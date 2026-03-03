@@ -51,7 +51,9 @@
       "Bash(echo \"EXIT: $?\")",
       "Bash(node -e \":*)",
       "Bash(node --check \"C:/Users/holylight/.claude/tools/workflow-guardian-mcp/server.js\")",
-      "Bash(cmd /c \"npx -y computer-use-mcp --help\")"
+      "Bash(cmd /c \"npx -y computer-use-mcp --help\")",
+      "mcp__workflow-guardian__workflow_signal",
+      "mcp__workflow-guardian__workflow_status"
     ],
     "additionalDirectories": [
       "C:\\Users\\holylight\\.claude",
