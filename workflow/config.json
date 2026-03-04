@@ -22,5 +22,19 @@
     "search_timeout_ms": 2000,
     "auto_start_service": true,
     "auto_index_on_change": true
+  },
+  "write_gate": {
+    "enabled": true,
+    "auto_threshold": 0.5,
+    "ask_threshold": 0.3,
+    "dedup_score": 0.80,
+    "skip_on_explicit_user": true
+  },
+  "decay": {
+    "enforce_on_audit": false,
+    "staleness_thresholds": {"[固]": 90, "[觀]": 60, "[臨]": 30},
+    "auto_archive_临": true,
+    "mark_观_pending_review": true,
+    "never_auto_archive_固": true
   }
 }

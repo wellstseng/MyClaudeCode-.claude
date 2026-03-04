@@ -495,9 +495,10 @@ def handle_user_prompt_submit(
             lines.extend(atom_lines)
             state["injected_atoms"] = already_injected + newly_injected
 
-            # Auto-update Last-used timestamp in injected atom files
+            # Auto-update Last-used timestamp + Confirmations++ in injected atom files (v2.1)
             today_str = datetime.now().strftime("%Y-%m-%d")
             last_used_re = re.compile(r"^(- Last-used:\s*)\d{4}-\d{2}-\d{2}", re.MULTILINE)
+            confirmations_re = re.compile(r"^(- Confirmations:\s*)(\d+)", re.MULTILINE)
             for inj_name in newly_injected:
                 for (name, rel_path, triggers), base_dir in matched_with_dir:
                     if name != inj_name:
@@ -507,10 +508,29 @@ def handle_user_prompt_submit(
                         break
                     try:
                         text = apath.read_text(encoding="utf-8-sig")
+                        changed = False
+                        # Update Last-used
                         if last_used_re.search(text):
-                            updated = last_used_re.sub(rf"\g<1>{today_str}", text)
-                            if updated != text:
-                                apath.write_text(updated, encoding="utf-8")
+                            new_text = last_used_re.sub(rf"\g<1>{today_str}", text)
+                            if new_text != text:
+                                text = new_text
+                                changed = True
+                        # Confirmations++ (v2.1)
+                        cm = confirmations_re.search(text)
+                        if cm:
+                            new_count = int(cm.group(2)) + 1
+                            text = confirmations_re.sub(rf"\g<1>{new_count}", text)
+                            changed = True
+                        elif "- Last-used:" in text:
+                            # No Confirmations field yet — add it after Last-used
+                            text = re.sub(
+                                r"^(- Last-used:\s*.+)$",
+                                r"\1\n- Confirmations: 1",
+                                text, count=1, flags=re.MULTILINE,
+                            )
+                            changed = True
+                        if changed:
+                            apath.write_text(text, encoding="utf-8")
                     except (OSError, UnicodeDecodeError):
                         pass
                     break

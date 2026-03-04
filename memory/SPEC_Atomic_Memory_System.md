@@ -356,6 +356,71 @@ TRIGGER_RANGE = (3, 8)
 
 ---
 
+## 六、Write Gate（v2.1 新增）
+
+### 6.1 概述
+
+Write Gate 在新知識寫入前進行品質評估與去重檢查，降低噪音累積。
+
+### 6.2 決策流
+
+```
+新知寫入決策流：
+┌─ 使用者說「記住」「以後都這樣」
+│  └→ 直接 Add，[固]，quality=1.0
+│
+├─ AI 偵測到坑點/陷阱
+│  └→ Add，[觀]，quality=0.7
+│
+└─ 其他新知識
+   │
+   ├─ Dedup 檢查：embed → search existing (score>0.80)
+   │  ├─ >0.95 → Skip（完全重複）
+   │  ├─ 0.80-0.95 → 建議 Update 既有 atom
+   │  └─ <0.80 → 進入品質評分
+   │
+   └─ Quality Score（rule-based）：
+      ├─ ≥0.5 → Add
+      ├─ 0.3-0.5 → Ask User 確認
+      └─ <0.3 → Skip（log to audit trail）
+```
+
+### 6.3 Quality Score 計算
+
+| 條件 | 分數 |
+|------|------|
+| 長度 >20 chars | +0.15 |
+| 長度 >50 chars | +0.10 |
+| 技術術語 ≥2 | +0.15 |
+| 使用者明確觸發 | +0.35 |
+| 含具體值（版本號/路徑/設定值） | +0.15 |
+| 非暫時性（不含 timeout/retry/暫時） | +0.10 |
+
+### 6.4 工具
+
+`~/.claude/tools/memory-write-gate.py` — CLI 入口，搭配 session-end 同步使用。
+
+```
+python memory-write-gate.py --content "知識文字" [--classification "[觀]"] [--trigger-context "..."]
+  → 輸出 JSON：{action, quality_score, reason, dedup_match?}
+```
+
+### 6.5 設定
+
+`~/.claude/workflow/config.json` 的 `write_gate` 區塊：
+
+```json
+{
+  "enabled": true,
+  "auto_threshold": 0.5,
+  "ask_threshold": 0.3,
+  "dedup_score": 0.80,
+  "skip_on_explicit_user": true
+}
+```
+
+---
+
 ## 七、向量搜尋層（RAG）
 
 ### 7.1 概述
@@ -438,3 +503,4 @@ UserPromptSubmit (3s timeout)
 | 1.0 | 2026-03-02 | 初版：三層分類 + 資料夾結構 + 健檢腳本規格 |
 | 1.1 | 2026-03-03 | 新增 §七 向量搜尋層（RAG）規格 |
 | 2.0 | 2026-03-03 | **原子記憶 V2**：Hybrid RECALL 實作完成（keyword + vector + LLM） |
+| 2.1 | 2026-03-04 | **V2.1 Sprint 1**：Schema 擴展（Type/TTL/Tags/Related/Supersedes/Quality）、Write Gate §六、--enforce 自動淘汰、Confirmations 自動遞增 |

@@ -6,6 +6,7 @@
 
 | 日期 | 變更 | 涉及檔案 |
 |------|------|---------|
+| 2026-03-04 | **原子記憶 v2.1 Sprint 1 實作完成**：Schema 擴展 10 欄位（Type/TTL/Tags/Related/Supersedes/Quality 等）、解析器升級（graceful fallback）、`--enforce` 自動淘汰（[臨]>30d 移入 _distant/、[觀]>60d 標記 pending-review）、Confirmations 自動遞增、Write Gate 新建（quality score + dedup + audit.log）、config.json 新增 write_gate/decay 區塊 | `memory/SPEC_Atomic_Memory_System.md`, `tools/memory-audit.py`, `hooks/workflow-guardian.py`, `tools/memory-write-gate.py`(新), `workflow/config.json` |
 | 2026-03-04 | **原子記憶 v2.1 研究計畫**：系統化盤點 7 大缺陷 + 6 系統比較（MemGPT/Zep/Mem0/LangGraph/LlamaIndex/SK）+ JSON schema + 檢索排序公式 + 治理機制 + 3 階段路線圖 | `_AIDocs/AtomicMemory-v2.1-Plan.md` |
 | 2026-03-03 | **工作流完善**：session ID prefix match、resume 後 atoms 重注入、Atom Last-used 自動刷新、sync_completed 清空 queue+files、computer-use MCP 修正、README.md 流程圖 | `server.js`, `workflow-guardian.py`, `README.md`, `Install-forAI.md` |
 | 2026-03-03 | **MCP 傳輸格式修正**：Content-Length header → JSONL（Claude Code v2.x 實際使用的格式）。protocolVersion 更新至 2025-11-25。Dashboard port heartbeat recovery（多實例自動接管）。同步修復 openclaw-notify-mcp。 | `tools/workflow-guardian-mcp/server.js`, `C:\OpenClawWorkspace\scripts\openclaw-notify-mcp.js` |

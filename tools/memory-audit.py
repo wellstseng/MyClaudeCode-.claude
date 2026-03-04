@@ -40,9 +40,12 @@ MEMORY_INDEX = "MEMORY.md"
 DISTANT_DIR = "_distant"
 SKIP_PREFIXES = ("SPEC_", "_")  # Files to skip during atom scanning
 REQUIRED_METADATA = {"Scope", "Confidence", "Trigger", "Last-used"}
-OPTIONAL_METADATA = {"Confirmations", "Privacy", "Source"}
+OPTIONAL_METADATA = {"Confirmations", "Privacy", "Source", "Type", "Created", "TTL",
+                     "Expires-at", "Tags", "Related", "Supersedes", "Quality"}
 REQUIRED_SECTIONS = {"知識", "行動"}
 VALID_CONFIDENCE = {"[固]", "[觀]", "[臨]"}
+VALID_TYPES = {"semantic", "episodic", "procedural"}
+VALID_PRIVACY = {"public", "internal", "sensitive"}
 
 # ─── Data Classes ────────────────────────────────────────────────────────────
 
@@ -64,6 +67,15 @@ class AtomMetadata:
     has_evolution_log: bool = False
     evolution_entries: int = 0
     raw_metadata: Dict[str, str] = field(default_factory=dict)
+    # v2.1 fields (all optional, graceful fallback)
+    atom_type: str = "semantic"       # semantic/episodic/procedural
+    created: Optional[date] = None
+    ttl: Optional[str] = None         # e.g. "30d"
+    expires_at: Optional[date] = None
+    tags: List[str] = field(default_factory=list)
+    related: List[str] = field(default_factory=list)
+    supersedes: List[str] = field(default_factory=list)
+    quality: Optional[float] = None
 
 
 @dataclass
@@ -171,8 +183,47 @@ def parse_atom_file(path: Path, layer_name: str) -> AtomMetadata:
     except ValueError:
         atom.confirmations = 0
 
-    atom.privacy = atom.raw_metadata.get("Privacy", "")
+    atom.privacy = atom.raw_metadata.get("Privacy", "public")
     atom.source = atom.raw_metadata.get("Source", "")
+
+    # v2.1 fields — graceful fallback to defaults
+    atom.atom_type = atom.raw_metadata.get("Type", "semantic").strip().lower()
+    if atom.atom_type not in VALID_TYPES:
+        atom.atom_type = "semantic"
+
+    raw_created = atom.raw_metadata.get("Created", "").strip()
+    if DATE_PATTERN.match(raw_created):
+        try:
+            atom.created = datetime.strptime(raw_created, "%Y-%m-%d").date()
+        except ValueError:
+            pass
+
+    atom.ttl = atom.raw_metadata.get("TTL", None)
+    if atom.ttl:
+        atom.ttl = atom.ttl.strip()
+
+    raw_expires = atom.raw_metadata.get("Expires-at", "").strip()
+    if DATE_PATTERN.match(raw_expires):
+        try:
+            atom.expires_at = datetime.strptime(raw_expires, "%Y-%m-%d").date()
+        except ValueError:
+            pass
+
+    raw_tags = atom.raw_metadata.get("Tags", "")
+    atom.tags = [t.strip() for t in re.split(r"[,，]", raw_tags) if t.strip()]
+
+    raw_related = atom.raw_metadata.get("Related", "")
+    atom.related = [r.strip() for r in re.split(r"[,，]", raw_related) if r.strip()]
+
+    raw_supersedes = atom.raw_metadata.get("Supersedes", "")
+    atom.supersedes = [s.strip() for s in re.split(r"[,，]", raw_supersedes) if s.strip()]
+
+    raw_quality = atom.raw_metadata.get("Quality", "")
+    if raw_quality:
+        try:
+            atom.quality = float(raw_quality)
+        except ValueError:
+            pass
 
     # Sections
     for line in lines:
@@ -503,6 +554,115 @@ def restore_from_distant(atom_path: Path) -> Tuple[bool, str]:
         return False, f"寫入失敗: {e}"
 
 
+def _append_evolution_entry(atom_path: Path, change: str, source: str = "memory-audit --enforce") -> None:
+    """Append an entry to the atom's evolution log."""
+    try:
+        text = atom_path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError):
+        return
+    today_str = date.today().isoformat()
+    entry_line = f"| {today_str} | {change} | {source} |"
+
+    if "## 演化日誌" in text:
+        # Find the last table row and append after it
+        lines = text.splitlines()
+        insert_idx = None
+        in_log = False
+        for i, line in enumerate(lines):
+            if "演化日誌" in line:
+                in_log = True
+                continue
+            if in_log:
+                if TABLE_ROW_PATTERN.match(line.strip()):
+                    insert_idx = i
+                elif line.strip().startswith("##"):
+                    break
+        if insert_idx is not None:
+            lines.insert(insert_idx + 1, entry_line)
+        else:
+            # Table header exists but no data rows; append after separator
+            for i, line in enumerate(lines):
+                if "演化日誌" in line:
+                    # Find separator
+                    for j in range(i + 1, min(i + 5, len(lines))):
+                        if lines[j].strip().startswith("|---"):
+                            lines.insert(j + 1, entry_line)
+                            break
+                    break
+        atom_path.write_text("\n".join(lines), encoding="utf-8")
+    else:
+        # No evolution log section; append one
+        text += f"\n\n## 演化日誌\n\n| 日期 | 變更 | 來源 |\n|------|------|------|\n{entry_line}\n"
+        atom_path.write_text(text, encoding="utf-8")
+
+
+def enforce_decay(args: argparse.Namespace) -> None:
+    """Execute automated decay: move stale [臨] to _distant/, mark stale [觀] as pending-review."""
+    today = date.today()
+    dry_run = args.dry_run
+    layers = discover_layers(global_only=args.global_only, project_filter=args.project)
+    actions: List[str] = []
+
+    for layer_name, mem_dir in layers:
+        for md_file in sorted(mem_dir.glob("*.md")):
+            if md_file.name == MEMORY_INDEX:
+                continue
+            if any(md_file.name.startswith(p) for p in SKIP_PREFIXES):
+                continue
+
+            atom = parse_atom_file(md_file, layer_name)
+            if not atom.last_used or not atom.confidence:
+                continue
+
+            days = (today - atom.last_used).days
+            threshold = STALENESS_THRESHOLDS.get(atom.confidence)
+            if threshold is None or days <= threshold:
+                continue
+
+            rel = _rel_path(atom.file_path)
+
+            if atom.confidence == "[臨]":
+                if dry_run:
+                    actions.append(f"[DRY-RUN] Would move {rel} to _distant/ ({days}d > {threshold}d)")
+                else:
+                    _append_evolution_entry(md_file, f"--enforce 自動淘汰 ({days}d > {threshold}d)")
+                    ok, msg = move_to_distant(md_file)
+                    actions.append(f"{'OK' if ok else 'FAIL'}: {msg}")
+
+            elif atom.confidence == "[觀]":
+                if dry_run:
+                    actions.append(f"[DRY-RUN] Would mark {rel} as pending-review ({days}d > {threshold}d)")
+                else:
+                    # Add pending-review tag
+                    try:
+                        text = md_file.read_text(encoding="utf-8-sig")
+                        if "pending-review" not in text:
+                            # Add Tags line or update existing
+                            if "- Tags:" in text:
+                                text = re.sub(
+                                    r"^(- Tags:\s*)(.+)$",
+                                    r"\1\2, pending-review",
+                                    text, count=1, flags=re.MULTILINE,
+                                )
+                            else:
+                                # Insert after Last-used line
+                                text = re.sub(
+                                    r"^(- Last-used:\s*.+)$",
+                                    r"\1\n- Tags: pending-review",
+                                    text, count=1, flags=re.MULTILINE,
+                                )
+                            md_file.write_text(text, encoding="utf-8")
+                            _append_evolution_entry(md_file, f"標記 pending-review ({days}d > {threshold}d)")
+                            actions.append(f"MARKED: {rel} → pending-review")
+                    except (OSError, UnicodeDecodeError) as e:
+                        actions.append(f"FAIL: {rel} — {e}")
+
+    if actions:
+        print("\n".join(actions))
+    else:
+        print("No stale atoms found requiring action.")
+
+
 def move_to_distant(atom_path: Path) -> Tuple[bool, str]:
     """Move an active atom to _distant/{year}_{month}/."""
     if not atom_path.exists():
@@ -782,6 +942,12 @@ def main():
     parser.add_argument("--json", action="store_true", help="JSON 格式輸出")
     parser.add_argument("--verbose", action="store_true", help="含逐 atom 詳細資訊")
 
+    # Decay enforce (v2.1)
+    parser.add_argument("--enforce", action="store_true",
+                        help="自動淘汰：[臨]>30d 移入 _distant/，[觀]>60d 標記 pending-review")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="搭配 --enforce，只報告不執行")
+
     # Distant memory operations
     parser.add_argument("--search-distant", type=str, metavar="KEYWORD", help="搜尋遙遠記憶區")
     parser.add_argument("--restore", type=str, metavar="PATH", help="從遙遠記憶拉回活躍區")
@@ -817,6 +983,11 @@ def main():
         ok, msg = move_to_distant(path)
         print(msg)
         sys.exit(0 if ok else 1)
+
+    # Enforce decay (v2.1)
+    if args.enforce:
+        enforce_decay(args)
+        return
 
     # Run audit
     report = run_audit(args)
