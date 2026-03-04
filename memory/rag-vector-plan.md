@@ -4,7 +4,7 @@
 - Confidence: [固]
 - Trigger: RAG, vector, 向量, embedding, 語意, semantic, LanceDB, Ollama
 - Last-used: 2026-03-04
-- Confirmations: 11
+- Confirmations: 12
 
 ## 知識
 

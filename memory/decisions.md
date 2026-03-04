@@ -4,7 +4,7 @@
 - Confidence: [固]
 - Trigger: 全域決策, 工作流, workflow, 設定, config, 記住, MCP
 - Last-used: 2026-03-04
-- Confirmations: 10
+- Confirmations: 11
 
 ## 知識
 
