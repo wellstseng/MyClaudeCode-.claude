@@ -23,7 +23,8 @@
 - [固] **MCP stdio 傳輸格式**: Claude Code v2.x 使用 JSONL（`{...}\n`），不是 Content-Length header。自寫 MCP server 必須用 JSONL + protocolVersion `2025-11-25`，否則 30 秒超時 failed
 - [固] **Dashboard v2.1**: Tabbed UI（Sessions/Episodic/Health/Tests/Vector），API: /api/episodic, /api/health, /api/test-run, /api/vector-status, /api/knowledge-queue
 - [固] Node.js `exec` > `execFile` on Windows：`execFile` 找不到 Python（WindowsApps stub），`exec` 透過 shell 可正常解析 PATH；路徑需用正斜線避免反斜線被 shell 當逸出字元
-- [固] **Promotion hint (v2.1.1)**：atom 注入時若 Confirmations 達門檻（[臨]≥2→[觀]、[觀]≥4→[固]），自動在 context 附提醒，讓 Claude 主動確認是否晉升
+- [固] **Promotion hint (v2.1.1)**：atom 注入時若 Confirmations 達門檻（[臨]≥2→[觀]、[觀]≥4→[固]），自動在 context 附提醒，讓 Claude 主動確認是否晉升。已驗證通過（todo.md [觀]→⚡hint）
+- [臨] **Episodic atoms 不列 MEMORY.md 索引**：TTL 短（24d）且 vector search 可召回，列索引會撐爆 30 行限制。待改 hook 的 `_generate_episodic_atom()` 跳過索引插入
 
 ## 行動
 
