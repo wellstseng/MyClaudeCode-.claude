@@ -1,0 +1,55 @@
+{
+  "enabled": true,
+  "stop_gate_max_blocks": 2,
+  "min_files_to_block": 2,
+  "remind_after_turns": 3,
+  "max_reminders": 3,
+  "stale_threshold_hours": 24,
+  "dashboard_port": 3848,
+  "sync_keywords": ["同步", "sync", "commit", "提交", "結束", "收工"],
+  "completion_indicators": ["已同步", "同步完成", "已更新", "已提交", "committed"],
+  "vector_search": {
+    "enabled": true,
+    "service_port": 3849,
+    "embedding_backend": "ollama",
+    "embedding_model": "qwen3-embedding",
+    "fallback_backend": "sentence-transformers",
+    "fallback_model": "BAAI/bge-m3",
+    "ollama_base_url": "http://127.0.0.1:11434",
+    "ollama_llm_model": "qwen3:1.7b",
+    "search_top_k": 5,
+    "search_min_score": 0.65,
+    "search_timeout_ms": 2000,
+    "auto_start_service": true,
+    "auto_index_on_change": true
+  },
+  "write_gate": {
+    "enabled": true,
+    "auto_threshold": 0.5,
+    "ask_threshold": 0.3,
+    "dedup_score": 0.80,
+    "skip_on_explicit_user": true
+  },
+  "episodic": {
+    "auto_generate": true,
+    "min_files": 1,
+    "min_duration_seconds": 120
+  },
+  "cleanup": {
+    "ended_ttl_ms": 60000,
+    "orphan_done_ttl_ms": 1800000,
+    "orphan_working_ttl_ms": 86400000
+  },
+  "session_awareness": {
+    "enabled": true,
+    "max_keyword_signals": 20,
+    "max_triggers": 12
+  },
+  "decay": {
+    "enforce_on_audit": false,
+    "staleness_thresholds": {"[固]": 90, "[觀]": 60, "[臨]": 30},
+    "auto_archive_临": true,
+    "mark_观_pending_review": true,
+    "never_auto_archive_固": true
+  }
+}

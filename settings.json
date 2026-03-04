@@ -20,26 +20,43 @@
       "Bash(git config:*)",
       "Bash(git commit:*)",
       "Bash(git push)",
+      "Bash(git add:*)",
+      "Bash(curl -s:*)",
+      "Bash(ollama --version)",
+      "Bash(ollama list)",
       "Read(//c/Users/**)",
       "Read(//c/ProgramData/**)",
       "Read(//tmp/**)",
+      "Read(//e/OpenClawWorkSpace/**)",
       "mcp__MCPControl__get_screen_size",
+      "mcp__workflow-guardian__workflow_signal",
+      "mcp__workflow-guardian__workflow_status",
       "Bash(powershell.exe -Command \"Stop-Process -Name ngrok -Force -ErrorAction SilentlyContinue; Get-CimInstance Win32_Process -Filter \"\"Name=''node.exe''\"\" | Where-Object {$_.CommandLine -like ''*bridge-server*''} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; & cmd /c ''openclaw gateway stop'' 2>&1\")",
       "Bash(powershell.exe -Command \"Stop-Process -Name ngrok -Force -ErrorAction SilentlyContinue\")",
       "Bash(cmd //c \"openclaw gateway stop\")",
       "Bash(powershell.exe -Command \"Get-CimInstance Win32_Process -Filter \\\\\"\"Name=''node.exe''\\\\\"\" | ForEach-Object { if \\(\\\\$_.CommandLine -like ''*bridge-server*''\\) { Stop-Process -Id \\\\$_.ProcessId -Force } }\")",
-      "Bash(openclaw --help)",
-      "Read(//e/OpenClawWorkSpace/**)"
+      "Bash(openclaw --help)"
     ]
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$HOME/.claude/hooks/workflow-guardian.py\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "node E:/OpenClawWorkSpace/.claude/scripts/memory-v2/index.js",
-            "timeout": 15
+            "command": "python \"$HOME/.claude/hooks/workflow-guardian.py\"",
+            "timeout": 3
           }
         ]
       }
@@ -54,12 +71,47 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$HOME/.claude/hooks/workflow-guardian.py\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$HOME/.claude/hooks/workflow-guardian.py\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "node -e \"const http=require('http');const d=JSON.stringify({channelId:'1476967208461664378',message:'Claude Code session ended.'});const r=http.request({hostname:'127.0.0.1',port:3847,path:'/notify/discord',method:'POST',headers:{'Authorization':'Bearer openclaw-bridge-default-token','Content-Type':'application/json','Content-Length':Buffer.byteLength(d)}},()=>{});r.write(d);r.end()\" 2>/dev/null || true",
+            "command": "python \"$HOME/.claude/hooks/workflow-guardian.py\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$HOME/.claude/hooks/workflow-guardian.py\"",
+            "timeout": 5,
             "async": true
           }
         ]
