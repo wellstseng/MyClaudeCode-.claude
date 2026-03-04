@@ -266,6 +266,67 @@ def ranked_search(
     return hits[:top_k]
 
 
+def episodic_search(
+    query: str,
+    config: Dict[str, Any],
+    top_k: int = 3,
+    min_score: float = 0.35,
+    embedder=None,
+) -> List[Dict[str, Any]]:
+    """Search only episodic atoms. Lower threshold for session context injection.
+
+    Returns list of results filtered to atom_type=episodic, sorted by score:
+    [{"atom_name", "score", "file_path", "layer", "last_used", "created", "atom_type"}, ...]
+    """
+    if not query.strip():
+        return []
+
+    if embedder is None:
+        embedder = create_embedder(config)
+
+    query_vec = embedder.embed([query])
+    if not query_vec or not query_vec[0]:
+        return []
+
+    # Fetch more to compensate for type filtering
+    raw_results = search_vectors(query_vec[0], top_k=top_k * 8)
+    if not raw_results:
+        return []
+
+    # Filter: episodic only + dedup by atom
+    hits: List[Dict[str, Any]] = []
+    seen_atoms: Dict[str, float] = {}
+
+    for row in raw_results:
+        if row.get("atom_type", "semantic") != "episodic":
+            continue
+
+        distance = row.get("_distance", 1.0)
+        score = 1.0 - distance
+        if score < min_score:
+            continue
+
+        atom_name = row.get("atom_name", "")
+        if atom_name in seen_atoms:
+            if score <= seen_atoms[atom_name]:
+                continue
+        seen_atoms[atom_name] = score
+        hits = [h for h in hits if h["atom_name"] != atom_name]
+
+        hits.append({
+            "atom_name": atom_name,
+            "score": round(score, 4),
+            "file_path": row.get("file_path", ""),
+            "layer": row.get("layer", ""),
+            "last_used": row.get("last_used", ""),
+            "confidence": row.get("confidence", ""),
+            "atom_type": "episodic",
+        })
+
+    hits.sort(key=lambda x: x["score"], reverse=True)
+    return hits[:top_k]
+
+
 def search_raw(
     query: str,
     config: Dict[str, Any],

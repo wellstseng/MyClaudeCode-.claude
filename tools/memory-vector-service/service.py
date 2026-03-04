@@ -26,7 +26,7 @@ sys.path.insert(0, str(SERVICE_DIR))
 
 from config import load_config, VECTORDB_DIR
 from indexer import build_index, create_embedder, get_index_status
-from searcher import search, search_raw, ranked_search
+from searcher import search, search_raw, ranked_search, episodic_search
 
 # ─── Globals ─────────────────────────────────────────────────────────────────
 
@@ -98,6 +98,7 @@ class VectorServiceHandler(BaseHTTPRequestHandler):
         routes = {
             "/search": self._handle_search,
             "/search/ranked": self._handle_search_ranked,
+            "/search/episodic": self._handle_search_episodic,
             "/health": self._handle_health,
             "/status": self._handle_status,
         }
@@ -191,6 +192,63 @@ class VectorServiceHandler(BaseHTTPRequestHandler):
             layer_filter=layer if layer != "all" else None,
             embedder=_embedder,
         )
+        self._send_json(results)
+
+    def _handle_search_episodic(self, params: Dict):
+        """GET /search/episodic?q=...&top_k=3&min_score=0.35
+
+        Search only episodic atoms for session context injection.
+        Enriches results with summary from atom files.
+        """
+        q = params.get("q", [""])[0]
+        if not q:
+            self._send_error(400, "Missing query parameter 'q'")
+            return
+
+        top_k = int(params.get("top_k", ["3"])[0])
+        min_score = float(params.get("min_score", ["0.35"])[0])
+
+        results = episodic_search(
+            query=q,
+            config=_config,
+            top_k=top_k,
+            min_score=min_score,
+            embedder=_embedder,
+        )
+
+        # Enrich each result with summary + triggers from the atom file
+        memory_dir = Path.home() / ".claude" / "memory"
+        for r in results:
+            file_path = r.get("file_path", "")
+            layer = r.get("layer", "global")
+            if not file_path:
+                continue
+            # Resolve absolute path: global → ~/.claude/memory/, project → projects/slug/memory/
+            if layer.startswith("project:"):
+                slug = layer.split(":", 1)[1]
+                abs_path = Path.home() / ".claude" / "projects" / slug / "memory" / file_path
+            else:
+                abs_path = memory_dir / file_path
+            if not abs_path.exists():
+                continue
+            try:
+                text = abs_path.read_text(encoding="utf-8-sig")
+                # Extract ## 摘要 section (compact summary)
+                import re
+                summary_m = re.search(
+                    r"^## 摘要\s*\n(.+?)(?=\n## |\Z)",
+                    text, re.MULTILINE | re.DOTALL,
+                )
+                r["summary"] = summary_m.group(1).strip()[:200] if summary_m else ""
+                # Extract triggers
+                trigger_m = re.search(r"^- Trigger:\s*(.+)", text, re.MULTILINE)
+                r["triggers"] = [t.strip() for t in trigger_m.group(1).split(",") if t.strip()] if trigger_m else []
+                # Extract Created date
+                created_m = re.search(r"^- Created:\s*(\S+)", text, re.MULTILINE)
+                r["created"] = created_m.group(1) if created_m else r.get("last_used", "")
+            except (OSError, UnicodeDecodeError):
+                pass
+
         self._send_json(results)
 
     def _handle_health(self, params: Dict):

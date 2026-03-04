@@ -39,6 +39,20 @@ DEFAULTS = {
     "stale_threshold_hours": 24,
     "sync_keywords": ["同步", "sync", "commit", "提交", "結束", "收工"],
     "completion_indicators": ["已同步", "同步完成", "已更新", "已提交", "committed"],
+    # v2.2 Sprint 2: Session context injection
+    "session_context": {
+        "enabled": True,
+        "max_episodic": 3,
+        "reserved_tokens": 200,
+        "min_score": 0.35,
+        "search_timeout_ms": 1500,
+    },
+    # v2.2 Sprint 2: Proactive classification
+    "proactive": {
+        "auto_promote_lin": True,   # [臨]→[觀] auto-promote
+        "pattern_threshold": 2,     # N episodic sessions before suggesting dedicated atom
+        "migration_hint_threshold": 3,  # N session references before migration hint
+    },
 }
 
 # ─── Config ──────────────────────────────────────────────────────────────────
@@ -348,6 +362,161 @@ def _update_topic_tracker(
     tracker["related_episodic"] = related
 
 
+# ─── v2.2 Sprint 2: Session Context + Proactive Classification ──────────────
+
+from collections import Counter
+
+
+def _search_episodic_context(
+    prompt: str, config: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    """Query /search/episodic for related past sessions. First-prompt only.
+
+    Returns list of episodic atom results with summary, triggers, etc.
+    Timeout: 1.5s (reserve rest for Phase 1).
+    """
+    vs_config = config.get("vector_search", {})
+    if not vs_config.get("enabled", True):
+        return []
+    sc_config = config.get("session_context", {})
+    if not sc_config.get("enabled", True):
+        return []
+
+    port = vs_config.get("service_port", 3849)
+    top_k = sc_config.get("max_episodic", 3)
+    min_score = sc_config.get("min_score", 0.35)
+    timeout_s = sc_config.get("search_timeout_ms", 1500) / 1000.0
+
+    try:
+        import urllib.parse
+        params = urllib.parse.urlencode({
+            "q": prompt, "top_k": top_k, "min_score": min_score,
+        })
+        url = f"http://127.0.0.1:{port}/search/episodic?{params}"
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            return json.loads(resp.read())
+    except Exception:
+        return []
+
+
+def _build_session_context(episodic_results: List[Dict[str, Any]]) -> List[str]:
+    """Build compact [Session:Context] block from episodic search results.
+
+    Returns list of context lines (max ~200 tokens).
+    """
+    if not episodic_results:
+        return []
+
+    context_lines = ["[Session:Context] Related past sessions:"]
+    char_budget = 600  # ~150 tokens, leave room for header
+
+    for ep in episodic_results:
+        name = ep.get("atom_name", "")
+        created = ep.get("created", ep.get("last_used", ""))
+        summary = ep.get("summary", "")
+        score = ep.get("score", 0)
+
+        # Extract slug from name: episodic-20260304-memory-system → memory-system
+        slug = name
+        if name.startswith("episodic-") and len(name) > 18:
+            slug = name[18:]  # skip "episodic-YYYYMMDD-"
+
+        # Compact single-line format
+        line = f"- [{created}] {slug}: {summary[:120]}"
+        if len(line) > char_budget:
+            break
+        context_lines.append(line)
+        char_budget -= len(line)
+
+    return context_lines if len(context_lines) > 1 else []
+
+
+def _detect_cross_session_patterns(
+    episodic_results: List[Dict[str, Any]], prompt: str
+) -> List[str]:
+    """Detect recurring themes across episodic sessions.
+
+    Returns list of recurring keywords found in 2+ episodic atoms AND the prompt.
+    """
+    if len(episodic_results) < 2:
+        return []
+
+    # Count keyword appearances across episodic atoms
+    topic_counts: Counter = Counter()
+    for ep in episodic_results:
+        for kw in ep.get("triggers", []):
+            if kw not in ("session", "episodic"):  # skip generic triggers
+                topic_counts[kw] += 1
+
+    # Extract keywords from prompt
+    prompt_kw = set(
+        w.lower() for w in re.findall(r"[a-zA-Z\u4e00-\u9fff]{4,}", prompt)
+        if w.lower() not in _TOPIC_STOP_WORDS
+    )
+
+    # Intersection: keywords in prompt that appear in 2+ episodic atoms
+    recurring = [kw for kw in prompt_kw if topic_counts.get(kw, 0) >= 2]
+    return recurring
+
+
+def _proactive_classify(
+    state: Dict[str, Any],
+    episodic_results: List[Dict[str, Any]],
+    prompt: str,
+    config: Dict[str, Any],
+) -> List[str]:
+    """Proactive classification engine. Returns context lines for hints/questions.
+
+    Checks:
+    1. Cross-session pattern → suggest dedicated atom
+    2. Episodic migration → suggest migrating frequently-referenced episodic
+    """
+    pro_config = config.get("proactive", {})
+    lines: List[str] = []
+
+    # 1. Cross-session pattern detection
+    recurring = _detect_cross_session_patterns(episodic_results, prompt)
+    pattern_threshold = pro_config.get("pattern_threshold", 2)
+    if recurring:
+        # Check if any recurring keyword already has a dedicated semantic atom
+        atom_index = state.get("atom_index", {})
+        existing_names = set()
+        for entry in atom_index.get("global", []):
+            existing_names.add(entry[0].lower())
+        for entry in atom_index.get("project", []):
+            existing_names.add(entry[0].lower())
+
+        # Only suggest if topic has no dedicated atom
+        novel_themes = [kw for kw in recurring if kw not in existing_names]
+        if novel_themes:
+            themes_str = ", ".join(novel_themes[:3])
+            ep_count = len(episodic_results)
+            lines.append(
+                f"💡 [Proactive] 主題 \"{themes_str}\" 在最近 {ep_count} 個 session 反覆出現。"
+                " 建議建立專屬 semantic atom 來長期保存相關知識。"
+            )
+
+    # 2. Episodic migration hint
+    migration_threshold = pro_config.get("migration_hint_threshold", 3)
+    related_episodic = state.get("topic_tracker", {}).get("related_episodic", [])
+    # Count how many times each episodic atom has been referenced (across sessions)
+    for ep in episodic_results:
+        name = ep.get("atom_name", "")
+        confirms = 0
+        try:
+            confirms = int(ep.get("confirmations", 0) if ep.get("confirmations") else 0)
+        except (ValueError, TypeError):
+            pass
+        if confirms >= migration_threshold:
+            lines.append(
+                f"❓ {name} 已被 {confirms}+ 次 session 引用。"
+                " 核心知識是否應遷移到專屬 atom？"
+            )
+
+    return lines
+
+
 # ─── Vector Service Helpers ───────────────────────────────────────────────────
 
 
@@ -532,10 +701,28 @@ def handle_user_prompt_submit(
     prompt = input_data.get("prompt", "")
     lines: List[str] = []
 
+    # ─── Phase 0: Session Context Injection (first prompt only) ────────
+    budget = compute_token_budget(prompt)
+    if not state.get("session_context_injected", False):
+        state["session_context_injected"] = True
+        episodic_results = _search_episodic_context(prompt, config)
+        if episodic_results:
+            # Build compact context block
+            ctx_lines = _build_session_context(episodic_results)
+            if ctx_lines:
+                lines.extend(ctx_lines)
+                # Reserve tokens for episodic context
+                sc_config = config.get("session_context", {})
+                reserved = sc_config.get("reserved_tokens", 200)
+                budget = max(budget - reserved, 500)
+            # Proactive classification (cross-session patterns, migration hints)
+            proactive_lines = _proactive_classify(state, episodic_results, prompt, config)
+            lines.extend(proactive_lines)
+
     # ─── Phase 1: Atom auto-injection (Trigger matching) ─────────────
     atom_index = state.get("atom_index", {})
     already_injected = state.get("injected_atoms", [])
-    budget = compute_token_budget(prompt)
+    # budget already computed above (possibly reduced by Phase 0)
 
     # Collect all atoms from both layers
     # rel_path is relative to the PARENT of memory dir (e.g. ~/.claude/ or ~/.claude/projects/slug/)
@@ -701,7 +888,7 @@ def handle_user_prompt_submit(
                             changed = True
                         if changed:
                             apath.write_text(text, encoding="utf-8")
-                        # Promotion hint (v2.1.1) — proactive threshold alert
+                        # Promotion logic (v2.2) — auto-promote [臨]→[觀], hint [觀]→[固]
                         if new_count is not None:
                             conf_m = confidence_re.search(text)
                             if conf_m:
@@ -709,11 +896,26 @@ def handle_user_prompt_submit(
                                 threshold = PROMOTION_THRESHOLDS.get(cur)
                                 if threshold and new_count >= threshold:
                                     target = PROMOTION_TARGETS[cur]
-                                    lines.append(
-                                        f"⚡ [{inj_name}] Confirmations={new_count}, "
-                                        f"目前{cur}, 已達{target}門檻，"
-                                        f"觸及相關行為時請主動確認是否晉升"
-                                    )
+                                    pro_config = config.get("proactive", {})
+                                    if cur == "[臨]" and pro_config.get("auto_promote_lin", True):
+                                        # Auto-promote [臨]→[觀]: low risk
+                                        text = text.replace(
+                                            f"- Confidence: {cur}",
+                                            f"- Confidence: {target}",
+                                            1,
+                                        )
+                                        apath.write_text(text, encoding="utf-8")
+                                        lines.append(
+                                            f"✅ [{inj_name}] 已自動晉升 {cur}→{target}"
+                                            f"（Confirmations={new_count}）"
+                                        )
+                                    else:
+                                        # [觀]→[固]: high-confidence change, ask user
+                                        lines.append(
+                                            f"⚡ [{inj_name}] Confirmations={new_count}, "
+                                            f"目前{cur}, 已達{target}門檻，"
+                                            f"觸及相關行為時請主動確認是否晉升"
+                                        )
                     except (OSError, UnicodeDecodeError):
                         pass
                     break
@@ -1144,7 +1346,7 @@ def _generate_episodic_atom(
     )
 
     atom_path.write_text(content, encoding="utf-8")
-    _update_memory_index(MEMORY_DIR, atom_name, triggers)
+    # v2.2: Episodic atoms NOT listed in MEMORY.md index (TTL 24d, vector search discovers them)
 
     print(f"[episodic] Generated: {atom_path.name}", file=sys.stderr)
     return atom_name

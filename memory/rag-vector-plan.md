@@ -4,7 +4,7 @@
 - Confidence: [固]
 - Trigger: RAG, vector, 向量, embedding, 語意, semantic, LanceDB, Ollama
 - Last-used: 2026-03-04
-- Confirmations: 9
+- Confirmations: 11
 
 ## 知識
 
@@ -105,7 +105,7 @@ UserPromptSubmit (3s timeout)
 - [固] 命名規則：`episodic-{YYYYMMDD}-{slug}.md`，同日多 session 自動 append `-2`
 - [固] Type=episodic, Confidence=[臨], TTL=24d, Expires-at 自動計算
 - [固] 觸發條件：修改 ≥1 檔案或 knowledge_queue ≥1，且 session ≥2 分鐘
-- [固] 自動產生 trigger + 更新 MEMORY.md index
+- [固] 自動產生 trigger（不列 MEMORY.md 索引，vector search 發現）
 - [固] E2E 測試腳本：`~/.claude/tools/test-memory-v21.py`，9 tests 全通過
 - [固] 測試覆蓋：Write Gate (add/skip/ask), Supersedes, Decay --enforce, --compact-logs, Delete Propagation, Conflict Detection, Episodic Generation
 
@@ -122,6 +122,23 @@ UserPromptSubmit (3s timeout)
 - [固] P@5 結構上限：avg GT 1.4 atoms / top_k=5 → max ≈ 0.28（改用 R@5/Hit@5/MRR 為主要指標）
 - [固] Intent 分類器準確率：72%（36/50 與人工標註一致）
 - 評測結果 JSON：`~/.claude/memory/_vectordb/eval-results-*.json`
+
+### v2.2 Sprint 1（已完成）
+
+- [固] Topic Tracker：每 prompt 累積 intent_distribution、keyword_signals、related_episodic
+- [固] Enhanced Episodic：`## 摘要` + `## 關聯`（意圖分布、related sessions、referenced atoms）
+- [固] Trigger 自動生成含 topic tracker keyword_signals（前 5 個）
+- [固] 純 CPU < 1ms，零網路開銷
+
+### v2.2 Sprint 2（已完成）
+
+- [固] **Session Start Context Injection**：首 prompt 時 `/search/episodic` 找相關 episodic atoms，注入 `[Session:Context]` block
+- [固] Episodic search endpoint：`GET /search/episodic?q=...&top_k=3&min_score=0.35`，只回傳 atom_type=episodic + 摘要/triggers 富化
+- [固] **主動推進分類引擎**：跨 session 模式偵測 + episodic 遷移提示 + 專屬 atom 建議
+- [固] **[臨]→[觀] 自動晉升**：Confirmations ≥2 直接修改 atom 檔（低風險），[觀]→[固] 維持 ⚡ hint
+- [固] Episodic atoms 不列 MEMORY.md 索引（vector search 發現）
+- [固] 配置：`session_context`（enabled/max_episodic/reserved_tokens）+ `proactive`（auto_promote_lin/pattern_threshold）
+- [固] 首 prompt 時間預算：Phase 0 ~400ms + Phase 1 ~473ms = ~880ms（3s 內）
 
 ## 行動
 
@@ -141,6 +158,8 @@ UserPromptSubmit (3s timeout)
 
 | 日期 | 變更 | 來源 |
 |------|------|------|
+| 2026-03-04 | v2.2 Sprint 2 完成：Session Start Episodic Injection + 主動推進分類 + [臨]→[觀] 自動晉升 | session 實作 |
+| 2026-03-04 | v2.2 Sprint 1 完成：Topic Tracker + Enhanced Episodic atoms | session 實作 |
 | 2026-03-04 | v2.1 Episodic Memory + E2E 測試完成：9/9 tests pass, episodic auto-gen in handle_session_end() | session 實作 |
 | 2026-03-04 | v2.1 品質驗證完成：50-query 測試集，Hybrid R@5=0.96, Hit@5=0.90, MRR=0.80，語意增量 +0.80 | session 實作 |
 | 2026-03-04 | v2.1 Sprint 3 完成：Type Decay + Supersedes + Log Compaction + Token Budget + Session-end Index + Audit Trail | session 實作 |
