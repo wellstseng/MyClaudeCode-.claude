@@ -19,6 +19,7 @@
 | openclaw-setup-guide | memory/openclaw-setup-guide.md | 安裝 OpenClaw, 啟動 Gateway, 環境設定, 首次設定, 重新部署, 服務啟停, start-gateway |
 | openclaw-taxonomy | memory/openclaw-taxonomy.md | 人事時地物, 五大分類, taxonomy, 分類系統, categories.json, 子分類, atomPaths |
 | openclaw-self-iteration | memory/openclaw-self-iteration.md | 升級 OpenClaw, 版本管理, config merge, plugin 管理, 自我除錯, 迭代, 維護 |
+| openclaw-latest-issues | memory/openclaw-latest-issues.md | OpenClaw 官方文件, 最新版本, breaking changes, 升級問題, 已知問題, 故障排除, openclaw doctor, release notes |
 
 ---
 
