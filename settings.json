@@ -129,8 +129,7 @@
           {
             "type": "command",
             "command": "python \"$HOME/.claude/hooks/workflow-guardian.py\"",
-            "timeout": 5,
-            "async": true
+            "timeout": 30
           }
         ]
       }

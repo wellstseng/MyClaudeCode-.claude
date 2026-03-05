@@ -1,11 +1,13 @@
-# 原子記憶系統規格 v2.1
+# 原子記憶系統規格 v2.4
 
-> Atomic Memory System V2.1 Specification
+> Atomic Memory System V2.4 Specification
 > 適用於 Claude Code 跨 session 知識管理。
 > V2：Hybrid RECALL — Keyword Trigger + Vector Semantic Search + Local LLM
 > V2.1 Sprint 1：Write Gate + Decay Enforce + Schema 擴展 + Confirmations 自動遞增
 > V2.1 Sprint 2：Intent Ranking + Conflict Detection + Delete Propagation
 > V2.1 Sprint 3：Type Decay + Supersedes Loading + Evolution Compaction + Token Budget + Audit Trail
+> V2.4 Phase 1+2：回應知識捕獲（本地 LLM 逐輪+SessionEnd 萃取）+ 兩層分類（Scope×Type）
+> V2.4 Phase 3：跨 Session 鞏固（向量比對自動晉升）
 
 ---
 
@@ -526,9 +528,9 @@ INTENT_PATTERNS = {
 
 | 功能 | 模型 | 觸發 | 延遲 |
 |------|------|------|------|
-| 查詢改寫 | qwen3:4b | `rag-engine.py search --enhanced` | ~2s |
-| Re-ranking | qwen3:4b | `rag-engine.py search --rerank` | ~4s |
-| 知識萃取 | qwen3:4b | session 結束同步 | ~3s |
+| 查詢改寫 | qwen3:1.7b | `rag-engine.py search --enhanced` | ~2s |
+| Re-ranking | qwen3:1.7b | `rag-engine.py search --rerank` | ~4s |
+| 知識萃取 | qwen3:1.7b | session 結束同步 | ~3s |
 
 ### 7.7 設定
 
@@ -542,7 +544,7 @@ INTENT_PATTERNS = {
   "embedding_model": "qwen3-embedding",
   "fallback_backend": "sentence-transformers",
   "fallback_model": "BAAI/bge-m3",
-  "ollama_llm_model": "qwen3:4b",
+  "ollama_llm_model": "qwen3:1.7b",
   "search_top_k": 5,
   "search_min_score": 0.65,
   "search_timeout_ms": 2000,
@@ -617,7 +619,90 @@ python memory-conflict-detector.py [--atom X] [--dry-run] [--json]
 
 ---
 
-## 十、版本紀錄
+## 十、回應知識捕獲（V2.4）
+
+### 10.1 概述
+
+V2.4 建立「回應知識捕獲」管線，讓 Claude 的分析產出也能系統性地轉化為持久記憶。
+由本地 LLM（qwen3:1.7b）自動萃取，零雲端 token 開銷。
+
+### 10.2 雙層萃取架構
+
+| 層 | 時機 | 輸入 | 上限 | Timeout |
+|----|------|------|------|---------|
+| 逐輪萃取 | UserPromptSubmit（非同步 daemon thread） | 上一輪 assistant 回應 | 3000 chars, 2 items | 3s |
+| SessionEnd 補漏 | SessionEnd hook（同步） | 全 transcript assistant texts | 20000 chars, 5 items | 10s |
+
+- 逐輪結果存入 `state["pending_extraction"]`，下一輪 prompt 讀取合併
+- SessionEnd 做全 transcript 掃描，補抓跨回應的 pattern
+- 去重：前 40 字元匹配
+- 所有萃取結果一律 `[臨]`
+
+### 10.3 兩層分類（Scope × Type）
+
+| 維度 | 值 | 說明 |
+|------|-----|------|
+| Scope | global / project | 知識適用範圍 |
+| Type | factual / procedural / architectural / pitfall | 知識類型 |
+
+MCP tool `memory_queue_add` 支援 `scope`、`knowledge_type`、`tags` 參數。
+
+### 10.4 跨 Session 鞏固（Phase 3）
+
+SessionEnd 時，對 knowledge_queue 中的每個 item 進行向量搜尋比對：
+
+```
+對每個 knowledge item：
+  1. 向量搜尋 /search/ranked（top_k=5, min_score=0.75）
+  2. 統計命中的不同 session 數（以 episodic atom 為單位）
+  3. 排除當前 session 的 atom
+  4. 依命中數執行晉升：
+     - 2+ sessions → 自動晉升 [臨] → [觀]
+     - 4+ sessions → 標記建議晉升 [觀] → [固]（不自動執行）
+  5. 結果寫入 episodic atom 的「跨 Session 觀察」段落
+```
+
+#### Episodic Atom 增強
+
+跨 session 觀察寫入 episodic atom 的新段落：
+
+```markdown
+## 跨 Session 觀察
+- [觀] "LanceDB search 需要 AVX2" — 3 sessions 出現，自動晉升 [臨] → [觀]
+- [觀] "Windows pathlib 混用問題" — 5 sessions 出現，建議晉升 → [固]（需使用者確認）
+```
+
+### 10.5 設定
+
+`~/.claude/workflow/config.json`：
+
+```json
+{
+  "response_capture": {
+    "enabled": true,
+    "per_turn_enabled": true,
+    "per_turn_max_chars": 3000,
+    "per_turn_max_items": 2,
+    "per_turn_min_response_chars": 100,
+    "session_end_max_chars": 20000,
+    "session_end_max_items": 5,
+    "ollama_timeout_seconds": 3,
+    "session_end_timeout_seconds": 10,
+    "classification_default": "[臨]"
+  },
+  "cross_session": {
+    "enabled": true,
+    "min_score": 0.75,
+    "promote_threshold": 2,
+    "suggest_threshold": 4,
+    "timeout_seconds": 5
+  }
+}
+```
+
+---
+
+## 十一、版本紀錄
 
 | 版本 | 日期 | 變更 |
 |------|------|------|
@@ -627,3 +712,5 @@ python memory-conflict-detector.py [--atom X] [--dry-run] [--json]
 | 2.1 | 2026-03-04 | **V2.1 Sprint 1**：Schema 擴展（Type/TTL/Tags/Related/Supersedes/Quality）、Write Gate §六、--enforce 自動淘汰、Confirmations 自動遞增 |
 | 2.1.2 | 2026-03-04 | **V2.1 Sprint 2**：Intent classifier、ranked search、conflict detection、delete propagation |
 | 2.1.3 | 2026-03-04 | **V2.1 Sprint 3**：Type decay multipliers、Supersedes loading、evolution compaction、token budget、session-end index、audit trail |
+| 2.4 | 2026-03-05 | **V2.4 Phase 1+2**：回應知識捕獲（逐輪+SessionEnd 本地 LLM 萃取）、兩層分類（Scope×Type） |
+| 2.4.3 | 2026-03-05 | **V2.4 Phase 3**：跨 Session 鞏固（向量比對自動晉升 [臨]→[觀]、建議晉升 [觀]→[固]） |

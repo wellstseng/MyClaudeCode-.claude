@@ -51,5 +51,24 @@
     "auto_archive_临": true,
     "mark_观_pending_review": true,
     "never_auto_archive_固": true
+  },
+  "cross_session": {
+    "enabled": true,
+    "min_score": 0.75,
+    "promote_threshold": 2,
+    "suggest_threshold": 4,
+    "timeout_seconds": 5
+  },
+  "response_capture": {
+    "enabled": true,
+    "per_turn_enabled": true,
+    "per_turn_max_chars": 3000,
+    "per_turn_max_items": 2,
+    "per_turn_min_response_chars": 100,
+    "session_end_max_chars": 20000,
+    "session_end_max_items": 5,
+    "ollama_timeout_seconds": 3,
+    "session_end_timeout_seconds": 10,
+    "classification_default": "[臨]"
   }
 }

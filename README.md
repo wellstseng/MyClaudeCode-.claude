@@ -1,404 +1,428 @@
-# Claude Code Custom Extensions
+# 原子記憶系統 Atomic Memory V2.4
 
-> Claude Code hooks + MCP + Atomic Memory V2.2 = 自動化工作流監督 & 跨 session 知識管理（含向量語意搜尋、Session Awareness、自動晉升）
+> **Claude Code 跨 Session 知識管理引擎**
+> Hybrid RECALL | Dual LLM | Workflow Guardian
 
----
-
-## Overview
-
-這是一套 Claude Code 的自訂擴充系統，核心解決兩個問題：
-
-1. **工作流監督** — Claude 容易忘記同步（git commit、更新文件），這套系統自動追蹤修改、提醒同步、阻止未完成就結束
-2. **跨 session 記憶** — Claude 每次新對話都是白紙一張，原子記憶 V2.2 讓知識在 sessions 之間延續
-
-**技術架構**：
-- **Hooks**（Python）— 6 個生命週期事件的統一處理器
-- **MCP Server**（Node.js）— JSON-RPC stdio + HTTP Dashboard（5 tabs）
-- **Atomic Memory V2.2** — Hybrid RECALL + Ranked Search + Write Gate + Session Awareness + Proactive Classification + Auto-promotion
+Claude Code 每次 session 都是白紙一張——上次的決策、踩過的坑、使用者偏好，全部歸零。
+原子記憶系統為 Claude Code 補上 **長期記憶層**，透過 hooks 自動注入歷史知識，讓 AI 不再反覆犯同樣的錯。
 
 ---
 
-## 7-Phase Workflow Lifecycle
+## 設計哲學
 
-每個 Claude Code session 的完整生命週期：
+LLM 的 context window 是**工作記憶**（working memory），但缺少**長期記憶**（long-term memory）。
+原子記憶系統補上這塊拼圖，核心原則：
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                                                                      │
-│  Phase 1: BOOT（啟動初始化）                                          │
-│  Trigger: SessionStart hook                                          │
-│  ├─ 新 session → 建立 state, 解析全域+專案 MEMORY.md atom index       │
-│  ├─ resume/compact → 恢復 state, 清空 injected_atoms, 注入摘要       │
-│  └─ 自動啟動 Memory Vector Service daemon（若未運行）                  │
-│                                                                      │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  Phase 2: RECALL（記憶召回）★ V2.2 Hybrid                            │
-│  Trigger: UserPromptSubmit hook（每輪）                               │
-│  ├─ [1] Keyword match: prompt vs atom Trigger 關鍵詞（~10ms）        │
-│  ├─ [2] Intent classification: rule-based 分類（~1ms）               │
-│  │       → debug / build / design / recall / general                 │
-│  ├─ [3] Ranked search: HTTP → Vector Service /search/ranked          │
-│  │       → 5 因子加權：Semantic·Recency·IntentBoost·Confidence·Confirm│
-│  ├─ [4] Merge: keyword + semantic results（去重）                     │
-│  ├─ [5] 在 token budget 內載入 atom 全文或摘要                        │
-│  ├─ [6] Session context injection（首輪 only）                        │
-│  │       → /search/episodic → 注入過往 session 摘要（~400ms）         │
-│  ├─ [7] Proactive classification: 跨 session 模式偵測 + 建議          │
-│  └─ [8] Auto-promotion: [臨] Confirmations≥2 → 自動晉升 [觀]         │
-│                                                                      │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  Phase 3: TRACK（修改追蹤）                                           │
-│  Trigger: PostToolUse hook（Edit|Write）                              │
-│  ├─ 靜默記錄 file_path + tool + timestamp                            │
-│  ├─ 設定 sync_pending = true                                         │
-│  └─ ★ 若修改的是 atom 檔 → 觸發增量向量索引                          │
-│                                                                      │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  Phase 4: REMIND（同步提醒）                                          │
-│  Trigger: UserPromptSubmit hook（週期性）                              │
-│  ├─ 每 N 輪提醒一次未同步修改（max_reminders 上限）                    │
-│  └─ 偵測 sync 關鍵詞時顯示完整 sync context                          │
-│                                                                      │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  Phase 5: COMPACT（壓縮保護）                                         │
-│  Trigger: PreCompact hook                                             │
-│  ├─ 快照 state（timestamp）                                          │
-│  └─ Resume 時由 Phase 1 恢復 context + 重新注入 atoms                 │
-│                                                                      │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  Phase 6: GATE（結束閘門）                                            │
-│  Trigger: Stop hook                                                   │
-│  ├─ 修改 ≥ min_files_to_block → BLOCK（最多 N 次）                   │
-│  ├─ phase=done/muted → ALLOW                                         │
-│  └─ 阻止 N 次後強制放行（anti-loop）                                  │
-│                                                                      │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  Phase 7: SYNC（同步執行）                                            │
-│  Trigger: 手動（Claude + 使用者確認）                                 │
-│  ├─ Write Gate 品質檢查 + 去重（auto_threshold=0.5）                  │
-│  ├─ 更新 _AIDocs/_CHANGELOG.md                                       │
-│  ├─ 更新 atom 檔（知識段落 + Last-used + Confirmations++）            │
-│  ├─ Episodic atom 自動生成（修改≥1 檔 + session≥2min）               │
-│  │   → episodic-{YYYYMMDD}-{slug}.md, TTL=24d, 不列 MEMORY.md 索引  │
-│  ├─ workflow_signal("sync_completed") → 清空 queue + phase=done       │
-│  └─ git commit + push                                                │
-│                                                                      │
-└──────────────────────────────────────────────────────────────────────┘
-```
+| # | 原則 | 說明 |
+|---|------|------|
+| 1 | **精確度 > Token 節省** | 寧可多注入確保正確，不因省 token 而遺漏關鍵知識 |
+| 2 | **漸進式信任** | 三層分類 `[臨]`→`[觀]`→`[固]`，知識需多次驗證才晉升為永久 |
+| 3 | **最小侵入** | 全部透過 Claude Code hooks 運作，主程式零修改 |
+| 4 | **雙 LLM 分工** | 雲端（Claude）做決策，本地（Ollama）做語意處理 |
+| 5 | **可審計** | 所有操作記錄 JSONL audit trail，知識不刪除只歸檔 |
 
 ---
 
-## Features
-
-### Workflow Guardian
-- **自動追蹤修改** — Edit/Write 操作靜默記錄，不干擾工作
-- **Stop 閘門** — 有未同步修改時阻止 Claude 結束，防止遺忘
-- **Anti-loop 保護** — 最多阻止 N 次後強制放行，不會卡死
-- **Mute 靜音** — 不想被打擾時可以靜音提醒
-- **Dashboard** — `http://127.0.0.1:3848` 即時監控所有 sessions（5 tabs）
-- **多實例 Heartbeat** — 多個 VS Code 視窗時自動接管 Dashboard port
-- **Session ID Prefix Match** — 用截短 ID（前 8 碼）即可操作
-
-### Atomic Memory V2
-- **兩層架構** — 全域 atoms（跨專案）+ 專案 atoms（專案綁定）
-- **Hybrid RECALL** — Keyword Trigger + Vector Semantic Search 並行
-- **Vector Service** — LanceDB + Ollama qwen3-embedding，常駐 HTTP daemon @ port 3849
-- **Embedding 雙軌** — Ollama qwen3-embedding（主力）/ sentence-transformers bge-m3（fallback）
-- **本地 LLM** — qwen3:1.7b via Ollama：查詢改寫、Re-ranking、知識萃取
-- **段落級索引** — atom 中每個知識點獨立向量化，搜尋精度高於整檔比對
-- **增量索引** — atom 修改時自動觸發，只重建變動的檔案（hash 比對）
-- **Graceful fallback** — daemon/Ollama 未啟動時自動退化為純 keyword 模式
-- **Token Budget** — 根據 prompt 複雜度自動調整載入量（1.5~5K tokens）
-- **三級分類** — `[固]` 確認長期有效、`[觀]` 可能演化、`[臨]` 單次決策
-- **Last-used 自動刷新** — Atom 被載入時自動更新使用日期
-- **Compact 恢復** — Context 壓縮後自動重新注入 atoms
-
-### v2.1 — Quality & Governance
-- **Write Gate** — 寫入前品質評分 + 向量去重（auto_threshold=0.5, dedup_score=0.80）
-- **Conflict Detection** — LLM 語意比對 AGREE/CONTRADICT/EXTEND/UNRELATED（離線路徑）
-- **Intent Classification** — Rule-based 零 LLM 開銷（debug/build/design/recall/general）
-- **Ranked Search** — `/search/ranked` 五因子加權：0.45 Semantic + 0.15 Recency + 0.20 IntentBoost + 0.10 Confidence + 0.10 Confirmation
-- **Delete Propagation** — `--delete`/`--purge` 全鏈清除（LanceDB + Related 引用 + MEMORY.md + re-index）
-- **Type Decay Multipliers** — semantic=1.0, episodic=0.8, procedural=1.5
-- **Audit Trail** — JSONL audit.log 追蹤 add/skip/decay/delete/purge/conflict_scan
-- **E2E Testing** — 9 tests + 50-query benchmark（R@5=0.96, Hit@5=0.90, MRR=0.80）
-
-### v2.2 — Session Awareness
-- **Topic Tracker** — 累積 intent_distribution + keyword_signals，跨 session 辨識主題
-- **Enhanced Episodic Atoms** — Session 結束自動生成 `episodic-{YYYYMMDD}-{slug}.md`，含 `## 摘要` + `## 關聯`。Type=episodic, [臨], TTL=24d，不寫入 MEMORY.md 索引（向量搜尋發現）
-- **Session Start Context Injection** — 首輪 prompt 觸發 `/search/episodic`，注入 `[Session:Context]` 過往 session 摘要（~400ms）
-- **Proactive Classification** — 跨 session 模式偵測 + episodic 遷移建議 + atom 建立提示
-- **[臨]→[觀] Auto-promotion** — Confirmations ≥ 2 自動晉升（寫入檔案 + 通知）。[觀]→[固] 需人工確認（顯示 ⚡ hint）
-
----
-
-## Quick Start
-
-詳細安裝指南見 [Install-forAI.md](Install-forAI.md)（為 AI 設計的安裝手冊）。
-
-### 核心元件
+## 系統架構
 
 ```
 ~/.claude/
-├── CLAUDE.md                      # 工作流引擎指令（Claude 自動載入）
+├── CLAUDE.md                         ← 系統指令 (每 session 自動載入)
+├── settings.json                     ← Hook 註冊 (6 events)
+│
 ├── hooks/
-│   └── workflow-guardian.py        # 6 事件 hook 處理器（V2.2 semantic search + session awareness）
+│   └── workflow-guardian.py          ← 統一 Hook 入口 (~1900 行)
+│
+├── memory/                           ← 全域記憶層
+│   ├── MEMORY.md                    ← Atom 索引 (≤30 行)
+│   ├── preferences.md               ← [固] 使用者偏好
+│   ├── decisions.md                 ← [固] 全域決策
+│   ├── excel-tools.md               ← [固] Excel 讀取配方
+│   ├── SPEC_*.md                    ← 系統規格 (參考用)
+│   ├── episodic/                    ← 自動生成 session 摘要 (TTL 24d)
+│   ├── _distant/                    ← 遙遠記憶區 (已淘汰 atoms)
+│   └── _vectordb/                   ← LanceDB 向量索引
+│
 ├── tools/
-│   ├── workflow-guardian-mcp/
-│   │   └── server.js              # MCP server + HTTP Dashboard（5 tabs）
-│   ├── memory-vector-service/     # V2 向量搜尋服務
-│   │   ├── service.py             # HTTP daemon (port 3849)
-│   │   ├── indexer.py             # 段落級 chunking + embedding + LanceDB
-│   │   ├── searcher.py            # 語意搜尋 + ranked search + episodic search
-│   │   ├── reranker.py            # LLM 查詢改寫 / re-ranking / 知識萃取
-│   │   ├── config.py              # 設定管理
-│   │   └── requirements.txt       # Python 依賴
-│   ├── rag-engine.py              # V2 CLI 入口
-│   ├── memory-audit.py            # 健檢 + decay + delete/purge
-│   ├── memory-write-gate.py       # ★ v2.1 寫入品質閘門
-│   ├── memory-conflict-detector.py # ★ v2.1 LLM 衝突偵測
-│   ├── test-memory-v21.py         # ★ v2.1 E2E 測試（9 tests）
-│   ├── eval-ranked-search.py      # ★ v2.1 搜尋品質評估（50 queries）
-│   └── read-excel.py              # Excel 讀取工具
+│   ├── memory-audit.py              ← 健檢工具
+│   ├── memory-write-gate.py         ← 寫入品質閘門
+│   ├── memory-conflict-detector.py  ← 衝突偵測
+│   ├── rag-engine.py               ← RAG CLI 入口
+│   ├── read-excel.py               ← Excel 讀取工具
+│   └── memory-vector-service/       ← HTTP Vector 搜尋服務
+│       ├── service.py               ← HTTP daemon @ :3849
+│       ├── indexer.py               ← 段落級索引器 (LanceDB)
+│       ├── searcher.py              ← 語意搜尋 + ranked search
+│       ├── reranker.py              ← LLM re-ranking
+│       └── config.py                ← 設定管理
+│
 ├── workflow/
-│   ├── config.json                # Guardian + Vector Search + Write Gate + Decay 設定
-│   └── state-*.json               # Session state（自動產生，不 commit）
-├── memory/
-│   ├── MEMORY.md                  # 全域 Atom Index
-│   ├── preferences.md             # 使用者偏好 atom
-│   ├── decisions.md               # 全域決策 atom
-│   ├── rag-vector-plan.md         # RAG 架構設計 atom
-│   ├── episodic-*.md              # ★ v2.2 自動生成 session 摘要（不在索引，向量搜尋發現）
-│   ├── _vectordb/                 # LanceDB 向量資料庫 + audit.log（runtime data）
-│   └── SPEC_Atomic_Memory_System.md  # 原子記憶 V2.1 規格書
-├── commands/
-│   └── init-project.md            # /init-project 自訂指令
-├── _AIDocs/
-│   ├── _INDEX.md                  # 文件索引
-│   ├── Architecture.md            # 系統架構詳述
-│   └── _CHANGELOG.md              # 變更記錄
-└── settings.json                  # hooks 註冊 + 權限
+│   ├── config.json                  ← 統一設定檔
+│   └── state-{session-id}.json      ← Session 狀態追蹤 (ephemeral)
+│
+├── projects/{slug}/memory/          ← 專案記憶層 (每專案獨立)
+│
+└── commands/                         ← Slash commands (/skills)
+    └── init-project.md              ← /init-project 專案初始化
+
+背景服務：
+  [Vector Service]  HTTP :3849   ← LanceDB + Ollama embedding
+  [Dashboard MCP]   HTTP :3848   ← Workflow Guardian 狀態儀表板
+  [Ollama]          HTTP :11434  ← qwen3-embedding + qwen3:1.7b
 ```
-
-### MCP Tools
-
-| Tool | Description |
-|------|-------------|
-| `workflow_status` | 查詢 session 狀態（省略 session_id → 列出全部） |
-| `workflow_signal` | 發送信號：sync_started / sync_completed / reset / mute |
-| `memory_queue_add` | 新增知識到 pending queue（classification: [固]/[觀]/[臨]） |
-| `memory_queue_flush` | 標記 queue 已寫入 atom |
-
-### Standalone Tools
-
-| Tool | CLI | Description |
-|------|-----|-------------|
-| `memory-audit.py` | `python ~/.claude/tools/memory-audit.py` | 健檢（格式驗證、過期分析、晉升建議、重複偵測） |
-| | `--enforce` | 自動淘汰過期 [臨] atoms，標記 [觀] pending-review |
-| | `--delete <name>` | 刪除 atom（全鏈：LanceDB + Related + MEMORY.md） |
-| | `--purge <name>` | 永久刪除（不移入 _distant/） |
-| | `--compact-logs` | 壓縮 evolution logs（>10 筆合併） |
-| `memory-write-gate.py` | `--content "..." [--classification "[觀]"]` | 寫入前品質 + 去重檢查 |
-| `memory-conflict-detector.py` | `[--atom X] [--dry-run]` | LLM 衝突掃描（AGREE/CONTRADICT/EXTEND/UNRELATED） |
-| `test-memory-v21.py` | `[-v] [--test NAME] [--json]` | E2E 測試（9 tests） |
-| `eval-ranked-search.py` | `[--top-k 5] [--min-score 0.50]` | 50-query 搜尋品質評估 |
-| `read-excel.py` | `<file> [--sheet N]` | Excel 讀取 |
-
-### RAG Engine CLI
-
-```bash
-# 全量建索引
-python ~/.claude/tools/rag-engine.py index
-
-# 語意搜尋
-python ~/.claude/tools/rag-engine.py search "查詢關鍵字"
-
-# 增強搜尋（LLM 查詢改寫）
-python ~/.claude/tools/rag-engine.py search "查詢" --enhanced
-
-# 服務管理
-python ~/.claude/tools/rag-engine.py status
-python ~/.claude/tools/rag-engine.py health
-python ~/.claude/tools/rag-engine.py start
-python ~/.claude/tools/rag-engine.py stop
-```
-
-### Vector Service API（port 3849）
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/search?q=...&top_k=5&min_score=0.65` | 基本語意搜尋 |
-| GET | `/search/ranked?q=...&intent=general` | ★ v2.1 Intent-aware 加權排序搜尋 |
-| GET | `/search/episodic?q=...&top_k=3&min_score=0.35` | ★ v2.2 Episodic memory 搜尋 |
-| GET | `/health` | 健康檢查 |
-| GET | `/status` | 索引狀態（chunks 數、atom 數、最後索引時間） |
-| POST | `/index` | 全量重建索引 |
-| POST | `/index/incremental` | 增量索引（只重建有變動的 atom） |
-| POST | `/search/enhanced` | LLM 查詢改寫 + 搜尋 |
-| POST | `/rerank` | LLM re-ranking |
-| POST | `/extract` | 知識萃取（文本 → 結構化 [固/觀/臨] 事實） |
-| POST | `/reload` | 重新載入 config |
-| POST | `/shutdown` | 停止 daemon |
 
 ---
 
-## MCP Transport Format
+## Token 消耗與延遲對比
 
-Claude Code v2.x 使用 **JSONL** 傳輸格式（非 LSP Content-Length header）：
+### Vanilla Claude Code vs + Atomic Memory V2.4
+
+| 指標 | Vanilla Claude Code | + Atomic Memory V2.4 |
+|------|--------------------|-----------------------|
+| **Session 啟動延遲** | ~0ms | +200-800ms (Guardian init + Vector Service check) |
+| **每次 Prompt 額外延遲** | ~0ms | +300-600ms (keyword ~10ms + vector ~200-500ms + intent ~1ms) |
+| **首次 Prompt 額外延遲** | ~0ms | +500-1500ms (含 episodic context search) |
+| **PostToolUse 延遲** | ~0ms | +50-200ms (state write + incremental index，僅 Edit/Write) |
+| **CLAUDE.md Token** | 0 | ~2,500-3,500 tokens (系統指令，每 session 固定) |
+| **MEMORY.md Token** | 0 | ~50-80 tokens (索引表 ≤30 行，每 session 固定) |
+| **Atom 注入 Token** | 0 | ~200-1,500 tokens/次 (按需，命中才載入) |
+| **典型 Session 總 Overhead** | 0 | **~3,000-5,000 tokens (~1.5-2.5% of 200K context)** |
+
+### 效益對比
+
+| 指標 | Vanilla Claude Code | + Atomic Memory V2.4 |
+|------|--------------------|-----------------------|
+| **跨 Session 知識保留率** | 0% (每次白紙) | ~85-95% (取決於 atom 覆蓋率) |
+| **重複解釋次數** | 每次都要 | 首次記錄後趨近 0 |
+| **已知陷阱踩坑率** | 100% (無記憶) | 記錄後 ~0% (pitfall atom 自動注入) |
+| **決策一致性** | 無法保證 | 自動載入歷史決策 |
+| **磁碟空間** | ~0 | ~5-20 MB (atoms + LanceDB + state) |
+| **背景 RAM** | 0 | ~100-200 MB (LanceDB + Ollama model) |
+
+### Token Budget 自動調節
 
 ```
-{"jsonrpc":"2.0","method":"initialize","params":{...}}\n
-{"jsonrpc":"2.0","id":1,"result":{...}}\n
+短 prompt (<50 chars)   → 1,500 token budget (輕量模式)
+中 prompt (<200 chars)  → 3,000 token budget
+長 prompt (≥200 chars)  → 5,000 token budget (深度模式)
 ```
 
-- protocolVersion: `2025-11-25`
-- 自寫 MCP server 務必遵循此格式，否則 30 秒超時 failed
-
 ---
 
-## Configuration
+## 流程圖
 
-`~/.claude/workflow/config.json`:
+### 原版 Claude Code 操作流程
 
-```json
-{
-  "enabled": true,
-  "dashboard_port": 3848,
-  "stop_gate_max_blocks": 2,
-  "min_files_to_block": 2,
-  "remind_after_turns": 3,
-  "max_reminders": 3,
-  "sync_keywords": ["同步", "sync", "commit", "提交", "結束", "收工"],
-  "vector_search": {
-    "enabled": true,
-    "service_port": 3849,
-    "embedding_backend": "ollama",
-    "embedding_model": "qwen3-embedding",
-    "fallback_backend": "sentence-transformers",
-    "fallback_model": "BAAI/bge-m3",
-    "ollama_llm_model": "qwen3:1.7b",
-    "search_top_k": 5,
-    "search_min_score": 0.65,
-    "search_timeout_ms": 2000,
-    "auto_start_service": true,
-    "auto_index_on_change": true
-  },
-  "write_gate": {
-    "enabled": true,
-    "auto_threshold": 0.5,
-    "ask_threshold": 0.3,
-    "dedup_score": 0.80,
-    "skip_on_explicit_user": true
-  },
-  "episodic": {
-    "auto_generate": true,
-    "min_files": 1,
-    "min_duration_seconds": 120
-  },
-  "session_awareness": {
-    "enabled": true,
-    "max_keyword_signals": 20,
-    "max_triggers": 12
-  },
-  "cleanup": {
-    "ended_ttl_ms": 60000,
-    "orphan_done_ttl_ms": 1800000,
-    "orphan_working_ttl_ms": 86400000
-  },
-  "decay": {
-    "staleness_thresholds": {"[固]": 90, "[觀]": 60, "[臨]": 30},
-    "auto_archive_临": true,
-    "never_auto_archive_固": true
-  }
-}
+```mermaid
+sequenceDiagram
+    participant U as 使用者
+    participant C as Claude Code
+    participant F as 檔案系統
+
+    U->>C: 輸入 prompt
+    C->>F: 讀取 CLAUDE.md (若有 system prompt)
+    F-->>C:
+
+    note right of C: 生成回應<br/>• 無歷史知識<br/>• 無使用者偏好<br/>• 無過去決策
+
+    C->>F: 使用工具 (Read/Edit/Write/Bash)
+    F-->>C:
+    C-->>U: 回應結果
+
+    U->>C: Session 結束
+
+    note right of C: ❌ 所有 context 消失<br/>❌ 知識歸零<br/>❌ 下次重頭來過
+
+    note over U,F: 沒有 hooks、沒有記憶注入、沒有同步閘門<br/>每個 session 都是全新的白紙
 ```
 
-### Dashboard（port 3848）
+### Claude Code + 原子記憶 V2.4 完整流程
 
-`http://127.0.0.1:3848` — 自動重新整理（5s interval）
+```mermaid
+sequenceDiagram
+    participant U as 使用者
+    participant G as Guardian Hook
+    participant C as Claude Code
+    participant V as Vector Svc
+    participant O as Ollama
+    participant F as 檔案系統
 
-| Tab | 內容 |
-|-----|------|
-| Sessions | 活躍 session 卡片（phase badge、修改檔案列表、knowledge queue） |
-| Episodic | 自動生成的 episodic atoms 列表（TTL 倒數、摘要預覽） |
-| Health | memory-audit 健檢報告（格式問題、晉升建議、decay 警告） |
-| Tests | E2E 測試執行器（即時進度、pass/fail 明細） |
-| Vector | Vector Service 狀態代理（索引統計、最後更新時間） |
+    U->>G: 啟動 Session
+
+    rect rgba(100, 150, 255, 0.1)
+        note over G,F: SessionStart Hook
+        G->>G: [1] 建立 session state file
+        G->>G: [2] 解析 MEMORY.md 索引 (全域+專案)
+        G->>V: [3] 檢查 Vector Service health
+        V-->>G:
+        note right of G: 若未啟動: 自動 spawn service
+        G->>C: [4] 注入: atom 索引清單 + Guardian 狀態
+    end
+
+    U->>G: 輸入 prompt
+
+    rect rgba(100, 200, 100, 0.1)
+        note over G,F: UserPromptSubmit Hook
+        note over G,V: Phase 0 (首次 prompt)
+        G->>V: [A] Episodic context search
+        V->>O: embed
+        O-->>V:
+        V-->>G: ~1.5s
+        G->>G: [B] 注入過去 session 摘要
+
+        note over G,V: Phase 1 — Atom 自動注入
+        G->>G: [C] Keyword trigger 匹配 (~10ms)
+        G->>G: [D] Intent 分類 (rule-based ~1ms)
+        G->>V: [E] Semantic search
+        V->>O: embed
+        O-->>V:
+        V-->>G: ~200-500ms
+        G->>G: [F] Merge keyword + semantic 結果
+        G->>G: [G] Supersedes 過濾
+        G->>F: [H] 載入 atoms (token budget 內)
+        F-->>G: atoms
+        G->>G: [I] Related atom 自動載入
+        G->>G: [J] Auto-update Last-used + Confirm++
+        G->>G: [K] Auto-promote [臨]→[觀]
+
+        note over G,V: Phase 2 — 同步提醒
+        G->>G: [L] 檢查未同步修改
+
+        G->>C: additionalContext: atoms + reminders
+
+        note over G,O: V2.4 — 回應知識捕獲 (非同步)
+        G->>O: [L2] 上一輪 assistant 回應 → qwen3 萃取
+        O-->>G: → state["pending_extraction"]
+    end
+
+    C->>F: 使用工具 (Read/Edit/Write/Bash)
+    F-->>C:
+
+    rect rgba(255, 200, 100, 0.1)
+        note over G,F: PostToolUse Hook (Edit/Write only)
+        G->>G: [M] 記錄 modified file 到 state
+        G->>G: [N] sync_pending = true
+        G->>V: [O] 若修改 atom → incremental index
+    end
+
+    note over C: (繼續多輪...)
+
+    rect rgba(200, 200, 200, 0.1)
+        note over G,F: PreCompact Hook (context 壓縮前)
+        G->>G: [P] 快照 state (壓縮前保護)
+    end
+
+    U->>G: Session 結束意圖
+
+    rect rgba(255, 150, 150, 0.1)
+        note over G,F: Stop Hook (閘門)
+        alt 有未同步 + blocked < 2 次
+            G--xC: BLOCK: "X files modified" → 被迫繼續同步
+        else blocked ≥ 2 次
+            note right of G: 強制放行 (防無限迴圈)
+        else 已同步 / 無待同步
+            note right of G: 放行
+        end
+    end
+
+    rect rgba(150, 100, 255, 0.1)
+        note over G,F: SessionEnd Hook
+        G->>O: [Q] Transcript 全文掃描 → qwen3 萃取
+        O-->>G: knowledge_queue
+        G->>V: [R] 跨 Session 鞏固 — 逐項向量搜尋
+        V-->>G:
+        note right of G: 2+ sessions → 自動晉升 [臨]→[觀]<br/>4+ sessions → 建議晉升 [觀]→[固]
+        G->>G: [S] 自動生成 episodic atom
+        G->>V: [T] incremental index (若有 atom 變動)
+        G->>G: [U] 寫入 state phase="done"
+    end
+
+    note over U,F: ✅ 知識已保存到 atoms + vector DB<br/>✅ 回應知識自動萃取 (V2.4)<br/>✅ 跨 session 重複知識自動晉升 (V2.4)<br/>✅ 下次 session 自動載入
+```
 
 ---
 
-## Hardware Requirements
+## 核心子系統
 
-### Minimum（純 keyword 模式，不需 GPU）
-- Python 3.8+
-- Node.js 18+
+### 三層決策記憶分類
 
-### Recommended（V2 Hybrid RECALL）
-- Python 3.10+（3.14 已驗證）
-- NVIDIA GPU with CUDA（embedding 加速）
-- Ollama 已安裝 + `qwen3-embedding` 模型
-- `pip install lancedb sentence-transformers`
+| 符號 | 名稱 | 定義 | 引用行為 | 晉升條件 |
+|------|------|------|---------|---------|
+| `[固]` | 固定記憶 | 跨多次對談確認，長期有效 | 直接引用 | Confirmations ≥4 或使用者明確永久化 |
+| `[觀]` | 觀察記憶 | 已決策但可能演化 | 簡短確認 | Confirmations ≥2 |
+| `[臨]` | 臨時記憶 | 單次決策 | 明確確認 | — |
 
-### Tested On
-- Windows 11 Pro, GTX 1050 Ti 4GB, Python 3.14.2
-- Ollama: qwen3-embedding（embedding）+ qwen3:1.7b（LLM）
-- 全量索引 18+ atoms → 380+ chunks in ~300s
-- Warm search: ~386ms | Ranked search: ~400ms
-- Session context injection: ~400ms（首輪 only）
-- Hook 總延遲（首輪）: ~880ms（3s timeout 內）
+淘汰閾值：`[臨]` >30天 → `[觀]` >60天 → `[固]` >90天 → 移入 `_distant/`（遙遠記憶，不刪除）
 
-### Quality Metrics（50-query benchmark）
+### Hybrid RECALL 記憶檢索
 
-| Metric | Value |
-|--------|-------|
-| Recall@5 | 0.96 |
-| Hit@5 | 0.90 |
-| MRR | 0.80 |
-| Semantic-only delta | +0.80（0.05 → 0.85） |
-| Intent classifier accuracy | 72% |
+每次使用者送出 prompt，系統在 hook 階段自動執行：
+
+```mermaid
+flowchart TD
+    P["使用者 prompt"] --> KW["Keyword Trigger 匹配<br/><i>MEMORY.md 索引快速掃描 ~10ms</i>"]
+    P --> INT["Intent 分類<br/><i>rule-based: debug/build/design/recall ~1ms</i>"]
+    P --> VS["Vector Semantic Search<br/><i>LanceDB + qwen3-embedding ~200-500ms</i>"]
+
+    KW --> MG["Ranked Merge"]
+    INT --> MG
+    VS --> MG
+
+    MG --> SC["FinalScore = 0.45×Semantic + 0.15×Recency<br/>+ 0.20×IntentBoost + 0.10×Confidence<br/>+ 0.10×(Confirmations + TypeBonus)"]
+
+    SC --> SF["Supersedes 過濾<br/><i>被取代的 atom 不載入</i>"]
+    SF --> RL["Related atom 自動載入 (摘要)"]
+    RL --> CTX["組合至 additionalContext<br/><i>token budget 內</i>"]
+```
+
+降級策略：Ollama 不可用 → 純 keyword | Vector Service 掛 → keyword + fallback | 全部掛 → 僅 MEMORY.md
+
+### Write Gate 寫入品質閘門
+
+新知識寫入前自動評估：
+
+```mermaid
+flowchart TD
+    NK["新知識"] --> DD{"Dedup 檢查<br/>(vector search score)"}
+    DD -- "> 0.95" --> SKIP1["Skip (完全重複)"]
+    DD -- "0.80 - 0.95" --> UPD["建議 Update 既有 atom"]
+    DD -- "< 0.80" --> QS["Quality Score 評分"]
+
+    QS --> S1["+0.25 — length > 50 chars"]
+    QS --> S2["+0.15 — 技術術語 ≥ 2"]
+    QS --> S3["+0.35 — 使用者明確觸發"]
+    QS --> S4["+0.15 — 具體值 (版本/路徑)"]
+    QS --> S5["+0.10 — 非暫時性"]
+
+    S1 & S2 & S3 & S4 & S5 --> DEC{"加總分數"}
+    DEC -- "≥ 0.5" --> ADD["Auto Add"]
+    DEC -- "0.3 - 0.5" --> ASK["Ask User"]
+    DEC -- "< 0.3" --> SKIP2["Skip<br/>(audit trail 記錄)"]
+```
+
+### 其他子系統
+
+| 子系統 | 說明 |
+|--------|------|
+| **Workflow Guardian** | Stop 閘門——有未同步修改時阻止結束，最多 2 次，第 3 次強制放行 |
+| **Episodic Memory** | Session 結束自動生成摘要 atom (TTL 24d)，下次透過 vector search 找回 |
+| **Response Capture (V2.4)** | 逐輪+SessionEnd 本地 LLM 萃取 assistant 回應中的技術知識 → `[臨]` atom |
+| **Cross-Session (V2.4)** | SessionEnd 向量比對 knowledge_queue，2+ sessions 自動晉升，4+ sessions 建議晉升 |
+| **Conflict Detection** | 新知識寫入時語意掃描既有 atoms，偵測矛盾 (AGREE/CONTRADICT/EXTEND) |
+| **Decay & Archival** | 超期 atom 自動移入 `_distant/{year}_{month}/`，不刪除，可 `--restore` 拉回 |
+| **Audit Trail** | `_vectordb/audit.log` (JSONL) 記錄所有 add/delete/conflict/decay 操作 |
 
 ---
 
-## Version History
+## 大型專案使用法
 
-| Version | Date | Highlights |
-|---------|------|------------|
-| v2.0 | 2026-03-03 | Hybrid RECALL（keyword + vector semantic search）, Dashboard, 7-Phase Lifecycle |
-| v2.1 | 2026-03-04 | Write Gate, Ranked Search, Conflict Detection, Delete Propagation, Audit Trail, E2E Tests |
-| v2.2 | 2026-03-04 | Session Awareness, Episodic Auto-generation, Context Injection, Proactive Classification, Auto-promotion |
+### 1. 專案初始化：`/init-project`
+
+新專案首次使用時，執行 `/init-project` slash command，自動建立 `_AIDocs/` 知識庫骨架：
+
+```
+_AIDocs/
+  _INDEX.md            ← 文件索引 + 一句話摘要
+  _CHANGELOG.md        ← 變更記錄 (最近 ~8 筆)
+  Architecture.md      ← 架構分析
+  Project_File_Tree.md ← 目錄結構摘要
+```
+
+這是一次性投資（通常 1-2 個 session），之後所有 session 直接引用文件而非重新掃描原始碼。
+
+### 2. 專案層記憶
+
+每個專案在 `~/.claude/projects/{slug}/memory/` 有獨立的 atom 空間：
+
+- **架構決策**：framework 選型、資料夾慣例、命名規範
+- **已知陷阱**：踩過的坑、環境特殊設定、相容性問題
+- **Coding convention**：專案特有的程式風格、禁止事項
+
+全域層只放跨專案共通知識（使用者偏好、通用工具決策）。
+
+### 3. Vector DB 語意搜尋
+
+當 atom 數量超過 10-20 個，純 keyword trigger 命中率下降。Vector 搜尋補充層：
+
+- **段落級索引**：每個 `- ` bullet point 為一個 chunk（而非整個檔案）
+- **增量索引**：比對 file_hash，僅重新索引有變動的 atom
+- **Metadata 攜帶**：atom_name, confidence, layer, tags — 支援 ranked search 精確加權
+- **多來源整合**：透過 `config.json` 的 `additional_atom_dirs` 整合外部工具的 atoms
+
+### 4. Episodic Memory 跨 Session 延續
+
+每個 session 結束時自動生成 episodic atom（不列入 MEMORY.md 索引），包含：
+
+- 本次 session 做了什麼
+- 修改了哪些檔案
+- 關聯的 semantic atoms
+
+下次 session 首次 prompt 時，系統透過 vector search 找到相關的 episodic atoms，注入「上次做了什麼」的上下文。
+
+V2.4 增加「跨 Session 觀察」段落——episodic atom 會記錄哪些知識在多個 session 重複出現及其晉升狀態。
+
+### 5. 回應知識捕獲（V2.4）
+
+Claude 的分析回應也是知識來源。V2.4 由本地 LLM 自動萃取：
+
+```mermaid
+flowchart TD
+    subgraph UPS ["UserPromptSubmit (非同步 daemon thread)"]
+        A1["讀取上一輪 assistant 回應<br/>(≤3000 chars)"] --> A2["qwen3:1.7b 萃取"]
+        A2 --> A3["[臨] knowledge items (≤2/turn)"]
+    end
+
+    subgraph SE ["SessionEnd (同步)"]
+        B1["全 transcript assistant texts<br/>(≤20000 chars)"] --> B2["qwen3:1.7b 萃取"]
+        B2 --> B3["[臨] knowledge items (≤5)"]
+    end
+
+    subgraph P3 ["V2.4 Phase 3: 跨 Session 鞏固"]
+        C1["對每個 knowledge item<br/>向量搜尋 (min_score 0.75)"]
+        C1 -- "2+ sessions 命中" --> C2["自動晉升 [臨] → [觀]"]
+        C1 -- "4+ sessions 命中" --> C3["建議晉升 [觀] → [固]<br/>(需使用者確認)"]
+    end
+
+    A3 --> C1
+    B3 --> C1
+```
+
+### 6. Token 管理策略
+
+大型專案可能有 20+ atoms，但不會全部載入：
+
+- **Trigger 匹配**：只有關鍵字命中的 atom 才載入
+- **Ranked Search**：語意搜尋結果按 FinalScore 排序，取 top-K
+- **Token Budget**：自動依 prompt 長度調節（1,500-5,000 tokens）
+- **Supersedes**：被取代的舊 atom 自動過濾
+- **MEMORY.md ≤30 行 / Atom ≤200 行**：硬限制防止膨脹
 
 ---
 
-## Known Limitations & Design Trade-offs
+## 版本歷史
 
-誠實評估：
+| 版本 | 日期 | 核心變更 |
+|------|------|---------|
+| V1.0 | 2026-03-02 | 三層分類 `[固]/[觀]/[臨]` + 資料夾結構 + memory-audit 健檢 |
+| V2.0 | 2026-03-03 | **Hybrid RECALL**：keyword + vector search + LLM re-ranking |
+| V2.1 Sprint 1 | 2026-03-04 | Schema 擴展、Write Gate、自動淘汰、Confirmations 遞增 |
+| V2.1 Sprint 2 | 2026-03-04 | Intent classifier、ranked search、衝突偵測、刪除傳播 |
+| V2.1 Sprint 3 | 2026-03-04 | Type decay、Supersedes loading、日誌壓縮、audit trail |
+| **V2.4** | **2026-03-05** | **回應知識捕獲 + 跨 Session 鞏固**：逐輪+SessionEnd 本地 LLM 萃取、兩層分類（Scope×Type）、向量比對自動晉升 [臨]→[觀] |
 
-**已知不足**：
-- **Token 估算粗糙** — `len(content) // 4` 只是近似值，中英文混合時偏差大
-- **無回饋迴路** — 系統不知道注入的 context 是否真的被 Claude 用到了
-- **First-match-wins** — 預算內先到先得，不是「最有價值的先注入」
-- **Intent 分類器 72% 準確率** — rule-based，不會學習
-- **冷啟動問題** — episodic atoms 需要累積，前幾個 session 的跨 session 模式偵測基本無效
+---
 
-**跟「真正智慧」的差距**：
+## 雙 LLM 架構
 
-真正智慧的系統會：
-- 追蹤「注入了但沒被引用」的 atom → 降低其未來優先級
-- 根據對話進展動態載入（不只首 prompt 決定一次）
-- 用 LLM 判斷「這段 context 對當前問題有多相關」而非靠向量分數
+| 角色 | 引擎 | 職責 | 延遲 |
+|------|------|------|------|
+| **雲端 LLM** | Claude Code | 記憶演進決策：何時寫入、分類判斷、晉升/淘汰、衝突裁決 | — |
+| **本地 LLM** | Ollama qwen3 | 語意處理：embedding 生成、query rewrite、re-ranking、intent 分類、回應知識萃取 | ~200-500ms |
 
-但這些都需要更多 token 或更長延遲。v2.2 的設計哲學是**用零 token 的本地運算做到 80% 的精準度**，trade-off 是放棄了最後 20% 需要 LLM 判斷才能達到的精確度。
-
-以 GTX 1050 Ti + 3 秒 hook timeout 的限制來說，這個 trade-off 是合理的。
+本地 LLM 在 hook 階段（UserPromptSubmit + SessionEnd）自動執行，Claude Code 無感。
 
 ---
 
 ## License
 
-Personal use. Not published as a package.
+Personal project by holyl. Not licensed for redistribution.

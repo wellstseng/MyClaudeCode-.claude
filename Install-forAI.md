@@ -1,268 +1,298 @@
-# Install-forAI — Claude Code 自訂擴充快速安裝指南
+# 原子記憶 V2.4 安裝指南 (Install for AI)
 
-> **讀者：另一台電腦上的 Claude Code AI 助手**
-> 此文件設計為 AI 可讀格式。請逐步執行以下操作，將本 repo 的自訂擴充合併到目標機器的 `~/.claude/` 中。
-
----
-
-## 前置條件
-
-### 必要（基本功能）
-- Claude Code 已安裝且可正常運作
-- Python 3.8+（hooks 需要）
-- Node.js 18+（MCP server 需要）
-- `~/.claude/` 目錄已存在（Claude Code 首次啟動會自動建立）
-
-### 必要（V2 向量搜尋）
-- Python 3.10+（LanceDB 需要）
-- Ollama 已安裝（embedding + local LLM）
-- NVIDIA GPU with CUDA（推薦，CPU 也可但較慢）
+> 本文件供其他 Claude Code 實例安裝原子記憶系統。
+> 設計為可由 AI 助手讀取並執行的安裝步驟。
 
 ---
 
-## 安裝步驟
+## 前置需求
 
-### Step 1: 複製自訂檔案
+### 必要軟體
 
-將以下檔案/目錄從 repo 複製到 `~/.claude/`：
+| 軟體 | 最低版本 | 用途 | 安裝方式 |
+|------|---------|------|---------|
+| Python | 3.8+ | Hook 腳本、工具鏈 | python.org 或系統內建 |
+| Node.js | 18+ | Dashboard MCP server | nodejs.org |
+| Ollama | 最新 | 本地 LLM + embedding | ollama.com |
+| Claude Code | 最新 | 主程式 | `npm install -g @anthropic-ai/claude-code` |
 
-```
-hooks/workflow-guardian.py            → ~/.claude/hooks/workflow-guardian.py
-tools/workflow-guardian-mcp/          → ~/.claude/tools/workflow-guardian-mcp/
-tools/memory-vector-service/          → ~/.claude/tools/memory-vector-service/
-tools/rag-engine.py                   → ~/.claude/tools/rag-engine.py
-tools/memory-audit.py                 → ~/.claude/tools/memory-audit.py
-tools/memory-write-gate.py            → ~/.claude/tools/memory-write-gate.py
-tools/memory-conflict-detector.py     → ~/.claude/tools/memory-conflict-detector.py
-tools/test-memory-v21.py              → ~/.claude/tools/test-memory-v21.py
-tools/eval-ranked-search.py           → ~/.claude/tools/eval-ranked-search.py
-tools/read-excel.py                   → ~/.claude/tools/read-excel.py
-workflow/config.json                  → ~/.claude/workflow/config.json
-commands/init-project.md              → ~/.claude/commands/init-project.md
-memory/SPEC_Atomic_Memory_System.md   → ~/.claude/memory/SPEC_Atomic_Memory_System.md
-_AIDocs/                              → ~/.claude/_AIDocs/  (可選，僅作參考)
-```
-
-**不要覆蓋**：
-- `memory/MEMORY.md` — 每台機器有自己的記憶索引
-- `memory/decisions.md` — 包含機器特有的決策記錄
-- `memory/preferences.md` — 可參考但應由使用者確認
-
-### Step 2: 安裝 Python 依賴
+### Ollama Models（必須預先下載）
 
 ```bash
-# V2 向量搜尋依賴
-python -m pip install lancedb sentence-transformers
+ollama pull qwen3-embedding          # embedding 模型（完整版，需 AVX2 CPU）
+# 或 qwen3-embedding:0.6b           # 小模型版（無 AVX2 限制，~400MB）
+ollama pull qwen3:1.7b               # 語意處理 LLM (~1.2GB)
 ```
 
-> **注意**：在 Git Bash 中 `pip` 可能不在 PATH，請使用 `python -m pip install`。
-
-### Step 3: 安裝 Ollama 及模型
+### Python 套件
 
 ```bash
-# 1. 安裝 Ollama
-#    Windows: https://ollama.com/download/windows
-#    macOS: https://ollama.com/download/mac
-#    Linux: curl -fsSL https://ollama.com/install.sh | sh
-
-# 2. 拉取模型
-ollama pull qwen3-embedding      # embedding 主力 (~1.2GB, MTEB 多語言 #1)
-ollama pull qwen3:1.7b            # 本地 LLM for Phase 3 (~1.5GB)
+pip install lancedb                  # Vector DB (需 AVX2 CPU)
+# 或 pip install chromadb           # 替代方案 (無 AVX2 限制)
+pip install sentence-transformers    # Fallback embedding (建議，Ollama 不可用時備援)
 ```
 
-> **GPU VRAM 需求**：
-> - qwen3-embedding: ~1.5GB
-> - qwen3:1.7b: ~2GB
-> - 最低建議 4GB VRAM（分時使用，不會同時佔用）
-> - 無 GPU 時自動 CPU fallback（速度慢 3-5x 但可用）
+### 硬體注意事項
 
-### Step 4: 合併 CLAUDE.md
+- **有 AVX2 的 CPU**（2013 年後多數 CPU）：LanceDB 和 ChromaDB 都可用
+- **無 AVX2**（如 i7-3770）：必須用 ChromaDB，LanceDB 會 crash
+- **GPU**：非必要，但有 NVIDIA GPU 可加速 Ollama 推論
+- **RAM**：建議 8GB+（Ollama model 常駐約 1-2GB）
 
-讀取 repo 中的 `CLAUDE.md`，**合併**（非覆蓋）到目標機器的 `~/.claude/CLAUDE.md`：
+---
 
-- 第一～四區塊（_AIDocs 知識庫、原子記憶、工作結束同步、對話管理）→ 直接採用
-- 第五區塊（使用者偏好）→ 應由使用者確認是否適用
+## 需複製的檔案
 
-### Step 5: 合併 settings.json — hooks 區段
+從來源機器複製以下結構到目標機器的 `~/.claude/`：
 
-讀取目標機器的 `~/.claude/settings.json`，在 JSON 中新增或合併 `hooks` 欄位：
+```
+~/.claude/
+├── CLAUDE.md                          [必要] 系統指令
+├── settings.json                      [必要] Hook 註冊 + 權限
+│
+├── hooks/
+│   └── workflow-guardian.py           [必要] 統一 Hook 入口
+│
+├── tools/
+│   ├── memory-audit.py               [必要] 健檢工具
+│   ├── memory-write-gate.py          [必要] 寫入品質閘門
+│   ├── memory-conflict-detector.py   [建議] 衝突偵測
+│   ├── rag-engine.py                [建議] RAG CLI
+│   ├── memory-vector-service/        [必要] Vector 搜尋服務
+│   │   ├── service.py
+│   │   ├── indexer.py
+│   │   ├── searcher.py
+│   │   ├── reranker.py
+│   │   ├── config.py
+│   │   └── requirements.txt
+│   └── workflow-guardian-mcp/        [建議] Dashboard MCP
+│       └── server.js (+ package.json)
+│
+├── memory/                            [必要] 全域記憶
+│   ├── MEMORY.md                     ← 需依目標機器重建
+│   └── SPEC_Atomic_Memory_System.md  [參考] 規格文件
+│
+├── workflow/
+│   └── config.json                   [必要] 需依目標機器調整
+│
+└── commands/                          [建議] Slash commands
+    └── init-project.md
+```
+
+### 不需複製
+
+```
+workflow/state-*.json         # Session 狀態 (自動生成)
+memory/_vectordb/             # 向量索引 (自動重建)
+memory/episodic/              # Session 摘要 (自動生成)
+memory/_distant/              # 遙遠記憶 (個人歷史)
+memory/preferences.md         # 使用者偏好 (需自建)
+memory/decisions.md           # 決策記錄 (需自建)
+tools/__pycache__/            # Python 快取
+todos/                        # Session todos
+debug/                        # Debug logs
+cache/                        # 快取
+shell-snapshots/              # Shell 快照
+telemetry/                    # 遙測數據
+```
+
+---
+
+## 設定步驟
+
+### Step 1: 調整 settings.json
+
+確認 hooks 的 `command` 欄位中 Python 路徑正確：
 
 ```json
-{
-  "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "python \"$HOME/.claude/hooks/workflow-guardian.py\"", "timeout": 5 }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "python \"$HOME/.claude/hooks/workflow-guardian.py\"", "timeout": 3 }] }],
-    "PostToolUse": [{ "matcher": "Edit|Write", "hooks": [{ "type": "command", "command": "python \"$HOME/.claude/hooks/workflow-guardian.py\"", "timeout": 3 }] }],
-    "PreCompact": [{ "hooks": [{ "type": "command", "command": "python \"$HOME/.claude/hooks/workflow-guardian.py\"", "timeout": 5 }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "python \"$HOME/.claude/hooks/workflow-guardian.py\"", "timeout": 5 }] }],
-    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "python \"$HOME/.claude/hooks/workflow-guardian.py\"", "timeout": 5, "async": true }] }]
-  }
+"hooks": {
+    "SessionStart": [{
+        "hooks": [{
+            "type": "command",
+            "command": "python \"$HOME/.claude/hooks/workflow-guardian.py\"",
+            "timeout": 5
+        }]
+    }]
 }
 ```
 
-**注意**：若目標機器已有 `hooks`，需手動合併而非覆蓋。
+**注意**：若目標機器的 Python 指令是 `python3` 而非 `python`，需全部替換。
 
-### Step 6: 合併 MCP server 註冊
+6 個 Hook event 都需檢查：
+- `SessionStart` (timeout: 5)
+- `UserPromptSubmit` (timeout: 3)
+- `PostToolUse` (timeout: 3, matcher: "Edit|Write")
+- `PreCompact` (timeout: 5)
+- `Stop` (timeout: 5)
+- `SessionEnd` (timeout: 30)  ← V2.4: transcript extraction + cross-session check 需更多時間
 
-在 `~/.claude.json`（注意：在 HOME 目錄，不在 `~/.claude/` 裡）的 `mcpServers` 中新增：
+### Step 2: 調整 workflow/config.json
+
+關鍵設定項需依目標環境調整：
 
 ```json
 {
-  "workflow-guardian": {
-    "type": "stdio",
-    "command": "node",
-    "args": ["{{HOME_PATH}}/.claude/tools/workflow-guardian-mcp/server.js"],
-    "env": {}
+  "vector_search": {
+    "embedding_model": "qwen3-embedding",
+    "ollama_llm_model": "qwen3:1.7b",
+    "search_min_score": 0.65,
+    "additional_atom_dirs": []
   },
-  "computer-use": {
-    "type": "stdio",
-    "command": "cmd",
-    "args": ["/c", "npx", "-y", "computer-use-mcp"],
-    "env": {}
+  "response_capture": {
+    "enabled": true,
+    "per_turn_enabled": true,
+    "per_turn_max_chars": 3000,
+    "per_turn_max_items": 2,
+    "session_end_max_chars": 20000,
+    "session_end_max_items": 5,
+    "ollama_timeout_seconds": 3,
+    "classification_default": "[臨]"
+  },
+  "cross_session": {
+    "enabled": true,
+    "min_score": 0.75,
+    "promote_threshold": 2,
+    "suggest_threshold": 4,
+    "timeout_seconds": 5
   }
 }
 ```
 
-`{{HOME_PATH}}` 替換為目標機器的 HOME 絕對路徑（Windows: `C:\\Users\\USERNAME`，macOS/Linux: `/home/USERNAME`）。
+- **response_capture**：控制回應知識萃取（V2.4），需 Ollama qwen3:1.7b
+- **cross_session**：控制跨 Session 鞏固（V2.4 Phase 3），依賴 Vector Service
+- **search_min_score**：完整版 embedding 建議 0.60-0.65；小模型 (0.6b) 建議 0.40-0.50
 
-> **MCP 傳輸格式警告**
->
-> Claude Code v2.x 使用 **JSONL** 傳輸格式（每行一個完整 JSON，以 `\n` 分隔），而非 LSP 風格的 Content-Length header。自寫 MCP server 必須：
-> - 以 JSONL 格式收發訊息（`{...}\n`）
-> - `protocolVersion` 設為 `2025-11-25`
-> - 違反上述格式將導致 30 秒超時 → `/mcp` 顯示 failed
->
-> Windows 上使用 npx 的 MCP server 需加 `cmd /c` wrapper（如上方 computer-use 範例）。
+### Step 3: 初始化全域記憶
 
-### Step 7: 合併 settings.json — permissions 區段（可選）
-
-以下權限與 Workflow Guardian 無直接關係，屬於使用者個人偏好。目標使用者可參考後自行決定：
-
-```json
-{
-  "permissions": {
-    "allow": [
-      "Bash(svn status:*)", "Bash(svn diff:*)", "Bash(svn log:*)",
-      "Bash(svn info:*)", "Bash(svn revert:*)",
-      "Bash(git config:*)", "Bash(git commit:*)", "Bash(git push)",
-      "Bash(git add:*)", "Bash(git init)", "Bash(git remote add:*)",
-      "Bash(dotnet build:*)"
-    ]
-  }
-}
-```
-
-### Step 7.5: 確認 config.json 新增區段（v2.1/v2.2）
-
-`~/.claude/workflow/config.json` 在 v2.1/v2.2 新增了 5 個區段。確認目標機器的 config.json 包含：
-
-| 區段 | 用途 | 關鍵預設值 |
-|------|------|-----------|
-| `write_gate` | 寫入品質閘門 + 去重 | `auto_threshold: 0.5, dedup_score: 0.80` |
-| `episodic` | Session 摘要自動生成 | `auto_generate: true, min_files: 1, min_duration: 120s` |
-| `session_awareness` | Topic tracking + keyword signals | `enabled: true, max_keyword_signals: 20` |
-| `cleanup` | Session state 自動清理（三層 TTL） | `ended: 1min, orphan_done: 30min, orphan_working: 24h` |
-| `decay` | 分類別衰減策略 | `[固]=90d, [觀]=60d, [臨]=30d` |
-
-若從 v2.0 升級，需手動將這 5 個區段合併到現有 config.json。完整範例見 README.md Configuration 區段。
-
-### Step 8: 初始化記憶索引
-
-若目標機器的 `~/.claude/memory/MEMORY.md` 尚未存在，建立最小版本：
+建立 `~/.claude/memory/MEMORY.md`：
 
 ```markdown
 # Atom Index — Global
 
-> 每個 session 啟動時，先讀此索引。
-> 比對使用者訊息的 Trigger 欄，命中 → Read 對應 atom 檔。
+> Session 啟動時先讀此索引。比對 Trigger → Read 對應 atom。
 
-| Atom | Path | Trigger |
-|------|------|---------|
-| preferences | memory/preferences.md | 偏好, 風格, 習慣, style, preference |
-| decisions | memory/decisions.md | 全域決策, 工具, 工作流, workflow, guardian, hooks |
+| Atom | Path | Trigger | Confidence |
+|------|------|---------|------------|
+| preferences | memory/preferences.md | 偏好, 風格, 習慣, style, preference | [固] |
+| decisions | memory/decisions.md | 全域決策, 工具, 工作流, workflow, hooks | [固] |
 
 ---
 
 ## 高頻事實
 
-- 使用者: {{USERNAME}} | 回應語言: 繁體中文
-- [固] Workflow Guardian: hooks 驅動工作流監督 + Dashboard @ localhost:3848
-- [固] 原子記憶 V2.2：Hybrid RECALL + Ranked Search + Session Awareness @ localhost:3849
+- 使用者: {username} | {OS} | 回應語言: 繁體中文
+- [固] 原子記憶 V2.4
 ```
 
-### Step 9: 建立向量索引
+### Step 4: 啟動 Vector Service 並建立索引
 
 ```bash
-# 確認 Ollama 正在運行
-ollama list
+# 安裝 Python 依賴
+cd ~/.claude/tools/memory-vector-service
+pip install -r requirements.txt
 
-# 啟動 Vector Service daemon
-python ~/.claude/tools/rag-engine.py start
+# 啟動 Vector Service (背景)
+python service.py &
 
-# 建立全量索引（首次需要幾分鐘，取決於 atom 數量和 GPU 速度）
-python ~/.claude/tools/rag-engine.py index
+# 確認健康
+curl http://127.0.0.1:3849/health
+# 預期: {"status":"ok",...}
 
-# 驗證基本功能
-python ~/.claude/tools/rag-engine.py status
-python ~/.claude/tools/rag-engine.py search "test query"
-
-# 驗證 ranked search（v2.1）
-python ~/.claude/tools/rag-engine.py search "測試" --rerank
-
-# 驗證 E2E 測試（v2.1，需有足夠 atoms）
-python ~/.claude/tools/test-memory-v21.py
+# 觸發完整索引
+curl http://127.0.0.1:3849/index/full
+# 預期: {"indexed":N,"chunks":M}
 ```
 
-### Step 10: 驗證
+### Step 5: 註冊 Dashboard MCP（可選）
 
-重啟 Claude Code（VS Code: `Ctrl+Shift+P` → `Reload Window`），然後：
+若有 `workflow-guardian-mcp/`，在 `.mcp.json` 中加入：
 
-1. 執行 `/mcp` — 確認 `workflow-guardian` 狀態為 **connected**
-2. 開啟 `http://127.0.0.1:3848` — 應看到 Dashboard（5 tabs）
-3. 編輯任意檔案 → Dashboard 應出現新 session 卡片
-4. 嘗試結束對話 → Guardian 應阻止並提醒同步
-5. 確認 Vector Service 運行：`python ~/.claude/tools/rag-engine.py health`
-6. 確認語意搜尋：`python ~/.claude/tools/rag-engine.py search "測試"`
-7. 確認 Write Gate：`python ~/.claude/tools/memory-write-gate.py --content "test knowledge" --classification "[臨]"`
-8. 確認 E2E 測試：`python ~/.claude/tools/test-memory-v21.py`（9 tests should pass）
+```json
+{
+  "mcpServers": {
+    "workflow-guardian": {
+      "command": "node",
+      "args": ["~/.claude/tools/workflow-guardian-mcp/server.js"],
+      "disabled": false
+    }
+  }
+}
+```
 
----
-
-## Placeholder 清單
-
-安裝時需替換的佔位符：
-
-| Placeholder | 說明 | 範例 |
-|-------------|------|------|
-| `{{HOME_PATH}}` | 使用者 HOME 絕對路徑 | `C:\\Users\\john` 或 `/home/john` |
-| `{{USERNAME}}` | 使用者名稱 | `john` |
+Dashboard 可在 `http://127.0.0.1:3848` 查看 Guardian 狀態。
 
 ---
 
-## Fallback 機制
+## 驗證清單
 
-V2 向量搜尋設計為 graceful degradation：
+### 基礎驗證
 
-| 情境 | 行為 |
-|------|------|
-| Ollama 未安裝 | embedding fallback 到 sentence-transformers (bge-m3) |
-| Ollama 未啟動 | 同上 |
-| sentence-transformers 也沒裝 | 純 keyword 模式（V1 行為） |
-| Vector Service daemon 未啟動 | 純 keyword 模式（V1 行為） |
-| GPU 不可用 | CPU fallback（慢 3-5x 但可用） |
-| Write Gate service 不可用 | 略過品質檢查，直接寫入（v2.0 行為） |
+```bash
+# 1. Python 可執行
+python --version                    # 需 3.8+
 
-**任何環節故障都不會影響 Claude Code 正常運作**，只是語意搜尋功能不可用。
+# 2. Ollama 模型就緒
+ollama list                          # 應看到 qwen3-embedding 和 qwen3:1.7b
+
+# 3. Hook 可執行 (模擬 SessionStart)
+echo '{"hook_event_name":"SessionStart","session_id":"test-001","cwd":"/tmp"}' | \
+  python ~/.claude/hooks/workflow-guardian.py
+# 預期: JSON output 含 "additionalContext"
+
+# 4. Vector Service 啟動
+curl http://127.0.0.1:3849/health
+# 預期: {"status":"ok","chunks":N,...}
+
+# 5. 健檢工具
+python ~/.claude/tools/memory-audit.py
+# 預期: Markdown 格式報告，無 ERROR
+
+# 6. 語意搜尋
+curl "http://127.0.0.1:3849/search/ranked?q=test&top_k=3"
+# 預期: JSON array with scored results
+```
+
+### 整合驗證
+
+啟動 Claude Code，觀察：
+
+1. **Session 開始**：應看到 `[Workflow Guardian] Active.` 訊息
+2. **輸入含 trigger 關鍵字的 prompt**：應看到 atom 被載入
+3. **Edit/Write 操作後嘗試結束**：應看到 Stop 閘門同步提醒
+4. **Session 結束後**：檢查 `~/.claude/memory/` 是否有新的 `episodic-*.md`
 
 ---
 
-## 系統概述（供 AI 理解上下文）
+## 常見問題
 
-本擴充包含兩個核心系統，透過 7 個階段（BOOT → RECALL → TRACK → REMIND → COMPACT → GATE → SYNC）管理 session 生命週期：
+### Q: Vector Service 啟動失敗
+**A**: 檢查 `pip install lancedb` 是否成功（需 AVX2 CPU）。無 AVX2 則改用 `pip install chromadb` 並修改 indexer.py。檢查 port 3849 是否被占用。
 
-1. **原子記憶 V2.2**：跨 session 知識管理，兩層（全域/專案）、三級分類（[固]/[觀]/[臨]），Hybrid RECALL + Ranked Search + Session Awareness。Write Gate 品質控制、Conflict Detection 衝突偵測、Proactive Classification 自動分類建議、[臨]→[觀] 自動晉升（Confirmations ≥ 2）、Episodic atoms 自動生成（TTL=24d，向量搜尋發現）
-2. **Workflow Guardian**：hooks 事件驅動的工作流監督，自動追蹤修改、阻止未同步結束、5-tab Dashboard 監控、Session state 三層自動清理
+### Q: Ollama embedding timeout
+**A**: 確認使用正確版本的 embedding model。小模型首次載入約 5-10 秒，之後常駐。
 
-MCP 傳輸格式：JSONL（`{...}\n`），protocolVersion `2025-11-25`。
+### Q: Hook 執行但沒有 atom 注入
+**A**: 檢查 `MEMORY.md` 的 Trigger 欄位是否與 prompt 關鍵字匹配。檢查 atom 檔案路徑是否正確（相對於 `~/.claude/`）。
 
-詳見 `README.md`（運作流程圖 + 已知限制）、`_AIDocs/Architecture.md` 和 `memory/SPEC_Atomic_Memory_System.md`。
+### Q: 無 GPU 能跑嗎
+**A**: 可以。Ollama 自動 fallback 到 CPU。`qwen3-embedding` CPU 推論約 200-500ms，`qwen3:1.7b` CPU 約 1-3s。
+
+### Q: 如何遷移已有 atom 到新機器
+**A**: 複製整個 `~/.claude/memory/` 目錄，然後：
+```bash
+curl -X POST http://127.0.0.1:3849/index/full
+```
+即可重建向量索引。Atom 是純 Markdown 檔案，完全可攜。
+
+---
+
+## 升級路徑
+
+安裝完成後，可根據硬體能力逐步啟用：
+
+| 階段 | 條件 | 升級項目 |
+|------|------|---------|
+| **基礎** | 任何機器 | Keyword trigger + MEMORY.md 索引 |
+| **+Vector** | Python + LanceDB/ChromaDB | Hybrid RECALL 語意搜尋 |
+| **+本地 LLM** | Ollama + 4GB+ RAM | Intent 分類 + embedding + 回應知識萃取 (V2.4) |
+| **+大模型** | 16GB+ VRAM GPU | qwen3:8b/14b 提升語意品質 |
