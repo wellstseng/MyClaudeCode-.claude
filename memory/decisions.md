@@ -4,7 +4,7 @@
 - Confidence: [固]
 - Trigger: 全域決策, 工具, 工作流, workflow, guardian, hooks, MCP, 記憶系統
 - Last-used: 2026-03-05
-- Confirmations: 12
+- Confirmations: 17
 - Type: decision
 
 ## 知識
@@ -64,3 +64,4 @@
 - 2026-03-05: SessionEnd timeout 5→30s，修復 episodic atom 不生成 bug
 - 2026-03-05: episodic 移入 memory/episodic/（不進 git），hardware.md 從 git 移除
 - 2026-03-05: .gitignore 整理 — 只保留 OpenClaw project memory，排除 session-env/、.claude/
+- 2026-03-05: fix: workflow-guardian stdout/stderr 強制 UTF-8（Windows cp950 導致中文亂碼）
