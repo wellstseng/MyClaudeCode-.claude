@@ -3,19 +3,21 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 全域決策, 工具, 工作流, workflow, guardian, hooks, MCP, 記憶系統
-- Last-used: 2026-03-05
-- Confirmations: 17
+- Last-used: 2026-03-06
+- Confirmations: 25
 - Type: decision
 
 ## 知識
 
 ### 核心架構
-- [固] 原子記憶 V2.4：Hybrid RECALL + Ranked Search + 回應捕獲 + 跨 Session 鞏固 + Workflow Guardian
+- [固] 原子記憶 V2.5：Hybrid RECALL + Ranked Search + Keyword Boost + Self-healing Cache + 回應捕獲 + 跨 Session 鞏固 + Workflow Guardian
 - [固] 雙 LLM：Claude Code（雲端決策）+ Ollama qwen3（本地語意處理）
 - [固] 7 hook 事件全由 workflow-guardian.py 統一處理（SessionStart/UserPromptSubmit/PostToolUse/PreCompact/Stop/SessionEnd + PreToolUse 由 inbox-check.js）
 
-### 記憶檢索管線（V2.3 起）
-- [固] UserPromptSubmit: Intent 分類（qwen3:1.7b）→ Trigger 匹配 → Vector Search → Ranked Merge → additionalContext
+### 記憶檢索管線（V2.5）
+- [固] UserPromptSubmit: Intent 分類（qwen3:1.7b）→ Trigger 匹配 → Vector Search → Keyword Boost → Ranked Merge → additionalContext
+- [固] V2.5 Hybrid Search: 向量結果疊加 keyword matching boost（大寫詞、引號短語、中文專有名詞），雙命中 +0.1，keyword 救回 +0.05
+- [固] V2.5 Self-healing Cache: ChromaDB collection reference 快取 + 失效自動 invalidate + retry；連續失敗計數器超閾值升級警告
 - [固] 降級順序：Ollama 不可用 → 純 keyword | Vector Service 掛 → graceful fallback
 - [固] 索引 4 層：global → project → extra:openclaw → episodic（向量發現）
 
@@ -65,3 +67,4 @@
 - 2026-03-05: episodic 移入 memory/episodic/（不進 git），hardware.md 從 git 移除
 - 2026-03-05: .gitignore 整理 — 只保留 OpenClaw project memory，排除 session-env/、.claude/
 - 2026-03-05: fix: workflow-guardian stdout/stderr 強制 UTF-8（Windows cp950 導致中文亂碼）
+- 2026-03-06: V2.5 Hybrid Search Keyword Boost（專有名詞召回率提升）+ Self-healing Collection Cache（ChromaDB 失效自動恢復）

@@ -1,4 +1,4 @@
-# 原子記憶 V2.4 安裝指南 (Install for AI)
+# 原子記憶 V2.5 安裝指南 (Install for AI)
 
 > 本文件供其他 Claude Code 實例安裝原子記憶系統。
 > 設計為可由 AI 助手讀取並執行的安裝步驟。
@@ -124,7 +124,7 @@ telemetry/                    # 遙測數據
 - `PostToolUse` (timeout: 3)
 - `PreCompact` (timeout: 3)
 - `Stop` (timeout: 3)
-- `SessionEnd` (timeout: 30)  ← V2.4: transcript extraction + cross-session check 需更多時間
+- `SessionEnd` (timeout: 30)  ← transcript extraction + cross-session check 需更多時間
 
 ### Step 2: 調整 workflow/config.json
 
@@ -158,8 +158,8 @@ telemetry/                    # 遙測數據
 }
 ```
 
-- **response_capture**：控制回應知識萃取（V2.4），需 Ollama qwen3:1.7b
-- **cross_session**：控制跨 Session 鞏固（V2.4 Phase 3），依賴 Vector Service
+- **response_capture**：控制回應知識萃取，需 Ollama qwen3:1.7b
+- **cross_session**：控制跨 Session 鞏固，依賴 Vector Service
 
 - **CPU 有 AVX2**：可考慮在 `indexer.py` 中啟用 LanceDB（需修改 import）
 - **GPU VRAM 充足**：可考慮升級 embedding model（如 `qwen3-embedding:latest` 4.7GB 版）
@@ -184,7 +184,7 @@ telemetry/                    # 遙測數據
 ## 高頻事實
 
 - 使用者: {username} | {OS} | 回應語言: 繁體中文
-- [固] 原子記憶 V2.4
+- [固] 原子記憶 V2.5
 ```
 
 建立 `~/.claude/memory/preferences.md`：
@@ -223,7 +223,7 @@ telemetry/                    # 遙測數據
 
 ## 知識
 
-- [觀] 原子記憶 V2.4：Hybrid RECALL + Ranked Search + Workflow Guardian
+- [觀] 原子記憶 V2.5：Hybrid RECALL + Ranked Search + Keyword Boost + Self-healing Cache + Workflow Guardian
 
 ## 行動
 
@@ -298,7 +298,7 @@ curl "http://127.0.0.1:3849/search/ranked?q=test&top_k=3"
 # 預期: JSON array with scored results
 ```
 
-### V2.4 驗證
+### V2.5 驗證
 
 ```bash
 # 回應知識萃取測試 (需 Ollama 運行中)
@@ -313,7 +313,7 @@ assert r == [], f'Expected empty, got {r}'
 # 測試 episodic section builder
 s = mod._build_cross_session_section({})
 assert s == '', 'Expected empty string'
-print('V2.4 function tests passed!')
+print('V2.5 function tests passed!')
 "
 ```
 
@@ -365,6 +365,6 @@ curl -X POST http://127.0.0.1:3849/index/full
 |------|------|---------|
 | **基礎** | 任何機器 | Keyword trigger + MEMORY.md 索引 |
 | **+Vector** | Python + ChromaDB | Hybrid RECALL 語意搜尋 |
-| **+本地 LLM** | Ollama + 4GB+ RAM | Intent 分類 + embedding + 回應知識萃取 (V2.4) |
+| **+本地 LLM** | Ollama + 4GB+ RAM | Intent 分類 + embedding + 回應知識萃取 + Keyword Boost (V2.5) |
 | **+大模型** | 16GB+ VRAM GPU | qwen3:8b/14b 提升語意品質 |
 | **+LanceDB** | AVX2 CPU | 切換更快的向量引擎 |

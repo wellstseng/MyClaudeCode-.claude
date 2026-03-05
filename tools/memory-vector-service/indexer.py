@@ -405,22 +405,61 @@ def create_embedder(config: Dict[str, Any]) -> Any:
 DB_DIR = CLAUDE_DIR / "memory" / "_vectordb"
 COLLECTION_NAME = "atom_chunks"
 
+# v2.5: Self-healing collection cache
+_cached_collection = None
+_cached_collection_id = None
+_cached_db_client = None
+_consecutive_failures = 0
+_MAX_FAILURES = 3
+
 
 def _get_db():
-    """Get ChromaDB persistent client."""
+    """Get ChromaDB persistent client (cached)."""
+    global _cached_db_client
+    if _cached_db_client is not None:
+        return _cached_db_client
     import chromadb
     DB_DIR.mkdir(parents=True, exist_ok=True)
-    return chromadb.PersistentClient(path=str(DB_DIR))
+    _cached_db_client = chromadb.PersistentClient(path=str(DB_DIR))
+    return _cached_db_client
+
+
+def _invalidate_collection_cache():
+    """Invalidate cached collection reference."""
+    global _cached_collection, _cached_collection_id, _cached_db_client
+    _cached_collection = None
+    _cached_collection_id = None
+    _cached_db_client = None
 
 
 def _get_collection(client=None):
-    """Get or create the atom_chunks collection."""
+    """Get or create the atom_chunks collection with self-healing cache."""
+    global _cached_collection, _cached_collection_id, _consecutive_failures
+    if _cached_collection is not None:
+        try:
+            # Validate cached reference is still alive
+            _cached_collection.count()
+            _consecutive_failures = 0
+            return _cached_collection
+        except Exception:
+            _consecutive_failures += 1
+            if _consecutive_failures >= _MAX_FAILURES:
+                print(f"[indexer] WARNING: {_consecutive_failures} consecutive collection failures, re-resolving", file=sys.stderr)
+            _invalidate_collection_cache()
+
     if client is None:
         client = _get_db()
-    return client.get_or_create_collection(
+    col = client.get_or_create_collection(
         name=COLLECTION_NAME,
         metadata={"hnsw:space": "cosine"},
     )
+    _cached_collection = col
+    try:
+        _cached_collection_id = col.id
+    except Exception:
+        _cached_collection_id = None
+    _consecutive_failures = 0
+    return col
 
 
 def _cosine_similarity(a: List[float], b: List[float]) -> float:
@@ -575,6 +614,9 @@ def build_index(
                 } for r in batch_recs],
             )
 
+    # v2.5: Invalidate collection cache after index rebuild
+    _invalidate_collection_cache()
+
     elapsed = time.time() - t0
     stats = {
         "atoms_found": len(atoms),
@@ -625,9 +667,11 @@ def search_vectors(
     top_k: int = 10,
     layer_filter: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Search ChromaDB collection by vector. Returns list of dicts with _distance."""
-    try:
-        col = _get_collection()
+    """Search ChromaDB collection by vector. Returns list of dicts with _distance.
+
+    v2.5: Self-healing — on query failure, invalidates cache and retries once.
+    """
+    def _do_query(col):
         where_filter = None
         if layer_filter and layer_filter not in ("all", None):
             if layer_filter == "global":
@@ -635,16 +679,16 @@ def search_vectors(
             elif layer_filter.startswith("project:"):
                 where_filter = {"layer": layer_filter}
 
+        count = col.count()
         kwargs = {
             "query_embeddings": [query_vec],
-            "n_results": min(top_k, col.count()) if col.count() > 0 else top_k,
+            "n_results": min(top_k, count) if count > 0 else top_k,
         }
         if where_filter:
             kwargs["where"] = where_filter
 
         results = col.query(**kwargs)
 
-        # Convert ChromaDB results to the format expected by searcher
         output = []
         if results and results["ids"] and results["ids"][0]:
             for i, doc_id in enumerate(results["ids"][0]):
@@ -657,8 +701,18 @@ def search_vectors(
                     **meta,
                 })
         return output
+
+    try:
+        col = _get_collection()
+        return _do_query(col)
     except Exception:
-        return []
+        # v2.5: Self-healing retry — invalidate cache and try once more
+        try:
+            _invalidate_collection_cache()
+            col = _get_collection()
+            return _do_query(col)
+        except Exception:
+            return []
 
 
 if __name__ == "__main__":
