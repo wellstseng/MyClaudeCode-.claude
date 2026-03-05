@@ -1,4 +1,4 @@
-# 通用工作流引擎（原子記憶 V2.3）
+# 通用工作流引擎（原子記憶 V2.4）
 
 > 本檔案為全域自動載入指令，適用於所有專案。
 > 專案特有的知識（路徑、架構、約束）由各專案根目錄的 `CLAUDE.md` 定義。
@@ -38,8 +38,27 @@
 | **雲端 LLM** | Claude Code | 記憶演進決策：何時寫入、分類判斷、晉升/淘汰、衝突裁決、上下文解讀 | — |
 | **本地 LLM** | Ollama qwen3 | 語意處理：embedding 生成、query rewrite、search re-ranking、intent 分類（tech/arch/ops/flow/domain）、知識萃取 | ~200-500ms |
 
-本地 LLM 在 hook 階段（UserPromptSubmit）自動執行，Claude Code 無感。
+本地 LLM 在 hook 階段（UserPromptSubmit + SessionEnd）自動執行，Claude Code 無感。
 Claude Code 負責的是**理解語意後的決策**——決定記什麼、分什麼類、怎麼演進。
+
+### 回應知識捕獲（V2.4）
+
+Claude 的回應也自動萃取為記憶，由本地 LLM（qwen3:1.7b）處理，零雲端 token 開銷：
+
+| 層 | 時機 | 輸入 | 上限 |
+|----|------|------|------|
+| 逐輪萃取 | UserPromptSubmit（非同步） | 上一輪 assistant 回應 | 3000 chars, 2 items |
+| SessionEnd 補漏 | SessionEnd（同步） | 全 transcript | 20000 chars, 5 items |
+
+所有萃取結果一律 `[臨]`，經跨 Session 鞏固後自動晉升。
+
+### 跨 Session 鞏固（V2.4 Phase 3）
+
+SessionEnd 時，對 knowledge_queue 中的每個 item 做向量搜尋（min_score 0.75），統計跨 session 出現次數：
+
+- **2+ sessions 命中** → 自動晉升 `[臨]` → `[觀]`
+- **4+ sessions 命中** → 標記建議晉升 `[觀]` → `[固]`（不自動執行，需使用者確認）
+- 結果寫入 episodic atom 的「跨 Session 觀察」段落
 
 ### 載入順序
 

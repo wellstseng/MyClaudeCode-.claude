@@ -1,4 +1,4 @@
-# 原子記憶 V2.3 安裝指南 (Install for AI)
+# 原子記憶 V2.4 安裝指南 (Install for AI)
 
 > 本文件供其他 Claude Code 實例安裝原子記憶系統。
 > 設計為可由 AI 助手讀取並執行的安裝步驟。
@@ -124,7 +124,7 @@ telemetry/                    # 遙測數據
 - `PostToolUse` (timeout: 3)
 - `PreCompact` (timeout: 3)
 - `Stop` (timeout: 3)
-- `SessionEnd` (timeout: 5)
+- `SessionEnd` (timeout: 30)  ← V2.4: transcript extraction + cross-session check 需更多時間
 
 ### Step 2: 調整 workflow/config.json
 
@@ -137,9 +137,29 @@ telemetry/                    # 遙測數據
     "ollama_llm_model": "qwen3:1.7b",
     "search_min_score": 0.45,
     "additional_atom_dirs": []     ← 移除來源機器特有路徑
+  },
+  "response_capture": {
+    "enabled": true,
+    "per_turn_enabled": true,
+    "per_turn_max_chars": 3000,
+    "per_turn_max_items": 2,
+    "session_end_max_chars": 20000,
+    "session_end_max_items": 5,
+    "ollama_timeout_seconds": 3,
+    "classification_default": "[臨]"
+  },
+  "cross_session": {
+    "enabled": true,
+    "min_score": 0.75,
+    "promote_threshold": 2,
+    "suggest_threshold": 4,
+    "timeout_seconds": 5
   }
 }
 ```
+
+- **response_capture**：控制回應知識萃取（V2.4），需 Ollama qwen3:1.7b
+- **cross_session**：控制跨 Session 鞏固（V2.4 Phase 3），依賴 Vector Service
 
 - **CPU 有 AVX2**：可考慮在 `indexer.py` 中啟用 LanceDB（需修改 import）
 - **GPU VRAM 充足**：可考慮升級 embedding model（如 `qwen3-embedding:latest` 4.7GB 版）
@@ -164,7 +184,7 @@ telemetry/                    # 遙測數據
 ## 高頻事實
 
 - 使用者: {username} | {OS} | 回應語言: 繁體中文
-- [固] 原子記憶 V2.3
+- [固] 原子記憶 V2.4
 ```
 
 建立 `~/.claude/memory/preferences.md`：
@@ -203,7 +223,7 @@ telemetry/                    # 遙測數據
 
 ## 知識
 
-- [觀] 原子記憶 V2.3：Hybrid RECALL + Ranked Search + Workflow Guardian
+- [觀] 原子記憶 V2.4：Hybrid RECALL + Ranked Search + Workflow Guardian
 
 ## 行動
 
@@ -278,6 +298,25 @@ curl "http://127.0.0.1:3849/search/ranked?q=test&top_k=3"
 # 預期: JSON array with scored results
 ```
 
+### V2.4 驗證
+
+```bash
+# 回應知識萃取測試 (需 Ollama 運行中)
+python -c "
+import importlib.util
+spec = importlib.util.spec_from_file_location('wg', '$HOME/.claude/hooks/workflow-guardian.py')
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+# 測試 cross-session (vector search disabled → 空結果)
+r = mod._check_cross_session_patterns([], 'test', {'vector_search': {'enabled': False}})
+assert r == [], f'Expected empty, got {r}'
+# 測試 episodic section builder
+s = mod._build_cross_session_section({})
+assert s == '', 'Expected empty string'
+print('V2.4 function tests passed!')
+"
+```
+
 ### 整合驗證
 
 啟動 Claude Code，觀察：
@@ -326,6 +365,6 @@ curl -X POST http://127.0.0.1:3849/index/full
 |------|------|---------|
 | **基礎** | 任何機器 | Keyword trigger + MEMORY.md 索引 |
 | **+Vector** | Python + ChromaDB | Hybrid RECALL 語意搜尋 |
-| **+本地 LLM** | Ollama + 4GB+ RAM | Intent 分類 + embedding |
+| **+本地 LLM** | Ollama + 4GB+ RAM | Intent 分類 + embedding + 回應知識萃取 (V2.4) |
 | **+大模型** | 16GB+ VRAM GPU | qwen3:8b/14b 提升語意品質 |
 | **+LanceDB** | AVX2 CPU | 切換更快的向量引擎 |
