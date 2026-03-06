@@ -4,7 +4,7 @@
 - Confidence: [固]
 - Trigger: 全域決策, 工具, 工作流, workflow, guardian, hooks, MCP, 記憶系統
 - Last-used: 2026-03-06
-- Confirmations: 16
+- Confirmations: 17
 - Type: decision
 
 ## 知識
