@@ -1,4 +1,4 @@
-# 原子記憶 V2.4 安裝指南 (Install for AI)
+# 原子記憶 V2.5 安裝指南 (Install for AI)
 
 > 本文件供其他 Claude Code 實例安裝原子記憶系統。
 > 設計為可由 AI 助手讀取並執行的安裝步驟。
@@ -124,7 +124,7 @@ telemetry/                    # 遙測數據
 - `PostToolUse` (timeout: 3, matcher: "Edit|Write")
 - `PreCompact` (timeout: 5)
 - `Stop` (timeout: 5)
-- `SessionEnd` (timeout: 30)  ← V2.4: transcript extraction + cross-session check 需更多時間
+- `SessionEnd` (timeout: 30)  ← V2.5: transcript extraction + cross-session check 需更多時間
 
 ### Step 2: 調整 workflow/config.json
 
@@ -158,8 +158,8 @@ telemetry/                    # 遙測數據
 }
 ```
 
-- **response_capture**：控制回應知識萃取（V2.4），需 Ollama qwen3:1.7b
-- **cross_session**：控制跨 Session 鞏固（V2.4 Phase 3），依賴 Vector Service
+- **response_capture**：控制回應知識萃取（V2.5: 可操作性標準 + format:json），需 Ollama qwen3:1.7b
+- **cross_session**：控制跨 Session 鞏固，依賴 Vector Service
 - **search_min_score**：完整版 embedding 建議 0.60-0.65；小模型 (0.6b) 建議 0.40-0.50
 
 ### Step 3: 初始化全域記憶
@@ -181,7 +181,7 @@ telemetry/                    # 遙測數據
 ## 高頻事實
 
 - 使用者: {username} | {OS} | 回應語言: 繁體中文
-- [固] 原子記憶 V2.4
+- [固] 原子記憶 V2.5
 ```
 
 ### Step 4: 啟動 Vector Service 並建立索引
@@ -294,5 +294,5 @@ curl -X POST http://127.0.0.1:3849/index/full
 |------|------|---------|
 | **基礎** | 任何機器 | Keyword trigger + MEMORY.md 索引 |
 | **+Vector** | Python + LanceDB/ChromaDB | Hybrid RECALL 語意搜尋 |
-| **+本地 LLM** | Ollama + 4GB+ RAM | Intent 分類 + embedding + 回應知識萃取 (V2.4) |
+| **+本地 LLM** | Ollama + 4GB+ RAM | Intent 分類 + embedding + 回應知識萃取 (V2.5: 可操作性標準) |
 | **+大模型** | 16GB+ VRAM GPU | qwen3:8b/14b 提升語意品質 |

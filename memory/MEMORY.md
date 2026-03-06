@@ -18,5 +18,5 @@
 - [固] Guardian @ localhost:3848 | Vector @ localhost:3849
 - [固] GPU: GTX 1050 Ti 4GB | qwen3-embedding + qwen3:1.7b
 - [固] Vector DB: LanceDB | search_min_score: 0.65
-- [固] 原子記憶 V2.4：回應捕獲 + 跨 Session 鞏固 + 6 hooks
+- [固] 原子記憶 V2.5：回應捕獲（可操作性標準）+ 跨 Session 鞏固 + Write Gate 強化 + 6 hooks
 - [固] Excel: `~/.claude/tools/read-excel.py`（Python3 + openpyxl + xlrd）

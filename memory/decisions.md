@@ -10,7 +10,7 @@
 ## 知識
 
 ### 核心架構
-- [固] 原子記憶 V2.4：Hybrid RECALL + Ranked Search + 回應捕獲 + 跨 Session 鞏固 + Workflow Guardian
+- [固] 原子記憶 V2.5：Hybrid RECALL + Ranked Search + 回應捕獲（可操作性標準）+ 跨 Session 鞏固 + Write Gate 強化 + Workflow Guardian
 - [固] 雙 LLM：Claude Code（雲端決策）+ Ollama qwen3（本地語意處理）
 - [固] 6 hook 事件全由 workflow-guardian.py 統一處理（SessionStart/UserPromptSubmit/PostToolUse/PreCompact/Stop/SessionEnd）
 
@@ -19,10 +19,14 @@
 - [固] 降級順序：Ollama 不可用 → 純 keyword | Vector Service 掛 → graceful fallback
 - [固] 索引 2 層：global → project（向量發現）
 
-### 回應捕獲（V2.4）
+### 回應捕獲（V2.4→V2.5 強化）
 - [固] 逐輪萃取：UserPromptSubmit 非同步讀取上一輪 assistant 回應，qwen3:1.7b 萃取知識（≤3000 chars, 2 items）
 - [固] SessionEnd 補漏：同步掃描全 transcript（≤20000 chars, 5 items）
 - [固] 萃取結果一律 [臨]，經跨 Session 鞏固後自動晉升
+- [固] V2.5: 萃取 prompt 加入可操作性標準（actionable + specific + reusable）+ negative examples
+- [固] V2.5: 知識類型 4→6（+decision, +preference），content 上限 80→150 chars
+- [固] V2.5: Ollama API 加 format:json（減少 JSON 解析失敗），dedup 前綴 40→60 chars
+- [固] V2.5: Write Gate 加入可操作性評分（+0.15），CJK-aware patterns（中文無空格）
 
 ### 跨 Session 鞏固（V2.4 Phase 3）
 - [固] SessionEnd 時對 knowledge_queue 做向量搜尋（min_score 0.75）
@@ -63,3 +67,4 @@
 - 2026-03-05: feat: 專案級 episodic（CWD 對應 project 層時，episodic 存到該 project memory）
 - 2026-03-05: fix: _call_ollama_generate num_predict 500→2048, timeout 3→120s（qwen3 thinking mode 修復）
 - 2026-03-06: fix: V2.4 萃取改用 detached subprocess（extract-worker.py），解決 sys.exit + hook 3s timeout 雙殺問題，萃取首次成功
+- 2026-03-06: feat: V2.5 寫入品質強化 — 萃取 prompt 重寫（可操作性標準）、6 知識類型、150 chars 上限、format:json、Write Gate 可操作性評分、CJK patterns
