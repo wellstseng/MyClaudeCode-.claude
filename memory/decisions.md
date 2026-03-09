@@ -4,13 +4,13 @@
 - Confidence: [固]
 - Trigger: 全域決策, 工具, 工作流, workflow, guardian, hooks, MCP, 記憶系統
 - Last-used: 2026-03-10
-- Confirmations: 58
+- Confirmations: 59
 - Type: decision
 
 ## 知識
 
 ### 核心架構
-- [固] 原子記憶 V2.6：V2.5 + Self-Iteration Engine（品質函數 + 震盪偵測 + 成熟度模型 + 定期檢閱 + 8 條演進原則）
+- [固] 原子記憶 V2.7：V2.6 + CLAUDE.md 精簡 50%（289→144 行，移除 hook 實作細節與重複內容）+ failures/toolchain atoms + Output Quality Feedback
 - [固] 雙 LLM：Claude Code（雲端決策）+ Ollama qwen3（本地語意處理）
 - [固] 7 hook 事件全由 workflow-guardian.py 統一處理（SessionStart/UserPromptSubmit/PostToolUse/PreCompact/Stop/SessionEnd + PreToolUse 由 inbox-check.js）
 
@@ -81,6 +81,7 @@
 - [觀] **toolchain.md**：工具鏈實戰記憶（Windows 差異/已驗證指令/路徑版本/特殊配置），procedural type
 - [觀] **Output Quality Feedback**：PostToolUse 的 `_check_output_quality()` 偵測跨 session 重寫檔案，結果寫入 `state["quality_feedback"]`，SessionEnd 自動記入 episodic 知識段落
 - [觀] **跨專案模式掃描**：定期檢閱時比較不同專案 episodic atoms，跨 2+ 專案共通模式收攏為全域知識
+- [固] **CLAUDE.md 精簡（V2.7）**：289→144 行（-50%），移除 hook 實作細節（雙 LLM 表格、Hybrid Search、回應捕獲、跨 Session 鞏固、三級注入策略）、移除與 preferences.md 重複的偏好段落、風險分級框架；保留 Claude 決策指令（三層分類、寫入時機、分類演進、同步流程、自我迭代 8 條）
 
 ### 歷史決策
 - [固] 記憶檢索統一用 Python，已移除 Node.js memory-v2（2026-03-05 退役）
@@ -103,3 +104,4 @@
 - 2026-03-09: [固] 主動續航 + 三級注入 + 工作單元命名 + 定期檢閱
 - 2026-03-10: [固] V2.6 Self-Iteration Engine（8 條演進原則 + 跨學科理論背書 + metrics/震盪/成熟度/檢閱自動化）
 - 2026-03-10: [觀] V2.7 記憶強化 — failures.md + toolchain.md + Output Quality Feedback（PostToolUse 跨 session 偵測）+ 跨專案模式掃描
+- 2026-03-10: [固] V2.7 CLAUDE.md 精簡 — 289→144 行（-50%），移除 hook 實作細節與重複偏好，保留 Claude 決策指令

@@ -1,4 +1,4 @@
-# 原子記憶 V2.6 安裝指南 (Install for AI)
+# 原子記憶 V2.7 安裝指南 (Install for AI)
 
 > 本文件供其他 Claude Code 實例安裝原子記憶系統。
 > 設計為可由 AI 助手讀取並執行的安裝步驟。
@@ -200,7 +200,7 @@ V2.6 新增設定（可選，有合理預設值）：
 ## 高頻事實
 
 - 使用者: {username} | {OS} | 回應語言: 繁體中文
-- [固] 原子記憶 V2.6
+- [固] 原子記憶 V2.7
 ```
 
 建立 `~/.claude/memory/preferences.md`：
@@ -239,7 +239,7 @@ V2.6 新增設定（可選，有合理預設值）：
 
 ## 知識
 
-- [觀] 原子記憶 V2.6：Hybrid RECALL + Ranked Search + Keyword Boost + Self-healing Cache + Workflow Guardian + Self-Iteration Engine
+- [觀] 原子記憶 V2.7：Hybrid RECALL + Ranked Search + Keyword Boost + Self-healing Cache + Workflow Guardian + Self-Iteration Engine + failures/toolchain atoms
 
 ## 行動
 
@@ -314,7 +314,7 @@ curl "http://127.0.0.1:3849/search/ranked?q=test&top_k=3"
 # 預期: JSON array with scored results
 ```
 
-### V2.6 驗證
+### V2.6+ 驗證
 
 ```bash
 # V2.5 回應知識萃取 + V2.6 Self-Iteration 測試
@@ -383,7 +383,7 @@ curl -X POST http://127.0.0.1:3849/index/full
 即可重建向量索引。Atom 是純 Markdown 檔案，完全可攜。
 
 ### Q: CLAUDE.md 太長怎麼辦
-**A**: CLAUDE.md 建議 ≤200 行。超過的話 Claude Code 會截斷。核心指令放 CLAUDE.md，細節放 SPEC 文件或 atom 檔。
+**A**: CLAUDE.md 建議 ≤200 行（V2.7 精簡後僅 144 行）。核心指令放 CLAUDE.md，hook 實作細節和規格放 SPEC 文件或 atom 檔。
 
 ---
 
@@ -395,6 +395,6 @@ curl -X POST http://127.0.0.1:3849/index/full
 |------|------|---------|
 | **基礎** | 任何機器 | Keyword trigger + MEMORY.md 索引 |
 | **+Vector** | Python + ChromaDB | Hybrid RECALL 語意搜尋 |
-| **+本地 LLM** | Ollama + 4GB+ RAM | Intent 分類 + embedding + 回應知識萃取 + Keyword Boost + Self-Iteration |
+| **+本地 LLM** | Ollama + 4GB+ RAM | Intent 分類 + embedding + 回應知識萃取 + Keyword Boost + Self-Iteration + Quality Feedback |
 | **+大模型** | 16GB+ VRAM GPU | qwen3:8b/14b 提升語意品質 |
 | **+LanceDB** | AVX2 CPU | 切換更快的向量引擎 |

@@ -17,7 +17,7 @@
 ## 高頻事實
 
 - 使用者: holyl | Windows 10 Pro | 回應語言: 繁體中文
-- [固] 原子記憶 V2.6：V2.5 + Self-Iteration Engine（品質函數 + 震盪偵測 + 成熟度模型 + 定期檢閱 + 8 條演進原則）
+- [固] 原子記憶 V2.7：V2.6 + CLAUDE.md 精簡 50%（289→144 行）+ failures/toolchain atoms + Output Quality Feedback
 - [固] Vector Service @ localhost:3849 | Dashboard @ localhost:3848
 - [固] Ollama models: qwen3-embedding:0.6b + qwen3:1.7b
 - [固] 雙 LLM：Claude Code（雲端決策）+ Ollama qwen3（本地語意）
