@@ -4,7 +4,7 @@
 - Confidence: [固]
 - Trigger: 全域決策, 工具, 工作流, workflow, guardian, hooks, MCP, 記憶系統
 - Last-used: 2026-03-10
-- Confirmations: 54
+- Confirmations: 56
 - Type: decision
 
 ## 知識
@@ -86,6 +86,8 @@
 - 記憶寫入走 write-gate 品質閘門
 - 向量搜尋 fallback 順序：Ollama → sentence-transformers → keyword
 - Guardian 閘門最多阻止 2 次，第 3 次強制放行
+- 大幅修改前 session 生成的程式碼（>30% 變動）時，記錄品質回饋到 failures.md「生成品質回饋」分類
+- debug 超過 5 分鐘時，先查 failures.md 已知模式再嘗試新方案
 
 ## 演化日誌
 
@@ -107,3 +109,4 @@
 - 2026-03-09: [固] 定期檢閱週期（每 5±2 session）— 近期 session 回顧、重複模式收攏晉升、向量庫同步
 - 2026-03-10: [固] 自我迭代理論背書 — 8 條原則 × 五大領域跨學科理論（Skinner/Kolmogorov/Popper/Taleb/Dreyfus/Aristotle/Rawls/Russell 等）
 - 2026-03-10: [固] V2.6 Self-Iteration Engine 實作 — metrics 收集 + 震盪偵測 + 成熟度模型 + 定期檢閱觸發 + CLAUDE.md 行為指引 + SPEC v2.6
+- 2026-03-10: [觀] 新增 failures.md（失敗模式+品質回饋）+ toolchain.md（工具鏈實戰記憶）— 強化「從錯誤學習」和「環境知識累積」

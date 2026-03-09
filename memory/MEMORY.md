@@ -9,6 +9,8 @@
 | spec | memory/SPEC_Atomic_Memory_System.md | 原子記憶規格, atom schema, 記憶系統設計 |
 | hardware | memory/hardware.md | 硬體, 電腦, 升級, hardware, PC, GPU, CPU, 顯卡, 記憶體, RAM, 主機板 |
 | self-iteration-theory | memory/openclaw-self-iteration.md | 自我迭代, self-iteration, 演進原則, 理論背書, 設計哲學 |
+| failures | memory/failures.md | 失敗, 錯誤, debug, 踩坑, pitfall, crash, 重試, retry, workaround |
+| toolchain | memory/toolchain.md | 工具, 環境, 指令, command, path, 路徑, bash, git, python, npm, ollama |
 
 ---
 

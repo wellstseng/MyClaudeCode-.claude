@@ -4,7 +4,7 @@
 - Confidence: [固]
 - Trigger: 偏好, 風格, 習慣, style, preference, 語言, 回應
 - Last-used: 2026-03-10
-- Confirmations: 44
+- Confirmations: 45
 - Type: preference
 
 ## 知識
@@ -17,6 +17,7 @@
 - Prompt 輸出: 給使用者複製貼上的 prompt 一律包在 code block 裡
 - 「上 GIT」: 等同 git add + commit + push（三步都做完）
 - 大型計畫執行: 分階段 session 執行，每階段完成+驗證+上傳GIT後，提供下一階段的 prompt 給使用者
+- 「執驗上P」/「執P」: 縮寫指令，等同「由 AI 考量拆分 session 接續處理，單一階段執行完畢＋驗證無誤後，上傳 GIT（如有可上傳的 repo），再給使用者下一階段接續用的 prompt；此規則延伸到本項目全數完成」
 
 ## 行動
 
