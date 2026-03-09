@@ -1710,6 +1710,12 @@ def _generate_episodic_atom(
         knowledge_lines.append(
             f"- [臨] 引用 atoms: {', '.join(summary['atoms_referenced'])}"
         )
+    # V2.6: Record which atoms were MODIFIED (for oscillation detection)
+    atoms_modified = state.get("iteration_metrics", {}).get("atoms_modified", [])
+    if atoms_modified:
+        knowledge_lines.append(
+            f"- [臨] 修改 atoms: {', '.join(atoms_modified)}"
+        )
     for ki in summary["knowledge_items"]:
         knowledge_lines.append(f"- [{ki['classification'].strip('[]')}] {ki['content']}")
 
@@ -1840,17 +1846,17 @@ def _detect_oscillation(
     recent_files.sort(key=lambda x: -x[0])
     recent_files = recent_files[:oscillation_window]
 
-    # Parse each episodic for modified atoms
+    # Parse each episodic for MODIFIED atoms (not just referenced)
     atom_sessions = {}  # atom_name -> [session_dates]
     for _, ep_path in recent_files:
         try:
             text = ep_path.read_text(encoding="utf-8")
             date_match = re.search(r"Created:\s*(\d{4}-\d{2}-\d{2})", text)
             ep_date = date_match.group(1) if date_match else ep_path.stem[:15]
-            # Look for "修改" or "工作區域" lines referencing atoms
             for line in text.split("\n"):
-                if "引用 atoms:" in line:
-                    atoms_part = line.split("引用 atoms:")[-1].strip()
+                # Only look at "修改 atoms:" lines (written by V2.6+), NOT "引用 atoms:"
+                if "修改 atoms:" in line:
+                    atoms_part = line.split("修改 atoms:")[-1].strip()
                     for a in atoms_part.split(","):
                         a = a.strip()
                         if a:
