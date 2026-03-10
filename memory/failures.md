@@ -1,10 +1,10 @@
 # 失敗模式記憶
 
 - Scope: global
-- Confidence: [觀]
+- Confidence: [固]
 - Trigger: 失敗, 錯誤, debug, 踩坑, pitfall, crash, 重試, retry, workaround
 - Last-used: 2026-03-10
-- Confirmations: 4
+- Confirmations: 6
 - Type: procedural
 - Tags: failure, pitfall, debug, quality-feedback
 - Related: decisions, toolchain
@@ -17,6 +17,7 @@
 
 - [固] Windows bash 的 `find` 輸出路徑含反斜線 → 管道到其他工具時路徑解析失敗 → 改用 Glob/Grep 工具或 `//` 正斜線（根因: MSYS2 路徑轉換不一致）
 - [固] ChromaDB 在 i7-3770 上 import 失敗 → 誤以為安裝問題反覆重裝 → 確認 CPU 不支援 AVX2 後改用 SQLite backend（根因: LanceDB/ChromaDB 預設需要 AVX2 指令集）
+- [觀] Windows Node.js `rmSync()` 對 CJK 檔名靜默失敗（不報錯但不刪除）→ 以為刪除成功 → 改用 `unlinkSync()`（根因: rmSync 內部路徑處理與 NTFS CJK 字元不相容）
 
 ### 假設錯誤（Wrong Assumption）
 
@@ -51,3 +52,4 @@
 | 日期 | 變更 | 來源 |
 |------|------|------|
 | 2026-03-10 | 初始建立：四大分類（環境踩坑/假設錯誤/模式誤用/品質回饋）+ 2 條已知踩坑 | manual |
+| 2026-03-10 | [觀]→[固] 晉升（Confirmations=6）+ 新增 rmSync CJK 踩坑 | atomic-memory E2E |

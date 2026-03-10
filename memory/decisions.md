@@ -4,7 +4,7 @@
 - Confidence: [固]
 - Trigger: 全域決策, 工具, 工作流, workflow, guardian, hooks, MCP, 記憶系統
 - Last-used: 2026-03-10
-- Confirmations: 63
+- Confirmations: 64
 - Type: decision
 
 ## 知識
@@ -82,6 +82,18 @@
 - [觀] **Output Quality Feedback**：PostToolUse 的 `_check_output_quality()` 偵測跨 session 重寫檔案，結果寫入 `state["quality_feedback"]`，SessionEnd 自動記入 episodic 知識段落
 - [觀] **跨專案模式掃描**：定期檢閱時比較不同專案 episodic atoms，跨 2+ 專案共通模式收攏為全域知識
 - [固] **CLAUDE.md 精簡（V2.7）**：289→144 行（-50%），移除 hook 實作細節（雙 LLM 表格、Hybrid Search、回應捕獲、跨 Session 鞏固、三級注入策略）、移除與 preferences.md 重複的偏好段落、風險分級框架；保留 Claude 決策指令（三層分類、寫入時機、分類演進、同步流程、自我迭代 8 條）
+
+### 🔄 智慧引擎 Wisdom Engine（V2.8 規劃中）
+- [臨] 三力架構：因果圖（Causal Graph）+ 情境分類器（Situation Classifier）+ 反思引擎（Reflection Engine）
+- [臨] 核心原則：code 預運算判斷 → 只注入結論（≤90 tokens） vs 現行注入規則文字（~500 tokens）
+- [臨] 實作：wisdom_engine.py (~200行) + 3 JSON (causal_graph/situation_model/reflection_metrics) + guardian 3 hook 點
+- [臨] 因果圖：有向加權圖 + BFS depth=2 + Bayesian confidence 更新（命中+0.1, 落空*0.95, <0.3 淘汰）
+- [臨] 情境分類：加權評分函數（file_count*2 + feature*4 + arch*5 + quick*-4 + thorough*3）→ direct/confirm/plan，小任務零注入
+- [臨] 反思引擎：滑動窗口統計 first_approach_accuracy + over_engineering_rate + silence_accuracy → 盲點偵測（<70% 標記）
+- [臨] 冷啟動策略：無資料時靜默（零 token），漸進增強
+- [臨] 不改：CLAUDE.md、atom schema、hook 事件、MCP server
+- [臨] 需新增：PostToolUse 追蹤 retry_count 欄位供反思引擎統計
+- [臨] 依賴：/resume Skill 也列入待建（Session 接續智慧化）
 
 ### 歷史決策
 - [固] 記憶檢索統一用 Python，已移除 Node.js memory-v2（2026-03-05 退役）
