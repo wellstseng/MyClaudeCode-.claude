@@ -86,8 +86,11 @@ git clone https://gitlab.uj.com.tw/holylight/ClaudeCode-AtomMemory.git /tmp/atom
 以下是需要複製到你 `~/.claude/` 的檔案。**不會覆蓋你現有的個人設定**。
 
 ```bash
-# ── 核心指令 ──
+# ── 核心指令 + 身份檔案 ──
 cp /tmp/atomic-memory/CLAUDE.md ~/.claude/CLAUDE.md
+cp /tmp/atomic-memory/IDENTITY.md ~/.claude/IDENTITY.md
+cp /tmp/atomic-memory/USER.md ~/.claude/USER.md
+# ⚠ USER.md 需修改為你自己的資料（帳號、技術背景、偏好）
 
 # ── Hook 腳本 ──
 mkdir -p ~/.claude/hooks
@@ -106,17 +109,28 @@ cp /tmp/atomic-memory/tools/read-excel.py ~/.claude/tools/
 cp /tmp/atomic-memory/tools/memory-vector-service/* ~/.claude/tools/memory-vector-service/
 cp /tmp/atomic-memory/tools/workflow-guardian-mcp/server.js ~/.claude/tools/workflow-guardian-mcp/
 
-# ── 記憶規格 ──
+# ── 記憶規格 + 領域知識 ──
 mkdir -p ~/.claude/memory
+mkdir -p ~/.claude/memory/unity
 cp /tmp/atomic-memory/memory/SPEC_Atomic_Memory_System.md ~/.claude/memory/
+cp /tmp/atomic-memory/memory/unity/unity-yaml.md ~/.claude/memory/unity/
+cp /tmp/atomic-memory/memory/unity/unity-yaml-detail.md ~/.claude/memory/unity/
 
 # ── Workflow 設定 ──
 mkdir -p ~/.claude/workflow
 cp /tmp/atomic-memory/workflow/config.json ~/.claude/workflow/
 
-# ── Slash commands ──
+# ── Slash commands (Skills) ──
 mkdir -p ~/.claude/commands
 cp /tmp/atomic-memory/commands/init-project.md ~/.claude/commands/
+cp /tmp/atomic-memory/commands/read-project.md ~/.claude/commands/
+cp /tmp/atomic-memory/commands/resume.md ~/.claude/commands/
+cp /tmp/atomic-memory/commands/consciousness-stream.md ~/.claude/commands/
+cp /tmp/atomic-memory/commands/svn-update.md ~/.claude/commands/
+cp /tmp/atomic-memory/commands/unity-yaml.md ~/.claude/commands/
+
+# ── Unity YAML 操作工具 ──
+cp /tmp/atomic-memory/tools/unity-yaml-tool.py ~/.claude/tools/
 ```
 
 ### Step 3: 合併 settings.json（最關鍵的一步）
@@ -366,6 +380,8 @@ python ~/.claude/tools/memory-audit.py
 ```
 ~/.claude/
 ├── CLAUDE.md                     ★ 系統指令（每 session 自動載入）
+├── IDENTITY.md                   ★ AI 身份與行為準則（@import 載入，團隊共用）
+├── USER.md                       ★ 操作者個人資料（@import 載入，⚠ 需改為你的資料）
 ├── settings.json                   已合併 hooks 區塊
 │
 ├── hooks/                        ★
@@ -379,6 +395,7 @@ python ~/.claude/tools/memory-audit.py
 │   ├── memory-conflict-detector.py ★ 衝突偵測
 │   ├── rag-engine.py             ★ RAG CLI
 │   ├── read-excel.py             ★ Excel 讀取
+│   ├── unity-yaml-tool.py        ★ Unity YAML 操作工具
 │   ├── memory-vector-service/    ★ HTTP Vector 搜尋服務 @ :3849
 │   └── workflow-guardian-mcp/    ★ Dashboard MCP @ :3848
 │
@@ -386,6 +403,9 @@ python ~/.claude/tools/memory-audit.py
 │   ├── MEMORY.md                 ★ 你的記憶索引
 │   ├── preferences.md            ★ 你的偏好 atom
 │   ├── decisions.md              ★ 你的決策 atom
+│   ├── unity/                    ★ Unity YAML 領域知識
+│   │   ├── unity-yaml.md         ★ 速查 atom (trigger 自動載入)
+│   │   └── unity-yaml-detail.md  ★ 完整參考 (按需讀取)
 │   ├── SPEC_Atomic_Memory_System.md ★ 規格參考
 │   ├── _staging/                   （暫存區，臨時檔案用完即清）
 │   ├── episodic/                   （自動生成 session 摘要）
@@ -394,8 +414,13 @@ python ~/.claude/tools/memory-audit.py
 ├── workflow/                     ★
 │   └── config.json               ★ 系統設定
 │
-├── commands/                     ★
-│   └── init-project.md           ★ /init-project slash command
+├── commands/                     ★ Slash commands (Skills)
+│   ├── init-project.md           ★ /init-project — 專案知識庫初始化
+│   ├── read-project.md           ★ /read-project — 專案深度掃描
+│   ├── resume.md                 ★ /resume — 自動續接 Session
+│   ├── consciousness-stream.md   ★ /consciousness-stream — 識流決策流程
+│   ├── svn-update.md             ★ /svn-update — SVN 工作目錄更新
+│   └── unity-yaml.md             ★ /unity-yaml — Unity YAML 資產操作
 │
 └── (你原有的檔案保持不變)
 ```
