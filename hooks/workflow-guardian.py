@@ -157,6 +157,7 @@ def new_state(session_id: str, cwd: str, source: str) -> Dict[str, Any]:
 # ─── Memory Index Parsing ────────────────────────────────────────────────────
 
 TABLE_ROW_RE = re.compile(r"^\|(.+)\|$")
+ALIAS_RE = re.compile(r"^>\s*Project-Aliases:\s*(.+)", re.MULTILINE)  # v2.9
 
 # Atom entry: (name, relative_path, trigger_keywords[])
 AtomEntry = Tuple[str, str, List[str]]
@@ -194,6 +195,21 @@ def parse_memory_index(memory_dir: Path) -> List[AtomEntry]:
             elif cells:
                 atoms.append((cells[0], "", []))
     return atoms
+
+
+def parse_project_aliases(memory_dir: Path) -> List[str]:
+    """Parse > Project-Aliases: line from MEMORY.md. Returns lowercase alias keywords."""
+    index_path = memory_dir / MEMORY_INDEX
+    if not index_path.exists():
+        return []
+    try:
+        text = index_path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError):
+        return []
+    m = ALIAS_RE.search(text)
+    if not m:
+        return []
+    return [a.strip().lower() for a in m.group(1).split(",") if a.strip()]
 
 
 def cwd_to_project_slug(cwd: str) -> str:
@@ -801,8 +817,9 @@ def handle_user_prompt_submit(
     # Match prompt against triggers (keyword)
     matched_with_dir: List[Tuple[AtomEntry, Path]] = []
     prompt_lower = prompt.lower()
+    alias_injected_projects: set = set()  # v2.9: track alias-injected projects
 
-    # ── Cross-project atom discovery (v2.5) ─────────────────────────
+    # ── Cross-project atom discovery (v2.5) + alias matching (v2.9) ──
     # Scan ALL project memory dirs for trigger matches, not just CWD project.
     loaded_proj_names = set()
     if proj_dir_str:
@@ -815,6 +832,17 @@ def handle_user_prompt_submit(
             cross_mem = proj_dir / "memory"
             if not cross_mem.exists():
                 continue
+            # v2.9: Check project aliases before trigger matching
+            aliases = parse_project_aliases(cross_mem)
+            if aliases and any(alias in prompt_lower for alias in aliases):
+                try:
+                    mem_text = (cross_mem / MEMORY_INDEX).read_text(encoding="utf-8-sig")
+                    lines.append(f"[Guardian:AliasMatch] {proj_dir.name} matched via alias")
+                    lines.append(f"[ProjectMemory:{proj_dir.name}]\n{mem_text}")
+                    alias_injected_projects.add(proj_dir.name)
+                except (OSError, UnicodeDecodeError):
+                    pass
+            # Existing trigger-based cross-atom discovery
             cross_atoms = parse_memory_index(cross_mem)
             if not cross_atoms:
                 continue
@@ -1002,6 +1030,16 @@ def handle_user_prompt_submit(
                     except (OSError, UnicodeDecodeError):
                         pass
                     break
+
+    # ── Blind-Spot Reporter (v2.9) ──────────────────────────────────
+    if not matched_with_dir and not newly_injected and not alias_injected_projects:
+        prompt_preview = prompt[:50].strip()
+        if len(prompt) > 50:
+            prompt_preview += "..."
+        lines.append(
+            f'[Guardian:BlindSpot] 未找到與 "{prompt_preview}" '
+            f'相關的記憶 atom。建議 LLM 主動搜尋檔案或詢問使用者。'
+        )
 
     # ─── Topic tracking (v2.2) ─────────────────────────────────────
     _update_topic_tracker(state, prompt, intent, newly_injected)

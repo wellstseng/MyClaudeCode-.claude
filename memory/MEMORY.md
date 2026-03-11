@@ -24,7 +24,7 @@
 - [固] GPU: GTX 1050 Ti 4GB | qwen3-embedding + qwen3:1.7b
 - [固] Vector DB: LanceDB | search_min_score: 0.65
 - [固] 原子記憶 V2.8：回應捕獲 + 跨 Session 鞏固 + 自我迭代 + Wisdom Engine + 6 hooks
-- [觀] V2.9 設計中：Project-Aliases + Related-Edge Spreading + ACT-R Activation + Blind-Spot Reporter
+- [觀] V2.9 實作中(S1完成)：Project-Aliases ✅ + Blind-Spot Reporter ✅ + Related-Edge Spreading + ACT-R Activation
 - [固] Excel: `~/.claude/tools/read-excel.py`（Python3 + openpyxl + xlrd）
 - [固] SVN 專案修改前必問 svn update（每 session 一次）| Skill: /svn-update
 - [觀] Wisdom Engine: causal graph + reflection + situation classifier
