@@ -1,4 +1,4 @@
-# Atomic Memory V2.9 — 安裝指南
+# Atomic Memory V2.10 — 安裝指南
 
 > **目標讀者**：使用 VS Code + Claude Code Extension，但完全不知道原子記憶是什麼的開發者。
 > 本指南會幫你把原子記憶系統**合併安裝**到你現有的 `~/.claude/` 目錄中。
@@ -157,7 +157,7 @@ cp /tmp/atomic-memory/commands/init-project.md ~/.claude/commands/
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write",
+        "matcher": "Edit|Write|Read|Bash",
         "hooks": [
           {
             "type": "command",
@@ -225,7 +225,7 @@ cat > ~/.claude/memory/MEMORY.md << 'EOF'
 
 ## 高頻事實
 
-- 原子記憶 V2.9
+- 原子記憶 V2.10
 EOF
 ```
 
@@ -387,6 +387,7 @@ python ~/.claude/tools/memory-audit.py
 │   ├── preferences.md            ★ 你的偏好 atom
 │   ├── decisions.md              ★ 你的決策 atom
 │   ├── SPEC_Atomic_Memory_System.md ★ 規格參考
+│   ├── _staging/                   （暫存區，臨時檔案用完即清）
 │   ├── episodic/                   （自動生成 session 摘要）
 │   └── _vectordb/                  （自動生成向量索引）
 │
