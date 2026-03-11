@@ -9,6 +9,8 @@
 | excel-tools | memory/excel-tools.md | Excel, xls, xlsx, 讀取, 試算表, spreadsheet, openpyxl, xlrd | [固] |
 | spec | memory/SPEC_Atomic_Memory_System.md | SPEC, 規格, atom格式, 記憶規範, memory spec | [固] |
 | workflow-rules | memory/workflow-rules.md | svn, svn-update, 版本控制, 同步, vcs | [固] |
+| failures | memory/failures.md | 失敗, pitfall, 陷阱, bug, 踩坑, debug | [觀] |
+| toolchain | memory/toolchain.md | 工具鏈, toolchain, Ollama, qwen3, vector, LanceDB | [觀] |
 
 ---
 
@@ -19,6 +21,7 @@
 - [固] Guardian @ localhost:3848 | Vector @ localhost:3849
 - [固] GPU: GTX 1050 Ti 4GB | qwen3-embedding + qwen3:1.7b
 - [固] Vector DB: LanceDB | search_min_score: 0.65
-- [固] 原子記憶 V2.5：回應捕獲（可操作性標準）+ 跨 Session 鞏固 + Write Gate 強化 + 6 hooks
+- [固] 原子記憶 V2.8：回應捕獲 + 跨 Session 鞏固 + 自我迭代 + Wisdom Engine + 6 hooks
 - [固] Excel: `~/.claude/tools/read-excel.py`（Python3 + openpyxl + xlrd）
 - [固] SVN 專案修改前必問 svn update（每 session 一次）| Skill: /svn-update
+- [觀] Wisdom Engine: causal graph + reflection + situation classifier

@@ -1,6 +1,6 @@
-# 原子記憶系統規格 v2.4
+# 原子記憶系統規格 v2.8
 
-> Atomic Memory System V2.4 Specification
+> Atomic Memory System V2.8 Specification
 > 適用於 Claude Code 跨 session 知識管理。
 > V2：Hybrid RECALL — Keyword Trigger + Vector Semantic Search + Local LLM
 > V2.1 Sprint 1：Write Gate + Decay Enforce + Schema 擴展 + Confirmations 自動遞增
@@ -160,9 +160,8 @@ memory/
 - Type: semantic                 ← v2.1（semantic/episodic/procedural，預設 semantic）
 - Trigger: kw1, kw2, kw3
 - Last-used: YYYY-MM-DD
-- Confirmations: 1
+- Confirmations: 2
 - Created: YYYY-MM-DD            ← v2.1（首次建立日期）
-- Confirmations: N
 - TTL: 30d                       ← v2.1（可選，null = 由 confidence 決定）
 - Expires-at: YYYY-MM-DD         ← v2.1（可選，自動計算）
 - Privacy: public                ← v2.1（public/internal/sensitive，預設 public）

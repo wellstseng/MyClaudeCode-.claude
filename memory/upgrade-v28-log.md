@@ -10,8 +10,8 @@
 
 | Session | 狀態 | 完成項目 | 遇到的問題 | Git commit |
 |---------|------|---------|-----------|------------|
-| S1 | ✅ 完成 | 備份 + 8 檔案新增 + 3 項驗證通過 | 無 | (待填) |
-| S2 | ⏳ 待執行 | guardian 合併 + CLAUDE.md + MEMORY + SPEC | — | — |
+| S1 | ✅ 完成 | 備份 + 8 檔案新增 + 3 項驗證通過 | 無 | f916780 |
+| S2 | ✅ 完成 | guardian 合併 + CLAUDE.md + MEMORY + SPEC | 無 | (pending) |
 | S3 | ⏳ 待執行 | 文件更新 + SOP + 全面驗證 | — | — |
 
 ## S1 完成明細
@@ -67,3 +67,8 @@
 |------|------|------|
 | S1 | 檔案複製 | 全部順利，無衝突 |
 | S1 | 驗證 | memory-audit 回報 failures/toolchain 未在 MEMORY.md 索引 — 預期中，S2 處理 |
+| S2 | guardian | 增量合併完成：wisdom import + 4 handler 插入 + 6 新函數 + V2.6 metrics/oscillation + V2.7 quality + V2.8 wisdom |
+| S2 | CLAUDE.md | 替換為 Home 精簡版（145 行） |
+| S2 | MEMORY.md | 新增 failures/toolchain 索引 + V2.8 版本 + Wisdom Engine 高頻事實 |
+| S2 | SPEC | 移除重複 Confirmations 欄位 + 版本號 v2.4→v2.8 |
+| S2 | 驗證 | py_compile PASS, SessionStart hook PASS, CLAUDE.md 145行 PASS, 索引完整性 PASS |
