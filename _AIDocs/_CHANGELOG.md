@@ -6,6 +6,7 @@
 
 | 日期 | 變更 | 涉及檔案 |
 |------|------|---------|
+| 2026-03-13 | **Atom 整理**：SPEC(950行)/self-iteration/v3-design-spec/v3-research 移至 `memory/_reference/`，MEMORY.md 索引 13→8 筆，新增「參考文件」區塊（開發記憶系統時手動讀取） | `memory/MEMORY.md`, `memory/_reference/*` |
 | 2026-03-13 | **README Token/延遲表校正**：CLAUDE.md Token 2500-3500→1500-2500、MEMORY.md Token 50-80→200-350、Prompt 延遲 300-600→200-500ms（V2.11 移除逐輪萃取）、總 Overhead 3000-5000→2000-5500；子系統描述同步（Self-Iteration 8→3 條、Wisdom 因果圖移除、Response Capture 逐輪萃取移除）；架構樹行數校正 | `README.md` |
 | 2026-03-13 | **README/Install 文件補完 V2.11**：版本號更新、新增「初步建議使用方式」區塊、Skills 表格上移並補 `/harvest` `/upgrade`、架構樹補 `rules/`、Install 補安裝後使用指引 | `README.md`, `Install-forAI.md` |
 | 2026-03-13 | **V2.11 全面升級（4 波 10 sessions）**：精簡（砍逐輪萃取/因果圖/自動晉升/自我迭代 8→3 條）+ 品質（衝突偵測自動化/反思校準 over_engineering+silence_accuracy/Atom 健康度）+ 模組化（.claude/rules/ 4 模組 + Context Budget 3000t + CLAUDE.md 瘦身）+ 環境清理 300+ 檔 + Episodic 品質升級（17→0，1 條晉升） | `hooks/{workflow-guardian,extract-worker,wisdom_engine}.py`, `memory/wisdom/*`, `memory/{self-iteration,SPEC,decisions,MEMORY}.md`, `rules/*.md`, `CLAUDE.md`, `tools/{atom-health-check,cleanup-old-files}.py`, `_AIDocs/*` |
