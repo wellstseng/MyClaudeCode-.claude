@@ -3,7 +3,7 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 全域決策, 工具, 工作流, workflow, guardian, hooks, MCP, 記憶系統
-- Last-used: 2026-03-12
+- Last-used: 2026-03-13
 - Confirmations: 34
 - Type: decision
 
@@ -17,7 +17,7 @@
 ### 記憶檢索管線（V2.3 起）
 - [固] UserPromptSubmit: Intent 分類（qwen3:1.7b）→ Trigger 匹配 → Vector Search → Ranked Merge → additionalContext
 - [固] 降級順序：Ollama 不可用 → 純 keyword | Vector Service 掛 → graceful fallback
-- [固] 索引 2 層：global → project（向量發現）
+- [固] 索引 2 層：global → project（向量發現），所有層統一 `**/*.md` 遞迴掃描 + `_` 前綴目錄跳過
 
 ### 回應捕獲（V2.4→V2.5 強化）
 - [固] 逐輪萃取：UserPromptSubmit 非同步讀取上一輪 assistant 回應，qwen3:1.7b 萃取知識（≤3000 chars, 2 items）
@@ -99,3 +99,4 @@
 - 2026-03-11: feat: V2.9 S2 — Related-Edge Spreading（多跳檢索 depth=1）+ ACT-R Activation Scoring（時間加權排序 + .access.json）
 - 2026-03-11: feat: V2.9 S3 完成 — 整合測試通過 + SPEC §十四 + 版號升級 V2.8→V2.9
 - 2026-03-11: feat: V2.10 — Session 全軌跡追蹤（Read Tracking + VCS Query Capture + 閱讀軌跡 section + 純閱讀 episodic + _staging 暫存區管理）
+- 2026-03-13: feat: 引入同事改進 — indexer.py 遞迴掃描所有層（子目錄 atom 可被索引）+ /upgrade skill（環境升級比對工具）
