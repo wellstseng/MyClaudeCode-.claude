@@ -1664,23 +1664,24 @@ def _call_ollama_generate(prompt: str, model: str = None,
     """
     try:
         client = get_client()
+        # 不用 format="json" — qwen3.5 thinking mode 與 JSON constrained decoding 衝突
         return client.generate(
             prompt, model=model, timeout=timeout,
-            format="json", temperature=0.1, num_predict=2048,
+            temperature=0.1, num_predict=2048,
         )
     except Exception:
         return ""
 
 
 _EXTRACT_PROMPT_TEMPLATE = (
-    "Extract reusable technical knowledge from this AI assistant response. "
-    "Output a JSON array of objects, each with 'content' (max 80 chars, concise fact) "
-    "and 'type' (one of: factual, procedural, architectural, pitfall). "
-    "Only extract: root causes, API behaviors, architecture constraints, "
-    "debugging patterns, configuration values, environment-specific behaviors. "
-    "Skip: code changes, general programming knowledge, session-specific details, greetings. "
-    "If nothing worth extracting, output empty array [].\n\n"
-    "Response text:\n{text}\n\nJSON:"
+    "你是「原子記憶系統」的知識萃取器。從 AI 回應中萃取可跨 session 重用的知識。\n"
+    "輸出 JSON array: [{{\"content\": \"精簡事實，最多150字\", "
+    "\"type\": \"factual|procedural|architectural|pitfall|decision\"}}]\n\n"
+    "只萃取：根因分析、API 行為、架構限制、除錯模式、設定值、環境特有行為。\n"
+    "不萃取：程式碼變更、通用程式知識、session 進度、問候語。\n"
+    "沒有值得萃取的內容就輸出 []。直接輸出 JSON。\n"
+    "/no_think\n\n"
+    "回應文字:\n{text}\n\nJSON:"
 )
 
 
@@ -1723,7 +1724,7 @@ def _llm_extract_knowledge(text: str, existing_queue: List[dict],
             items = json.loads(match.group(0))
     except (json.JSONDecodeError, ValueError):
         # Regex fallback: try to extract content/type pairs
-        for m in re.finditer(r'"content"\s*:\s*"([^"]{10,80})"', raw):
+        for m in re.finditer(r'"content"\s*:\s*"([^"]{10,150})"', raw):
             items.append({"content": m.group(1), "type": "factual"})
 
     if not items:
@@ -1744,10 +1745,10 @@ def _llm_extract_knowledge(text: str, existing_queue: List[dict],
         if content[:40].lower() in existing_fingerprints:
             continue
         knowledge_type = item.get("type", "factual")
-        if knowledge_type not in ("factual", "procedural", "architectural", "pitfall"):
+        if knowledge_type not in ("factual", "procedural", "architectural", "pitfall", "decision"):
             knowledge_type = "factual"
         results.append({
-            "content": content[:80],
+            "content": content[:150],
             "classification": "[臨]",
             "knowledge_type": knowledge_type,
             "source": source,

@@ -16,7 +16,7 @@
       }
     },
     "over_engineering_rate": {
-      "user_reverted_or_simplified": 79,
+      "user_reverted_or_simplified": 97,
       "total_suggestions": 0
     },
     "silence_accuracy": {
@@ -35,5 +35,12 @@
   "blind_spots": [
     "architecture 首次正確率 0%"
   ],
-  "last_reflection": "2026-03-13T01:47:03.194579+00:00"
+  "last_reflection": "2026-03-13T01:47:03.194579+00:00",
+  "over_engineering_rate": 0.556,
+  "over_engineering_detail": {
+    "reverted_files": 5,
+    "total_edited_files": 9,
+    "session": "a9b2b79c",
+    "at": "2026-03-13T15:40:07+08:00"
+  }
 }

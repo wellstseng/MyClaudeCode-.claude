@@ -97,9 +97,10 @@ def _extract_all_assistant_texts(
 def _call_ollama(prompt: str, model: str = None, timeout: int = 120) -> str:
     try:
         client = get_client()
+        # 不用 format="json" — qwen3.5 thinking mode 與 JSON constrained decoding 衝突
         return client.generate(
             prompt, model=model, timeout=timeout,
-            format="json", temperature=0.1, num_predict=2048,
+            temperature=0.1, num_predict=2048,
         )
     except Exception:
         return ""
@@ -107,45 +108,51 @@ def _call_ollama(prompt: str, model: str = None, timeout: int = 120) -> str:
 
 # ─── Prompt templates ─────────────────────────────────────────────────────────
 
+_SYSTEM_CONTEXT = (
+    "你是「原子記憶系統」的知識萃取器。萃取出的知識會存入長期記憶，供未來 session 引用。\n"
+    "只萃取「這個專案/環境特有的」、「下次會用到的」事實。通用程式知識不要。\n\n"
+)
+
+_FORMAT_SPEC = (
+    "輸出 JSON array: [{\"content\": \"精簡事實，最多150字\", "
+    "\"type\": \"factual|procedural|architectural|pitfall|decision\"}]\n\n"
+    "範例（值得萃取）:\n"
+    '  {"content": "rdchat Open WebUI LDAP 端點是 /api/v1/auths/ldap，用 user 欄位（非 email）", "type": "factual"}\n'
+    '  {"content": "GTX 1050 Ti 跑 qwen3:1.7b generate 約 30s，qwen3-embedding embed 約 5s", "type": "factual"}\n'
+    '  {"content": "LanceDB search 用 cosine metric，min_score 0.65 以下多為噪音", "type": "architectural"}\n\n'
+    "範例（不要萃取）:\n"
+    '  ✗ "Python 的 dict 是 hash table" → 通用知識\n'
+    '  ✗ "修改了 config.py 第 43 行" → session 進度，不是知識\n'
+    '  ✗ "使用 git commit 提交變更" → 常識\n\n'
+)
+
+_RULES_COMMON = (
+    "規則:\n"
+    "- 只萃取此專案/環境特有的具體事實（含數值、路徑、版本、錯誤碼）\n"
+    "- 跳過：程式碼片段、session 進度、隨便 Google 就能查到的知識\n"
+    "- 沒有值得萃取的內容就輸出 []\n"
+    "- 直接輸出 JSON，不要解釋\n"
+    "/no_think\n\n"
+)
+
 _PROMPT_TEMPLATES = {
     "build": (
-        "Extract reusable technical knowledge from this development session.\n"
-        "Focus on: architectural decisions, tooling choices, configuration values,\n"
-        "framework-specific behaviors, API quirks discovered during building.\n\n"
-        "Output JSON array: [{\"content\": \"max 100 chars\", "
-        "\"type\": \"architectural|procedural|factual|decision\"}]\n\n"
-        "Rules:\n"
-        "- Only concrete, actionable facts (not general programming knowledge)\n"
-        "- Include specific values, paths, versions, error codes when available\n"
-        "- Skip: code snippets, session-specific progress, obvious facts\n"
-        "- If nothing worth extracting, output []\n\n"
-        "Session text:\n{text}\n\nJSON:"
+        _SYSTEM_CONTEXT
+        + "本次 session 類型：開發建構。重點關注：架構決策、工具配置、框架行為、API 特性。\n\n"
+        + _FORMAT_SPEC + _RULES_COMMON
+        + "Session 文字:\n{text}\n\nJSON:"
     ),
     "debug": (
-        "Extract reusable debugging knowledge from this session.\n"
-        "Focus on: root causes found, error patterns, workarounds, misleading symptoms,\n"
-        "environment-specific gotchas, version-specific bugs.\n\n"
-        "Output JSON array: [{\"content\": \"max 100 chars\", "
-        "\"type\": \"pitfall|procedural|factual\"}]\n\n"
-        "Rules:\n"
-        "- Prioritize: 'X fails because Y' patterns, workarounds that took time to find\n"
-        "- Include error messages, stack trace patterns, config fixes\n"
-        "- Skip: code changes made, general debugging methodology\n"
-        "- If nothing worth extracting, output []\n\n"
-        "Session text:\n{text}\n\nJSON:"
+        _SYSTEM_CONTEXT
+        + "本次 session 類型：除錯。重點關注：根因分析、錯誤模式、誤導性症狀、環境相關的坑。\n\n"
+        + _FORMAT_SPEC + _RULES_COMMON
+        + "Session 文字:\n{text}\n\nJSON:"
     ),
     "design": (
-        "Extract reusable design knowledge from this session.\n"
-        "Focus on: design decisions and their rationale, tradeoff analyses,\n"
-        "pattern selections, rejected alternatives and why.\n\n"
-        "Output JSON array: [{\"content\": \"max 100 chars\", "
-        "\"type\": \"decision|architectural|factual\"}]\n\n"
-        "Rules:\n"
-        "- Capture WHY decisions were made, not just WHAT was decided\n"
-        "- Include constraints that drove the decision\n"
-        "- Skip: implementation details, code structure descriptions\n"
-        "- If nothing worth extracting, output []\n\n"
-        "Session text:\n{text}\n\nJSON:"
+        _SYSTEM_CONTEXT
+        + "本次 session 類型：設計。重點關注：設計決策的理由、權衡分析、被否決的方案及原因。\n\n"
+        + _FORMAT_SPEC + _RULES_COMMON
+        + "Session 文字:\n{text}\n\nJSON:"
     ),
 }
 
@@ -167,7 +174,7 @@ def _parse_llm_response(raw: str) -> List[dict]:
         if match:
             items = json.loads(match.group(0))
     except (json.JSONDecodeError, ValueError):
-        for m in re.finditer(r'"content"\s*:\s*"([^"]{10,100})"', raw):
+        for m in re.finditer(r'"content"\s*:\s*"([^"]{10,150})"', raw):
             items.append({"content": m.group(1), "type": "factual"})
     return items
 
@@ -215,7 +222,7 @@ def _dedup_items(
             kt = "factual"
 
         results.append({
-            "content": content[:100],
+            "content": content[:150],
             "classification": "[臨]",
             "knowledge_type": kt,
             "source": "session-end",

@@ -82,25 +82,28 @@ class OllamaClient:
 
     def generate(self, prompt: str, model: str = None,
                  timeout: int = 120, format: str = None, **options) -> str:
-        """POST /api/generate — 替換 workflow-guardian + extract-worker"""
+        """LLM text generation. Internally uses /api/chat + think:false
+        to avoid thinking-mode token waste on qwen3/3.5 models."""
         backend = self._pick_backend("llm")
         if not backend:
             return ""
         payload: Dict[str, Any] = {
             "model": model or backend.llm_model,
-            "prompt": prompt,
+            "messages": [{"role": "user", "content": prompt}],
             "stream": False,
+            "think": False,
         }
         if format:
             payload["format"] = format
         if options:
             payload["options"] = options
         result = self._request_with_failover(
-            "llm", "/api/generate", payload, timeout
+            "llm", "/api/chat", payload, timeout,
+            explicit_model=model,
         )
         if result is None:
             return ""
-        return result.get("response", "")
+        return result.get("message", {}).get("content", "")
 
     def chat(self, messages: List[Dict[str, str]], system: str = "",
              model: str = None, timeout: int = 30) -> str:
@@ -116,9 +119,11 @@ class OllamaClient:
             "model": model or backend.llm_model,
             "messages": msgs,
             "stream": False,
+            "think": False,
         }
         result = self._request_with_failover(
-            "llm", "/api/chat", payload, timeout
+            "llm", "/api/chat", payload, timeout,
+            explicit_model=model,
         )
         if result is None:
             return ""
@@ -135,7 +140,8 @@ class OllamaClient:
             "input": texts,
         }
         result = self._request_with_failover(
-            "embedding", "/api/embed", payload, timeout
+            "embedding", "/api/embed", payload, timeout,
+            explicit_model=model,
         )
         if result is None:
             return []
@@ -150,15 +156,29 @@ class OllamaClient:
     # -----------------------------------------------------------------------
 
     def _request_with_failover(self, need: str, endpoint: str,
-                               payload: dict, timeout: int) -> Optional[dict]:
-        """Try backends in priority order, with failover on failure."""
+                               payload: dict, timeout: int,
+                               explicit_model: str = None) -> Optional[dict]:
+        """Try backends in priority order, with failover on failure.
+
+        When explicit_model is None, model field is updated per-backend
+        to match each backend's configured model (fixes failover using
+        wrong model name on fallback backend).
+        """
         tried = set()
         while True:
             backend = self._pick_backend(need, exclude=tried)
             if not backend:
                 return None
             tried.add(backend.name)
-            result = self._do_request(backend, endpoint, payload, timeout)
+            # Adjust model for this backend (unless caller specified explicit model)
+            actual_payload = payload
+            if not explicit_model and "model" in payload:
+                model_attr = "embedding_model" if need == "embedding" else "llm_model"
+                backend_model = getattr(backend, model_attr, None)
+                if backend_model and payload["model"] != backend_model:
+                    actual_payload = dict(payload)
+                    actual_payload["model"] = backend_model
+            result = self._do_request(backend, endpoint, actual_payload, timeout)
             if result is not None:
                 self._record_success(backend)
                 return result
