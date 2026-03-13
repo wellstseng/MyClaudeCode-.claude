@@ -23,6 +23,7 @@ logger = logging.getLogger("ollama_client")
 CLAUDE_DIR = Path.home() / ".claude"
 CONFIG_PATH = CLAUDE_DIR / "workflow" / "config.json"
 TOKEN_PATH = CLAUDE_DIR / "workflow" / ".rdchat_token.json"
+REAUTH_MARKER = CLAUDE_DIR / "workflow" / ".rdchat_reauth.json"
 
 # Health check cache TTL
 HEALTH_TTL = 60  # seconds
@@ -374,11 +375,19 @@ class OllamaClient:
 
     def _ldap_login(self, auth: dict) -> Optional[str]:
         """POST to login_url with user/password, return JWT token."""
+        import os
         login_url = auth.get("login_url", "")
-        user = auth.get("user", "")
+        user = auth.get("user", "") or os.getlogin()
         password = self._resolve_password(auth)
-        if not login_url or not user or not password:
-            logger.error("LDAP auth config incomplete")
+
+        if not login_url or not user:
+            logger.error("LDAP auth config incomplete (no login_url or user)")
+            return None
+        if not password:
+            # 密碼檔不存在 → 寫 setup marker，提示使用者
+            self._write_reauth_marker("setup_needed", user,
+                "rdchat 密碼檔不存在。請建立 ~/.claude/workflow/.rdchat_password，"
+                "內容為你的 LDAP 密碼（公司登入密碼）。此檔案已在 .gitignore 中，不會被上傳。")
             return None
 
         payload = json.dumps({"user": user, "password": password}).encode("utf-8")
@@ -398,7 +407,26 @@ class OllamaClient:
                 token = data.get("token")
                 if token:
                     logger.info("LDAP login success: %s", user)
+                    self._clear_reauth_marker()
                     return token
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode("utf-8", errors="replace")
+            except Exception:
+                pass
+            if e.code == 400 and ("incorrect" in body.lower() or "invalid" in body.lower()):
+                # 密碼錯誤（過期或打錯）→ 寫 reauth marker
+                self._write_reauth_marker("reauth_needed", user,
+                    "rdchat LDAP 登入失敗（密碼錯誤或已過期）。"
+                    "請更新 ~/.claude/workflow/.rdchat_password 的內容為新密碼。")
+                # 清除快取的 token，下次強制重新登入
+                self._token_cache.pop("rdchat", None)
+                try:
+                    TOKEN_PATH.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            logger.error("LDAP login failed (HTTP %s): %s", e.code, user)
         except Exception as e:
             logger.error("LDAP login failed: %s", e)
         return None
@@ -455,6 +483,33 @@ class OllamaClient:
                     self._token_cache[name] = token
             except (json.JSONDecodeError, OSError):
                 pass
+
+    # -----------------------------------------------------------------------
+    # Reauth marker (密碼設定/過期提示)
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _write_reauth_marker(kind: str, user: str, message: str):
+        """Write marker file so hooks/sessions can detect setup/reauth needs."""
+        try:
+            REAUTH_MARKER.parent.mkdir(parents=True, exist_ok=True)
+            REAUTH_MARKER.write_text(json.dumps({
+                "type": kind,
+                "user": user,
+                "message": message,
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+            }, ensure_ascii=False, indent=2), encoding="utf-8")
+            logger.warning("[rdchat] %s — %s", kind, message)
+        except OSError:
+            pass
+
+    @staticmethod
+    def _clear_reauth_marker():
+        """Clear marker after successful login."""
+        try:
+            REAUTH_MARKER.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -533,6 +588,22 @@ def reset_client():
     """Reset singleton (for testing)."""
     global _client_instance
     _client_instance = None
+
+
+def check_rdchat_status() -> Optional[Dict[str, str]]:
+    """Check if rdchat needs setup or reauth.
+
+    Returns None if everything is fine, or a dict with:
+      {"type": "setup_needed"|"reauth_needed", "user": ..., "message": ...}
+
+    Hooks / session-start can call this and display the message to the user.
+    """
+    if REAUTH_MARKER.exists():
+        try:
+            return json.loads(REAUTH_MARKER.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return None
 
 
 # ---------------------------------------------------------------------------
