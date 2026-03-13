@@ -3,7 +3,7 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 工具, 環境, 指令, command, path, 路徑, bash, git, python, npm, ollama
-- Last-used: 2026-03-11
+- Last-used: 2026-03-13
 - Confirmations: 19
 - Type: procedural
 - Tags: toolchain, environment, commands
@@ -32,10 +32,21 @@
 - [固] Ollama models 位置: 預設 `~/.ollama/models/`
 - [固] ChromaDB 資料: `~/.claude/memory/_vectordb/`
 
+### Ollama Dual-Backend（rdchat + local）
+
+- [觀] ollama_client.py: singleton pattern，generate()/chat()/embed() 三個 API，自動 primary→fallback
+- [觀] generate()/chat() 內部用 /api/chat + think:false — 避免 qwen3/3.5 thinking tokens 吃光 output budget
+- [觀] Open WebUI proxy 不轉發 Ollama 原生 /api/embed — 改走 OpenAI-compatible /api/v1/embeddings（在根路徑，非 /ollama/ 下）
+- [觀] Open WebUI /api/v1/embeddings 要求完整 model tag（如 `model:latest`），省略 tag 會 500
+- [觀] LDAP 認證端點是 /api/v1/auths/ldap，payload 用 `user` 欄位（非 `email`）。token expires_at: null（永不過期）
+- [觀] failover 時 model 名稱要跟著切換（rdchat 用 qwen3.5:latest，local 用 qwen3:1.7b），否則 fallback backend 回 404
+- [觀] 三階段退避：連續 2 次失敗→短DIE(60s)→10 分鐘內 2 次短DIE→長DIE(等 6h 邊界 00/06/12/18)
+- [觀] config 中 password_file 指向獨立檔案（.gitignore 排除），支援 os.getlogin() 多使用者
+
 ### 環境特殊配置
 
 - [固] ChromaDB 用 SQLite backend（i7-3770 不支援 AVX2，預設 HNSW backend 會 crash）
-- [固] Ollama 同時只能跑一個模型（GTX 1650 4GB VRAM 限制），embedding 和推論模型需輪替
+- [固] Ollama 同時只能跑一個模型（GTX 1050 Ti 4GB VRAM 限制），embedding 和推論模型需輪替
 - [固] workflow-guardian.py stdout/stderr 強制 UTF-8（Windows 預設 cp950 會導致中文亂碼）
 
 ## 行動

@@ -3,7 +3,7 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 失敗, 錯誤, debug, 踩坑, pitfall, crash, 重試, retry, workaround
-- Last-used: 2026-03-12
+- Last-used: 2026-03-13
 - Confirmations: 14
 - Type: procedural
 - Tags: failure, pitfall, debug, quality-feedback
@@ -30,6 +30,15 @@
 - [觀] `context.request.get()` 不帶 browser cookies → export URL 回 401 → 改用 `context.cookies()` 同步到 aiohttp（根因: Playwright API request 獨立於 browser cookie store）
 - [觀] `page.evaluate` + `fetch()` 對 Google export URL 被 CORS 擋 → export URL redirect 跨域 → 改用 aiohttp server-side 請求（根因: browser fetch 無法跨域 follow Google CDN redirect）
 - [觀] `page.goto()` Google export URL 觸發 download 而非頁面渲染 → Playwright 報 "Download is starting" → 需 `accept_downloads=True` + `expect_download()`（根因: export URL 回 Content-Disposition: attachment）
+
+### Ollama / Open WebUI 踩坑
+
+- [觀] qwen3/3.5 的 /api/generate thinking mode 會把所有 token 花在 thinking 欄位，response 永遠為空 → 改用 /api/chat + `think: false`（根因: Ollama 0.17+ 預設啟用 thinking mode，/api/generate 不支援 think 參數）
+- [觀] Ollama `format: "json"` 與 thinking mode 衝突 → constrained decoding 限制 thinking tokens 輸出格式，JSON 從未產生 → 移除 format，改用 prompt 引導 + regex 解析（根因: JSON constrained decoding 套用到 thinking output，不是 final response）
+- [觀] Open WebUI proxy 不轉發 /api/embed → "Model not found" → 改走 OpenAI-compatible /api/v1/embeddings（根路徑，不經 /ollama/ proxy）（根因: OWU proxy 只轉 generate/chat/tags 等端點）
+- [觀] Open WebUI /api/v1/embeddings 的 model 名稱須含完整 tag（`:latest`）→ 省略 tag 回 500 Internal Server Error → config 中寫完整 tag（根因: OWU OpenAI-compat 層 model routing 嚴格匹配）
+- [觀] LDAP 認證端點誤用 /api/v1/auths/signin（帳密登入）→ 400 → 正確端點是 /api/v1/auths/ldap，payload 用 `user` 欄位非 `email`（根因: Open WebUI 帳密登入和 LDAP 登入是不同端點）
+- [觀] failover 時 payload 的 model 名稱沒跟著切換 → 用 rdchat 的 model 打 local → 404 → _request_with_failover 需按 backend 動態換 model（根因: payload 在首次 backend 選定時建立，failover 重用同一 payload）
 
 ### 假設錯誤（Wrong Assumption）
 

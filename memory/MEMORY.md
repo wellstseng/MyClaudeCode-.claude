@@ -21,7 +21,8 @@
 - [固] 使用者: holylight | 平台: Windows 11 Pro
 - [固] MCP 可用: playwright, openclaw-notify, workflow-guardian, computer-use
 - [固] Guardian @ localhost:3848 | Vector @ localhost:3849
-- [固] GPU: GTX 1050 Ti 4GB | qwen3-embedding + qwen3:1.7b
+- [固] GPU: GTX 1050 Ti 4GB (local) | RTX 3090 24GB (rdchat, primary)
+- [觀] Ollama Dual-Backend: rdchat (qwen3.5 + qwen3-embedding, pri=1) → local (qwen3:1.7b + qwen3-embedding, pri=2)
 - [固] Vector DB: LanceDB | search_min_score: 0.65
 - [固] 原子記憶 V2.11：僅 SessionEnd 萃取 + 簡化鞏固 + 自我迭代(3條) + Wisdom(硬規則+反思校準) + Context Budget(3000t) + 衝突偵測 + Atom 健康度 + rules/ 模組化
 - [固] Excel: `~/.claude/tools/read-excel.py`（Python3 + openpyxl + xlrd）
