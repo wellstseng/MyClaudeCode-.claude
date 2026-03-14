@@ -15,7 +15,7 @@
 
 | 參數 | 必填 | 說明 | 範例 |
 |------|------|------|------|
-| 目標 | 是 | 目錄路徑、檔案路徑、或描述關鍵詞 | `C:\Projects\sgi_client\DesignDoc\` |
+| 目標 | 是 | 目錄路徑、檔案路徑、或描述關鍵詞 | `{sgi_client}/DesignDoc/` |
 
 ### 選項（自然語言附加在參數後）
 
@@ -26,9 +26,9 @@
 ### 使用範例
 
 ```
-/read-project C:\Projects\sgi_client\DesignDoc\
-/read-project C:\Projects\sgi_server\MapServer\ 只看 .cs 詳細閱讀
-/read-project C:\Projects\sgi_client\DesignDoc\ 前 10 份 存為 combat-specs
+/read-project {sgi_client}/DesignDoc/
+/read-project {sgi_server}/MapServer/ 只看 .cs 詳細閱讀
+/read-project {sgi_client}/DesignDoc/ 前 10 份 存為 combat-specs
 ```
 
 ### 錯誤處理

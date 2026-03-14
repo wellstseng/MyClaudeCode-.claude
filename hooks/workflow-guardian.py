@@ -24,16 +24,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+sys.path.insert(0, str(Path.home() / ".claude" / "tools"))
+from ollama_client import get_client, check_long_die_status, disable_backend, OllamaClient
+
 # ─── V2.8: Wisdom Engine (lazy import, graceful fallback) ────────────────────
 try:
     from wisdom_engine import (
-        add_causal_edge,
-        get_causal_warnings,
         classify_situation,
         get_reflection_summary,
         reflect as wisdom_reflect,
         track_retry as wisdom_track_retry,
-        update_causal_confidence,
     )
     WISDOM_AVAILABLE = True
 except ImportError:
@@ -47,6 +47,7 @@ MEMORY_DIR = CLAUDE_DIR / "memory"
 EPISODIC_DIR = MEMORY_DIR / "episodic"
 CONFIG_PATH = WORKFLOW_DIR / "config.json"
 MEMORY_INDEX = "MEMORY.md"
+CONTEXT_BUDGET_DEFAULT = 3000  # V2.11: default token cap (overridden by compute_token_budget)
 
 # Defaults (overridable via config.json)
 DEFAULTS = {
@@ -74,7 +75,6 @@ DEFAULTS = {
     },
     # v2.2 Sprint 2: Proactive classification
     "proactive": {
-        "auto_promote_lin": True,   # [臨]→[觀] auto-promote
         "pattern_threshold": 2,     # N episodic sessions before suggesting dedicated atom
         "migration_hint_threshold": 3,  # N session references before migration hint
     },
@@ -137,7 +137,7 @@ def write_state(session_id: str, state: Dict[str, Any]) -> None:
 def new_state(session_id: str, cwd: str, source: str) -> Dict[str, Any]:
     """Create a fresh state object."""
     return {
-        "schema_version": "1.2",
+        "schema_version": "1.1",
         "session": {
             "id": session_id,
             "started_at": _now_iso(),
@@ -160,12 +160,6 @@ def new_state(session_id: str, cwd: str, source: str) -> Dict[str, Any]:
             "related_episodic": [],
         },
         "session_context_injected": False,
-        # V2.6: Self-iteration metrics
-        "iteration_metrics": {
-            "atoms_referenced": [],   # atom names loaded this session
-            "atoms_modified": [],     # atom names modified this session
-            "quality_signals": [],    # [{atom, signal(+/-/0), at}]
-        },
         "last_updated": _now_iso(),
     }
 
@@ -449,6 +443,95 @@ def load_atoms_within_budget(
             break  # stop loading more
 
     return lines, injected, used
+
+
+def _truncate_context_by_activation(
+    lines: List[str], limit: int = CONTEXT_BUDGET_DEFAULT
+) -> List[str]:
+    """V2.11: Truncate additionalContext lines to fit within token budget.
+
+    Identifies [Atom:xxx] blocks, scores them by ACT-R activation,
+    and replaces lowest-scoring atoms with summary lines until under limit.
+    """
+    full_text = "\n".join(lines)
+    used = len(full_text) // 4
+    if used <= limit:
+        lines.append(f"[Context budget: {used}/{limit} tokens]")
+        return lines
+
+    # Identify atom blocks: lines starting with [Atom:xxx]
+    ATOM_LINE_RE = re.compile(r"^\[Atom:(\S+)\]")
+    atom_blocks: List[dict] = []  # {index, name, start, end, tokens}
+    i = 0
+    while i < len(lines):
+        m = ATOM_LINE_RE.match(lines[i])
+        if m:
+            name = m.group(1)
+            # Find end of this atom block (next [Atom:...] or non-content line pattern)
+            end = i + 1
+            while end < len(lines) and not ATOM_LINE_RE.match(lines[end]):
+                end += 1
+            block_text = "\n".join(lines[i:end])
+            atom_blocks.append({
+                "name": name,
+                "start": i,
+                "end": end,
+                "tokens": len(block_text) // 4,
+                "first_line": lines[i].split("\n", 1)[0] if "\n" in lines[i] else lines[i],
+            })
+            i = end
+        else:
+            i += 1
+
+    if not atom_blocks:
+        # No atoms to truncate, just cap it
+        lines.append(f"[Context budget: {used}/{limit} tokens (over)]")
+        return lines
+
+    # Score each atom by ACT-R activation (low = truncate first)
+    for ab in atom_blocks:
+        atom_name = ab["name"]
+        # Try global memory dir first
+        ab["activation"] = compute_activation(atom_name, MEMORY_DIR)
+        if ab["activation"] <= -10.0:
+            # Try episodic
+            ab["activation"] = compute_activation(atom_name, EPISODIC_DIR)
+
+    # Sort by activation ascending (lowest first = truncate first)
+    atom_blocks.sort(key=lambda x: x["activation"])
+
+    # Truncate lowest-activation atoms until under budget
+    truncated_indices: set = set()
+    for ab in atom_blocks:
+        if used <= limit:
+            break
+        # Replace multi-line atom block with summary
+        summary = f"[Atom:{ab['name']}] (truncated, activation={ab['activation']:.2f}) Read memory/{ab['name']}.md"
+        saved = ab["tokens"] - (len(summary) // 4)
+        if saved > 0:
+            truncated_indices.add(ab["start"])
+            # Mark for replacement
+            ab["summary"] = summary
+            used -= saved
+
+    # Rebuild lines
+    new_lines: List[str] = []
+    skip_until = -1
+    for idx, line in enumerate(lines):
+        if idx < skip_until:
+            continue
+        found = False
+        for ab in atom_blocks:
+            if ab["start"] == idx and idx in truncated_indices:
+                new_lines.append(ab["summary"])
+                skip_until = ab["end"]
+                found = True
+                break
+        if not found and idx >= skip_until:
+            new_lines.append(line)
+
+    new_lines.append(f"[Context budget: {used}/{limit} tokens]")
+    return new_lines
 
 
 # ─── Output Helpers ──────────────────────────────────────────────────────────
@@ -888,6 +971,7 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         review_reminder = _check_periodic_review_due(config)
         if review_reminder:
             lines.append(review_reminder)
+            state["review_due"] = True
     except Exception as e:
         print(f"[v2.6] Review check error: {e}", file=sys.stderr)
 
@@ -898,6 +982,20 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             lines.extend(wisdom_lines)
         except Exception as e:
             print(f"[v2.8] Wisdom reflection error: {e}", file=sys.stderr)
+
+    # ── Dual-Backend: long_die user confirmation ────────────────────────
+    try:
+        long_die = check_long_die_status()
+        if long_die:
+            backend_name = long_die.get("backend", "remote")
+            until = long_die.get("until", "?")
+            lines.append(
+                f"[⚠ Long DIE] 遠端 Ollama backend '{backend_name}' 多次連線失敗，"
+                f"已暫停至 {until}。請確認是否要永久停用此 backend？"
+                f"（回覆「停用 {backend_name}」或「保持」）"
+            )
+    except Exception as e:
+        print(f"[dual-backend] Long DIE check error: {e}", file=sys.stderr)
 
     # ── Vector Service auto-start ──────────────────────────────────────
     if config.get("vector_search", {}).get("auto_start_service", True):
@@ -923,16 +1021,28 @@ def handle_user_prompt_submit(
         return
 
     prompt = input_data.get("prompt", "")
+    prompt_lower = prompt.lower().strip()
     lines: List[str] = []
 
-    # ─── V2.4: Collect pending extraction from last turn ──────────────
-    pending = state.pop("pending_extraction", [])
-    if pending:
-        state.setdefault("knowledge_queue", []).extend(pending)
-        lines.append(
-            f"[V2.4] {len(pending)} knowledge items captured from last response: "
-            + "; ".join(f"[{p.get('knowledge_type','?')}] {p['content'][:50]}" for p in pending)
-        )
+    # ─── Dual-Backend: long_die user response ─────────────────────────
+    try:
+        long_die = check_long_die_status()
+        if long_die:
+            backend_name = long_die.get("backend", "")
+            if any(kw in prompt_lower for kw in ("停用", "disable")):
+                if disable_backend(backend_name):
+                    OllamaClient._clear_long_die_marker()
+                    lines.append(
+                        f"[Dual-Backend] 已永久停用 '{backend_name}'。"
+                        f"如需重新啟用，修改 config.json 中 enabled: true。"
+                    )
+                else:
+                    lines.append(f"[Dual-Backend] 停用 '{backend_name}' 失敗，請手動修改 config.json。")
+            elif any(kw in prompt_lower for kw in ("保持", "keep", "忽略")):
+                OllamaClient._clear_long_die_marker()
+                lines.append(f"[Dual-Backend] 保持 '{backend_name}'，long_die 將在時間段到期後自動恢復。")
+    except Exception as e:
+        print(f"[dual-backend] Long DIE response error: {e}", file=sys.stderr)
 
     # ─── Phase 0: Session Context Injection (first prompt only) ────────
     budget = compute_token_budget(prompt)
@@ -952,13 +1062,10 @@ def handle_user_prompt_submit(
             proactive_lines = _proactive_classify(state, episodic_results, prompt, config)
             lines.extend(proactive_lines)
 
-    # ─── V2.8: Wisdom Engine — causal warnings + situation ──────────
+    # ─── V2.8: Wisdom Engine — situation classification ──────────
     if WISDOM_AVAILABLE:
         try:
             mod_paths = [m["path"] for m in state.get("modified_files", [])]
-            if mod_paths:
-                causal = get_causal_warnings(mod_paths)
-                lines.extend(causal)
             tracker = state.get("topic_tracker", {})
             prompt_analysis = {
                 "intent": tracker.get("intent_distribution", {}).get("top", ""),
@@ -968,6 +1075,12 @@ def handle_user_prompt_submit(
             result = classify_situation(prompt_analysis)
             if result.get("inject"):
                 lines.append(result["inject"])
+            # 記錄最高 approach 供 SessionEnd reflect() 使用
+            cur = result.get("approach", "direct")
+            prev = state.get("wisdom_approach", "direct")
+            rank = {"direct": 0, "confirm": 1, "plan": 2}
+            if rank.get(cur, 0) > rank.get(prev, 0):
+                state["wisdom_approach"] = cur
         except Exception as e:
             print(f"[v2.8] Wisdom prompt error: {e}", file=sys.stderr)
 
@@ -1212,7 +1325,7 @@ def handle_user_prompt_submit(
                             access_file.write_text(json.dumps(adata), encoding="utf-8")
                         except (OSError, json.JSONDecodeError):
                             pass
-                        # Promotion logic (v2.2) — auto-promote [臨]→[觀], hint [觀]→[固]
+                        # Promotion hint (v2.11) — no auto-promote, hint only
                         if new_count is not None:
                             conf_m = confidence_re.search(text)
                             if conf_m:
@@ -1220,26 +1333,11 @@ def handle_user_prompt_submit(
                                 threshold = PROMOTION_THRESHOLDS.get(cur)
                                 if threshold and new_count >= threshold:
                                     target = PROMOTION_TARGETS[cur]
-                                    pro_config = config.get("proactive", {})
-                                    if cur == "[臨]" and pro_config.get("auto_promote_lin", True):
-                                        # Auto-promote [臨]→[觀]: low risk
-                                        text = text.replace(
-                                            f"- Confidence: {cur}",
-                                            f"- Confidence: {target}",
-                                            1,
-                                        )
-                                        apath.write_text(text, encoding="utf-8")
-                                        lines.append(
-                                            f"✅ [{inj_name}] 已自動晉升 {cur}→{target}"
-                                            f"（Confirmations={new_count}）"
-                                        )
-                                    else:
-                                        # [觀]→[固]: high-confidence change, ask user
-                                        lines.append(
-                                            f"⚡ [{inj_name}] Confirmations={new_count}, "
-                                            f"目前{cur}, 已達{target}門檻，"
-                                            f"觸及相關行為時請主動確認是否晉升"
-                                        )
+                                    lines.append(
+                                        f"⚡ [{inj_name}] Confirmations={new_count}, "
+                                        f"目前{cur}, 已達{target}門檻，"
+                                        f"觸及相關行為時請主動確認是否晉升"
+                                    )
                     except (OSError, UnicodeDecodeError):
                         pass
                     break
@@ -1289,27 +1387,9 @@ def handle_user_prompt_submit(
 
     write_state(session_id, state)
 
-    # ─── V2.4: Spawn detached extraction subprocess BEFORE output ──
-    # output_json/output_nothing call sys.exit(0), so this must come first.
-    # Subprocess survives parent exit — hook has 3s timeout but extraction needs ~30s.
-    rc = config.get("response_capture", {})
-    if rc.get("enabled", True) and rc.get("per_turn_enabled", True):
-        cwd = state.get("session", {}).get("cwd", "")
-        if cwd and state.get("session_context_injected", False):
-            import subprocess
-            extract_script = str(Path(__file__).parent / "extract-worker.py")
-            config_json = json.dumps(config)
-            try:
-                subprocess.Popen(
-                    [sys.executable, extract_script, session_id, cwd, config_json],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True,
-                )
-            except OSError:
-                pass  # Non-critical
-
     if lines:
+        # V2.11: Context budget hard cap
+        lines = _truncate_context_by_activation(lines, budget)
         output_json({
             "hookSpecificOutput": {
                 "hookEventName": "UserPromptSubmit",
@@ -1338,6 +1418,10 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             "at": _now_iso(),
         })
         state["sync_pending"] = True
+
+        # V2.11: Track per-file edit counts for over-engineering detection
+        edit_counts = state.setdefault("edit_counts", {})
+        edit_counts[file_path] = edit_counts.get(file_path, 0) + 1
 
         # V2.8: Wisdom Engine retry tracking
         if WISDOM_AVAILABLE:
@@ -1539,44 +1623,6 @@ def _find_session_transcript(session_id: str, cwd: str) -> Optional[Path]:
     return None
 
 
-def _extract_last_assistant_text(transcript_path: Path, max_chars: int = 3000) -> str:
-    """Extract the last assistant text response from a JSONL transcript.
-
-    Reads from end, skips thinking/tool_use blocks, returns text only.
-    """
-    try:
-        with open(transcript_path, "r", encoding="utf-8") as f:
-            lines_raw = f.readlines()
-    except (OSError, UnicodeDecodeError):
-        return ""
-
-    # Scan from end to find last assistant message with text content
-    for raw_line in reversed(lines_raw):
-        try:
-            obj = json.loads(raw_line)
-        except json.JSONDecodeError:
-            continue
-        if obj.get("type") != "assistant":
-            continue
-        content = obj.get("message", {}).get("content", [])
-        if not isinstance(content, list):
-            continue
-        texts = []
-        total = 0
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                t = block.get("text", "")
-                if t:
-                    texts.append(t)
-                    total += len(t)
-                    if total >= max_chars:
-                        break
-        if texts:
-            combined = "\n".join(texts)
-            return combined[:max_chars]
-    return ""
-
-
 def _extract_all_assistant_texts(transcript_path: Path, max_chars: int = 20000) -> List[str]:
     """Extract all assistant text responses from a JSONL transcript (for SessionEnd)."""
     texts = []
@@ -1606,54 +1652,44 @@ def _extract_all_assistant_texts(transcript_path: Path, max_chars: int = 20000) 
     return texts
 
 
-def _call_ollama_generate(prompt: str, model: str = "qwen3:1.7b",
+def _call_ollama_generate(prompt: str, model: str = None,
                           timeout: int = 120) -> str:
-    """Call Ollama generate API. Returns raw response text.
+    """Call Ollama generate API via dual-backend client.
 
-    Default timeout=120s: qwen3 thinking mode needs ~30s.
+    Default timeout=120s: qwen3 thinking mode needs ~30s on GTX 1050 Ti.
     Background threads (extraction) can afford to wait.
     """
-    payload = json.dumps({
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "format": "json",
-        "options": {"temperature": 0.1, "num_predict": 2048}
-    }).encode("utf-8")
-
-    req = urllib.request.Request(
-        "http://127.0.0.1:11434/api/generate",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-    )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read())
-            return data.get("response", "")
+        client = get_client()
+        # think="auto" → rdchat: think=True + 8192, local: think=False + 2048
+        # 不用 format="json" — qwen3.5 thinking mode 與 JSON constrained decoding 衝突
+        return client.generate(
+            prompt, model=model, timeout=timeout,
+            temperature=0.1, think="auto",
+        )
     except Exception:
         return ""
 
 
 _EXTRACT_PROMPT_TEMPLATE = (
-    "Extract reusable technical knowledge from this AI assistant response. "
-    "Output a JSON array of objects, each with 'content' (max 80 chars, concise fact) "
-    "and 'type' (one of: factual, procedural, architectural, pitfall). "
-    "Only extract: root causes, API behaviors, architecture constraints, "
-    "debugging patterns, configuration values, environment-specific behaviors. "
-    "Skip: code changes, general programming knowledge, session-specific details, greetings. "
-    "If nothing worth extracting, output empty array [].\n\n"
-    "Response text:\n{text}\n\nJSON:"
+    "你是「原子記憶系統」的知識萃取器。從 AI 回應中萃取可跨 session 重用的知識。\n"
+    "輸出 JSON array: [{{\"content\": \"精簡事實，最多150字\", "
+    "\"type\": \"factual|procedural|architectural|pitfall|decision\"}}]\n\n"
+    "只萃取：根因分析、API 行為、架構限制、除錯模式、設定值、環境特有行為。\n"
+    "不萃取：程式碼變更、通用程式知識、session 進度、問候語。\n"
+    "沒有值得萃取的內容就輸出 []。直接輸出 JSON。\n\n"
+    "回應文字:\n{text}\n\nJSON:"
 )
 
 
 def _llm_extract_knowledge(text: str, existing_queue: List[dict],
-                           source: str = "per-turn") -> List[dict]:
-    """Use local LLM (qwen3:1.7b) to extract knowledge from assistant text.
+                           source: str = "session-end") -> List[dict]:
+    """Use local LLM to extract knowledge from assistant text (SessionEnd only).
 
     Args:
         text: Assistant response text
         existing_queue: Already queued knowledge items (for dedup)
-        source: "per-turn" or "session-end" (affects limits and timeout)
+        source: extraction source label
 
     Returns:
         List of knowledge items: [{content, classification, knowledge_type, source, at}]
@@ -1661,13 +1697,8 @@ def _llm_extract_knowledge(text: str, existing_queue: List[dict],
     if not text or len(text) < 50:
         return []
 
-    # Source-dependent limits (timeout handled by _call_ollama_generate default)
-    if source == "per-turn":
-        max_chars = 3000
-        max_items = 2
-    else:  # session-end
-        max_chars = 4000
-        max_items = 5
+    max_chars = 4000
+    max_items = 5
 
     truncated = text[:max_chars]
     prompt = _EXTRACT_PROMPT_TEMPLATE.format(text=truncated)
@@ -1685,7 +1716,7 @@ def _llm_extract_knowledge(text: str, existing_queue: List[dict],
             items = json.loads(match.group(0))
     except (json.JSONDecodeError, ValueError):
         # Regex fallback: try to extract content/type pairs
-        for m in re.finditer(r'"content"\s*:\s*"([^"]{10,80})"', raw):
+        for m in re.finditer(r'"content"\s*:\s*"([^"]{10,150})"', raw):
             items.append({"content": m.group(1), "type": "factual"})
 
     if not items:
@@ -1706,10 +1737,10 @@ def _llm_extract_knowledge(text: str, existing_queue: List[dict],
         if content[:40].lower() in existing_fingerprints:
             continue
         knowledge_type = item.get("type", "factual")
-        if knowledge_type not in ("factual", "procedural", "architectural", "pitfall"):
+        if knowledge_type not in ("factual", "procedural", "architectural", "pitfall", "decision"):
             knowledge_type = "factual"
         results.append({
-            "content": content[:80],
+            "content": content[:150],
             "classification": "[臨]",
             "knowledge_type": knowledge_type,
             "source": source,
@@ -1718,38 +1749,6 @@ def _llm_extract_knowledge(text: str, existing_queue: List[dict],
         existing_fingerprints.add(content[:40].lower())
 
     return results
-
-
-def _async_extract_last_response(session_id: str, cwd: str, config: dict) -> None:
-    """Background thread: extract knowledge from last assistant response → write to state."""
-    try:
-        transcript = _find_session_transcript(session_id, cwd)
-        if not transcript:
-            return
-
-        rc = config.get("response_capture", {})
-        max_chars = rc.get("per_turn_max_chars", 3000)
-        min_chars = rc.get("per_turn_min_response_chars", 100)
-
-        text = _extract_last_assistant_text(transcript, max_chars=max_chars)
-        if not text or len(text) < min_chars:
-            return
-
-        state = read_state(session_id)
-        if not state:
-            return
-        existing = state.get("knowledge_queue", [])
-        items = _llm_extract_knowledge(text, existing, source="per-turn")
-        if items:
-            # Re-read state for freshness (avoid race condition)
-            state = read_state(session_id)
-            if not state:
-                return
-            state["pending_extraction"] = items
-            write_state(session_id, state)
-            print(f"[v2.4] Per-turn extraction: {len(items)} items", file=sys.stderr)
-    except Exception as e:
-        print(f"[v2.4] Per-turn extraction error: {e}", file=sys.stderr)
 
 
 # ─── V2.4 Phase 3: Cross-Session Pattern Consolidation ────────────────────
@@ -1835,40 +1834,44 @@ def _check_cross_session_patterns(
             if hit_count < promote_threshold:
                 continue
 
+            # V2.11: No auto-promote — Confirmations +1 only, hint at 4+
             current_class = item.get("classification", "[臨]")
-            new_class = current_class
             action = ""
 
-            if hit_count >= suggest_threshold and current_class in ("[觀]", "[臨]"):
-                # 4+ sessions: suggest [觀] → [固] (don't auto-execute)
-                if current_class == "[臨]":
-                    item["classification"] = "[觀]"
-                    new_class = "[觀]"
-                action = f"建議晉升 → [固]（{hit_count} sessions 命中，需使用者確認）"
-            elif hit_count >= promote_threshold and current_class == "[臨]":
-                # 2+ sessions: auto-promote [臨] → [觀]
-                item["classification"] = "[觀]"
-                new_class = "[觀]"
-                action = f"自動晉升 [臨] → [觀]（{hit_count} sessions 命中）"
+            if hit_count >= suggest_threshold:
+                action = f"建議晉升（{hit_count} sessions 命中，需使用者確認）"
+            else:
+                action = f"跨 session 命中 {hit_count} 次（Confirmations +1）"
 
-            if action:
-                observations.append({
-                    "content": content[:80],
-                    "classification": new_class,
-                    "sessions_hit": hit_count,
-                    "action": action,
-                    "matched_atoms": list(session_hits)[:5],
-                })
-                # Annotate the item's trigger_context
-                prev_ctx = item.get("trigger_context", "")
-                item["trigger_context"] = (
-                    f"{prev_ctx} | cross-session: {hit_count} hits, {action}"
-                ).strip(" | ")
+            # Increment Confirmations in matched atom files
+            for r in results:
+                atom_file = r.get("file_path", "")
+                if atom_file and os.path.isfile(atom_file):
+                    try:
+                        atom_text = Path(atom_file).read_text(encoding="utf-8-sig")
+                        cm = re.search(r"^(- Confirmations:\s*)(\d+)", atom_text, re.MULTILINE)
+                        if cm:
+                            new_c = int(cm.group(2)) + 1
+                            atom_text = re.sub(
+                                r"^(- Confirmations:\s*)\d+", rf"\g<1>{new_c}",
+                                atom_text, count=1, flags=re.MULTILINE,
+                            )
+                            Path(atom_file).write_text(atom_text, encoding="utf-8")
+                    except (OSError, UnicodeDecodeError):
+                        pass
 
-                print(
-                    f"[v2.4] Cross-session: \"{content[:40]}...\" → {action}",
-                    file=sys.stderr,
-                )
+            observations.append({
+                "content": content[:80],
+                "classification": current_class,
+                "sessions_hit": hit_count,
+                "action": action,
+                "matched_atoms": list(session_hits)[:5],
+            })
+
+            print(
+                f"[v2.11] Cross-session: \"{content[:40]}...\" → {action}",
+                file=sys.stderr,
+            )
 
         except Exception as e:
             print(f"[v2.4] Cross-session check error: {e}", file=sys.stderr)
@@ -1877,7 +1880,91 @@ def _check_cross_session_patterns(
     return observations
 
 
-# ─── End V2.4 ─────────────────────────────────────────────────────────────
+# ─── V2.11: Conflict Detection ─────────────────────────────────────────────
+
+
+def _detect_atom_conflicts(
+    state: Dict[str, Any], config: Dict[str, Any]
+) -> List[dict]:
+    """Detect potential conflicts between session-modified atoms and existing atoms.
+
+    For each modified atom file, query vector search (score 0.60-0.95).
+    Results in that range suggest semantically similar but different content — potential conflicts.
+    """
+    vs_config = config.get("vector_search", {})
+    if not vs_config.get("enabled", True):
+        return []
+
+    port = vs_config.get("service_port", 3849)
+    timeout_s = 5
+    conflicts: List[dict] = []
+
+    modified = state.get("modified_files", [])
+    atom_files = [
+        m for m in modified
+        if "/memory/" in m.get("path", "").replace("\\", "/")
+        and m.get("path", "").endswith(".md")
+    ]
+
+    for m in atom_files:
+        fpath = m["path"]
+        try:
+            content = Path(fpath).read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        # Use first 200 chars as query
+        query = content[:200].strip()
+        if len(query) < 30:
+            continue
+
+        try:
+            import urllib.parse
+            params = urllib.parse.urlencode({
+                "q": query, "top_k": 5, "min_score": 0.60,
+            })
+            url = f"http://127.0.0.1:{port}/search/ranked?{params}"
+            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+                    results = json.loads(resp.read())
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    params = urllib.parse.urlencode({
+                        "q": query, "top_k": 5, "min_score": 0.60,
+                    })
+                    url = f"http://127.0.0.1:{port}/search?{params}"
+                    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+                    with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+                        results = json.loads(resp.read())
+                else:
+                    continue
+
+            fname = Path(fpath).stem
+            for r in results:
+                score = r.get("score", 0)
+                other_name = r.get("atom_name", "")
+                other_path = r.get("file_path", "")
+                # Skip self-match (same file or score > 0.95)
+                if score > 0.95 or other_name == fname:
+                    continue
+                if other_path and os.path.normpath(other_path) == os.path.normpath(fpath):
+                    continue
+                conflicts.append({
+                    "source": fname,
+                    "target": other_name,
+                    "score": round(score, 3),
+                    "snippet": r.get("text", r.get("content", ""))[:80],
+                })
+
+        except Exception as e:
+            print(f"[v2.11] Conflict detection error: {e}", file=sys.stderr)
+            continue
+
+    return conflicts
+
+
+# ─── End V2.11 Conflict Detection ─────────────────────────────────────────
 
 
 def _build_episodic_summary(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -2054,6 +2141,22 @@ def _build_cross_session_section(state: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _build_conflict_section(state: Dict[str, Any]) -> str:
+    """V2.11: Build '## ⚠ 衝突警告' section from conflict detection results."""
+    warnings = state.get("conflict_warnings", [])
+    if not warnings:
+        return ""
+    lines = ["## ⚠ 衝突警告\n"]
+    for w in warnings:
+        lines.append(
+            f"- {w['source']} ↔ {w['target']} (score={w['score']}) "
+            f"— \"{w.get('snippet', '')[:60]}\""
+        )
+    lines.append("")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _resolve_episodic_dir(state: Dict[str, Any]) -> Tuple[Path, str]:
     """Resolve episodic directory: project-scoped if CWD maps to a project, else global.
 
@@ -2107,32 +2210,6 @@ def _generate_episodic_atom(
         )
     for ki in summary["knowledge_items"]:
         knowledge_lines.append(f"- [{ki['classification'].strip('[]')}] {ki['content']}")
-
-    # V2.6: Record which atoms were MODIFIED (for oscillation detection)
-    atoms_modified = state.get("iteration_metrics", {}).get("atoms_modified", [])
-    if atoms_modified:
-        knowledge_lines.append(
-            f"- [臨] 修改 atoms: {', '.join(atoms_modified)}"
-        )
-
-    # V2.7: Record quality feedback (files rewritten from previous sessions)
-    qf_files = state.get("quality_feedback", {}).get("rewritten_files", [])
-    if qf_files:
-        # Deduplicate by path
-        seen = set()
-        unique_qf = []
-        for qf in qf_files:
-            p = qf.get("path", "").replace("\\", "/").lower()
-            if p not in seen:
-                seen.add(p)
-                unique_qf.append(qf)
-        knowledge_lines.append(
-            f"- [臨] 品質回饋: {len(unique_qf)} 個檔案與前 session 重疊修改"
-        )
-        for qf in unique_qf[:5]:  # Cap at 5 to avoid bloat
-            knowledge_lines.append(
-                f"  - {qf['path']} (前 session: {qf.get('original_session', '?')})"
-            )
 
     # V2.10: Read tracking summary
     if summary.get("files_accessed", 0) > 0:
@@ -2194,6 +2271,7 @@ def _generate_episodic_atom(
         + (f"## 關聯\n\n" + "\n".join(relation_lines) + "\n\n" if relation_lines else "")
         + _build_read_tracking_section(summary)
         + _build_cross_session_section(state)
+        + _build_conflict_section(state)
         + f"## 行動\n"
         f"\n"
         f"- session 自動摘要，TTL 24d 後自動淘汰\n"
@@ -2223,49 +2301,49 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
     state["ended_at"] = _now_iso()
     state["phase"] = "done"
 
-    # ─── V2.4: Collect any pending per-turn extraction ──────────────
-    pending = state.pop("pending_extraction", [])
-    if pending:
-        state.setdefault("knowledge_queue", []).extend(pending)
-
-    # ─── V2.4: SessionEnd transcript extraction (补漏) ────────────────
+    # ─── V2.11-fix: Spawn extract-worker.py as detached subprocess ──────
+    # extract-worker handles: transcript reading, LLM extraction, cross-session
+    # observation, and pattern aggregation — all independently of hook timeout.
     rc = config.get("response_capture", {})
     if rc.get("enabled", True):
         try:
+            import subprocess
             cwd = state.get("session", {}).get("cwd", "")
-            transcript = _find_session_transcript(session_id, cwd)
-            if transcript:
-                se_max = rc.get("session_end_max_chars", 20000)
-                texts = _extract_all_assistant_texts(transcript, max_chars=se_max)
-                if texts:
-                    combined = "\n---\n".join(texts)
-                    existing = state.get("knowledge_queue", [])
-                    new_items = _llm_extract_knowledge(
-                        combined, existing, source="session-end"
-                    )
-                    if new_items:
-                        state.setdefault("knowledge_queue", []).extend(new_items)
-                        print(
-                            f"[v2.4] SessionEnd extraction: {len(new_items)} items",
-                            file=sys.stderr,
-                        )
-        except Exception as e:
-            print(f"[v2.4] SessionEnd extraction error: {e}", file=sys.stderr)
-
-    # ─── V2.4 Phase 3: Cross-session pattern consolidation ──────────
-    cross_obs = []
-    kq = state.get("knowledge_queue", [])
-    if kq and config.get("vector_search", {}).get("enabled", True):
-        try:
-            cross_obs = _check_cross_session_patterns(kq, session_id, config)
-            if cross_obs:
-                state["cross_session_observations"] = cross_obs
+            tracker = state.get("topic_tracker", {})
+            intent = tracker.get("intent_distribution", {}).get("top", "build")
+            worker_ctx = json.dumps({
+                "session_id": session_id,
+                "cwd": cwd,
+                "config": config,
+                "knowledge_queue": state.get("knowledge_queue", []),
+                "session_intent": intent,
+            }, ensure_ascii=False)
+            worker_path = CLAUDE_DIR / "hooks" / "extract-worker.py"
+            if worker_path.exists():
+                # Detached subprocess: survives hook timeout
+                kwargs = {}
+                if sys.platform == "win32":
+                    kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
+                else:
+                    kwargs["start_new_session"] = True
+                worker_log = CLAUDE_DIR / "workflow" / "extract-worker.log"
+                worker_log_fh = open(worker_log, "a", encoding="utf-8")
+                proc = subprocess.Popen(
+                    [sys.executable, str(worker_path)],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.DEVNULL,
+                    stderr=worker_log_fh,
+                    **kwargs,
+                )
+                worker_log_fh.close()  # fd inherited by child; parent can close
+                proc.stdin.write(worker_ctx.encode("utf-8"))
+                proc.stdin.close()
                 print(
-                    f"[v2.4] Cross-session: {len(cross_obs)} patterns detected",
+                    f"[v2.11] extract-worker spawned (pid={proc.pid}, intent={intent})",
                     file=sys.stderr,
                 )
         except Exception as e:
-            print(f"[v2.4] Cross-session check error: {e}", file=sys.stderr)
+            print(f"[v2.11] extract-worker spawn error: {e}", file=sys.stderr)
 
     mod_count = len(state.get("modified_files", []))
     kq_count = len(state.get("knowledge_queue", []))
@@ -2300,6 +2378,21 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
         except Exception as e:
             print(f"[v2.8] Wisdom reflect error: {e}", file=sys.stderr)
 
+    # ─── V2.11: over_engineering 統計已由 wisdom_reflect(state) 統一處理 ────
+    # （track_retry 累計 wisdom_retry_count → reflect() 寫入 reflection_metrics）
+    try:
+        edit_counts = state.get("edit_counts", {})
+        if edit_counts:
+            reverted = sum(1 for c in edit_counts.values() if c >= 2)
+            if reverted > 0:
+                print(
+                    f"[v2.11] Over-engineering: {reverted}/{len(edit_counts)} files "
+                    f"edited 2+ times",
+                    file=sys.stderr,
+                )
+    except Exception as e:
+        print(f"[v2.11] Over-engineering metrics error: {e}", file=sys.stderr)
+
     # V2.10: Staging area reminder
     staging_dir = MEMORY_DIR / "_staging"
     if staging_dir.exists():
@@ -2310,6 +2403,20 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
                 file=sys.stderr,
             )
 
+    # ─── V2.11: Conflict detection ──────────────────────────────────
+    try:
+        conflict_warnings = _detect_atom_conflicts(state, config)
+        if conflict_warnings:
+            state["conflict_warnings"] = conflict_warnings
+            for cw in conflict_warnings:
+                print(
+                    f"[v2.11] Conflict: {cw['source']} ↔ {cw['target']} "
+                    f"(score={cw['score']})",
+                    file=sys.stderr,
+                )
+    except Exception as e:
+        print(f"[v2.11] Conflict detection error: {e}", file=sys.stderr)
+
     # v2.1 Task #2: Auto-generate episodic atom
     episodic_generated = False
     if config.get("episodic", {}).get("auto_generate", True):
@@ -2318,6 +2425,15 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
             episodic_generated = True
         except Exception as e:
             print(f"[episodic] generation failed: {e}", file=sys.stderr)
+
+    # V2.11-fix: Save review marker if review was due this session
+    if state.get("review_due"):
+        try:
+            total = sum(1 for _ in EPISODIC_DIR.glob("episodic-*.md")) if EPISODIC_DIR.exists() else 0
+            _save_review_marker(total)
+            print(f"[v2.6] Review marker saved (total={total})", file=sys.stderr)
+        except Exception as e:
+            print(f"[v2.6] Review marker save error: {e}", file=sys.stderr)
 
     write_state(session_id, state)
 

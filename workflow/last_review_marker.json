@@ -1,11 +1,4 @@
 {
-  "last_review_date": "2026-03-10",
-  "session_count_at_review": 24,
-  "actions_taken": [
-    "toolchain.md: [觀]→[固] (Confirmations=4)",
-    "episodic scan: 7 global + 14 OpenClaw + 3 OpenClawWorkSpace",
-    "no new atoms needed (patterns already captured in existing atoms)",
-    "SPEC v2.7 cleanup completed in same session"
-  ],
-  "next_review_threshold": 6
+  "session_count": 0,
+  "reviewed_at": "2026-03-13T20:10:50+08:00"
 }

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-wisdom_engine.py — Wisdom Engine V2.8
+wisdom_engine.py — Wisdom Engine V2.11
 
-Three forces: Causal Graph, Situation Classifier, Reflection Engine.
+Two forces: Situation Classifier (hard rules), Reflection Engine (enhanced).
+Causal Graph removed in V2.11 — stubs kept for API compat.
 Called by workflow-guardian.py. Cold start = zero tokens.
 """
 import json
@@ -12,13 +13,12 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 WISDOM_DIR = Path.home() / ".claude" / "memory" / "wisdom"
-CAUSAL_GRAPH_PATH = WISDOM_DIR / "causal_graph.json"
 REFLECTION_PATH = WISDOM_DIR / "reflection_metrics.json"
 
-DEFAULT_WEIGHTS = {"file": 2.0, "feature": 4.0, "arch": 5.0, "quick": -4.0, "thorough": 3.0}
 ARCH_KEYWORDS = {"架構", "refactor", "重構", "migrate", "migration", "重寫"}
-QUICK_KEYWORDS = {"快速", "簡單", "quick", "simple", "小改"}
-THOROUGH_KEYWORDS = {"好好", "徹底", "thorough", "完整", "仔細"}
+
+# Module-level state for silence_accuracy tracking (same process as guardian)
+_last_approach: str = "direct"
 
 
 def _load_json(path: Path, default: Any) -> Any:
@@ -44,135 +44,51 @@ def _save_json(path: Path, data: Any) -> None:
             tmp.unlink()
 
 
-# ── Force 1: Causal Graph ────────────────────────────────────────────────────
+# ── [V2.11 移除] Causal Graph — stubs for API compat ────────────────────────
 
 def get_causal_warnings(touched_files: List[str], max_depth: int = 2) -> List[str]:
-    """BFS over causal graph → ≤3 warning strings."""
-    graph = _load_json(CAUSAL_GRAPH_PATH, {"nodes": {}, "edges": []})
-    edges = graph.get("edges", [])
-    if not edges or not touched_files:
-        return []
-
-    touched_set = set()
-    for f in touched_files:
-        norm = f.replace("\\", "/")
-        touched_set.add(norm)
-        if "/" in norm:
-            touched_set.add(norm.rsplit("/", 1)[-1])
-
-    warnings, visited, warned_edges = [], set(), set()
-    queue = [(f, 0) for f in touched_set]
-    while queue:
-        node, depth = queue.pop(0)
-        if node in visited or depth > max_depth:
-            continue
-        visited.add(node)
-        for edge in edges:
-            if edge.get("confidence", 0) < 0.6:
-                continue
-            e_from = edge.get("from", "")
-            if node == e_from or node in e_from or e_from in node:
-                target = edge.get("to", "")
-                edge_key = (e_from, target)
-                if edge_key in warned_edges:
-                    continue
-                warned_edges.add(edge_key)
-                through = edge.get("through", "")
-                evidence = edge.get("evidence", "")
-                hint = evidence or (f"via {through}" if through else "")
-                warnings.append(
-                    f"[因果] {e_from} ←{through}→ {target} ({edge['confidence']:.2f})"
-                    + (f" | {hint}" if hint else "")
-                )
-                if target not in visited:
-                    queue.append((target, depth + 1))
-    return warnings[:3]
+    """Stub: causal graph removed in V2.11."""
+    return []
 
 
-def add_causal_edge(
-    edge_from: str,
-    edge_to: str,
-    relation: str = "coupled_via",
-    through: str = "",
-    evidence: str = "",
-    confidence: float = 0.7,
-) -> bool:
-    """Add a new edge to the causal graph. Returns True if added, False if duplicate."""
-    graph = _load_json(CAUSAL_GRAPH_PATH, {"nodes": {}, "edges": []})
-    edges = graph.get("edges", [])
-
-    # Dedup: skip if same from→to already exists
-    for edge in edges:
-        if edge.get("from") == edge_from and edge.get("to") == edge_to:
-            return False
-
-    # Auto-create nodes
-    nodes = graph.setdefault("nodes", {})
-    for n in (edge_from, edge_to):
-        if n not in nodes:
-            ntype = "file" if "." in n or "/" in n else "concept"
-            nodes[n] = {"type": ntype, "domain": "auto"}
-    if through and through not in nodes:
-        nodes[through] = {"type": "concept", "domain": "auto"}
-
-    edges.append({
-        "from": edge_from,
-        "to": edge_to,
-        "relation": relation,
-        "through": through,
-        "confidence": confidence,
-        "evidence": evidence or f"{datetime.now(timezone.utc).strftime('%Y-%m-%d')} auto",
-    })
-    graph["edges"] = edges
-    _save_json(CAUSAL_GRAPH_PATH, graph)
-    return True
+def add_causal_edge(edge_from: str, edge_to: str, **kwargs) -> bool:
+    """Stub: causal graph removed in V2.11."""
+    return False
 
 
 def update_causal_confidence(edge_from: str, edge_to: str, hit: bool) -> None:
-    """Bayesian update: hit → approach 1.0, miss → decay toward 0."""
-    graph = _load_json(CAUSAL_GRAPH_PATH, {"nodes": {}, "edges": []})
-    edges = graph.get("edges", [])
-    updated = False
-    for edge in edges:
-        if edge.get("from") == edge_from and edge.get("to") == edge_to:
-            if hit:
-                edge["confidence"] = edge["confidence"] * 0.9 + 0.1
-            else:
-                edge["confidence"] = edge["confidence"] * 0.95
-            updated = True
-            break
-    graph["edges"] = [e for e in edges if e.get("confidence", 0) >= 0.3]
-    if updated:
-        _save_json(CAUSAL_GRAPH_PATH, graph)
+    """Stub: causal graph removed in V2.11."""
+    pass
 
 
-# ── Force 2: Situation Classifier ────────────────────────────────────────────
+# ── Force 1: Situation Classifier (V2.11 hard rules) ────────────────────────
 
 def classify_situation(prompt_analysis: Dict[str, Any]) -> Dict[str, str]:
-    """Weighted scoring → approach (direct/confirm/plan) + inject string."""
-    metrics = _load_json(REFLECTION_PATH, {})
-    weights = metrics.get("calibrated_weights", DEFAULT_WEIGHTS)
+    """Hard rules → approach (direct/confirm/plan) + inject string."""
+    global _last_approach
+
     keywords = set(prompt_analysis.get("keywords", []))
-    intent = prompt_analysis.get("intent", "")
+    file_count = prompt_analysis.get("estimated_files", 1)
+    is_feature = prompt_analysis.get("intent", "") == "feature"
+    touches_arch = bool(keywords & ARCH_KEYWORDS)
 
-    file_count = min(prompt_analysis.get("estimated_files", 1), 5)
-    score = (
-        file_count * weights.get("file", 2.0)
-        + (1 if intent == "feature" else 0) * weights.get("feature", 4.0)
-        + (1 if keywords & ARCH_KEYWORDS else 0) * weights.get("arch", 5.0)
-        + (1 if keywords & QUICK_KEYWORDS else 0) * weights.get("quick", -4.0)
-        + (1 if keywords & THOROUGH_KEYWORDS else 0) * weights.get("thorough", 3.0)
-    )
+    # Bayesian: arch sensitivity elevation lowers plan threshold
+    metrics = _load_json(REFLECTION_PATH, {})
+    arch_elevated = metrics.get("arch_sensitivity_elevated", False)
+    plan_threshold = 2 if arch_elevated else 3
 
-    if score <= 4:
-        return {"approach": "direct", "inject": ""}
-    elif score <= 10:
-        return {"approach": "confirm", "inject": "[情境:確認] 跨檔修改，建議先列範圍"}
+    if touches_arch or file_count > plan_threshold:
+        result = {"approach": "plan", "inject": "[情境:規劃] 架構級變更，建議 Plan Mode"}
+    elif file_count > 2 and is_feature:
+        result = {"approach": "confirm", "inject": "[情境:確認] 跨檔修改，建議先列範圍"}
     else:
-        return {"approach": "plan", "inject": "[情境:規劃] 架構級變更，建議 Plan Mode"}
+        result = {"approach": "direct", "inject": ""}
+
+    _last_approach = result["approach"]
+    return result
 
 
-# ── Force 3: Reflection Engine ───────────────────────────────────────────────
+# ── Force 2: Reflection Engine (V2.11 enhanced) ─────────────────────────────
 
 def _empty_reflection() -> Dict[str, Any]:
     return {
@@ -187,12 +103,11 @@ def _empty_reflection() -> Dict[str, Any]:
                 "user_reverted_or_simplified": 0, "total_suggestions": 0,
             },
             "silence_accuracy": {
-                "held_back_and_user_didnt_ask": 0,
-                "held_back_but_user_needed": 0,
-                "spoke_but_user_ignored": 0,
+                "held_back_ok": 0,
+                "held_back_missed": 0,
             },
         },
-        "calibrated_weights": dict(DEFAULT_WEIGHTS),
+        "arch_sensitivity_elevated": False,
         "blind_spots": [],
         "last_reflection": None,
     }
@@ -208,26 +123,50 @@ def get_reflection_summary() -> List[str]:
 
 
 def reflect(state: Dict[str, Any]) -> None:
-    """SessionEnd: update accuracy stats from session data."""
+    """SessionEnd: update accuracy stats, silence accuracy, Bayesian calibration."""
     metrics = _load_json(REFLECTION_PATH, _empty_reflection())
-    faa = metrics.setdefault("metrics", _empty_reflection()["metrics"]) \
-                 .setdefault("first_approach_accuracy", {})
+    m = metrics.setdefault("metrics", _empty_reflection()["metrics"])
+    faa = m.setdefault("first_approach_accuracy", {})
 
+    # ── first_approach_accuracy ──
+    # 用 Wisdom classify_situation 的結果判定任務類型，而非純看檔案數
+    approach = state.get("wisdom_approach", "direct")
     mod_files = state.get("modified_files", [])
-    file_count = len(set(m.get("path", "") for m in mod_files))
-    if file_count <= 1:
-        task_type = "single_file"
-    elif file_count <= 4:
-        task_type = "multi_file"
-    else:
+    file_count = len(set(m_item.get("path", "") for m_item in mod_files))
+    if approach == "plan":
         task_type = "architecture"
+    elif file_count <= 1:
+        task_type = "single_file"
+    else:
+        task_type = "multi_file"
 
     bucket = faa.setdefault(task_type, {"correct": 0, "total": 0})
     bucket["total"] += 1
-    if state.get("wisdom_retry_count", 0) == 0:
+    retry_count = state.get("wisdom_retry_count", 0)
+    if retry_count == 0:
         bucket["correct"] += 1
 
-    # Blind spot detection
+    # ── over_engineering_rate: total_suggestions +1 per session ──
+    oe = m.setdefault("over_engineering_rate",
+         {"user_reverted_or_simplified": 0, "total_suggestions": 0})
+    oe["total_suggestions"] += 1
+
+    # ── silence_accuracy (V2.11) ──
+    sa = m.setdefault("silence_accuracy", {"held_back_ok": 0, "held_back_missed": 0})
+    # 遷移舊 key（held_back_and_user_didnt_ask → held_back_ok 等）
+    if "held_back_ok" not in sa:
+        sa["held_back_ok"] = sa.pop("held_back_and_user_didnt_ask", 0)
+        sa["held_back_missed"] = sa.pop("held_back_but_user_needed", 0)
+        sa.pop("spoke_but_user_ignored", None)
+    # 用 state 保存的 approach（跨 process 持久），不用 module-level _last_approach
+    session_approach = approach  # 已從 state["wisdom_approach"] 取得
+    if session_approach == "direct":
+        if retry_count == 0:
+            sa["held_back_ok"] += 1
+        else:
+            sa["held_back_missed"] += 1
+
+    # ── Blind spot detection ──
     blind_spots = []
     for tt, b in faa.items():
         total = b.get("total", 0)
@@ -237,6 +176,14 @@ def reflect(state: Dict[str, Any]) -> None:
             if rate < 0.7:
                 blind_spots.append(f"{tt} 首次正確率 {rate:.0%}")
     metrics["blind_spots"] = blind_spots
+
+    # ── Bayesian: architecture sensitivity calibration (V2.11) ──
+    arch = faa.get("architecture", {"correct": 0, "total": 0})
+    if arch["total"] >= 3 and arch["correct"] / max(arch["total"], 1) < 0.34:
+        metrics["arch_sensitivity_elevated"] = True
+    elif arch["total"] >= 3 and arch["correct"] / arch["total"] >= 0.5:
+        metrics["arch_sensitivity_elevated"] = False
+
     metrics["last_reflection"] = datetime.now(timezone.utc).isoformat()
     _save_json(REFLECTION_PATH, metrics)
 
@@ -248,3 +195,5 @@ def track_retry(state: Dict[str, Any], file_path: str) -> None:
     count = sum(1 for m in edits if m.get("path", "").replace("\\", "/") == norm)
     if count >= 2:
         state["wisdom_retry_count"] = state.get("wisdom_retry_count", 0) + 1
+        # V2.11: 只更新 state 計數，由 SessionEnd reflect() 統一寫入 reflection_metrics
+        # （避免 PostToolUse 與 SessionEnd 雙寫 JSON 競爭）

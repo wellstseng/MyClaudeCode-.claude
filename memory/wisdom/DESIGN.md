@@ -1,148 +1,72 @@
-# Wisdom Engine 設計文件（V2.8）
+# Wisdom Engine 設計文件（V2.11）
 
-- Status: ✅ 第三階段完成
+- Status: ✅ V2.11 重構完成
 - Created: 2026-03-10
+- Updated: 2026-03-13
 - Work-Unit: 智慧引擎 Wisdom Engine
 
 ## 核心原則
 
 code 預運算判斷 → 只注入結論（≤90 tokens）
-vs 現行：注入 markdown 規則（~500 tokens），Claude 每次重讀重理解
-
 小任務零注入。只在需要時才出聲 = 沉默的智慧。
 
 ## 架構總覽
 
 ```
-wisdom_engine.py (~200行, ~/.claude/hooks/)
+wisdom_engine.py (~170行, ~/.claude/hooks/)
         │
-  ┌─────┼─────────┐
-  ▼     ▼         ▼
-因果圖  情境分類  反思引擎
-  │     │         │
-  ▼     ▼         ▼
-≤30t   0~20t    0~40t    → additionalContext ≤90 tokens
+  ┌─────┴─────────┐
+  ▼               ▼
+情境分類        反思引擎
+(硬規則)       (強化版)
+  │               │
+  ▼               ▼
+ 0~20t          0~40t    → additionalContext ≤60 tokens
 ```
 
 被 workflow-guardian.py 在 3 個 hook 點呼叫。
 
-## 力一：因果圖（Causal Graph）
+## [V2.11 移除] 力一：因果圖（Causal Graph）
 
-### 數學：有向加權圖 + BFS depth=2
+**移除原因**：冷啟動零邊、維護成本 > 收益。實際使用中 3 條種子 edge 未產生有效警告。
 
-資料檔：`memory/wisdom/causal_graph.json`
+**API 保留**：`get_causal_warnings()`、`add_causal_edge()`、`update_causal_confidence()` 保留為 no-op stub，確保 guardian.py import 不報錯。
 
-```json
-{
-  "nodes": {
-    "auth/middleware.py": {"type": "file", "domain": "auth"},
-    "ws/handler.py": {"type": "file", "domain": "realtime"},
-    "session_state": {"type": "concept", "domain": "shared"}
-  },
-  "edges": [
-    {
-      "from": "auth/middleware.py",
-      "to": "ws/handler.py",
-      "relation": "coupled_via",
-      "through": "session_state",
-      "confidence": 0.85,
-      "evidence": "2026-03-08 debug: 改 session 結構壞 WS"
-    }
-  ]
-}
-```
-
-relation 類型：`coupled_via` | `depends_on` | `breaks_when`
-
-### 查詢演算法
-
-```python
-def get_causal_warnings(graph, touched_files, max_depth=2):
-    warnings, visited = [], set()
-    queue = [(f, 0) for f in touched_files]
-    while queue:
-        node, depth = queue.pop(0)
-        if node in visited or depth > max_depth:
-            continue
-        visited.add(node)
-        for edge in graph.get_edges_from(node):
-            if edge["confidence"] >= 0.6:
-                warnings.append(edge)
-                queue.append((edge["to"], depth + 1))
-    return warnings[:3]  # ≤3 條, ~100 tokens
-```
-
-### Bayesian confidence 更新
-
-```python
-# 命中（因果預測正確）
-edge.confidence = edge.confidence * 0.9 + 0.1   # 趨向 1.0
-# 落空（改 A 但 B 沒壞）
-edge.confidence = edge.confidence * 0.95          # 緩慢衰減
-# < 0.3 → 自動移除 edge
-```
-
-### 注入格式
-
-```
-[因果] auth/middleware ←session_state→ ws/handler (0.85) | 改 session 結構須檢查 WS
-```
-
-### 寫入時機
-
-Claude debug 時發現因果關係 → 呼叫 helper 寫入 graph。
-冷啟動：無 edge 時靜默。
+`causal_graph.json` 已清空為 `{}`。
 
 ---
 
-## 力二：情境分類器（Situation Classifier）
+## [V2.11 改為硬規則] 力二：情境分類器（Situation Classifier）
 
-### 數學：加權評分函數 + 閾值決策
+### V2.8 原版（已移除）
 
-輸入：qwen3:1.7b intent 分類結果（已有）+ keyword signals
+5 信號加權評分函數 + calibrated_weights + 閾值 4/10。過度工程，權重校準需 10+ sessions 但從未真正校準。
+
+### V2.11 硬規則
 
 ```python
-def classify_situation(prompt_analysis, history):
-    signals = {
-        'file_count': prompt_analysis.get('estimated_files', 1),
-        'is_new_feature': prompt_analysis.get('intent') == 'feature',
-        'touches_arch': any(k in prompt_analysis.get('keywords', [])
-                          for k in ['架構', 'refactor', '重構', 'migrate']),
-        'user_quick': any(k in prompt_analysis.get('keywords', [])
-                         for k in ['快速', '簡單', 'quick', 'simple']),
-        'user_thorough': any(k in prompt_analysis.get('keywords', [])
-                            for k in ['好好', '徹底', 'thorough', '完整']),
-    }
-    w = history.get('weights', DEFAULT_WEIGHTS)
-    score = (
-        signals['file_count'] * w['file'] +       # 預設 2.0
-        signals['is_new_feature'] * w['feature'] + # 預設 4.0
-        signals['touches_arch'] * w['arch'] +      # 預設 5.0
-        signals['user_quick'] * w['quick'] +       # 預設 -4.0
-        signals['user_thorough'] * w['thorough']   # 預設 3.0
-    )
-    if score <= 2:  return {'approach': 'direct', 'inject': ''}
-    elif score <= 6: return {'approach': 'confirm', 'inject': '[情境:確認] 跨檔修改，建議先列範圍'}
-    else:           return {'approach': 'plan', 'inject': '[情境:規劃] 架構級變更，建議 Plan Mode'}
+def classify_situation(prompt_analysis):
+    # Rule 1 (plan): touches_arch OR file_count > threshold
+    # Rule 2 (confirm): file_count > 2 AND is_feature
+    # Default: direct (零注入)
 ```
 
-### 預設權重
+### Arch Sensitivity（Bayesian 校準）
 
-```json
-{"file": 2.0, "feature": 4.0, "arch": 5.0, "quick": -4.0, "thorough": 3.0}
-```
+`arch_sensitivity_elevated` 欄位存於 `reflection_metrics.json`：
+- `True`：plan 閾值從 `file_count > 3` 降為 `> 2`（更敏感）
+- 觸發條件：architecture 首次正確率 < 34%（total ≥ 3）
+- 恢復條件：architecture 首次正確率 ≥ 50%
 
-權重由反思引擎在定期檢閱時校準。
+### Module-level state
 
-### 關鍵：score ≤ 2 → 零注入，不打擾
+`_last_approach`：暫存最近一次 classify 結果，供 `reflect()` 做 silence_accuracy 追蹤。同一 process 內有效。
 
 ---
 
-## 力三：反思引擎（Reflection Engine）
+## [V2.11 強化] 力三：反思引擎（Reflection Engine）
 
-### 數學：滑動窗口統計 + 異常偵測（<70% = 盲點）
-
-資料檔：`memory/wisdom/reflection_metrics.json`
+### 資料檔：`memory/wisdom/reflection_metrics.json`
 
 ```json
 {
@@ -158,49 +82,41 @@ def classify_situation(prompt_analysis, history):
       "total_suggestions": 0
     },
     "silence_accuracy": {
-      "held_back_and_user_didnt_ask": 0,
-      "held_back_but_user_needed": 0,
-      "spoke_but_user_ignored": 0
+      "held_back_ok": 0,
+      "held_back_missed": 0
     }
   },
-  "calibrated_weights": {
-    "file": 2.0, "feature": 4.0, "arch": 5.0, "quick": -4.0, "thorough": 3.0
-  },
+  "arch_sensitivity_elevated": false,
   "blind_spots": [],
   "last_reflection": null
 }
 ```
 
-### SessionEnd 更新
+### first_approach_accuracy（V2.8 延續）
 
-```python
-def reflect(episodic_atoms, current_metrics):
-    for ep in episodic_atoms:
-        task_type = ep.get('task_type', 'single_file')
-        had_retry = ep.get('retry_count', 0) > 0
-        bucket = current_metrics['first_approach_accuracy'][task_type]
-        bucket['total'] += 1
-        if not had_retry:
-            bucket['correct'] += 1
-    # 盲點偵測
-    blind_spots = []
-    for task_type, bucket in current_metrics['first_approach_accuracy'].items():
-        rate = bucket['correct'] / max(bucket['total'], 1)
-        if rate < 0.7 and bucket['total'] >= 3:
-            blind_spots.append(f"{task_type} 首次正確率 {rate:.0%}")
-    current_metrics['blind_spots'] = blind_spots
-    return current_metrics
-```
+SessionEnd 時根據 `modified_files` 數量分類為 single_file / multi_file / architecture，`wisdom_retry_count == 0` 則 correct +1。
 
-### SessionStart 注入（僅有盲點時）
+盲點偵測：total ≥ 3 且正確率 < 70% → 寫入 `blind_spots`，SessionStart 注入 `[自知]` 提醒。
 
-```
-[自知] multi_file 首次正確率 64% — 跨檔修改建議先確認影響範圍
-```
+### [V2.11 新增] over_engineering_rate
 
-### ✅ PostToolUse 追蹤 retry_count（已實作）
+- **PostToolUse**：同一檔案被 Edit 2+ 次 → `user_reverted_or_simplified +1`（revert 信號）
+- **SessionEnd**：`total_suggestions +1`（每 session 計一次）
+- 用途：未來可在 rate > 30% 時注入「簡化建議」提醒
 
-在 state 中追蹤同一檔案被重複 Edit 的次數（`wisdom_retry_count`），作為 retry 信號。第一階段已完成。
+### [V2.11 新增] silence_accuracy
+
+- 依據 `_last_approach`（module-level 暫存）判斷本 session 是否「未注入」
+- `_last_approach == "direct"` AND `retry_count == 0` → `held_back_ok +1`（沉默正確）
+- `_last_approach == "direct"` AND `retry_count > 0` → `held_back_missed +1`（該說沒說）
+- 用途：追蹤「沉默的智慧」是否真的智慧
+
+### [V2.11 新增] Bayesian arch sensitivity 校準
+
+在 `reflect()` 末尾：
+- architecture 正確率 < 34%（total ≥ 3） → `arch_sensitivity_elevated = True`
+- architecture 正確率 ≥ 50% → `arch_sensitivity_elevated = False`
+- 效果：情境分類器的 plan 閾值動態調整
 
 ---
 
@@ -208,97 +124,35 @@ def reflect(episodic_atoms, current_metrics):
 
 | Hook | 呼叫 | 作用 |
 |------|------|------|
-| UserPromptSubmit | `wisdom.get_causal_warnings(modified_files)` | 因果警告注入 |
-| UserPromptSubmit | `wisdom.classify_situation(prompt_analysis)` | 情境建議注入 |
+| UserPromptSubmit | `wisdom.get_causal_warnings()` | [V2.11] stub, 返回 [] |
+| UserPromptSubmit | `wisdom.classify_situation()` | 硬規則情境建議 |
 | SessionStart | `wisdom.get_reflection_summary()` | 盲點提醒注入 |
-| SessionEnd | `wisdom.reflect(episodics)` | 更新統計 |
-| PostToolUse | state retry_count tracking | 追蹤重試次數 |
-
-## 不改的東西
-
-- CLAUDE.md
-- atom schema（[固]/[觀]/[臨] 離散標籤保留給 Claude 看，連續分數在 code 裡）
-- hook 事件種類
-- MCP server
+| SessionEnd | `wisdom.reflect(state)` | 更新統計 + silence + Bayesian |
+| PostToolUse | `wisdom.track_retry(state, path)` | 追蹤重試 + over_engineering |
 
 ## 哲學基礎
 
-- 亞里斯多德四因說：因果圖的 edge 編碼動力因(relation)+質料因(through)
 - Phronesis（實踐智慧）：情境分類器 = 正確感知特殊情境的能力
 - 蘇格拉底 γνῶθι σεαυτόν：反思引擎 = 可行動的精確自我校準
-- 核心：Wisdom ≠ 知道更多（WHAT），= 理解因果（WHY）+ 判斷時機（WHEN）+ 認識自己（SELF）
-
-## 批判與風險
-
-- 因果圖冷啟動：新專案無 edge，前幾 session 無效果 → 靜默即可
-- 情境權重初始值靠經驗猜，需 10+ session 校準
-- 反思引擎需 retry_count（目前無）→ ✅ 第一階段已新增 track_retry()
-- 三者皆漸進增強，無資料時零 token，不會比現在差
+- 核心：Wisdom ≠ 知道更多（WHAT），= 判斷時機（WHEN）+ 認識自己（SELF）
 
 ---
 
-## 第二階段完成記錄（2026-03-10）
+## 變更記錄
 
-### 因果圖種子資料（3 edges）
+### V2.11（2026-03-13）
 
-從 episodic atoms + failures.md 萃取的真實 debug 歷史：
+- **移除**：因果圖（CausalGraph class + BFS + Bayesian update + causal_graph.json）
+- **移除**：5 信號加權評分函數 + DEFAULT_WEIGHTS + QUICK/THOROUGH_KEYWORDS + calibrated_weights
+- **改為硬規則**：2 條規則（plan: arch/file_count、confirm: feature/file_count、default: direct）
+- **新增**：over_engineering_rate 追蹤（PostToolUse revert 信號 + SessionEnd 計數）
+- **新增**：silence_accuracy 追蹤（_last_approach module-level state）
+- **新增**：Bayesian arch sensitivity 校準（architecture 連續失敗 → 降低 plan 閾值）
+- **行數**：251 → ~170
 
-| from | to | relation | through | confidence | 來源 |
-|------|-----|----------|---------|-----------|------|
-| workflow-guardian.py | hook_output | breaks_when | stdout_encoding | 0.85 | episodic-20260305-guardian |
-| atom_files | vector_index | depends_on | vector_sync | 0.80 | decisions atom 多次確認 |
-| CLAUDE.md | context_budget | coupled_via | token_count | 0.75 | V2.7 精簡實證 |
+### V2.8（2026-03-10 ~ 2026-03-11）
 
-### add_causal_edge() helper
-
-`wisdom_engine.py:88` — Claude debug 時可直接呼叫寫入新因果關係：
-- 自動 dedup（同 from→to 不重複）
-- 自動建立 nodes（依 `.` 判斷 file/concept）
-- 預設 confidence 0.7
-
-Guardian import 已更新：`add_causal_edge` + `update_causal_confidence` 皆可用。
-
-### 反思引擎校準狀態
-
-目前 reflection_metrics.json 已累積 8 sessions 資料（single_file: 8/8 correct）。
-校準需 10+ sessions 累積，暫不調整 calibrated_weights。
-觀察指標：
-- `first_approach_accuracy` 各 bucket 需 total ≥ 3 才有統計意義
-- blind_spots 觸發門檻 <70% accuracy
-- 權重校準邏輯待第三階段（需 10+ sessions 數據）
-
-### 整合測試結果
-
-- ✅ `get_causal_warnings(['workflow-guardian.py'])` → 1 warning, 格式正確
-- ✅ `get_causal_warnings(['atom_files'])` → 1 warning
-- ✅ `get_causal_warnings(['CLAUDE.md'])` → 1 warning
-- ✅ `add_causal_edge()` 新增成功 + dedup 阻擋
-- ✅ `classify_situation()` quick→direct(零注入), arch→plan
-- ✅ 3 warnings 合計 ~110 tokens（單項 ~35 tokens，實際 1-2 項 ≤90）
-- ✅ wisdom_engine.py = 246 行（≤250 限制）
-
-## 第三階段完成記錄（2026-03-11）
-
-### BFS dedup 修復
-- `warned_edges` set 防止同一 edge 從不同起點重複匹配
-
-### 情境分類器調校
-- 閾值從 2/6 調整為 4/10（原閾值對小任務過敏，頻繁注入 [情境:確認]）
-- `file_count` 加上 cap=5 防止單一信號過度放大
-
-### Bayesian auto-update
-- 設計完成但未啟用，等 10+ sessions 累積再開，避免小樣本錯誤衰減好 edge
-
-### /resume Skill（✅ 已完成）
-- MCP 桌面自動化：clipboard → "Open in New Window" → paste → enter
-- 測試驗證全流程成功（新 session 回覆「✅ 續接成功」）
-- 踩坑記錄：Ctrl+Shift+Escape 被 MCP 安全機制擋住 → 改用 Command Palette；"Open in New Tab" 焦點衝突 → 改用 "Open in New Window"
-
----
-
-### 下一步（第四階段）
-
-- [ ] 10+ session 數據累積後校準 calibrated_weights
-- [ ] over_engineering_rate 追蹤（需 PostToolUse 偵測使用者 revert/simplify）
-- [ ] silence_accuracy 追蹤（需比對注入 vs 使用者反應）
-- [ ] Bayesian auto-update 啟用（待 10+ sessions 數據）
+- 初版三力架構（因果圖 + 情境分類 + 反思引擎）
+- 因果圖種子資料 3 edges
+- BFS dedup 修復、情境閾值調校 4/10
+- track_retry() PostToolUse 追蹤

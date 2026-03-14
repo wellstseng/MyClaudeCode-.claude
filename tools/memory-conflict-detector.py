@@ -19,11 +19,12 @@ import json
 import os
 import re
 import sys
-import urllib.request
-import urllib.error
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ollama_client import get_client
 
 CLAUDE_DIR = Path.home() / ".claude"
 AUDIT_LOG = CLAUDE_DIR / "memory" / "_vectordb" / "audit.log"
@@ -136,9 +137,7 @@ def vector_search(query: str, top_k: int = 10, min_score: float = 0.40) -> List[
 # ─── LLM Conflict Classification ─────────────────────────────────────────────
 
 def ollama_classify(fact_a: str, atom_a: str, conf_a: str,
-                    fact_b: str, atom_b: str, conf_b: str,
-                    model: str = "qwen3:1.7b",
-                    base_url: str = "http://127.0.0.1:11434") -> str:
+                    fact_b: str, atom_b: str, conf_b: str) -> str:
     """Ask LLM to classify relationship. Returns AGREE/CONTRADICT/EXTEND/UNRELATED."""
     prompt = (
         f"Classify the relationship between two knowledge facts from a memory system.\n\n"
@@ -147,22 +146,13 @@ def ollama_classify(fact_a: str, atom_a: str, conf_a: str,
         f"Reply with exactly one word: AGREE, CONTRADICT, EXTEND, or UNRELATED.\n"
         f"/no_think"
     )
-    messages = [
-        {"role": "system", "content": "You classify memory relationships. Reply with exactly one word."},
-        {"role": "user", "content": prompt},
-    ]
-    payload = json.dumps({"model": model, "messages": messages, "stream": False}).encode("utf-8")
-    req = urllib.request.Request(
-        f"{base_url.rstrip('/')}/api/chat",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = json.loads(resp.read())
-        text = result.get("message", {}).get("content", "").strip().upper()
-        # Extract classification from response
+        client = get_client()
+        text = client.chat(
+            [{"role": "user", "content": prompt}],
+            system="You classify memory relationships. Reply with exactly one word.",
+            timeout=30,
+        ).strip().upper()
         for label in ("CONTRADICT", "EXTEND", "AGREE", "UNRELATED"):
             if label in text:
                 return label

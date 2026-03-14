@@ -9,49 +9,12 @@ C. 知識萃取 (Auto-extract)
 所有功能都是「離線路徑」，不在 3 秒 hook timeout 內使用。
 """
 
-import json
-import urllib.request
-import urllib.error
+import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-
-def _ollama_chat(
-    model: str,
-    prompt: str,
-    system: str = "",
-    base_url: str = "http://127.0.0.1:11434",
-    timeout: int = 30,
-) -> str:
-    """Call Ollama /api/chat and return assistant's response text."""
-    messages = []
-    if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
-
-    payload = json.dumps({
-        "model": model,
-        "messages": messages,
-        "stream": False,
-    }).encode("utf-8")
-
-    req = urllib.request.Request(
-        f"{base_url.rstrip('/')}/api/chat",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        result = json.loads(resp.read())
-    return result.get("message", {}).get("content", "")
-
-
-def _ollama_available(base_url: str = "http://127.0.0.1:11434") -> bool:
-    try:
-        req = urllib.request.Request(f"{base_url}/api/tags", method="GET")
-        with urllib.request.urlopen(req, timeout=3):
-            return True
-    except Exception:
-        return False
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from ollama_client import get_client
 
 
 # ─── A. Query Rewriting ──────────────────────────────────────────────────────
@@ -67,10 +30,8 @@ def rewrite_query(
       "伺服器重啟後 client 斷線"
       → "伺服器重啟 client 連線中斷 socket disconnect reconnect 重連邏輯 斷線恢復"
     """
-    model = config.get("ollama_llm_model", "qwen3:4b")
-    base_url = config.get("ollama_base_url", "http://127.0.0.1:11434")
-
-    if not _ollama_available(base_url):
+    client = get_client()
+    if not client.is_available("llm"):
         return query  # fallback: return original
 
     system = (
@@ -85,7 +46,10 @@ def rewrite_query(
     )
 
     try:
-        result = _ollama_chat(model, query, system, base_url, timeout=90)
+        result = client.chat(
+            [{"role": "user", "content": query}],
+            system=system, timeout=90,
+        )
         return result.strip() if result.strip() else query
     except Exception:
         return query
@@ -134,8 +98,7 @@ def rerank(
 
     If candidates not provided, does vector search first.
     """
-    model = config.get("ollama_llm_model", "qwen3:4b")
-    base_url = config.get("ollama_base_url", "http://127.0.0.1:11434")
+    client = get_client()
 
     # Get candidates from vector search if not provided
     if candidates is None:
@@ -145,7 +108,7 @@ def rerank(
     if not candidates:
         return []
 
-    if not _ollama_available(base_url):
+    if not client.is_available("llm"):
         # Fallback: return vector search results as-is
         return candidates[:top_k]
 
@@ -161,7 +124,10 @@ def rerank(
     for candidate in candidates:
         prompt = f"查詢: {query}\n\n知識片段: {candidate.get('text', '')}"
         try:
-            score_text = _ollama_chat(model, prompt, system, base_url, timeout=10)
+            score_text = client.chat(
+                [{"role": "user", "content": prompt}],
+                system=system, timeout=10,
+            )
             # Extract number from response
             import re
             nums = re.findall(r"\d+(?:\.\d+)?", score_text)
@@ -193,10 +159,9 @@ def extract_knowledge(
 
     Returns suggested atoms/facts for human review.
     """
-    model = config.get("ollama_llm_model", "qwen3:4b")
-    base_url = config.get("ollama_base_url", "http://127.0.0.1:11434")
+    client = get_client()
 
-    if not _ollama_available(base_url):
+    if not client.is_available("llm"):
         return {"error": "Ollama not available"}
 
     system = (
@@ -221,7 +186,10 @@ def extract_knowledge(
     )
 
     try:
-        result = _ollama_chat(model, text, system, base_url, timeout=30)
+        result = client.chat(
+            [{"role": "user", "content": text}],
+            system=system, timeout=30,
+        )
         # Try to parse JSON from response
         # LLM might wrap it in ```json ... ```
         import re

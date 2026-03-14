@@ -40,7 +40,7 @@ def load_config() -> Dict[str, Any]:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 full = json.load(f)
             vs = full.get("vector_search", {})
-            config.update({k: v for k, v in vs.items() if k in DEFAULTS or k == "additional_atom_dirs"})
+            config.update({k: v for k, v in vs.items() if k in DEFAULTS or k in ("additional_atom_dirs", "ollama_backends")})
         except (json.JSONDecodeError, OSError):
             pass
     return config
@@ -55,7 +55,7 @@ def save_config(config: Dict[str, Any]) -> None:
                 full = json.load(f)
         except (json.JSONDecodeError, OSError):
             pass
-    full["vector_search"] = {k: v for k, v in config.items() if k in DEFAULTS}
+    full["vector_search"] = {k: v for k, v in config.items() if k in DEFAULTS or k in ("additional_atom_dirs", "ollama_backends")}
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(full, f, indent=2, ensure_ascii=False)

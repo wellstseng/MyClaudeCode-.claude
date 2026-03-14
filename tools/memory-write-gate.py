@@ -40,6 +40,7 @@ QUALITY_RULES = {
     "explicit_user": 0.35,   # user explicitly triggered
     "concrete_value": 0.15,  # contains version/path/config value
     "non_transient": 0.10,   # not transient (no timeout/retry/暫時)
+    "actionable": 0.15,      # contains action pattern (when X → do Y)
 }
 
 # Technical term patterns (common in dev context)
@@ -51,6 +52,20 @@ TECH_TERM_PATTERNS = [
     r"\b(?:protobuf|flatbuffers|WebSocket|SSE|OAuth|JWT)\b",
     r"\b(?:VRAM|GPU|CUDA|ONNX|model|inference)\b",
     r"(?:版本|設定|路徑|配置|參數|模組|元件|架構|框架)",
+]
+
+# Actionable patterns (indicates knowledge that tells you what to do/avoid)
+# Note: CJK text has no spaces, so use \s* (optional) for CJK patterns
+ACTIONABLE_PATTERNS = [
+    r"(?:需要|必須)\s*.{5,}",                                 # CJK directive
+    r"(?:不要|避免)\s*.{5,}",                                 # CJK prohibition
+    r"(?:否則|不然)\s*.{3,}",                                 # CJK consequence
+    r"(?:因為|由於|原因是)\s*.{5,}",                           # CJK causal
+    r"(?:如果|when|if)\s*.{3,}(?:就|then|→)",                 # conditional
+    r"(?:should|must|need to)\s+.{5,}",                       # EN directive
+    r"(?:don't|avoid|never)\s+.{5,}",                         # EN prohibition
+    r"(?:because|otherwise)\s+.{5,}",                         # EN causal
+    r"→|->|＝>",                                               # arrow = causation
 ]
 
 # Transient patterns (suggests ephemeral issue, not worth storing)
@@ -157,6 +172,13 @@ def compute_quality_score(
     if not is_transient:
         score += QUALITY_RULES["non_transient"]
         reasons.append("non_transient")
+
+    # Actionability check
+    for pattern in ACTIONABLE_PATTERNS:
+        if re.search(pattern, content, re.IGNORECASE):
+            score += QUALITY_RULES["actionable"]
+            reasons.append("actionable")
+            break
 
     return min(score, 1.0), reasons
 

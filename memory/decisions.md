@@ -3,32 +3,33 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 全域決策, 工具, 工作流, workflow, guardian, hooks, MCP, 記憶系統
-- Last-used: 2026-03-11
-- Confirmations: 71
+- Last-used: 2026-03-13
+- Confirmations: 41
 - Type: decision
 
 ## 知識
 
 ### 核心架構
-- [固] 原子記憶 V2.10：V2.9 檢索強化 + V2.10 Session 全軌跡追蹤 + _AIDocs Bridge + 暫存區管理
+- [固] 原子記憶 V2.11：Hybrid RECALL + Ranked Search + 回應捕獲（僅 SessionEnd）+ 跨 Session 鞏固（簡化計數）+ Write Gate + 自我迭代（3 條精簡）+ Wisdom Engine（硬規則+反思校準）+ 檢索強化 + Context Budget + 衝突偵測 + Atom 健康度
 - [固] 雙 LLM：Claude Code（雲端決策）+ Ollama qwen3（本地語意處理）
 - [固] 6 hook 事件全由 workflow-guardian.py 統一處理（SessionStart/UserPromptSubmit/PostToolUse/PreCompact/Stop/SessionEnd）
 
-### 記憶檢索管線（V2.5）
-- [固] UserPromptSubmit: Intent 分類（qwen3:1.7b）→ Trigger 匹配 → Vector Search → Keyword Boost → Ranked Merge → additionalContext
-- [固] V2.5 Hybrid Search: 向量結果疊加 keyword matching boost（大寫詞、引號短語、中文專有名詞），雙命中 +0.1，keyword 救回 +0.05
-- [固] V2.5 Self-healing Cache: ChromaDB collection reference 快取 + 失效自動 invalidate + retry；連續失敗計數器超閾值升級警告
+### 記憶檢索管線（V2.3 起）
+- [固] UserPromptSubmit: Intent 分類（qwen3:1.7b）→ Trigger 匹配 → Vector Search → Ranked Merge → additionalContext
 - [固] 降級順序：Ollama 不可用 → 純 keyword | Vector Service 掛 → graceful fallback
-- [固] 索引 4 層：global → project → extra:openclaw → episodic（向量發現）
+- [固] 索引 2 層：global → project（向量發現），所有層統一 `**/*.md` 遞迴掃描 + `_` 前綴目錄跳過
 
-### 回應捕獲（V2.4）
-- [固] 逐輪萃取：UserPromptSubmit 非同步讀取上一輪 assistant 回應，qwen3:1.7b 萃取知識（≤3000 chars, 2 items）
-- [固] SessionEnd 補漏：同步掃描全 transcript（≤20000 chars, 5 items）
-- [固] 萃取結果一律 [臨]，經跨 Session 鞏固後自動晉升
+### 回應捕獲（V2.4→V2.11）
+- [固] V2.11: 廢除逐輪萃取（per_turn_enabled: false），僅保留 SessionEnd 全 transcript 萃取
+- [固] V2.11: 情境感知萃取（依 session intent 調整 prompt：build/debug/design/recall）
+- [固] V2.11: 跨 Session 觀察（vector search top_k=5, min_score=0.75 → 2+ sessions 命中生成觀察段落）
+- [固] SessionEnd 萃取：同步掃描全 transcript（≤20000 chars, 5 items）
+- [固] 萃取結果一律 [臨]，由 Confirmations 計數驅動後續晉升
+- [固] V2.5: 萃取 prompt 可操作性標準、知識類型 6 種、format:json、Write Gate CJK-aware
 
-### 跨 Session 鞏固（V2.4 Phase 3）
-- [固] SessionEnd 時對 knowledge_queue 做向量搜尋（min_score 0.75）
-- [固] 2+ sessions 命中 → 自動晉升 [臨]→[觀]；4+ sessions → 建議晉升 [觀]→[固]
+### 跨 Session 鞏固（V2.4→V2.11 簡化）
+- [固] V2.11: 廢除自動晉升 [臨]→[觀]，改為 Confirmations +1 簡單計數
+- [固] 4+ sessions 命中 → 建議晉升（不自動執行），統一 dedup 閾值 0.80
 - [固] 結果寫入 episodic atom「跨 Session 觀察」段落
 
 ### Episodic atom
@@ -38,67 +39,31 @@
 
 ### 基礎設施
 - [固] Vector Service @ localhost:3849 | Dashboard @ localhost:3848
-- [固] Ollama models: qwen3-embedding:0.6b（embedding）+ qwen3:1.7b（萃取/分類）
-- [固] Vector DB: ChromaDB（i7-3770 不支援 AVX2，LanceDB 不適用）
+- [固] Ollama Dual-Backend: rdchat qwen3.5（主力萃取, pri=1）+ local qwen3:1.7b（fallback, pri=2）+ qwen3-embedding（embedding）
+- [固] Vector DB: LanceDB（此電腦支援 AVX2，LanceDB 效能穩定）
+- [固] search_min_score: 0.65（完整版 embedding 精確度足夠）
 - [固] MCP 傳輸格式：JSONL，protocolVersion 2025-11-25
+- [固] _call_ollama_generate: num_predict=2048, timeout=120s（qwen3 thinking mode 需 ~30s on GTX 1050 Ti）
+- [固] SessionEnd 萃取由 extract-worker.py detached subprocess 執行（hook timeout=30s，萃取需 ~60s）
 
-### 主動續航（Session Continuity）
-- [固] **段落完成即存**：完成一個段落的動作（不論驗證是否通過）前，立即將進度寫入原子記憶
-- [固] **Token 上限預警存檔**：判斷 session 快碰觸 token 上限時，優先將當前工作狀態寫入 atom（任務名稱、進度、下一步、阻塞點）
-- [固] **重試追蹤**：反覆修正/重試的場景，記錄重試次數、每次調整的重點、成功/失敗原因
-- [固] **執行中項目清單**：以 atom 記錄「目前執行中的項目」，新 session 首次發話時主動檢查是否有未完成項目
-- [固] **跨 Session 接續**：不論跨越多少 session，透過原子記憶確保接續上下文完整。項目完成或確定中斷時，標記為已完成/已中斷
-- [固] **向量庫同步**：寫入/更新 atom 時，同步更新向量記憶庫（確保新 session 的語意搜尋能找到）
-- [固] **三級注入策略**：Level 0（首發必注，≤500 tokens compact 摘要，無條件）→ Level 1（關聯展開，語意命中時載入完整 atom）→ Level 2（歷史召回，已結案項目的摘要+教訓）
-- [固] **人性化 Trigger**：續航相關 trigger 涵蓋自然語言 — 繼續, 接著做, 承接, 我剛剛, 上次, 還沒做完, 做到哪, 之前那個, 回到, resume, continue, 還記得嗎, 進度如何
+### 自我迭代（V2.6→V2.11）
+- [固] V2.11: 精簡為 3 條核心原則：品質函數（Hook）、證據門檻（Claude）、震盪偵測（Hook）
+- [固] 定期檢閱：SessionStart 檢查 episodic 計數 → 提醒掃描近期 patterns
 
-### 工作單元命名（Work Unit Naming）
-- [固] **萬物皆可命名**：不只 plan 有代號，任何 session 中出現的有價值細節、邏輯推導、使用者指示、架構洞察，都應賦予簡短命名（如「WS 重連邏輯」「UTF-8 修正 v3」「使用者指示：不要過度封裝」）
-- [固] **命名即追蹤**：被命名的工作單元自動取得狀態（🔄 進行中 / ⏸ 暫停 / ✅ 完成 / ❌ 中斷），可跨 session 引用
-- [固] **命名粒度**：一個工作單元 = 一個可獨立描述的成果或決策。太大則拆分，太小則合併
-- [固] **命名時機**：(1) 開始執行一個有意義的修改前 (2) 使用者給出明確指示時 (3) 發現重要邏輯洞察時 (4) debug 進入反覆修正時
+### Wisdom Engine（V2.8→V2.11）
+- [固] V2.11: 移除因果圖（CausalGraph class + causal_graph.json），冷啟動零邊，維護成本>收益
+- [固] V2.11: 情境分類器改為 2 條硬規則（file_count+is_feature → confirm; touches_arch+file_count → plan）
+- [固] V2.11: 反思引擎新增 over_engineering_rate（同檔 Edit 2+ 次）+ silence_accuracy（held_back 追蹤）
+- [固] V2.11: Bayesian 權重校準（architecture 連續 3+ 失敗 → 提升 arch 敏感度）
+- [固] guardian lazy import + graceful fallback，冷啟動零 token，注入上限 ≤90 tokens
 
-### 自我迭代引擎（Self-Iteration V2.6）
-- [固] **8 條演進原則**（跨學科理論背書，詳見 `memory/self-iteration.md`）：
-  - (1) 品質函數：確認(+)/糾正(−)/無回饋(0) 三類訊號驅動規則調整
-  - (2) 收斂優先：規則總數趨向收斂，新增前先檢查可合併的既有規則
-  - (3) 證據門檻：≥2 次獨立 session 觀察才建立正式規則（hook 自動追蹤）
-  - (4) 淘汰勇氣：每新增 1 條 → 檢查淘汰 1 條（Via negativa）
-  - (5) 震盪偵測：3 session 內同 atom 改 2+ 次 → 暫停（hook 自動偵測）
-  - (6) 成熟度模型：學習期(<15)/穩定期(15-50)/成熟期(>50)（hook 自動計算）
-  - (7) 三維演進：精確度/協助力/良善性 Pareto 平衡
-  - (8) 演進邊界：只改行動/知識，絕對禁止自改 Confidence
-- [固] **自動化基礎設施**：
-  - SessionEnd: `_collect_iteration_metrics()` 收集 atoms_referenced + atoms_modified
-  - SessionEnd: `_detect_oscillation()` 掃描近 3 session episodic 偵測震盪
-  - SessionStart: `_check_periodic_review_due()` 檢查定期檢閱是否到期（預設每 6 session）
-  - SessionStart: `_calculate_maturity_phase()` 計算系統成熟度階段
-  - State schema 1.2: 新增 `iteration_metrics` 欄位
-- [固] **定期檢閱流程**：hook 觸發提醒 → Claude 掃描 episodic + knowledge_queue → 收攏/晉升規則 → 寫入 `workflow/last_review_marker.json` 重置計數器
-
-### 記憶強化（V2.7）
-- [觀] **failures.md**：失敗模式記憶（環境踩坑/假設錯誤/模式誤用/生成品質回饋），procedural type，45 天淘汰
-- [觀] **toolchain.md**：工具鏈實戰記憶（Windows 差異/已驗證指令/路徑版本/特殊配置），procedural type
-- [觀] **Output Quality Feedback**：PostToolUse 的 `_check_output_quality()` 偵測跨 session 重寫檔案，結果寫入 `state["quality_feedback"]`，SessionEnd 自動記入 episodic 知識段落
-- [觀] **跨專案模式掃描**：定期檢閱時比較不同專案 episodic atoms，跨 2+ 專案共通模式收攏為全域知識
-- [固] **CLAUDE.md 精簡（V2.7）**：289→144 行（-50%），移除 hook 實作細節（雙 LLM 表格、Hybrid Search、回應捕獲、跨 Session 鞏固、三級注入策略）、移除與 preferences.md 重複的偏好段落、風險分級框架；保留 Claude 決策指令（三層分類、寫入時機、分類演進、同步流程、自我迭代 8 條）
-
-### ✅ 智慧引擎 Wisdom Engine（V2.8 第二階段完成）
-- [觀] 三力架構：因果圖（Causal Graph）+ 情境分類器（Situation Classifier）+ 反思引擎（Reflection Engine）
-- [觀] 核心原則：code 預運算判斷 → 只注入結論（≤90 tokens） vs 現行注入規則文字（~500 tokens）
-- [觀] 實作：wisdom_engine.py (250行) + 2 JSON (causal_graph/reflection_metrics) + guardian 4 hook 點
-- [觀] 因果圖：有向加權圖 + BFS depth=2 + Bayesian confidence 更新（命中+0.1, 落空*0.95, <0.3 淘汰）
-- [觀] 因果圖種子：3 edges（guardian↔encoding, atoms↔vector, CLAUDE.md↔context），來自真實 debug 歷史
-- [觀] add_causal_edge() helper：Claude debug 時直接寫入因果關係（auto dedup + auto node creation）
-- [觀] 情境分類：加權評分 + file_count cap=5 + 閾值 4/10（Phase 3 調校：原 2/6 過敏）→ direct/confirm/plan，小任務零注入
-- [觀] 反思引擎：滑動窗口統計 first_approach_accuracy + over_engineering_rate + silence_accuracy → 盲點偵測（<70% 標記）
-- [觀] 冷啟動策略：無資料時靜默（零 token），漸進增強
-- [觀] PostToolUse retry_count 追蹤已實作（wisdom_retry_count in state）
-- [觀] 反思校準：需 10+ sessions 數據，目前 2 sessions（single_file 2/2），暫不調整權重
-- [觀] 因果圖 BFS dedup：warned_edges set 防止同一 edge 從不同起點重複匹配（Phase 3 修復）
-- [觀] Bayesian auto-update 設計完成但未啟用：等 10+ sessions 累積再開，避免小樣本錯誤衰減好 edge
-- [觀] /resume Skill：自動續接 Session（收集狀態→生成 prompt→MCP 自動化開新視窗→貼上→執行）
-- [固] /resume 必須用 "Open in New Window"（不可用 "Open in New Tab"），避免側邊欄焦點衝突
+### V2.11 新增機制
+- [固] Context Budget：additionalContext 硬上限 3000 tokens，超額按 ACT-R activation 由低到高 truncate
+- [固] 衝突偵測自動化：SessionEnd 對修改 atoms 做向量搜尋（score 0.60-0.95），寫入 episodic 衝突警告
+- [固] PostToolUse 品質追蹤：同檔 Edit 2+ 次 → reverted_count，SessionEnd 寫入 reflection_metrics
+- [固] Atom 健康度工具：atom-health-check.py（Related 完整性 + 懸空引用清除 + 過期掃描）
+- [固] .claude/rules/ 模組化：CLAUDE.md 瘦身至 ~50 行，4 個規則檔自動載入
+- [固] 環境清理：shell-snapshots/debug/workflow 300+ 垃圾檔案清除 + cleanup-old-files.py 定期工具
 
 ### 記憶檢索強化（V2.9）
 - [固] Project-Aliases：MEMORY.md 加 `> Project-Aliases:` 行，跨專案掃描先比對 aliases → 注入全文
@@ -113,38 +78,19 @@
 - [固] 純閱讀 Session：accessed_files ≥ 5 且無修改時也生成 episodic atom
 - [固] 暫存區管理：`memory/_staging/` 存放續接 prompt 等臨時檔案，.gitignore 排除，SessionEnd 提醒清理
 
-### _AIDocs Bridge（V2.10）
-- [固] SessionStart 掃描專案 `_AIDocs/_INDEX.md`，解析 entries + keywords 存入 state
-- [固] UserPromptSubmit keyword matching → 注入 `[Guardian:AIDocs]` 指標（最多 3 筆）
-
-### 回應萃取改進（V2.10）
-- [固] V2.4 萃取改用 extract-worker.py 獨立子 process（hook 有 3s timeout，萃取需 ~30s）
-- [固] _call_ollama_generate: num_predict=2048, timeout=120s, format=json
-
 ### 歷史決策
 - [固] 記憶檢索統一用 Python，已移除 Node.js memory-v2（2026-03-05 退役）
 - [固] Stop hook 只保留 Guardian 閘門，移除 Discord 通知
-- [固] OpenClaw workspace atoms 透過 additional_atom_dirs 整合（extra:openclaw 層，5 atoms）
 
 ## 行動
 
 - 記憶寫入走 write-gate 品質閘門
 - 向量搜尋 fallback 順序：Ollama → sentence-transformers → keyword
 - Guardian 閘門最多阻止 2 次，第 3 次強制放行
-- 大幅修改前 session 生成的程式碼（>30% 變動）時，記錄品質回饋到 failures.md「生成品質回饋」分類
-- debug 超過 5 分鐘時，先查 failures.md 已知模式再嘗試新方案
-- 定期檢閱時，比較不同專案的 episodic atoms，找出跨 2+ 專案的共通模式（程式風格、錯誤處理、架構偏好），收攏為全域 atom 知識
 
 ## 演化日誌
 
-- 2026-03-05: V2.3 合併安裝 + V2.4 回應捕獲/跨 Session 鞏固 + ChromaDB 遷移 + OpenClaw 整合（12 項變更壓縮）
-- 2026-03-06: V2.5 Hybrid Search Keyword Boost + Self-healing Collection Cache
-- 2026-03-09: [固] 主動續航 + 三級注入 + 工作單元命名 + 定期檢閱
-- 2026-03-10: [固] V2.6 Self-Iteration Engine（8 條演進原則 + 跨學科理論背書 + metrics/震盪/成熟度/檢閱自動化）
-- 2026-03-10: [觀] V2.7 記憶強化 — failures.md + toolchain.md + Output Quality Feedback（PostToolUse 跨 session 偵測）+ 跨專案模式掃描
-- 2026-03-10: [固] V2.7 CLAUDE.md 精簡 — 289→144 行（-50%），移除 hook 實作細節與重複偏好，保留 Claude 決策指令
-- 2026-03-10: [觀] V2.8 Phase 2 — 因果圖種子 3 edges + add_causal_edge() helper + guardian import 更新 + 反思校準待 10+ sessions
-- 2026-03-11: [觀] V2.8 Phase 3 — BFS dedup 修復 + 情境分類器閾值調校（2/6→4/10, cap=5）+ Bayesian auto-update 設計（未啟用）
-- 2026-03-11: [觀] /resume Skill 建立 — MCP 自動化續接（Open in New Window + clipboard + paste + enter）
-- 2026-03-11: [固] V2.9 檢索強化 — Project-Aliases + Related-Edge Spreading + ACT-R Activation + Blind-Spot Reporter
-- 2026-03-11: [固] V2.10 合併 — Session Read Tracking + VCS Query Capture + _AIDocs Bridge + 暫存區 + extract-worker subprocess
+- 2026-03-05: 初始建立 — V2.4 合併（回應捕獲/鞏固/episodic）+ LanceDB + Dual-Backend
+- 2026-03-11: V2.8→V2.10 — Wisdom Engine + 檢索強化(ACT-R/Spreading) + Session 全軌跡追蹤
+- 2026-03-13: V2.11 全面升級 — 精簡（砍逐輪萃取/因果圖/自動晉升/迭代8→3）+ 品質（衝突偵測/反思校準）+ 模組化（rules/+Context Budget）
+- 2026-03-13: 自檢修復 — 清除因果圖殘留 + Context Budget 動態化 + 索引同步 + atom 去重 + extract-worker 啟用
