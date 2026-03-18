@@ -52,7 +52,7 @@ def _atom_debug_log(tag: str, content: str, config: Dict[str, Any] = None) -> No
     try:
         log_dir = Path.home() / ".claude" / "Logs"
         log_dir.mkdir(parents=True, exist_ok=True)
-        log_path = log_dir / f"atom-debug-{datetime.now().strftime('%Y-%m-%d')}.log"
+        log_path = log_dir / f"atom-debug-{datetime.now().strftime('%Y-%m-%d_%H')}.log"
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         body = content if content and content.strip() else "NONE"
         with open(log_path, "a", encoding="utf-8") as f:

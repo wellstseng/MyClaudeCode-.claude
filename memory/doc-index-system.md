@@ -6,7 +6,7 @@
 - Trigger: 系統架構, 檔案結構, file tree, architecture, hook, skill, tool, 升級, upgrade, 迭代, self-understand
 - Last-used: 2026-03-18
 - Created: 2026-03-13
-- Confirmations: 20
+- Confirmations: 21
 - Tags: doc-index, system-overview
 - Related: decisions, toolchain
 

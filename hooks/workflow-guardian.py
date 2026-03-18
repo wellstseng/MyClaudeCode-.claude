@@ -427,10 +427,12 @@ def extract_aidocs_keywords(entries: List[AiDocsEntry]) -> Dict[str, List[str]]:
 
 
 def _kw_match(kw: str, prompt_lower: str) -> bool:
-    """Match a trigger keyword against prompt. Short ASCII keywords (<=2 chars)
-    use word-boundary regex to avoid false positives (e.g. 'OT' matching 'not')."""
-    if len(kw) <= 2 and kw.isascii():
-        return bool(re.search(r'\b' + re.escape(kw) + r'\b', prompt_lower))
+    """Match a trigger keyword against prompt.
+    ASCII keywords use word-boundary but exclude hyphenated compounds:
+    'debug' matches 'I am debug this' but not 'atom-debug'.
+    CJK keywords use plain substring match."""
+    if kw.isascii():
+        return bool(re.search(r'(?<![\w-])' + re.escape(kw) + r'(?![\w-])', prompt_lower))
     return kw in prompt_lower
 
 
@@ -619,7 +621,7 @@ def _atom_debug_log(tag: str, content: str, config: Dict[str, Any] = None) -> No
     try:
         log_dir = Path.home() / ".claude" / "Logs"
         log_dir.mkdir(parents=True, exist_ok=True)
-        log_path = log_dir / f"atom-debug-{datetime.now().strftime('%Y-%m-%d')}.log"
+        log_path = log_dir / f"atom-debug-{datetime.now().strftime('%Y-%m-%d_%H')}.log"
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         body = content if content and content.strip() else "NONE"
         with open(log_path, "a", encoding="utf-8") as f:
