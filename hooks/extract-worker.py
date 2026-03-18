@@ -191,7 +191,7 @@ _PROMPT_TEMPLATES = {
 
 def _build_prompt(intent: str, text: str) -> str:
     template = _PROMPT_TEMPLATES.get(intent, _PROMPT_TEMPLATES["build"])
-    return template.format(text=text[:4000])
+    return template.replace("{text}", text[:4000])
 
 
 # ─── Parse + Dedup ────────────────────────────────────────────────────────────

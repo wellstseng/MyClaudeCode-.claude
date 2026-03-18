@@ -4,7 +4,7 @@
 - Confidence: [固]
 - Trigger: 失敗, 錯誤, debug, 踩坑, pitfall, crash, 重試, retry, workaround
 - Last-used: 2026-03-18
-- Confirmations: 29
+- Confirmations: 31
 - Type: procedural
 - Tags: failure, pitfall, debug, quality-feedback
 - Related: decisions, toolchain
