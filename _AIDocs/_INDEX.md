@@ -1,21 +1,20 @@
 # MyClaudeCode (.claude) — AI 分析文件索引
 
 > 本資料夾記錄 `~/.claude` 自訂擴充系統的架構與演進。
-> 最近更新：2026-03-13
+> 最近更新：2026-03-18
 
 ---
 
 ## 文件清單
 
-| # | 文件名稱 | 說明 |
-|---|---------|------|
-| 1 | Architecture.md | 系統架構總覽：原子記憶 V2.8 + Workflow Guardian + Wisdom Engine + hooks |
-| 2 | Project_File_Tree.md | 完整目錄結構 |
-| 3 | AtomicMemory-v2.1-Plan.md | v2.1 缺陷研究與修補計畫（歷史文件） |
-| 4 | _CHANGELOG.md | 變更記錄（最近 ~8 筆） |
-| 5 | _CHANGELOG_ARCHIVE.md | 變更記錄封存 |
-| 6 | ../README.md | 完整運作知識庫 + 7 階段流程圖（GitHub 入口） |
-| 7 | DocIndex-System.md | 全 76 檔系統索引（啟動鏈 + Hook + Skill + Tool + Memory） |
+| # | 文件名稱 | 說明 | keywords |
+|---|---------|------|----------|
+| 1 | Architecture.md | 系統架構總覽：原子記憶 V2.12 + Workflow Guardian + Wisdom Engine + hooks | 架構, hooks, skill, rules, 事件驅動, wisdom engine, 規則模組, guardian |
+| 2 | Project_File_Tree.md | 完整目錄結構 | 目錄結構, 檔案位置, 資料夾, 在哪裡 |
+| 3 | _CHANGELOG.md | 變更記錄（最近 ~8 筆） | 變更記錄, 最近更新, 改了什麼 |
+| 4 | _CHANGELOG_ARCHIVE.md | 變更記錄封存 | 歷史變更, 舊版記錄 |
+| 5 | ../README.md | 完整運作知識庫 + 7 階段流程圖（GitHub 入口） | 設計哲學, 安裝, 入門, 流程圖, 使用方式 |
+| 6 | DocIndex-System.md | 全 76 檔系統索引（啟動鏈 + Hook + Skill + Tool + Memory） | 啟動鏈, lifecycle, 全檔索引, 檔案清單, 系統索引 |
 
 ---
 

@@ -43,7 +43,7 @@ $ARGUMENTS
 1. **進行中的工作單元**：掃描 atoms 中標記為 🔄 的工作單元
 2. **Todo list**：檢查是否有未完成的 todo items
 3. **最近的 git 變更**：`git status` + `git log --oneline -5`
-4. **暫存區**：檢查 `memory/_staging/` 是否有續接 prompt
+4. **暫存區**：檢查專案層 `projects/{slug}/memory/_staging/` 是否有續接 prompt
 
 ### 分流邏輯
 
@@ -115,7 +115,15 @@ $ARGUMENTS
 
 ## Step 4.5: 存入 Staging（安全網）
 
-使用者確認 prompt 後，先寫入 `memory/_staging/next-phase.md`（確保目錄存在）。
+使用者確認 prompt 後，寫入**專案層** staging 路徑（確保目錄存在）：
+
+```
+~/.claude/projects/{slug}/memory/_staging/next-phase.md
+```
+
+> `{slug}` 從系統 context 的 project memory 路徑推算，與 `/continue` 讀取路徑一致。
+> 例：工作目錄 `C:\Projects\MyApp` → slug `c--Projects-MyApp` → 寫入 `~/.claude/projects/c--Projects-MyApp/memory/_staging/next-phase.md`
+
 若檔案已存在，顯示舊內容第一行並詢問是否覆蓋。
 
 這樣即使後續 MCP 自動化失敗，使用者仍可透過 `/clear` → `/continue` 銜接。
@@ -201,8 +209,8 @@ echo '續接 prompt 內容' | powershell -command "Set-Clipboard -Value ([Consol
 1. 將 prompt 寫入暫存檔：
 
 ```bash
-# 將 prompt 寫入 _staging 目錄
-cat > ~/.claude/memory/_staging/_resume_prompt.txt << 'PROMPT_EOF'
+# 將 prompt 寫入專案層 _staging 目錄（{slug} 同 Step 4.5）
+cat > ~/.claude/projects/{slug}/memory/_staging/_resume_prompt.txt << 'PROMPT_EOF'
 {續接 prompt 內容}
 PROMPT_EOF
 ```
@@ -210,19 +218,19 @@ PROMPT_EOF
 2. 在 VS Code 終端執行：
 
 ```bash
-claude "$(cat ~/.claude/memory/_staging/_resume_prompt.txt)"
+claude "$(cat ~/.claude/projects/{slug}/memory/_staging/_resume_prompt.txt)"
 ```
 
 > 如果 prompt 過長（超過 shell 參數上限），改用管道：
 > ```bash
-> cat ~/.claude/memory/_staging/_resume_prompt.txt | claude -p
+> cat ~/.claude/projects/{slug}/memory/_staging/_resume_prompt.txt | claude -p
 > ```
 > 注意：`-p` 為非互動模式（print 完即退出）。若需互動，可先 `claude` 啟動後再手動貼上。
 
 3. 清理暫存檔（新 session 確認開始後）：
 
 ```bash
-rm ~/.claude/memory/_staging/_resume_prompt.txt
+rm ~/.claude/projects/{slug}/memory/_staging/_resume_prompt.txt
 ```
 
 ---

@@ -9,6 +9,7 @@
 - 獨立子任務可新開對話（MEMORY.md 自動載入）
 - 拆分前確保：新發現已寫入 _AIDocs、重要事實已存入 atom
 - 有順序依賴的任務應在同一對話完成
+- 所有執行階段只要內容、檔案、邏輯、流程皆不衝突的，就開啟多agents分頭進行
 
 ## 主動續航
 
@@ -17,7 +18,8 @@
 3. **重試追蹤**：反覆修正場景 → 記錄重試次數+調整+成敗原因，避免跨 session 重走錯路
 4. **自動續接**：`/resume` skill — 生成續接 prompt → MCP 自動化開新 VS Code 視窗 → 貼上 → 執行
 5. **暫存檔案管理**：
-   - 續接 prompt、臨時工作文件 → 存放 `memory/_staging/`，不放 memory 根目錄
+   - 續接 prompt、臨時工作文件 → 存放**專案層** `~/.claude/projects/{slug}/memory/_staging/`，每個專案獨立
+   - `/resume` 寫入、`/continue` 讀取同一路徑，確保不同專案的續接互不干擾
    - 清理信號：相關工作已確認寫入 atom + 上傳 git/svn → 刪除 `_staging/` 下對應檔案
    - `_staging/` 已加入 .gitignore，不會被上傳
 

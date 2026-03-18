@@ -34,6 +34,8 @@
 
 **重要**：不要用 Glob 搜尋。直接用 Read tool 讀絕對路徑。路徑在系統 context 的 "Additional working directories" 中可以找到 memory 目錄的位置。
 
+**每個專案有獨立的 staging 區**，確保不同專案的續接互不干擾。
+
 ### 分流
 
 - **讀取成功** → 繼續 Step 2

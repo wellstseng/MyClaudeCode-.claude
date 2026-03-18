@@ -1,4 +1,5 @@
 {
+  "atom_debug": true,
   "enabled": true,
   "stop_gate_max_blocks": 2,
   "min_files_to_block": 2,
@@ -25,24 +26,40 @@
     "enabled": true,
     "service_port": 3849,
     "embedding_backend": "ollama",
-    "embedding_model": "qwen3-embedding:0.6b",
+    "embedding_model": "qwen3-embedding",
     "fallback_backend": "sentence-transformers",
     "fallback_model": "BAAI/bge-m3",
     "ollama_base_url": "http://127.0.0.1:11434",
     "ollama_llm_model": "qwen3:1.7b",
+    "ollama_backends": {
+      "rdchat": {
+        "base_url": "https://rdchat.uj.com.tw/ollama",
+        "auth": {
+          "type": "bearer_ldap",
+          "login_url": "https://rdchat.uj.com.tw/api/v1/auths/ldap",
+          "password_file": "~/.claude/workflow/.rdchat_password"
+        },
+        "llm_model": "qwen3.5:latest",
+        "embedding_model": "qwen3-embedding:latest",
+        "priority": 1,
+        "enabled": true,
+        "think": true,
+        "llm_num_predict": 8192
+      },
+      "local": {
+        "base_url": "http://127.0.0.1:11434",
+        "llm_model": "qwen3:1.7b",
+        "embedding_model": "qwen3-embedding",
+        "priority": 2,
+        "think": false,
+        "llm_num_predict": 2048
+      }
+    },
     "search_top_k": 5,
     "search_min_score": 0.65,
-    "search_timeout_ms": 2000,
+    "search_timeout_ms": 3500,
     "auto_start_service": true,
-    "auto_index_on_change": true,
-    "additional_atom_dirs": [
-      {
-        "name": "openclaw",
-        "path": "E:/.openclaw/memory/atoms",
-        "recursive": true,
-        "skip_files": ["decisions", "system-health", "claude-code-delegation", "workspace-access", "_active"]
-      }
-    ]
+    "auto_index_on_change": true
   },
   "write_gate": {
     "enabled": true,
@@ -57,23 +74,6 @@
     "min_duration_seconds": 120
   },
   "_unused_cleanup": "cleanup/session_awareness/decay 設定僅供 memory-audit.py --enforce 使用，guardian 不讀取",
-  "cleanup": {
-    "ended_ttl_ms": 60000,
-    "orphan_done_ttl_ms": 1800000,
-    "orphan_working_ttl_ms": 86400000
-  },
-  "session_awareness": {
-    "enabled": true,
-    "max_keyword_signals": 20,
-    "max_triggers": 12
-  },
-  "decay": {
-    "enforce_on_audit": false,
-    "staleness_thresholds": {"[固]": 90, "[觀]": 60, "[臨]": 30},
-    "auto_archive_临": true,
-    "mark_观_pending_review": true,
-    "never_auto_archive_固": true
-  },
   "cross_session": {
     "enabled": true,
     "min_score": 0.75,
@@ -86,6 +86,13 @@
     "session_end_max_chars": 20000,
     "session_end_max_items": 5,
     "session_end_timeout_seconds": 10,
-    "classification_default": "[臨]"
+    "classification_default": "[臨]",
+    "per_turn": {
+      "enabled": true,
+      "min_new_chars": 500,
+      "max_items": 3,
+      "skip_cross_session": true,
+      "cooldown_seconds": 120
+    }
   }
 }

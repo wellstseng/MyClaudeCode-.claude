@@ -342,7 +342,7 @@ def get_project_memory_dir(cwd: str) -> Optional[Path]:
 
 # ─── _AIDocs Bridge (v2.10) ──────────────────────────────────────────────
 
-AiDocsEntry = Tuple[str, str]  # (filename, description)
+AiDocsEntry = Tuple[str, str, List[str]]  # (filename, description, keywords)
 
 
 def find_project_root(cwd: str) -> Optional[Path]:
@@ -397,22 +397,43 @@ def parse_aidocs_index(project_root: Path) -> List[AiDocsEntry]:
                 # Skip deprecated (strikethrough) entries
                 if fname.startswith("~~") or "淘汰" in desc:
                     continue
-                entries.append((fname, desc))
+                # Parse explicit keywords from 4th column (comma-separated)
+                keywords: List[str] = []
+                if len(cells) >= 4 and cells[3].strip():
+                    keywords = [k.strip().lower() for k in cells[3].split(",") if k.strip()]
+                entries.append((fname, desc, keywords))
     return entries
 
 
 def extract_aidocs_keywords(entries: List[AiDocsEntry]) -> Dict[str, List[str]]:
-    """Extract search keywords from _AIDocs descriptions."""
+    """Extract search keywords from _AIDocs entries.
+
+    Priority: explicit keywords from _INDEX.md 4th column → fallback to description auto-extract.
+    """
     STOP = {"的", "與", "和", "等", "個", "含", "—", "md", "分析", "說明", "文件", "專案"}
     result: Dict[str, List[str]] = {}
-    for fname, desc in entries:
-        words = re.findall(r"[\u4e00-\u9fff]{2,}|[a-zA-Z_]{3,}", desc.lower())
-        keywords = [w for w in words if w not in STOP]
-        # Also include filename stem as keywords
-        stem = Path(fname).stem.lower().replace("_", " ").replace("-", " ")
-        keywords.extend(stem.split())
-        result[fname] = list(set(keywords))[:10]
+    for fname, desc, explicit_kw in entries:
+        if explicit_kw:
+            # Use explicit keywords directly (already lowercased by parser)
+            result[fname] = explicit_kw[:15]
+        else:
+            # Fallback: auto-extract from description
+            words = re.findall(r"[\u4e00-\u9fff]{2,}|[a-zA-Z_]{3,}", desc.lower())
+            keywords = [w for w in words if w not in STOP]
+            stem = Path(fname).stem.lower().replace("_", " ").replace("-", " ")
+            keywords.extend(stem.split())
+            result[fname] = list(set(keywords))[:10]
     return result
+
+
+def _kw_match(kw: str, prompt_lower: str) -> bool:
+    """Match a trigger keyword against prompt.
+    ASCII keywords use word-boundary but exclude hyphenated compounds:
+    'debug' matches 'I am debug this' but not 'atom-debug'.
+    CJK keywords use plain substring match."""
+    if kw.isascii():
+        return bool(re.search(r'(?<![\w-])' + re.escape(kw) + r'(?![\w-])', prompt_lower))
+    return kw in prompt_lower
 
 
 def match_triggers(prompt: str, atoms: List[AtomEntry]) -> List[AtomEntry]:
@@ -420,7 +441,7 @@ def match_triggers(prompt: str, atoms: List[AtomEntry]) -> List[AtomEntry]:
     prompt_lower = prompt.lower()
     matched = []
     for name, rel_path, triggers in atoms:
-        if any(kw in prompt_lower for kw in triggers):
+        if any(_kw_match(kw, prompt_lower) for kw in triggers):
             matched.append((name, rel_path, triggers))
     return matched
 
@@ -587,6 +608,38 @@ def output_block(reason: str) -> None:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+# ─── Atom Debug Log ──────────────────────────────────────────────────────────
+
+
+def _atom_debug_log(tag: str, content: str, config: Dict[str, Any] = None) -> None:
+    """Write to atom-debug.log when atom_debug flag is on.
+    For ERROR tag, always write regardless of flag."""
+    if tag != "ERROR" and not (config or {}).get("atom_debug", False):
+        return
+    try:
+        log_dir = Path.home() / ".claude" / "Logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / f"atom-debug-{datetime.now().strftime('%Y-%m-%d_%H')}.log"
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        body = content if content and content.strip() else "NONE"
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{ts}][{tag}] {body}\n\n")
+    except Exception:
+        pass
+
+
+def _atom_debug_error(source: str, exc: Exception) -> None:
+    """Log error with source context. Network errors get one-line summary."""
+    if isinstance(exc, (TimeoutError, OSError, ConnectionError)):
+        msg = f"{type(exc).__name__}: {exc}"
+    else:
+        import traceback
+        msg = traceback.format_exc()
+        if "NoneType" in msg:
+            msg = f"{type(exc).__name__}: {exc}"
+    _atom_debug_log("ERROR", f"[{source}] {msg}", {"atom_debug": True})
 
 
 # ─── Intent Classifier (v2.1 Sprint 2) ───────────────────────────────────────
@@ -902,7 +955,8 @@ def _semantic_search(
                 entries.append((name, r.get("file_path", ""), []))
                 seen.add(name)
         return entries
-    except Exception:
+    except Exception as e:
+        _atom_debug_error("_semantic_search", e)
         return []  # graceful fallback
 
 
@@ -985,7 +1039,7 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         aidocs_keywords = extract_aidocs_keywords(aidocs_entries) if aidocs_entries else {}
         state["aidocs"] = {
             "project_root": str(project_root) if project_root else "",
-            "entries": [(f, d) for f, d in aidocs_entries],
+            "entries": [(f, d) for f, d, _kw in aidocs_entries],
             "keywords": aidocs_keywords,
         }
 
@@ -1003,7 +1057,7 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         max_entries = config.get("aidocs", {}).get("max_session_start_entries", 15)
         if aidocs_entries:
             aidocs_lines = [f"[AIDocs] {len(aidocs_entries)} docs in _AIDocs/:"]
-            for fname, desc in aidocs_entries[:max_entries]:
+            for fname, desc, _kw in aidocs_entries[:max_entries]:
                 clean = re.sub(r"[*~`]", "", desc).strip()
                 aidocs_lines.append(f"  - {fname}: {clean[:80]}")
             lines.extend(aidocs_lines)
@@ -1039,10 +1093,8 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
     except Exception as e:
         print(f"[dual-backend] Long DIE check error: {e}", file=sys.stderr)
 
-    # ── Vector Service auto-start ──────────────────────────────────────
-    if config.get("vector_search", {}).get("auto_start_service", True):
-        _ensure_vector_service(config)
-
+    # CRITICAL: write state + output BEFORE warmup, so even if warmup
+    # times out (and hook gets killed), state file exists for subsequent hooks.
     write_state(session_id, state)
 
     output_json({
@@ -1051,6 +1103,17 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             "additionalContext": "\n".join(lines),
         }
     })
+
+    # ── Vector Service auto-start + warmup (best-effort, after state saved) ──
+    if config.get("vector_search", {}).get("auto_start_service", True):
+        _ensure_vector_service(config)
+        try:
+            vs_port = config.get("vector_search", {}).get("service_port", 3849)
+            warmup_url = f"http://127.0.0.1:{vs_port}/search?q=warmup&top_k=1&min_score=0.99"
+            warmup_req = urllib.request.Request(warmup_url)
+            urllib.request.urlopen(warmup_req, timeout=2)
+        except Exception:
+            pass  # best-effort warmup
 
 
 def handle_user_prompt_submit(
@@ -1063,7 +1126,9 @@ def handle_user_prompt_submit(
         return
 
     prompt = input_data.get("prompt", "")
-    prompt_lower = prompt.lower().strip()
+    # Strip IDE context tags to avoid false keyword matches on tag content
+    clean_prompt = re.sub(r'<ide_\w+>.*?</ide_\w+>', '', prompt, flags=re.DOTALL).strip()
+    prompt_lower = clean_prompt.lower()
     lines: List[str] = []
 
     # ─── Dual-Backend: long_die user response ─────────────────────────
@@ -1133,7 +1198,7 @@ def handle_user_prompt_submit(
     if aidocs_kw_map and prompt.strip():
         matched_docs: List[str] = []
         for fname, keywords in aidocs_kw_map.items():
-            if any(kw in prompt_lower for kw in keywords):
+            if any(_kw_match(kw, prompt_lower) for kw in keywords):
                 matched_docs.append(fname)
         if matched_docs and len(matched_docs) <= 5:
             aidocs_root = aidocs_state.get("project_root", "")
@@ -1207,11 +1272,12 @@ def handle_user_prompt_submit(
                 continue
             cross_parent = cross_mem.parent
             for name, rel_path, triggers in cross_atoms:
-                if name not in already_injected and any(kw in prompt_lower for kw in triggers):
+                if name not in already_injected and sum(_kw_match(kw, prompt_lower) for kw in triggers) >= 2:
                     all_atoms.append(((name, rel_path, triggers), cross_parent))
-                    lines.append(f"[Guardian:CrossProject] {proj_dir.name}/{name} matched")
+                    # CrossProject match notification → debug log only
+                    _atom_debug_log("CrossProject", f"{proj_dir.name}/{name} matched", config)
     for (name, rel_path, triggers), base_dir in all_atoms:
-        if name not in already_injected and any(kw in prompt_lower for kw in triggers):
+        if name not in already_injected and any(_kw_match(kw, prompt_lower) for kw in triggers):
             matched_with_dir.append(((name, rel_path, triggers), base_dir))
 
     # ── Intent classification (v2.1) ────────────────────────────────
@@ -1317,7 +1383,6 @@ def handle_user_prompt_submit(
                 break
 
         if atom_lines:
-            lines.append("[Guardian:Memory] Trigger-matched atoms loaded:")
             lines.extend(atom_lines)
             state["injected_atoms"] = already_injected + newly_injected
 
@@ -1391,15 +1456,10 @@ def handle_user_prompt_submit(
                         pass
                     break
 
-    # ── Blind-Spot Reporter (v2.9) ──────────────────────────────────
-    if not matched_with_dir and not newly_injected and not alias_injected_projects:
-        prompt_preview = prompt[:50].strip()
-        if len(prompt) > 50:
-            prompt_preview += "..."
-        lines.append(
-            f'[Guardian:BlindSpot] 未找到與 "{prompt_preview}" '
-            f'相關的記憶 atom。建議 LLM 主動搜尋檔案或詢問使用者。'
-        )
+    # ── Blind-Spot Reporter (v2.9) — debug log only, not injected ──
+    if (not matched_with_dir and not newly_injected and not alias_injected_projects
+            and len(clean_prompt) >= 10):
+        _atom_debug_log("BlindSpot", f"未匹配: {clean_prompt[:80]}", config)
 
     # ── Fix Escalation Protocol (v2.12) ─────────────────────────────
     retry_count = state.get("wisdom_retry_count", 0)
@@ -1447,6 +1507,11 @@ def handle_user_prompt_submit(
                 state["total_reminds"] = total_reminds + 1
 
     write_state(session_id, state)
+
+    # atom-debug: log injection content with user prompt
+    prompt_preview = prompt[:200].strip() if prompt else ""
+    injection_body = f"[PROMPT] {prompt_preview}\n[注入內容]\n" + ("\n".join(lines) if lines else "NONE")
+    _atom_debug_log("注入", injection_body, config)
 
     if lines:
         # V2.11: Context budget hard cap
@@ -1544,6 +1609,172 @@ def handle_pre_compact(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
     output_nothing()
 
 
+# ─── Per-turn incremental extraction helpers (V2.12) ─────────────────────
+
+
+def _is_pid_alive(pid: int) -> bool:
+    """Check if a process is still running."""
+    if not pid:
+        return False
+    if sys.platform == "win32":
+        import ctypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        h = ctypes.windll.kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+        )
+        if h:
+            ctypes.windll.kernel32.CloseHandle(h)
+            return True
+        return False
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+
+def _cwd_to_project_slug(cwd: str) -> str:
+    slug = cwd.replace(":", "-").replace("\\", "-").replace("/", "-").replace(".", "-")
+    if slug:
+        slug = slug[0].lower() + slug[1:]
+    return slug
+
+
+def _find_transcript(session_id: str, cwd: str):
+    slug = _cwd_to_project_slug(cwd)
+    candidate = CLAUDE_DIR / "projects" / slug / f"{session_id}.jsonl"
+    return candidate if candidate.exists() else None
+
+
+def _count_new_assistant_chars(transcript_path, byte_offset: int) -> int:
+    """Lightweight pre-scan: count assistant text chars from byte_offset."""
+    total = 0
+    try:
+        with open(transcript_path, "r", encoding="utf-8") as f:
+            if byte_offset > 0:
+                f.seek(byte_offset)
+            for raw_line in f:
+                try:
+                    obj = json.loads(raw_line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if obj.get("type") != "assistant":
+                    continue
+                content = obj.get("message", {}).get("content", [])
+                if not isinstance(content, list):
+                    continue
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        t = block.get("text", "")
+                        if t and len(t) > 30:
+                            total += len(t)
+    except (OSError, UnicodeDecodeError):
+        pass
+    return total
+
+
+def _spawn_extract_worker(ctx_dict: dict) -> int:
+    """Spawn extract-worker.py as detached subprocess. Returns PID or 0."""
+    import subprocess as _sp
+    worker_path = CLAUDE_DIR / "hooks" / "extract-worker.py"
+    if not worker_path.exists():
+        return 0
+    try:
+        kwargs = {}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = _sp.CREATE_NO_WINDOW | _sp.DETACHED_PROCESS
+        else:
+            kwargs["start_new_session"] = True
+        worker_log = CLAUDE_DIR / "workflow" / "extract-worker.log"
+        worker_log_fh = open(worker_log, "a", encoding="utf-8")
+        json_ctx = json.dumps(ctx_dict, ensure_ascii=False)
+        proc = _sp.Popen(
+            [sys.executable, str(worker_path)],
+            stdin=_sp.PIPE,
+            stdout=_sp.DEVNULL,
+            stderr=worker_log_fh,
+            **kwargs,
+        )
+        worker_log_fh.close()
+        proc.stdin.write(json_ctx.encode("utf-8"))
+        proc.stdin.close()
+        return proc.pid
+    except Exception as e:
+        _atom_debug_error("_spawn_extract_worker", e)
+        return 0
+
+
+def _maybe_spawn_per_turn_extraction(
+    session_id: str, state: Dict[str, Any], config: Dict[str, Any]
+) -> None:
+    """Conditionally spawn per-turn incremental extraction."""
+    rc = config.get("response_capture", {})
+    pt = rc.get("per_turn", {})
+    if not pt.get("enabled", False):
+        return
+
+    # Cooldown check
+    last_at = state.get("last_per_turn_extraction_at", "")
+    if last_at:
+        cooldown = pt.get("cooldown_seconds", 120)
+        try:
+            last_t = datetime.fromisoformat(last_at)
+            if (datetime.now().astimezone() - last_t).total_seconds() < cooldown:
+                return
+        except (ValueError, TypeError):
+            pass
+
+    # Concurrency guard
+    prev_pid = state.get("extract_worker_pid", 0)
+    if _is_pid_alive(prev_pid):
+        return
+
+    # Check new content since last extraction
+    cwd = state.get("session", {}).get("cwd", "")
+    transcript = _find_transcript(session_id, cwd)
+    if not transcript:
+        return
+
+    prev_offset = state.get("extraction_offset", 0)
+    file_size = transcript.stat().st_size
+    if file_size <= prev_offset:
+        return
+
+    new_chars = _count_new_assistant_chars(transcript, prev_offset)
+    min_chars = pt.get("min_new_chars", 500)
+    if new_chars < min_chars:
+        return
+
+    # Resolve intent
+    tracker = state.get("topic_tracker", {})
+    dist = tracker.get("intent_distribution", {})
+    intent = max(dist, key=dist.get, default="build") if dist else "build"
+
+    # Spawn worker
+    worker_ctx = {
+        "session_id": session_id,
+        "cwd": cwd,
+        "config": config,
+        "knowledge_queue": state.get("knowledge_queue", []),
+        "session_intent": intent,
+        "mode": "per_turn",
+        "byte_offset": prev_offset,
+    }
+    pid = _spawn_extract_worker(worker_ctx)
+    if pid:
+        state["extract_worker_pid"] = pid
+        state["last_per_turn_extraction_at"] = _now_iso()
+        write_state(session_id, state)
+        print(
+            f"[v2.12] per-turn extract-worker spawned (pid={pid}, offset={prev_offset}, new_chars={new_chars})",
+            file=sys.stderr,
+        )
+
+
+# ─── Stop Hook ────────────────────────────────────────────────────────────
+
+
 def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
     session_id = input_data.get("session_id", "")
     state = read_state(session_id)
@@ -1559,11 +1790,13 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
     if stop_count >= max_blocks:
         state["phase"] = "done"
         write_state(session_id, state)
+        _maybe_spawn_per_turn_extraction(session_id, state, config)
         output_nothing()
         return
 
     # Already synced or marked done
     if phase in ("done", "syncing"):
+        _maybe_spawn_per_turn_extraction(session_id, state, config)
         output_nothing()
         return
 
@@ -1575,6 +1808,7 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
 
     # Muted session — always allow
     if state.get("muted"):
+        _maybe_spawn_per_turn_extraction(session_id, state, config)
         output_nothing()
         return
 
@@ -1582,6 +1816,7 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
     if mod_count == 0 and kq_count == 0:
         state["phase"] = "done"
         write_state(session_id, state)
+        _maybe_spawn_per_turn_extraction(session_id, state, config)
         output_nothing()
         return
 
@@ -1589,12 +1824,14 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
     if len(unique_files) < min_files and kq_count == 0:
         state["phase"] = "done"
         write_state(session_id, state)
+        _maybe_spawn_per_turn_extraction(session_id, state, config)
         output_nothing()
         return
 
     # Block: meaningful sync needed
     state["stop_blocked_count"] = stop_count + 1
     write_state(session_id, state)
+    _maybe_spawn_per_turn_extraction(session_id, state, config)
 
     file_names = ", ".join(f.rsplit("/", 1)[-1] for f in unique_files[:8])
 
@@ -2348,6 +2585,7 @@ def _generate_episodic_atom(
     atom_path.write_text(content, encoding="utf-8")
     # v2.2: Episodic atoms NOT listed in MEMORY.md index (TTL 24d, vector search discovers them)
 
+    _atom_debug_log("萃取:episodic", content, config)
     print(f"[episodic] Generated: {atom_path.name} (scope: {scope_label})", file=sys.stderr)
     return atom_name
 
@@ -2362,49 +2600,24 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
     state["ended_at"] = _now_iso()
     state["phase"] = "done"
 
-    # ─── V2.11-fix: Spawn extract-worker.py as detached subprocess ──────
-    # extract-worker handles: transcript reading, LLM extraction, cross-session
-    # observation, and pattern aggregation — all independently of hook timeout.
+    # ─── Spawn extract-worker.py as detached subprocess (V2.12) ─────────
     rc = config.get("response_capture", {})
     if rc.get("enabled", True):
-        try:
-            import subprocess
-            cwd = state.get("session", {}).get("cwd", "")
-            tracker = state.get("topic_tracker", {})
-            intent = tracker.get("intent_distribution", {}).get("top", "build")
-            worker_ctx = json.dumps({
-                "session_id": session_id,
-                "cwd": cwd,
-                "config": config,
-                "knowledge_queue": state.get("knowledge_queue", []),
-                "session_intent": intent,
-            }, ensure_ascii=False)
-            worker_path = CLAUDE_DIR / "hooks" / "extract-worker.py"
-            if worker_path.exists():
-                # Detached subprocess: survives hook timeout
-                kwargs = {}
-                if sys.platform == "win32":
-                    kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
-                else:
-                    kwargs["start_new_session"] = True
-                worker_log = CLAUDE_DIR / "workflow" / "extract-worker.log"
-                worker_log_fh = open(worker_log, "a", encoding="utf-8")
-                proc = subprocess.Popen(
-                    [sys.executable, str(worker_path)],
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.DEVNULL,
-                    stderr=worker_log_fh,
-                    **kwargs,
-                )
-                worker_log_fh.close()  # fd inherited by child; parent can close
-                proc.stdin.write(worker_ctx.encode("utf-8"))
-                proc.stdin.close()
-                print(
-                    f"[v2.11] extract-worker spawned (pid={proc.pid}, intent={intent})",
-                    file=sys.stderr,
-                )
-        except Exception as e:
-            print(f"[v2.11] extract-worker spawn error: {e}", file=sys.stderr)
+        cwd = state.get("session", {}).get("cwd", "")
+        tracker = state.get("topic_tracker", {})
+        dist = tracker.get("intent_distribution", {})
+        intent = max(dist, key=dist.get, default="build") if dist else "build"
+        worker_ctx = {
+            "session_id": session_id,
+            "cwd": cwd,
+            "config": config,
+            "knowledge_queue": state.get("knowledge_queue", []),
+            "session_intent": intent,
+        }
+        pid = _spawn_extract_worker(worker_ctx)
+        if pid:
+            print(f"[v2.12] extract-worker spawned (pid={pid}, intent={intent})", file=sys.stderr)
+        state["extract_worker_pid"] = 0  # SessionEnd: don't track PID (session ending)
 
     mod_count = len(state.get("modified_files", []))
     kq_count = len(state.get("knowledge_queue", []))
@@ -2486,6 +2699,7 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
             episodic_generated = True
         except Exception as e:
             print(f"[episodic] generation failed: {e}", file=sys.stderr)
+            _atom_debug_error("_generate_episodic_atom", e)
 
     # V2.11-fix: Save review marker if review was due this session
     if state.get("review_due"):
@@ -2551,6 +2765,7 @@ def main():
         except Exception as e:
             # Never crash; log to stderr (verbose mode only) and continue
             print(f"[workflow-guardian] Error in {event}: {e}", file=sys.stderr)
+            _atom_debug_error(f"workflow-guardian:{event}", e)
             sys.exit(0)
     else:
         sys.exit(0)

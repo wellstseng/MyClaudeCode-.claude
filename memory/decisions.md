@@ -3,14 +3,14 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 全域決策, 工具, 工作流, workflow, guardian, hooks, MCP, 記憶系統
-- Last-used: 2026-03-17
-- Confirmations: 60
+- Last-used: 2026-03-18
+- Confirmations: 56
 - Type: decision
 
 ## 知識
 
 ### 核心架構
-- [固] 原子記憶 V2.12：V2.11 全功能 + Fix Escalation Protocol（6 Agent 精確修正會議）+ Project Atom 載入三修（多表格解析 + _ATOM_INDEX.md + 路徑分流）
+- [固] 原子記憶 V2.12：Hybrid RECALL + Ranked Search + 回應捕獲（SessionEnd全量 + Stop逐輪增量）+ 跨 Session 鞏固（簡化計數）+ Write Gate + 自我迭代（3 條精簡）+ Wisdom Engine（硬規則+反思校準）+ 檢索強化 + Context Budget + 衝突偵測 + Atom 健康度 + Fix Escalation Protocol（6 Agent 精確修正會議）
 - [固] 雙 LLM：Claude Code（雲端決策）+ Ollama qwen3（本地語意處理）
 - [固] 6 hook 事件全由 workflow-guardian.py 統一處理（SessionStart/UserPromptSubmit/PostToolUse/PreCompact/Stop/SessionEnd）
 
@@ -19,11 +19,13 @@
 - [固] 降級順序：Ollama 不可用 → 純 keyword | Vector Service 掛 → graceful fallback
 - [固] 索引 2 層：global → project（向量發現），所有層統一 `**/*.md` 遞迴掃描 + `_` 前綴目錄跳過
 
-### 回應捕獲（V2.4→V2.11）
-- [固] V2.11: 廢除逐輪萃取（per_turn_enabled: false），僅保留 SessionEnd 全 transcript 萃取
+### 回應捕獲（V2.4→V2.12）
+- [固] V2.12: 逐輪增量萃取回歸 — Stop hook 觸發，byte_offset 增量讀取，cooldown 120s + PID 併發保護 + min_new_chars 500 門檻
+- [固] V2.12: per_turn 模式：max_chars=4000, max_items=3, skip_cross_session=true, 結果直接回寫 state knowledge_queue
+- [固] V2.12: _spawn_extract_worker() 共用函式（SessionEnd + per-turn 共用），handle_session_end() intent bug 修正
+- [固] SessionEnd 萃取仍為最終全量掃描（≤20000 chars, 5 items），自然 dedup per-turn 已萃取項目
 - [固] V2.11: 情境感知萃取（依 session intent 調整 prompt：build/debug/design/recall）
 - [固] V2.11: 跨 Session 觀察（vector search top_k=5, min_score=0.75 → 2+ sessions 命中生成觀察段落）
-- [固] SessionEnd 萃取：同步掃描全 transcript（≤20000 chars, 5 items）
 - [固] 萃取結果一律 [臨]，由 Confirmations 計數驅動後續晉升
 - [固] V2.5: 萃取 prompt 可操作性標準、知識類型 6 種、format:json、Write Gate CJK-aware
 
@@ -39,14 +41,12 @@
 
 ### 基礎設施
 - [固] Vector Service @ localhost:3849 | Dashboard @ localhost:3848
-- [固] Ollama: local qwen3:1.7b + qwen3-embedding:0.6b（家用環境僅 local backend）
-- [觀] Ollama Dual-Backend（辦公室參考）: rdchat qwen3.5(pri=1) + local(pri=2) — 詳見 toolchain.md
-- [固] Vector DB: ChromaDB SQLite backend（i7-3770 不支援 AVX2，LanceDB/HNSW 會 crash）
+- [固] Ollama Dual-Backend: rdchat qwen3.5（主力萃取, pri=1）+ local qwen3:1.7b（fallback, pri=2）+ qwen3-embedding（embedding）
+- [固] Vector DB: LanceDB（此電腦支援 AVX2，LanceDB 效能穩定）
 - [固] search_min_score: 0.65（完整版 embedding 精確度足夠）
 - [固] MCP 傳輸格式：JSONL，protocolVersion 2025-11-25
-- [固] _call_ollama_generate: num_predict=2048, timeout=120s（qwen3 thinking mode 需 ~30s on GTX 1650）
-- [固] SessionEnd 萃取由 extract-worker.py detached subprocess 執行（hook timeout=30s，但 Claude Code 硬性上限預設 1.5s，需 env var `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS=30000` 覆寫）
-- [固] Hook timeout 設定：SessionStart=5s, UserPromptSubmit=8s, PostToolUse=5s, PreCompact=5s, Stop=5s, SessionEnd=30s（需 env var）
+- [固] _call_ollama_generate: num_predict=2048, timeout=120s（qwen3 thinking mode 需 ~30s on GTX 1050 Ti）
+- [固] SessionEnd 萃取由 extract-worker.py detached subprocess 執行（hook timeout=30s，萃取需 ~60s）
 
 ### 自我迭代（V2.6→V2.11）
 - [固] V2.11: 精簡為 3 條核心原則：品質函數（Hook）、證據門檻（Claude）、震盪偵測（Hook）
@@ -78,13 +78,13 @@
 - [固] VCS Query Capture：PostToolUse 攔截 Bash tool，regex 匹配 git/svn log/blame/show/diff
 - [固] Episodic 閱讀軌跡：`_build_read_tracking_section()` 生成 `## 閱讀軌跡` section（最多 30 檔 + 10 筆版控查詢）
 - [固] 純閱讀 Session：accessed_files ≥ 5 且無修改時也生成 episodic atom
-- [固] 暫存區管理：`memory/_staging/` 存放續接 prompt 等臨時檔案，.gitignore 排除，SessionEnd 提醒清理
+- [固] 暫存區管理：`projects/{slug}/memory/_staging/` 專案層暫存區，每個專案獨立續接。.gitignore 排除，SessionEnd 提醒清理
 
 ### V2.12 精確修正計畫
-- [固] Fix Escalation Protocol：同一問題修正第 2 次起，強制暫停 → `/fix-escalation` 6 Agent 會議
-- [固] Guardian hook 自動偵測 `wisdom_retry_count >= 2` → 注入 `[Guardian:FixEscalation]`
-- [固] Project Atom 載入三修：多表格解析（`break`→`continue`）+ `_parse_atom_index_file()` + `_AIAtoms/` 路徑分流
-- [固] 豁免：typo/語法錯誤不計；使用者說「直接改」可跳過
+- [固] Fix Escalation Protocol：同一問題修正第 2 次起，強制啟動 6 Agent 精確修正會議（外部搜索+專案調查+正反辯論 2 輪+落地分析+垃圾回收）
+- [固] Guardian hook 自動偵測：UserPromptSubmit 檢查 wisdom_retry_count ≥ 2 → 注入 `[Guardian:FixEscalation]` 信號
+- [固] `/fix-escalation` skill：固定化 agent prompt 模板，5 Phase 流程（暫停→蒐集→辯論→深度挑戰→決策執行→驗證）
+- [固] 自我驗證+成效追蹤：連續 3 次未解決強制暫停與使用者對齊
 
 ### 歷史決策
 - [固] 記憶檢索統一用 Python，已移除 Node.js memory-v2（2026-03-05 退役）
@@ -102,4 +102,5 @@
 - 2026-03-11: V2.8→V2.10 — Wisdom Engine + 檢索強化(ACT-R/Spreading) + Session 全軌跡追蹤
 - 2026-03-13: V2.11 全面升級 — 精簡（砍逐輪萃取/因果圖/自動晉升/迭代8→3）+ 品質（衝突偵測/反思校準）+ 模組化（rules/+Context Budget）
 - 2026-03-13: 自檢修復 — 清除因果圖殘留 + Context Budget 動態化 + 索引同步 + atom 去重 + extract-worker 啟用
-- 2026-03-17: V2.12 — Fix Escalation Protocol + Project Atom 載入三修（從辦公室環境合併）
+- 2026-03-17: V2.12 精確修正計畫 — Fix Escalation Protocol（6 Agent 會議制）+ Guardian 自動偵測 + /fix-escalation skill
+- 2026-03-18: V2.12 逐輪增量萃取 — Stop hook per-turn extraction（byte_offset + cooldown + PID guard）+ _spawn_extract_worker 共用化 + intent bug 修正

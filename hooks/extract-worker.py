@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
-"""SessionEnd extraction worker for V2.11 response capture.
+"""Extraction worker for V2.12 response capture.
 
-Spawned by workflow-guardian.py as a detached subprocess at SessionEnd.
+Spawned by workflow-guardian.py as a detached subprocess.
+Two modes:
+  - SessionEnd (default): full transcript extraction
+  - per_turn: incremental extraction from byte_offset, lighter, writes back to state
+
 Reads context from stdin (JSON), outputs results to stdout (JSON).
 Survives hook timeout — runs ~60s on GTX 1050 Ti.
-
-V2.11 changes:
-- Removed per-turn extraction (SessionEnd only)
-- Intent-aware prompt templates (build/debug/design/recall)
-- Pattern aggregation (word overlap >40%)
-- Cross-session observation (vector search)
-- Simplified consolidation (confirmations count, no auto-promotion)
 """
 
 import json
@@ -44,6 +41,35 @@ def _empty_result() -> Dict[str, Any]:
     }
 
 
+# ─── Atom Debug Log ──────────────────────────────────────────────────────────
+
+
+def _atom_debug_log(tag: str, content: str, config: Dict[str, Any] = None) -> None:
+    """Write to atom-debug.log when atom_debug flag is on.
+    For ERROR tag, always write regardless of flag."""
+    if tag != "ERROR" and not (config or {}).get("atom_debug", False):
+        return
+    try:
+        log_dir = Path.home() / ".claude" / "Logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / f"atom-debug-{datetime.now().strftime('%Y-%m-%d_%H')}.log"
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        body = content if content and content.strip() else "NONE"
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{ts}][{tag}] {body}\n\n")
+    except Exception:
+        pass
+
+
+def _atom_debug_error(source: str, exc: Exception) -> None:
+    """Log error with source context and stack trace."""
+    import traceback
+    tb = traceback.format_exc()
+    if "NoneType" in tb:
+        tb = f"{type(exc).__name__}: {exc}"
+    _atom_debug_log("ERROR", f"[{source}] {tb}", {"atom_debug": True})
+
+
 # ─── Transcript helpers ──────────────────────────────────────────────────────
 
 
@@ -61,13 +87,20 @@ def _find_transcript(session_id: str, cwd: str) -> Optional[Path]:
 
 
 def _extract_all_assistant_texts(
-    transcript_path: Path, max_chars: int = 20000
-) -> List[str]:
-    """Read all assistant text blocks from JSONL transcript."""
+    transcript_path: Path, max_chars: int = 20000, byte_offset: int = 0
+) -> tuple:
+    """Read assistant text blocks from JSONL transcript.
+
+    Returns (texts: list[str], final_byte_offset: int).
+    When byte_offset > 0, seeks to that position first (incremental read).
+    """
     texts = []
     total = 0
+    final_offset = byte_offset
     try:
         with open(transcript_path, "r", encoding="utf-8") as f:
+            if byte_offset > 0:
+                f.seek(byte_offset)
             for raw_line in f:
                 try:
                     obj = json.loads(raw_line)
@@ -86,9 +119,10 @@ def _extract_all_assistant_texts(
                             total += len(t)
                 if total >= max_chars:
                     break
+            final_offset = f.tell()
     except (OSError, UnicodeDecodeError):
         pass
-    return texts
+    return texts, final_offset
 
 
 # ─── Ollama ───────────────────────────────────────────────────────────────────
@@ -104,7 +138,8 @@ def _call_ollama(prompt: str, model: str = None, timeout: int = 120) -> str:
             prompt, model=model, timeout=timeout,
             think=True, temperature=0.1, num_predict=8192,
         )
-    except Exception:
+    except Exception as e:
+        _atom_debug_error("_call_ollama", e)
         return ""
 
 
@@ -159,9 +194,16 @@ _PROMPT_TEMPLATES = {
 }
 
 
-def _build_prompt(intent: str, text: str) -> str:
+def _build_prompt(intent: str, text: str, existing_items: List[dict] = None) -> str:
     template = _PROMPT_TEMPLATES.get(intent, _PROMPT_TEMPLATES["build"])
-    return template.format(text=text[:4000])
+    prompt = template.replace("{text}", text[:4000])
+    # Per-turn: inject existing knowledge to prevent duplicates
+    if existing_items:
+        existing_contents = [q.get("content", "") for q in existing_items if q.get("content")]
+        if existing_contents:
+            dedup_block = "\n已萃取過的知識（不要重複）:\n" + "\n".join(f"- {c}" for c in existing_contents[-10:]) + "\n\n"
+            prompt = prompt.replace("Session 文字:\n", dedup_block + "Session 文字:\n")
+    return prompt
 
 
 # ─── Parse + Dedup ────────────────────────────────────────────────────────────
@@ -332,7 +374,8 @@ def _cross_session_search(
 
             observations.append(obs)
 
-        except Exception:
+        except Exception as e:
+            _atom_debug_error("_cross_session_search", e)
             continue  # Skip this item, try next
 
     return observations
@@ -347,6 +390,8 @@ def run_extraction(ctx: Dict[str, Any]) -> Dict[str, Any]:
     config = ctx.get("config", {})
     knowledge_queue = ctx.get("knowledge_queue", [])
     intent = ctx.get("session_intent", "build")
+    mode = ctx.get("mode", "session_end")
+    is_per_turn = mode == "per_turn"
 
     # recall sessions rarely produce new knowledge
     if intent == "recall":
@@ -358,8 +403,20 @@ def run_extraction(ctx: Dict[str, Any]) -> Dict[str, Any]:
         return _empty_result()
 
     rc = config.get("response_capture", {})
-    max_chars = rc.get("session_end_max_chars", 20000)
-    texts = _extract_all_assistant_texts(transcript, max_chars=max_chars)
+    pt = rc.get("per_turn", {})
+
+    if is_per_turn:
+        byte_offset = ctx.get("byte_offset", 0)
+        max_chars = 4000
+        max_items = pt.get("max_items", 3)
+    else:
+        byte_offset = 0
+        max_chars = rc.get("session_end_max_chars", 20000)
+        max_items = rc.get("session_end_max_items", 5)
+
+    texts, final_offset = _extract_all_assistant_texts(
+        transcript, max_chars=max_chars, byte_offset=byte_offset
+    )
     if not texts:
         return _empty_result()
 
@@ -368,28 +425,90 @@ def run_extraction(ctx: Dict[str, Any]) -> Dict[str, Any]:
         return _empty_result()
 
     # LLM extraction with intent-aware prompt
-    prompt = _build_prompt(intent, combined)
+    # Pass existing items so LLM avoids duplicates in generation
+    prompt = _build_prompt(intent, combined,
+                           existing_items=knowledge_queue if knowledge_queue else None)
     raw = _call_ollama(prompt)
     parsed = _parse_llm_response(raw)
     if not parsed:
         return _empty_result()
 
-    # Dedup against existing knowledge_queue (threshold 0.80)
-    items = _dedup_items(parsed, knowledge_queue, threshold=0.80)
+    # Dedup against existing knowledge_queue (0.65 for both modes)
+    items = _dedup_items(parsed, knowledge_queue, threshold=0.65)
+    # Cap items
+    items = items[:max_items]
     if not items:
         return _empty_result()
+
+    # Tag source
+    source_tag = "per-turn" if is_per_turn else "session-end"
+    for item in items:
+        item["source"] = source_tag
 
     # Pattern aggregation
     aggregation = _check_trigger_overlap(items)
 
-    # Cross-session vector search
-    observations = _cross_session_search(items, session_id, config)
+    # Cross-session vector search (skip in per_turn if configured)
+    observations = []
+    if not (is_per_turn and pt.get("skip_cross_session", True)):
+        observations = _cross_session_search(items, session_id, config)
 
-    return {
+    result = {
         "extracted_items": items,
         "cross_session_observations": observations,
         "aggregation_suggestions": aggregation,
     }
+    if is_per_turn:
+        result["final_offset"] = final_offset
+    return result
+
+
+# ─── State writeback (for per-turn mode) ─────────────────────────────────
+
+
+def _write_state_atomic(state_path: Path, state: dict) -> bool:
+    """Atomic write: temp file → rename. Returns True on success."""
+    tmp = state_path.with_suffix(".tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+        tmp.replace(state_path)
+        return True
+    except OSError:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+        return False
+
+
+def _per_turn_writeback(ctx: dict, result: dict) -> None:
+    """Write per-turn extraction results back to session state."""
+    session_id = ctx.get("session_id", "")
+    if not session_id:
+        return
+    state_path = WORKFLOW_DIR / f"state-{session_id}.json"
+    if not state_path.exists():
+        return
+    try:
+        with open(state_path, "r", encoding="utf-8") as f:
+            state = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return
+
+    items = result.get("extracted_items", [])
+    if items:
+        kq = state.get("knowledge_queue", [])
+        kq.extend(items)
+        state["knowledge_queue"] = kq
+
+    if result.get("final_offset"):
+        state["extraction_offset"] = result["final_offset"]
+
+    state["extract_worker_pid"] = 0
+    state["last_updated"] = _now_iso()
+    _write_state_atomic(state_path, state)
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
@@ -401,9 +520,23 @@ def main():
         raw_input = sys.stdin.read()
         ctx = json.loads(raw_input)
         result = run_extraction(ctx)
+
+        # atom-debug: log extraction results
+        _cfg = ctx.get("config", {})
+        mode = ctx.get("mode", "session_end")
+        items = result.get("extracted_items", [])
+        tag = f"萃取:{mode}"
+        body = json.dumps(items, ensure_ascii=False, indent=2) if items else None
+        _atom_debug_log(tag, body, _cfg)
+
+        # per_turn: write results back to state file
+        if mode == "per_turn":
+            _per_turn_writeback(ctx, result)
+
         sys.stdout.write(json.dumps(result, ensure_ascii=False))
     except Exception as e:
         print(f"[extract-worker] error: {e}", file=sys.stderr)
+        _atom_debug_error("extract-worker:main", e)
         sys.stdout.write(json.dumps(_empty_result()))
 
 

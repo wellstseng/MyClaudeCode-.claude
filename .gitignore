@@ -27,6 +27,10 @@ stats-cache.json
 # config.json IS tracked; state files are not
 workflow/state-*.json
 workflow/guardian-crash.log
+workflow/extract-worker.log
+
+# ─── Runtime logs (atom-debug, hook output) ───────────────
+Logs/
 
 # ─── Memory Vector Service runtime ────────────────────────
 memory/_vectordb/*.lance
@@ -50,6 +54,8 @@ memory/_distant/
 # ─── User-specific config (per-user, auto-generated) ──────
 USER.md
 USER-*.md
+IDENTITY.md
+IDENTITY-*.md
 
 # ─── User-specific atoms (hardware, local env) ────────────
 memory/hardware.md
@@ -83,3 +89,4 @@ __pycache__/
 Thumbs.db
 *.swp
 *~
+memory/mail-sorting.md

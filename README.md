@@ -407,7 +407,7 @@ flowchart TD
 | **ACT-R Activation (V2.9)** | 時間加權排序 B_i=ln(Σt_k^{-0.5})，近期高頻 atom 優先注入 |
 | **Blind-Spot Reporter (V2.9)** | 三重空判斷 → 注入盲點提醒，不假裝全知 |
 | **Read Tracking (V2.10)** | PostToolUse 攔截 Read/Bash，記錄閱讀檔案+版控查詢，寫入 episodic `## 閱讀軌跡` |
-| **Staging Area (V2.10)** | `memory/_staging/` 暫存區，續接 prompt 等臨時檔案用完即清，SessionEnd 提醒 |
+| **Staging Area (V2.10)** | `projects/{slug}/memory/_staging/` 專案層暫存區，續接 prompt 等臨時檔案用完即清，每個專案獨立 |
 | **Fix Escalation Protocol (V2.12)** | 同一問題修正第 2 次起強制啟動 6 Agent 精確修正會議。Guardian hook 自動偵測 retry≥2 注入 `[FixEscalation]` 信號 → `/fix-escalation` skill 執行 5 Phase 流程（暫停→蒐集→辯論 2 輪→決策執行→自我驗證）。連續 3 次未解決強制暫停 |
 | **Conflict Detection** | 新知識寫入時語意掃描既有 atoms，偵測矛盾 (AGREE/CONTRADICT/EXTEND) |
 | **Decay & Archival** | 超期 atom 自動移入 `_distant/{year}_{month}/`，不刪除，可 `--restore` 拉回 |

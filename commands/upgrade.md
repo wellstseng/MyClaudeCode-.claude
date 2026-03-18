@@ -116,7 +116,7 @@ $ARGUMENTS
 3. 特別處理子目錄：
    - `memory/wisdom/` — 直接比對
    - `memory/episodic/` — 不比對（自動生成）
-   - `memory/_staging/` — 確保目錄存在即可
+   - `memory/_staging/` — 確保目錄存在即可（全域層；專案層 staging 在 `projects/{slug}/memory/_staging/`）
    - `memory/_distant/` — 不比對（封存區）
 
 ### 2.5 Tools
