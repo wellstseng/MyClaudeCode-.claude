@@ -1091,18 +1091,8 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
     except Exception as e:
         print(f"[dual-backend] Long DIE check error: {e}", file=sys.stderr)
 
-    # ── Vector Service auto-start + warmup ─────────────────────────────
-    if config.get("vector_search", {}).get("auto_start_service", True):
-        _ensure_vector_service(config)
-        # Warmup: fire a non-blocking dummy search to preload embedding model
-        try:
-            vs_port = config.get("vector_search", {}).get("service_port", 3849)
-            warmup_url = f"http://127.0.0.1:{vs_port}/search?q=warmup&top_k=1&min_score=0.99"
-            warmup_req = urllib.request.Request(warmup_url)
-            urllib.request.urlopen(warmup_req, timeout=8)
-        except Exception:
-            pass  # best-effort warmup
-
+    # CRITICAL: write state + output BEFORE warmup, so even if warmup
+    # times out (and hook gets killed), state file exists for subsequent hooks.
     write_state(session_id, state)
 
     output_json({
@@ -1111,6 +1101,17 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             "additionalContext": "\n".join(lines),
         }
     })
+
+    # ── Vector Service auto-start + warmup (best-effort, after state saved) ──
+    if config.get("vector_search", {}).get("auto_start_service", True):
+        _ensure_vector_service(config)
+        try:
+            vs_port = config.get("vector_search", {}).get("service_port", 3849)
+            warmup_url = f"http://127.0.0.1:{vs_port}/search?q=warmup&top_k=1&min_score=0.99"
+            warmup_req = urllib.request.Request(warmup_url)
+            urllib.request.urlopen(warmup_req, timeout=2)
+        except Exception:
+            pass  # best-effort warmup
 
 
 def handle_user_prompt_submit(

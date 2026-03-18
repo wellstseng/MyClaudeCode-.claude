@@ -159,7 +159,10 @@
       "C:\\Users\\holylight",
       "\\tmp",
       "C:\\Users\\holylight\\.claude\\workflow",
-      "C:\\Users\\holylight\\.claude\\projects\\c--Projects-sgi-server\\memory"
+      "C:\\Users\\holylight\\.claude\\projects\\c--Projects-sgi-server\\memory",
+      "C:\\Users\\holylight\\.claude\\memory\\_staging",
+      "C:\\Users\\holylight\\.claude\\projects\\c--Users-holylight--claude\\memory",
+      "C:\\Users\\holylight\\.claude\\projects\\c--Users-holylight--claude\\memory\\_staging"
     ]
   },
   "hooks": {
