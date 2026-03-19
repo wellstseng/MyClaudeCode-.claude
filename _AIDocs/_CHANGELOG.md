@@ -6,6 +6,7 @@
 
 | 日期 | 變更 | 涉及檔案 |
 |------|------|---------|
+| 2026-03-19 | **V2.13 Failures 自動化系統**：Guardian UserPromptSubmit 偵測失敗關鍵字（strong ×1 / weak ×2）→ spawn detached extract-worker(mode=failure) → Ollama 萃取失敗模式 → 三維路由（失敗類型 × 專案 × 領域tags）自動寫入對應 failure atom。config 可調關鍵字 + cooldown 180s。專案層 failures 自動建立 | `hooks/extract-worker.py`, `hooks/workflow-guardian.py`, `workflow/config.json`, `memory/failures/_INDEX.md` |
 | 2026-03-18 | **V2.12 逐輪增量萃取**：Stop hook 觸發 per-turn extraction（byte_offset 增量讀取 + cooldown 120s + PID 併發保護 + min_new_chars 500 門檻）。`_spawn_extract_worker()` 共用化（SessionEnd + per-turn）。修正 `handle_session_end()` intent 選取 bug（`get("top")` → `max(dist)`）。per-turn 結果直接回寫 state knowledge_queue，SessionEnd 自然 dedup | `hooks/extract-worker.py`, `hooks/workflow-guardian.py`, `workflow/config.json` |
 | 2026-03-18 | **AIDocs keyword 重新設計**：`_INDEX.md` 加 keywords 欄（手動精準關鍵字）、`extract_aidocs_keywords()` 優先讀顯式 keywords fallback 描述提取、matching 改用 `_kw_match()` 防短詞誤匹配、`AiDocsEntry` 改 3-tuple | `_AIDocs/_INDEX.md`, `hooks/workflow-guardian.py` |
 | 2026-03-18 | **`/atom-debug` skill**：新增注入/萃取 debug log 開關。開啟後記錄每次 additionalContext 注入內容、episodic atom 萃取、extract-worker LLM 萃取結果至 `~/.claude/Logs/atom-debug.log`。ERROR log 不受開關控制，含 stack trace | `commands/atom-debug.md`, `hooks/workflow-guardian.py`, `hooks/extract-worker.py`, `workflow/config.json` |

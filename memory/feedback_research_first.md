@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 試錯, trial-and-error, 不熟悉, API, 框架, 搜尋, research
-- Last-used: 2026-03-18
-- Confirmations: 10
+- Last-used: 2026-03-19
+- Confirmations: 11
 
 修復同一個技術問題連續失敗時，必須主動搜尋網路知識來驗證/推翻推論、找到正確解法。
 

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Extraction worker for V2.12 response capture.
+"""Extraction worker for V2.13 response capture.
 
 Spawned by workflow-guardian.py as a detached subprocess.
-Two modes:
+Three modes:
   - SessionEnd (default): full transcript extraction
   - per_turn: incremental extraction from byte_offset, lighter, writes back to state
+  - failure: failure-pattern extraction triggered by user complaints, writes to failure atoms
 
 Reads context from stdin (JSON), outputs results to stdout (JSON).
 Survives hook timeout — runs ~60s on GTX 1050 Ti.
@@ -192,6 +193,30 @@ _PROMPT_TEMPLATES = {
         + "Session 文字:\n{text}\n\nJSON:"
     ),
 }
+
+_FAILURE_PROMPT = (
+    "你是「原子記憶系統」的失敗模式分析器。使用者回報了重複或未修好的問題。\n"
+    "分析對話內容，萃取出失敗模式記錄。\n\n"
+    "四種失敗類型:\n"
+    "- env: 環境踩坑（工具/平台/版本/port/路徑/config 造成的非預期行為）\n"
+    "- assumption: 假設錯誤（直覺判斷錯誤、沒調查就下結論、調查方向偏差）\n"
+    "- silent: 靜默失敗（看似正常但結果不對、錯誤被吞掉、資料沒寫入）\n"
+    "- cognitive: 認知偏差（代理指標、過度工程、反覆犯同一模式、選錯抽象層級）\n\n"
+    "輸出格式 — JSON array:\n"
+    '[{"content": "{觸發場景} → {錯誤行為} → {正確做法}（根因: ...）", '
+    '"failure_type": "env|assumption|silent|cognitive", '
+    '"domain_tags": ["tag1"]}]\n\n'
+    "規則:\n"
+    "- 如果對話中不是真正的失敗（使用者只是描述需求），輸出 []\n"
+    "- content 遵循「觸發 → 錯誤 → 正確（根因）」格式，最多 150 字\n"
+    "- 最多萃取 2 條\n"
+    "- domain_tags: 1-3 個領域標籤（如 gameplay, memory-system, git, unity, ollama）\n"
+    "- 直接輸出 JSON\n\n"
+    "使用者的回報:\n{failure_prompt}\n\n"
+    "最近對話:\n{text}\n\nJSON:"
+)
+
+VALID_FAILURE_TYPES = ("env", "assumption", "silent", "cognitive")
 
 
 def _build_prompt(intent: str, text: str, existing_items: List[dict] = None) -> str:
@@ -392,9 +417,10 @@ def run_extraction(ctx: Dict[str, Any]) -> Dict[str, Any]:
     intent = ctx.get("session_intent", "build")
     mode = ctx.get("mode", "session_end")
     is_per_turn = mode == "per_turn"
+    is_failure = mode == "failure"
 
     # recall sessions rarely produce new knowledge
-    if intent == "recall":
+    if intent == "recall" and not is_failure:
         return _empty_result()
 
     # Find and read transcript
@@ -404,8 +430,13 @@ def run_extraction(ctx: Dict[str, Any]) -> Dict[str, Any]:
 
     rc = config.get("response_capture", {})
     pt = rc.get("per_turn", {})
+    fc = rc.get("failure_extraction", {})
 
-    if is_per_turn:
+    if is_failure:
+        byte_offset = ctx.get("byte_offset", 0)
+        max_chars = 3000
+        max_items = fc.get("max_items", 2)
+    elif is_per_turn:
         byte_offset = ctx.get("byte_offset", 0)
         max_chars = 4000
         max_items = pt.get("max_items", 3)
@@ -424,10 +455,17 @@ def run_extraction(ctx: Dict[str, Any]) -> Dict[str, Any]:
     if len(combined) < 50:
         return _empty_result()
 
-    # LLM extraction with intent-aware prompt
-    # Pass existing items so LLM avoids duplicates in generation
-    prompt = _build_prompt(intent, combined,
-                           existing_items=knowledge_queue if knowledge_queue else None)
+    # Build prompt based on mode
+    if is_failure:
+        failure_prompt = ctx.get("failure_prompt", "")[:500]
+        prompt = _FAILURE_PROMPT.replace("{failure_prompt}", failure_prompt)
+        prompt = prompt.replace("{text}", combined[:3000])
+    else:
+        # LLM extraction with intent-aware prompt
+        # Pass existing items so LLM avoids duplicates in generation
+        prompt = _build_prompt(intent, combined,
+                               existing_items=knowledge_queue if knowledge_queue else None)
+
     raw = _call_ollama(prompt)
     parsed = _parse_llm_response(raw)
     if not parsed:
@@ -441,16 +479,16 @@ def run_extraction(ctx: Dict[str, Any]) -> Dict[str, Any]:
         return _empty_result()
 
     # Tag source
-    source_tag = "per-turn" if is_per_turn else "session-end"
+    source_tag = "failure" if is_failure else ("per-turn" if is_per_turn else "session-end")
     for item in items:
         item["source"] = source_tag
 
     # Pattern aggregation
     aggregation = _check_trigger_overlap(items)
 
-    # Cross-session vector search (skip in per_turn if configured)
+    # Cross-session vector search (skip in per_turn and failure if configured)
     observations = []
-    if not (is_per_turn and pt.get("skip_cross_session", True)):
+    if not (is_per_turn and pt.get("skip_cross_session", True)) and not is_failure:
         observations = _cross_session_search(items, session_id, config)
 
     result = {
@@ -511,6 +549,107 @@ def _per_turn_writeback(ctx: dict, result: dict) -> None:
     _write_state_atomic(state_path, state)
 
 
+# ─── Failure writeback ────────────────────────────────────────────────────────
+
+_FAILURE_TYPE_FILE = {
+    "env": "env-traps.md",
+    "assumption": "wrong-assumptions.md",
+    "silent": "silent-failures.md",
+    "cognitive": "cognitive-patterns.md",
+}
+
+_FAILURE_TITLES = {
+    "env": "環境踩坑（Environment Traps）",
+    "assumption": "假設錯誤（Wrong Assumptions）",
+    "silent": "靜默失敗（Silent Failures）",
+    "cognitive": "認知模式偏差（Cognitive Patterns）",
+}
+
+
+def _failure_writeback(ctx: dict, items: list) -> None:
+    """將萃取的失敗記錄寫入對應 failure atom 檔。"""
+    cwd = ctx.get("cwd", "")
+    config = ctx.get("config", {})
+
+    # 路由：有專案 memory dir → 專案層；否則 → 全域層
+    failures_dir = CLAUDE_DIR / "memory" / "failures"
+    if cwd:
+        slug = _cwd_to_project_slug(cwd)
+        if slug:
+            proj_mem = CLAUDE_DIR / "projects" / slug / "memory"
+            if proj_mem.exists():
+                proj_fail = proj_mem / "failures"
+                proj_fail.mkdir(exist_ok=True)
+                failures_dir = proj_fail
+
+    written = 0
+    for item in items:
+        ftype = item.get("failure_type", "assumption")
+        if ftype not in _FAILURE_TYPE_FILE:
+            ftype = "assumption"
+
+        target = failures_dir / _FAILURE_TYPE_FILE[ftype]
+        content = item.get("content", "").strip()
+        tags = item.get("domain_tags", [])
+        if not content or len(content) < 10:
+            continue
+
+        # Dedup：與目標檔案既有條目比對
+        if target.exists():
+            existing = target.read_text(encoding="utf-8-sig")
+            skip = False
+            for line in existing.split("\n"):
+                if line.startswith("- [") and _word_overlap_score(content, line) >= 0.65:
+                    skip = True
+                    break
+            if skip:
+                continue
+
+        # 組裝條目
+        tag_str = f"  #{' #'.join(tags)}" if tags else ""
+        now = datetime.now().strftime("%Y-%m-%d")
+        entry_line = f"- [臨] {content}{tag_str}  ({now})"
+
+        # 寫入：插在 ## 行動 之前；若檔案不存在則建立
+        if target.exists():
+            text = target.read_text(encoding="utf-8-sig")
+            inserted = False
+            for marker in ("## 行動", "## 演化日誌"):
+                idx = text.find(marker)
+                if idx > 0:
+                    text = text[:idx] + entry_line + "\n\n" + text[idx:]
+                    inserted = True
+                    break
+            if not inserted:
+                text += "\n" + entry_line + "\n"
+            target.write_text(text, encoding="utf-8")
+        else:
+            _create_failure_atom(target, ftype, entry_line)
+        written += 1
+
+    if written:
+        _atom_debug_log(
+            "failure_writeback",
+            f"Wrote {written} failure entries to {failures_dir}",
+            config,
+        )
+
+
+def _create_failure_atom(path: Path, ftype: str, first_entry: str) -> None:
+    """建立最小 failure atom 檔（專案層首次寫入用）。"""
+    content = (
+        f"# {_FAILURE_TITLES.get(ftype, ftype)}\n\n"
+        f"- Scope: project\n"
+        f"- Confidence: [臨]\n"
+        f"- Type: procedural\n"
+        f"- Created: {datetime.now().strftime('%Y-%m-%d')}\n\n"
+        f"## 知識\n\n{first_entry}\n\n"
+        f"## 行動\n\n- 同全域 failures 共通行動規則\n"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
 # ─── Entry point ──────────────────────────────────────────────────────────────
 
 
@@ -529,8 +668,12 @@ def main():
         body = json.dumps(items, ensure_ascii=False, indent=2) if items else None
         _atom_debug_log(tag, body, _cfg)
 
-        # per_turn: write results back to state file
-        if mode == "per_turn":
+        # Mode-specific writeback
+        if mode == "failure":
+            items = result.get("extracted_items", [])
+            if items:
+                _failure_writeback(ctx, items)
+        elif mode == "per_turn":
             _per_turn_writeback(ctx, result)
 
         sys.stdout.write(json.dumps(result, ensure_ascii=False))

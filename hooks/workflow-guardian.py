@@ -1508,6 +1508,11 @@ def handle_user_prompt_submit(
             "執行 /fix-escalation 精確修正會議。"
         )
 
+    # ─── Phase 1.5: Failure-triggered extraction (v2.13) ───────────
+    _maybe_spawn_failure_extraction(
+        session_id, state, config, clean_prompt, lines
+    )
+
     # ─── Topic tracking (v2.2) ─────────────────────────────────────
     _update_topic_tracker(state, prompt, intent, newly_injected)
 
@@ -1804,6 +1809,79 @@ def _maybe_spawn_per_turn_extraction(
         print(
             f"[v2.12] per-turn extract-worker spawned (pid={pid}, offset={prev_offset}, new_chars={new_chars})",
             file=sys.stderr,
+        )
+
+
+def _detect_failure_keywords(prompt: str, config: dict) -> bool:
+    """偵測使用者輸入是否含失敗回報關鍵字。"""
+    fc = config.get("response_capture", {}).get("failure_extraction", {})
+    if not fc.get("enabled", False):
+        return False
+
+    strong = fc.get("strong_keywords", [])
+    weak = fc.get("weak_keywords", [])
+    weak_min = fc.get("weak_min_match", 2)
+    prompt_lower = prompt.lower()
+
+    # Strong: 任一命中即觸發
+    for kw in strong:
+        if _kw_match(kw, prompt_lower):
+            return True
+
+    # Weak: 需 >= weak_min 命中
+    weak_hits = sum(1 for kw in weak if _kw_match(kw, prompt_lower))
+    return weak_hits >= weak_min
+
+
+def _maybe_spawn_failure_extraction(
+    session_id: str, state: dict, config: dict,
+    clean_prompt: str, lines: list,
+) -> None:
+    """偵測失敗關鍵字 → spawn extract-worker failure mode。"""
+    if not _detect_failure_keywords(clean_prompt, config):
+        return
+
+    fc = config.get("response_capture", {}).get("failure_extraction", {})
+    cooldown = fc.get("cooldown_seconds", 180)
+
+    # Cooldown check
+    last_at = state.get("last_failure_extraction_at", "")
+    if last_at:
+        try:
+            dt = datetime.fromisoformat(last_at)
+            if (datetime.now().astimezone() - dt).total_seconds() < cooldown:
+                return
+        except (ValueError, TypeError):
+            pass
+
+    # Concurrency guard
+    fail_pid = state.get("failure_worker_pid", 0)
+    if _is_pid_alive(fail_pid):
+        return
+
+    # 回看最近內容（往前 2000 bytes 以抓到失敗上下文）
+    prev_offset = max(0, state.get("extraction_offset", 0) - 2000)
+    cwd = state.get("session", {}).get("cwd", "")
+
+    worker_ctx = {
+        "session_id": session_id,
+        "cwd": cwd,
+        "config": config,
+        "knowledge_queue": state.get("knowledge_queue", []),
+        "session_intent": "debug",
+        "mode": "failure",
+        "byte_offset": prev_offset,
+        "failure_prompt": clean_prompt[:500],
+    }
+    pid = _spawn_extract_worker(worker_ctx)
+    if pid:
+        state["failure_worker_pid"] = pid
+        state["last_failure_extraction_at"] = _now_iso()
+        lines.append("[Guardian:FailureDetect] 偵測到失敗回報，背景萃取中...")
+        _atom_debug_log(
+            "FailureDetect",
+            f"Spawned failure extraction (pid={pid}), prompt: {clean_prompt[:100]}",
+            config,
         )
 
 
