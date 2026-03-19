@@ -54,7 +54,7 @@ Session Ready
 |------|------|
 | aidocs.md | _AIDocs 知識庫維護（啟動檢查 + 工作中 4 規則） |
 | memory-system.md | 原子記憶：[固]/[觀]/[臨] 分類 + 寫入原則 + 演進規則 |
-| session-management.md | 對話管理 + 續航 + 識流 + 自我迭代 V2.6 |
+| session-management.md | 對話管理 + 續航 + 識流 + 自我迭代 |
 | sync-workflow.md | 工作結束同步 + Workflow Guardian 閘門 |
 
 ## 4. Hook 系統

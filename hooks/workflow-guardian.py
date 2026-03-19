@@ -460,6 +460,37 @@ def compute_token_budget(prompt: str) -> int:
         return 5000       # Mode 2: deep
 
 
+# ─── V2.14: Token Diet — strip non-essential metadata before injection ────────
+
+# Metadata lines that have already served their purpose (trigger matching, activation scoring)
+# and provide no value to Claude during the conversation.
+_STRIP_META_RE = re.compile(
+    r"^- (?:Scope|Type|Trigger|Last-used|Created|Confirmations|Tags|TTL|Expires-at):\s.*$\n?",
+    re.MULTILINE,
+)
+
+# Sections that Claude doesn't need: 行動 (action rules duplicating CLAUDE.md/rules)
+# and 演化日誌 (atom change history).
+_STRIP_SECTION_RE = re.compile(
+    r"^## (?:行動|演化日誌)\s*\n[\s\S]*?(?=^## |\Z)",
+    re.MULTILINE,
+)
+
+
+def _strip_atom_for_injection(content: str) -> str:
+    """Strip metadata lines and non-essential sections from atom content before injection.
+
+    Keeps: title, Confidence, Related, 知識 section, and other knowledge sections.
+    Removes: Scope, Type, Trigger, Last-used, Created, Confirmations, Tags, TTL, Expires-at,
+             ## 行動, ## 演化日誌.
+    """
+    content = _STRIP_META_RE.sub("", content)
+    content = _STRIP_SECTION_RE.sub("", content)
+    # Clean up excessive blank lines left by stripping
+    content = re.sub(r"\n{3,}", "\n\n", content)
+    return content.strip()
+
+
 def load_atoms_within_budget(
     matched: List[AtomEntry],
     memory_dir: Path,
@@ -483,6 +514,7 @@ def load_atoms_within_budget(
         except (OSError, UnicodeDecodeError):
             continue
 
+        content = _strip_atom_for_injection(content)
         content_tokens = len(content) // 4  # char-to-token estimate
         if used + content_tokens <= budget_tokens:
             lines.append(f"[Atom:{name}]\n{content}")
@@ -742,7 +774,7 @@ def _search_episodic_context(
     port = vs_config.get("service_port", 3849)
     top_k = sc_config.get("max_episodic", 3)
     min_score = sc_config.get("min_score", 0.35)
-    timeout_s = sc_config.get("search_timeout_ms", 1500) / 1000.0
+    timeout_s = sc_config.get("search_timeout_ms", 8000) / 1000.0
 
     try:
         import urllib.parse
@@ -874,6 +906,33 @@ def _proactive_classify(
     return lines
 
 
+# ─── MCP Server Health Check ─────────────────────────────────────────────────
+
+
+def _check_mcp_servers() -> List[str]:
+    """Verify .mcp.json server entries: command + script must exist on disk."""
+    issues: List[str] = []
+    mcp_path = CLAUDE_DIR / ".mcp.json"
+    if not mcp_path.exists():
+        return []
+    try:
+        with open(mcp_path, "r", encoding="utf-8") as f:
+            mcp_cfg = json.loads(f.read())
+        servers = mcp_cfg.get("mcpServers", {})
+        for name, srv in servers.items():
+            cmd = srv.get("command", "")
+            args = srv.get("args", [])
+            if cmd and not Path(cmd).exists():
+                issues.append(f"{name}: command not found ({cmd})")
+            if args:
+                script = args[0]
+                if not Path(script).exists():
+                    issues.append(f"{name}: script not found ({script})")
+    except Exception as e:
+        issues.append(f"parse error: {e}")
+    return issues
+
+
 # ─── Vector Service Helpers ───────────────────────────────────────────────────
 
 
@@ -921,7 +980,7 @@ def _semantic_search(
     port = vs_config.get("service_port", 3849)
     top_k = vs_config.get("search_top_k", 5)
     min_score = vs_config.get("search_min_score", 0.65)
-    timeout_s = vs_config.get("search_timeout_ms", 2000) / 1000.0
+    timeout_s = vs_config.get("search_timeout_ms", 8000) / 1000.0
 
     try:
         import urllib.parse
@@ -1093,6 +1152,14 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
     except Exception as e:
         print(f"[dual-backend] Long DIE check error: {e}", file=sys.stderr)
 
+    # ── MCP Server health check ──────────────────────────────────────
+    try:
+        mcp_issues = _check_mcp_servers()
+        if mcp_issues:
+            lines.append("[MCP] " + "; ".join(mcp_issues))
+    except Exception as e:
+        print(f"[mcp-health] Check error: {e}", file=sys.stderr)
+
     # CRITICAL: write state + output BEFORE warmup, so even if warmup
     # times out (and hook gets killed), state file exists for subsequent hooks.
     write_state(session_id, state)
@@ -1111,7 +1178,7 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             vs_port = config.get("vector_search", {}).get("service_port", 3849)
             warmup_url = f"http://127.0.0.1:{vs_port}/search?q=warmup&top_k=1&min_score=0.99"
             warmup_req = urllib.request.Request(warmup_url)
-            urllib.request.urlopen(warmup_req, timeout=2)
+            urllib.request.urlopen(warmup_req, timeout=15)
         except Exception:
             pass  # best-effort warmup
 
@@ -1344,6 +1411,7 @@ def handle_user_prompt_submit(
             except (OSError, UnicodeDecodeError):
                 continue
 
+            content = _strip_atom_for_injection(content)
             content_tokens = len(content) // 4  # char-to-token estimate
             if used_tokens + content_tokens <= budget:
                 atom_lines.append(f"[Atom:{name}]\n{content}")
@@ -1371,6 +1439,7 @@ def handle_user_prompt_submit(
                 content = rpath.read_text(encoding="utf-8-sig")
             except (OSError, UnicodeDecodeError):
                 continue
+            content = _strip_atom_for_injection(content)
             content_tokens = len(content) // 4
             if used_tokens + content_tokens <= budget:
                 atom_lines.append(f"[Atom:{rname}] (related)\n{content}")
@@ -1472,6 +1541,11 @@ def handle_user_prompt_submit(
             "依據「精確修正升級」規則，必須暫停直接修復，"
             "執行 /fix-escalation 精確修正會議。"
         )
+
+    # ─── Phase 1.5: Failure-triggered extraction (v2.13) ───────────
+    _maybe_spawn_failure_extraction(
+        session_id, state, config, clean_prompt, lines
+    )
 
     # ─── Topic tracking (v2.2) ─────────────────────────────────────
     _update_topic_tracker(state, prompt, intent, newly_injected)
@@ -1769,6 +1843,79 @@ def _maybe_spawn_per_turn_extraction(
         print(
             f"[v2.12] per-turn extract-worker spawned (pid={pid}, offset={prev_offset}, new_chars={new_chars})",
             file=sys.stderr,
+        )
+
+
+def _detect_failure_keywords(prompt: str, config: dict) -> bool:
+    """偵測使用者輸入是否含失敗回報關鍵字。"""
+    fc = config.get("response_capture", {}).get("failure_extraction", {})
+    if not fc.get("enabled", False):
+        return False
+
+    strong = fc.get("strong_keywords", [])
+    weak = fc.get("weak_keywords", [])
+    weak_min = fc.get("weak_min_match", 2)
+    prompt_lower = prompt.lower()
+
+    # Strong: 任一命中即觸發
+    for kw in strong:
+        if _kw_match(kw, prompt_lower):
+            return True
+
+    # Weak: 需 >= weak_min 命中
+    weak_hits = sum(1 for kw in weak if _kw_match(kw, prompt_lower))
+    return weak_hits >= weak_min
+
+
+def _maybe_spawn_failure_extraction(
+    session_id: str, state: dict, config: dict,
+    clean_prompt: str, lines: list,
+) -> None:
+    """偵測失敗關鍵字 → spawn extract-worker failure mode。"""
+    if not _detect_failure_keywords(clean_prompt, config):
+        return
+
+    fc = config.get("response_capture", {}).get("failure_extraction", {})
+    cooldown = fc.get("cooldown_seconds", 180)
+
+    # Cooldown check
+    last_at = state.get("last_failure_extraction_at", "")
+    if last_at:
+        try:
+            dt = datetime.fromisoformat(last_at)
+            if (datetime.now().astimezone() - dt).total_seconds() < cooldown:
+                return
+        except (ValueError, TypeError):
+            pass
+
+    # Concurrency guard
+    fail_pid = state.get("failure_worker_pid", 0)
+    if _is_pid_alive(fail_pid):
+        return
+
+    # 回看最近內容（往前 2000 bytes 以抓到失敗上下文）
+    prev_offset = max(0, state.get("extraction_offset", 0) - 2000)
+    cwd = state.get("session", {}).get("cwd", "")
+
+    worker_ctx = {
+        "session_id": session_id,
+        "cwd": cwd,
+        "config": config,
+        "knowledge_queue": state.get("knowledge_queue", []),
+        "session_intent": "debug",
+        "mode": "failure",
+        "byte_offset": prev_offset,
+        "failure_prompt": clean_prompt[:500],
+    }
+    pid = _spawn_extract_worker(worker_ctx)
+    if pid:
+        state["failure_worker_pid"] = pid
+        state["last_failure_extraction_at"] = _now_iso()
+        lines.append("[Guardian:FailureDetect] 偵測到失敗回報，背景萃取中...")
+        _atom_debug_log(
+            "FailureDetect",
+            f"Spawned failure extraction (pid={pid}), prompt: {clean_prompt[:100]}",
+            config,
         )
 
 
@@ -2403,21 +2550,31 @@ def _update_memory_index(memory_dir: Path, atom_name: str, triggers: list) -> No
 
 
 def _build_read_tracking_section(summary: Dict[str, Any]) -> str:
-    """Build '## 閱讀軌跡' section from accessed files and VCS queries (V2.10)."""
+    """Build '## 閱讀軌跡' section — compressed summary (V2.14 token diet).
+
+    Instead of listing every file path (which vector search can't match anyway),
+    produce a compact summary: count + area breakdown.
+    """
     accessed = summary.get("accessed_files", [])
     vcs = summary.get("vcs_queries", [])
     if not accessed and not vcs:
         return ""
     lines = ["## 閱讀軌跡\n"]
-    for af in accessed[:30]:
-        lines.append(f"- {af['path']}")
     if accessed:
-        lines.append("")
+        # Group by area (parent directory or project)
+        areas: Dict[str, int] = {}
+        for af in accessed:
+            path = af.get("path", "")
+            # Extract meaningful area from path
+            parts = path.replace("\\", "/").split("/")
+            # Use the last 2 significant directory parts as area key
+            area = "/".join(p for p in parts[-3:-1] if p) or "root"
+            areas[area] = areas.get(area, 0) + 1
+        area_parts = [f"{a} ({c})" for a, c in sorted(areas.items(), key=lambda x: -x[1])[:5]]
+        lines.append(f"- 讀 {len(accessed)} 檔: {', '.join(area_parts)}")
     if vcs:
-        lines.append("### 版控查詢")
-        for v in vcs[:10]:
-            lines.append(f"- `{v['command']}`")
-        lines.append("")
+        lines.append(f"- 版控查詢 {len(vcs)} 次")
+    lines.append("")
     lines.append("")
     return "\n".join(lines)
 
@@ -2613,6 +2770,8 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
             "config": config,
             "knowledge_queue": state.get("knowledge_queue", []),
             "session_intent": intent,
+            # V2.14: pass byte_offset so SessionEnd skips already-extracted bytes
+            "byte_offset": state.get("extraction_offset", 0),
         }
         pid = _spawn_extract_worker(worker_ctx)
         if pid:
