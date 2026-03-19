@@ -6,7 +6,7 @@
 - Trigger: 環境, Windows, MSYS2, Node.js, npx, Ollama, thinking, port, MCP啟動, VSCode
 - Last-used: 2026-03-19
 - Created: 2026-03-10
-- Confirmations: 36
+- Confirmations: 37
 - Tags: failure, environment, pitfall
 - Related: toolchain
 

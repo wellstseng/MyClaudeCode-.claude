@@ -13,7 +13,7 @@
 │
 ├── hooks/                       ← Hook 腳本
 │   ├── workflow-guardian.py     ← 統一 Hook 入口（~2285 行，處理 6 events）
-│   └── wisdom_engine.py        ← Wisdom Engine V2.8（~250 行，因果圖+情境分類+反思）
+│   └── wisdom_engine.py        ← Wisdom Engine（~195 行，情境分類+反思）
 │
 ├── commands/                    ← 自訂 Skills（/slash commands）
 │   ├── init-project.md          ← /init-project 知識庫初始化
@@ -30,8 +30,8 @@
 │   ├── workflow-rules.md        ← [固] 版本控制工作流規則
 │   ├── failures.md              ← [觀] 失敗/陷阱知識
 │   ├── toolchain.md             ← [觀] 工具鏈知識
-│   ├── SPEC_Atomic_Memory_System.md ← 原子記憶系統規格 v2.8
-│   ├── wisdom/                  ← Wisdom Engine 資料（V2.8）
+│   ├── SPEC_Atomic_Memory_System.md ← 原子記憶系統規格
+│   ├── wisdom/                  ← Wisdom Engine 資料
 │   │   ├── DESIGN.md            ← 設計文件
 │   │   ├── causal_graph.json    ← 因果關係有向圖
 │   │   └── reflection_metrics.json ← 反思統計

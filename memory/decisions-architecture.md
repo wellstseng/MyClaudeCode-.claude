@@ -27,19 +27,19 @@
 - [固] _call_ollama_generate: num_predict=2048, timeout=120s（qwen3 thinking ~30s on GTX 1050 Ti）
 - [固] extract-worker think=true + num_predict=8192（rdchat），detached subprocess
 
-### 檢索強化（V2.9）
+### 檢索強化
 - [固] Project-Aliases：MEMORY.md `> Project-Aliases:` 行，跨專案掃描
 - [固] Related-Edge Spreading：BFS depth=1 沿 Related 邊帶出相關 atoms
 - [固] ACT-R Activation：`B_i = ln(Σ t_k^{-0.5})`，access.json 最近 50 筆
 - [固] Blind-Spot Reporter：matched + injected + alias 全空 → `[Guardian:BlindSpot]`
 
-### Session 軌跡追蹤（V2.10）
+### Session 軌跡追蹤
 - [固] Read Tracking：PostToolUse 攔截 Read，去重記錄（同檔只記首次，最多 30 檔）
 - [固] VCS Query Capture：regex 匹配 git/svn log/blame/show/diff（最多 10 筆）
 - [固] 純閱讀 Session：accessed_files ≥ 5 且無修改 → 也生成 episodic
 - [固] 暫存區：`projects/{slug}/memory/_staging/`，每個專案獨立
 
-### Token Diet（V2.14）
+### Token Diet
 - [固] `_strip_atom_for_injection()`：注入前 regex strip 9 種 metadata（Scope/Type/Trigger/Last-used/Created/Confirmations/Tags/TTL/Expires-at）+ `## 行動` / `## 演化日誌` section。保留 Confidence + Related
 - [固] Episodic 閱讀軌跡壓縮：`_build_read_tracking_section()` 改為摘要格式（`讀 N 檔: area (count)`），不列完整路徑
 - [固] SessionEnd 從 state `byte_offset` 開始讀（overlap=1000），跳過 per-turn 已處理段

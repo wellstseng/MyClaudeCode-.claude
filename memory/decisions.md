@@ -4,14 +4,14 @@
 - Confidence: [固]
 - Trigger: 全域決策, workflow, guardian, hooks, MCP, 記憶系統決策, 記憶系統架構
 - Last-used: 2026-03-19
-- Confirmations: 60
+- Confirmations: 62
 - Type: decision
 - Related: decisions-architecture
 
 ## 知識
 
 ### 核心架構
-- [固] 原子記憶 V2.12：Hybrid RECALL + Ranked Search + 回應捕獲 + 跨 Session 鞏固 + Write Gate + 自我迭代 + Wisdom Engine + 檢索強化 + Context Budget + 衝突偵測 + Fix Escalation
+- [固] 原子記憶 V2.15：Hybrid RECALL + Ranked Search + 回應捕獲（全量+逐輪） + 跨 Session 鞏固 + Write Gate + 自我迭代 + Wisdom Engine + 檢索強化 + Context Budget + 衝突偵測 + Fix Escalation + Failures 自動化 + Token Diet
 - [固] 雙 LLM：Claude Code（雲端決策）+ Ollama（本地語意處理）
 - [固] 6 hook 事件全由 workflow-guardian.py 統一處理
 

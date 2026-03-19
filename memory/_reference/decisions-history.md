@@ -10,4 +10,7 @@
 - 2026-03-13: 自檢修復 — 清除因果圖殘留 + Context Budget 動態化 + 索引同步 + atom 去重 + extract-worker 啟用
 - 2026-03-17: V2.12 精確修正計畫 — Fix Escalation Protocol（6 Agent 會議制）+ Guardian 自動偵測 + /fix-escalation skill
 - 2026-03-18: V2.12 逐輪增量萃取 — Stop hook per-turn extraction（byte_offset + cooldown + PID guard）+ _spawn_extract_worker 共用化 + intent bug 修正
-- 2026-03-19: 精修拆分 — decisions 瘦身 + decisions-architecture 拆出 + 歷史移至此檔
+- 2026-03-19: V2.13 Failures 自動化 — 失敗關鍵字偵測 + detached 萃取 + 三維路由
+- 2026-03-19: V2.14 Token Diet — 注入 strip + SessionEnd 跳段 + lazy search 預篩
+- 2026-03-19: atom 精準拆分（toolchain-ollama + workflow-icld）+ 設定檔精修 + vector timeout 修正
+- 2026-03-19: V2.15 定義版本 — 全文件版本號統一 + 內嵌版本標註清理 + CHANGELOG 補完
