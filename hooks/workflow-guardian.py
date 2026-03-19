@@ -460,6 +460,37 @@ def compute_token_budget(prompt: str) -> int:
         return 5000       # Mode 2: deep
 
 
+# ─── V2.14: Token Diet — strip non-essential metadata before injection ────────
+
+# Metadata lines that have already served their purpose (trigger matching, activation scoring)
+# and provide no value to Claude during the conversation.
+_STRIP_META_RE = re.compile(
+    r"^- (?:Scope|Type|Trigger|Last-used|Created|Confirmations|Tags|TTL|Expires-at):\s.*$\n?",
+    re.MULTILINE,
+)
+
+# Sections that Claude doesn't need: 行動 (action rules duplicating CLAUDE.md/rules)
+# and 演化日誌 (atom change history).
+_STRIP_SECTION_RE = re.compile(
+    r"^## (?:行動|演化日誌)\s*\n[\s\S]*?(?=^## |\Z)",
+    re.MULTILINE,
+)
+
+
+def _strip_atom_for_injection(content: str) -> str:
+    """Strip metadata lines and non-essential sections from atom content before injection.
+
+    Keeps: title, Confidence, Related, 知識 section, and other knowledge sections.
+    Removes: Scope, Type, Trigger, Last-used, Created, Confirmations, Tags, TTL, Expires-at,
+             ## 行動, ## 演化日誌.
+    """
+    content = _STRIP_META_RE.sub("", content)
+    content = _STRIP_SECTION_RE.sub("", content)
+    # Clean up excessive blank lines left by stripping
+    content = re.sub(r"\n{3,}", "\n\n", content)
+    return content.strip()
+
+
 def load_atoms_within_budget(
     matched: List[AtomEntry],
     memory_dir: Path,
@@ -483,6 +514,7 @@ def load_atoms_within_budget(
         except (OSError, UnicodeDecodeError):
             continue
 
+        content = _strip_atom_for_injection(content)
         content_tokens = len(content) // 4  # char-to-token estimate
         if used + content_tokens <= budget_tokens:
             lines.append(f"[Atom:{name}]\n{content}")
@@ -1379,6 +1411,7 @@ def handle_user_prompt_submit(
             except (OSError, UnicodeDecodeError):
                 continue
 
+            content = _strip_atom_for_injection(content)
             content_tokens = len(content) // 4  # char-to-token estimate
             if used_tokens + content_tokens <= budget:
                 atom_lines.append(f"[Atom:{name}]\n{content}")
@@ -1406,6 +1439,7 @@ def handle_user_prompt_submit(
                 content = rpath.read_text(encoding="utf-8-sig")
             except (OSError, UnicodeDecodeError):
                 continue
+            content = _strip_atom_for_injection(content)
             content_tokens = len(content) // 4
             if used_tokens + content_tokens <= budget:
                 atom_lines.append(f"[Atom:{rname}] (related)\n{content}")
@@ -2516,21 +2550,31 @@ def _update_memory_index(memory_dir: Path, atom_name: str, triggers: list) -> No
 
 
 def _build_read_tracking_section(summary: Dict[str, Any]) -> str:
-    """Build '## 閱讀軌跡' section from accessed files and VCS queries (V2.10)."""
+    """Build '## 閱讀軌跡' section — compressed summary (V2.14 token diet).
+
+    Instead of listing every file path (which vector search can't match anyway),
+    produce a compact summary: count + area breakdown.
+    """
     accessed = summary.get("accessed_files", [])
     vcs = summary.get("vcs_queries", [])
     if not accessed and not vcs:
         return ""
     lines = ["## 閱讀軌跡\n"]
-    for af in accessed[:30]:
-        lines.append(f"- {af['path']}")
     if accessed:
-        lines.append("")
+        # Group by area (parent directory or project)
+        areas: Dict[str, int] = {}
+        for af in accessed:
+            path = af.get("path", "")
+            # Extract meaningful area from path
+            parts = path.replace("\\", "/").split("/")
+            # Use the last 2 significant directory parts as area key
+            area = "/".join(p for p in parts[-3:-1] if p) or "root"
+            areas[area] = areas.get(area, 0) + 1
+        area_parts = [f"{a} ({c})" for a, c in sorted(areas.items(), key=lambda x: -x[1])[:5]]
+        lines.append(f"- 讀 {len(accessed)} 檔: {', '.join(area_parts)}")
     if vcs:
-        lines.append("### 版控查詢")
-        for v in vcs[:10]:
-            lines.append(f"- `{v['command']}`")
-        lines.append("")
+        lines.append(f"- 版控查詢 {len(vcs)} 次")
+    lines.append("")
     lines.append("")
     return "\n".join(lines)
 
@@ -2726,6 +2770,8 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
             "config": config,
             "knowledge_queue": state.get("knowledge_queue", []),
             "session_intent": intent,
+            # V2.14: pass byte_offset so SessionEnd skips already-extracted bytes
+            "byte_offset": state.get("extraction_offset", 0),
         }
         pid = _spawn_extract_worker(worker_ctx)
         if pid:

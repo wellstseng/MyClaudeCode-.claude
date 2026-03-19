@@ -222,12 +222,8 @@ VALID_FAILURE_TYPES = ("env", "assumption", "silent", "cognitive")
 def _build_prompt(intent: str, text: str, existing_items: List[dict] = None) -> str:
     template = _PROMPT_TEMPLATES.get(intent, _PROMPT_TEMPLATES["build"])
     prompt = template.replace("{text}", text[:4000])
-    # Per-turn: inject existing knowledge to prevent duplicates
-    if existing_items:
-        existing_contents = [q.get("content", "") for q in existing_items if q.get("content")]
-        if existing_contents:
-            dedup_block = "\n已萃取過的知識（不要重複）:\n" + "\n".join(f"- {c}" for c in existing_contents[-10:]) + "\n\n"
-            prompt = prompt.replace("Session 文字:\n", dedup_block + "Session 文字:\n")
+    # V2.14: Removed pre-filter dedup injection (was ~200 tok/call).
+    # Post-filter _dedup_items() at threshold=0.65 is sufficient to catch duplicates.
     return prompt
 
 
@@ -441,7 +437,10 @@ def run_extraction(ctx: Dict[str, Any]) -> Dict[str, Any]:
         max_chars = 4000
         max_items = pt.get("max_items", 3)
     else:
-        byte_offset = 0
+        # V2.14: SessionEnd skips already-extracted bytes with overlap for context
+        prev_offset = ctx.get("byte_offset", 0)
+        overlap = 1000  # chars of overlap to maintain context continuity
+        byte_offset = max(0, prev_offset - overlap)
         max_chars = rc.get("session_end_max_chars", 20000)
         max_items = rc.get("session_end_max_items", 5)
 
@@ -487,9 +486,20 @@ def run_extraction(ctx: Dict[str, Any]) -> Dict[str, Any]:
     aggregation = _check_trigger_overlap(items)
 
     # Cross-session vector search (skip in per_turn and failure if configured)
+    # V2.14: lazy mode — only search items that overlap with existing knowledge_queue,
+    # since brand-new items (confirmations=1) are unlikely to have cross-session hits.
     observations = []
     if not (is_per_turn and pt.get("skip_cross_session", True)) and not is_failure:
-        observations = _cross_session_search(items, session_id, config)
+        # Pre-filter: only items with word overlap against existing queue worth searching
+        searchable = []
+        for item in items:
+            ic = item.get("content", "")
+            for eq in knowledge_queue:
+                if _word_overlap_score(ic, eq.get("content", "")) >= 0.30:
+                    searchable.append(item)
+                    break
+        if searchable:
+            observations = _cross_session_search(searchable, session_id, config)
 
     result = {
         "extracted_items": items,
