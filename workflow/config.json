@@ -42,7 +42,7 @@
         "llm_model": "qwen3.5:latest",
         "embedding_model": "qwen3-embedding:latest",
         "priority": 1,
-        "enabled": true,
+        "enabled": false,
         "think": true,
         "llm_num_predict": 8192
       },

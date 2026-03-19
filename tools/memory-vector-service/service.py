@@ -309,6 +309,15 @@ class VectorServiceHandler(BaseHTTPRequestHandler):
     def _handle_reload(self):
         global _config, _embedder
         _config = load_config()
+        # Clear ollama_client singleton so new config (e.g. rdchat backend) takes effect
+        try:
+            TOOLS_DIR = SERVICE_DIR.parent
+            if str(TOOLS_DIR) not in sys.path:
+                sys.path.insert(0, str(TOOLS_DIR))
+            import ollama_client
+            ollama_client._client_instance = None
+        except Exception:
+            pass
         try:
             _embedder = create_embedder(_config)
         except Exception as e:

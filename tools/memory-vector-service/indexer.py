@@ -16,10 +16,11 @@ import json
 import re
 import sys
 import time
-import urllib.request
-import urllib.error
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from ollama_client import get_client
 
 CLAUDE_DIR = Path.home() / ".claude"
 COLLECTION_NAME = "atom_memory"
@@ -95,14 +96,18 @@ def discover_atoms(
         layer_skip_files = extra_skip.get(layer_name, set())
         is_extra = layer_name.startswith("extra:")
 
-        # Extra layers support recursive scanning; standard layers scan root + episodic/
-        glob_patterns = ["**/*.md"] if is_extra else ["*.md", "episodic/*.md"]
+        # Recursive scanning for all layers; skip files in _-prefixed directories
+        glob_patterns = ["**/*.md"]
         seen_paths: set = set()
         for glob_pattern in glob_patterns:
             for md_file in sorted(mem_dir.glob(glob_pattern)):
                 if md_file in seen_paths:
                     continue
                 seen_paths.add(md_file)
+                # Skip files inside any _-prefixed directory (e.g. _distant, _vectordb)
+                rel_parts = md_file.relative_to(mem_dir).parts
+                if any(part.startswith("_") for part in rel_parts[:-1]):
+                    continue
                 if md_file.name in SKIP_FILENAMES:
                     continue
                 if any(md_file.name.startswith(p) for p in SKIP_PREFIXES):
@@ -292,33 +297,18 @@ def parse_and_chunk(
 
 
 class OllamaEmbedder:
-    """Embedding via Ollama HTTP API."""
+    """Embedding via dual-backend Ollama client."""
 
-    def __init__(self, model: str = "qwen3-embedding", base_url: str = "http://127.0.0.1:11434"):
-        self.model = model
-        self.base_url = base_url.rstrip("/")
+    def __init__(self):
+        self._client = get_client()
         self._dimension: Optional[int] = None
 
     def is_available(self) -> bool:
-        try:
-            req = urllib.request.Request(f"{self.base_url}/api/tags", method="GET")
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                return resp.status == 200
-        except Exception:
-            return False
+        return self._client.is_available("embedding")
 
     def embed(self, texts: List[str]) -> List[List[float]]:
-        """Embed a batch of texts. Ollama /api/embed supports batch."""
-        payload = json.dumps({"model": self.model, "input": texts}).encode("utf-8")
-        req = urllib.request.Request(
-            f"{self.base_url}/api/embed",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=180) as resp:
-            result = json.loads(resp.read())
-        embeddings = result.get("embeddings", [])
+        """Embed a batch of texts via OllamaClient."""
+        embeddings = self._client.embed(texts)
         if embeddings and self._dimension is None:
             self._dimension = len(embeddings[0])
         return embeddings
@@ -326,7 +316,6 @@ class OllamaEmbedder:
     @property
     def dimension(self) -> int:
         if self._dimension is None:
-            # Probe with a dummy text
             vecs = self.embed(["test"])
             if vecs:
                 self._dimension = len(vecs[0])
@@ -382,10 +371,7 @@ def create_embedder(config: Dict[str, Any]) -> Any:
     """Create embedder based on config, with fallback."""
     backend = config.get("embedding_backend", "ollama")
     if backend == "ollama":
-        emb = OllamaEmbedder(
-            model=config.get("embedding_model", "qwen3-embedding"),
-            base_url=config.get("ollama_base_url", "http://127.0.0.1:11434"),
-        )
+        emb = OllamaEmbedder()
         if emb.is_available():
             return emb
         # Fallback
@@ -399,67 +385,18 @@ def create_embedder(config: Dict[str, Any]) -> Any:
     raise RuntimeError("No embedding backend available. Install Ollama or sentence-transformers.")
 
 
-# ─── ChromaDB Operations ─────────────────────────────────────────────────────
+# ─── LanceDB Operations ──────────────────────────────────────────────────────
 
 
 DB_DIR = CLAUDE_DIR / "memory" / "_vectordb"
-COLLECTION_NAME = "atom_chunks"
-
-# v2.5: Self-healing collection cache
-_cached_collection = None
-_cached_collection_id = None
-_cached_db_client = None
-_consecutive_failures = 0
-_MAX_FAILURES = 3
+TABLE_NAME = "atom_chunks"
 
 
 def _get_db():
-    """Get ChromaDB persistent client (cached)."""
-    global _cached_db_client
-    if _cached_db_client is not None:
-        return _cached_db_client
-    import chromadb
+    """Get LanceDB connection."""
+    import lancedb
     DB_DIR.mkdir(parents=True, exist_ok=True)
-    _cached_db_client = chromadb.PersistentClient(path=str(DB_DIR))
-    return _cached_db_client
-
-
-def _invalidate_collection_cache():
-    """Invalidate cached collection reference."""
-    global _cached_collection, _cached_collection_id, _cached_db_client
-    _cached_collection = None
-    _cached_collection_id = None
-    _cached_db_client = None
-
-
-def _get_collection(client=None):
-    """Get or create the atom_chunks collection with self-healing cache."""
-    global _cached_collection, _cached_collection_id, _consecutive_failures
-    if _cached_collection is not None:
-        try:
-            # Validate cached reference is still alive
-            _cached_collection.count()
-            _consecutive_failures = 0
-            return _cached_collection
-        except Exception:
-            _consecutive_failures += 1
-            if _consecutive_failures >= _MAX_FAILURES:
-                print(f"[indexer] WARNING: {_consecutive_failures} consecutive collection failures, re-resolving", file=sys.stderr)
-            _invalidate_collection_cache()
-
-    if client is None:
-        client = _get_db()
-    col = client.get_or_create_collection(
-        name=COLLECTION_NAME,
-        metadata={"hnsw:space": "cosine"},
-    )
-    _cached_collection = col
-    try:
-        _cached_collection_id = col.id
-    except Exception:
-        _cached_collection_id = None
-    _consecutive_failures = 0
-    return col
+    return lancedb.connect(str(DB_DIR))
 
 
 def _cosine_similarity(a: List[float], b: List[float]) -> float:
@@ -479,6 +416,7 @@ def build_index(
     verbose: bool = False,
 ) -> Dict[str, Any]:
     """Build or update the vector index. Returns stats dict."""
+    import pyarrow as pa
     t0 = time.time()
 
     additional_dirs = config.get("additional_atom_dirs", [])
@@ -500,25 +438,17 @@ def build_index(
     if verbose:
         print(f"[indexer] Using embedder: {embedder.__class__.__name__}")
 
-    client = _get_db()
+    db = _get_db()
 
     # For incremental: load existing hashes
     existing_hashes: Dict[str, str] = {}
     if incremental:
         try:
-            col = _get_collection(client)
-            if col.count() > 0:
-                all_meta = col.get(include=["metadatas"])
-                for meta in all_meta["metadatas"]:
-                    key = f"{meta.get('layer', '')}:{meta.get('atom_name', '')}"
-                    existing_hashes[key] = meta.get("file_hash", "")
-        except Exception:
-            pass
-
-    # For full rebuild: delete existing collection
-    if not incremental:
-        try:
-            client.delete_collection(COLLECTION_NAME)
+            table = db.open_table(TABLE_NAME)
+            rows = table.search().select(["layer", "atom_name", "file_hash"]).limit(table.count_rows()).to_list()
+            for row in rows:
+                key = f"{row.get('layer', '')}:{row.get('atom_name', '')}"
+                existing_hashes[key] = row.get("file_hash", "")
         except Exception:
             pass
 
@@ -571,51 +501,29 @@ def build_index(
             vecs = embedder.embed(batch)
             all_vecs.extend(vecs)
 
-    # Write to ChromaDB
+        for i, rec in enumerate(records):
+            rec["vector"] = all_vecs[i]
+
+    # Write to LanceDB
     if records:
-        col = _get_collection(client)
-
         if incremental:
-            # Delete changed atoms first
-            changed_atoms = {f"{r['layer']}:{r['atom_name']}" for r in records}
-            for ak in changed_atoms:
-                layer_val, atom_val = ak.split(":", 1)
-                try:
-                    existing = col.get(
-                        where={"$and": [{"layer": layer_val}, {"atom_name": atom_val}]}
-                    )
-                    if existing["ids"]:
-                        col.delete(ids=existing["ids"])
-                except Exception:
-                    pass
+            # Delete changed atoms first, then add new
+            try:
+                table = db.open_table(TABLE_NAME)
+                changed_atoms = {f"{r['layer']}:{r['atom_name']}" for r in records}
+                for ak in changed_atoms:
+                    layer_val, atom_val = ak.split(":", 1)
+                    table.delete(f"layer = '{layer_val}' AND atom_name = '{atom_val}'")
+                table.add(records)
+            except Exception:
+                # Table doesn't exist or other error → full write
+                db.create_table(TABLE_NAME, records, mode="overwrite")
+        else:
+            db.create_table(TABLE_NAME, records, mode="overwrite")
 
-        # Add records in batches (ChromaDB has limits)
-        chroma_batch = 5000
-        for i in range(0, len(records), chroma_batch):
-            batch_recs = records[i:i + chroma_batch]
-            batch_vecs = all_vecs[i:i + chroma_batch]
-            col.add(
-                ids=[r["chunk_id"] for r in batch_recs],
-                embeddings=batch_vecs,
-                documents=[r["text"] for r in batch_recs],
-                metadatas=[{
-                    "atom_name": r["atom_name"],
-                    "title": r["title"],
-                    "section": r["section"],
-                    "confidence": r["confidence"],
-                    "file_path": r["file_path"],
-                    "layer": r["layer"],
-                    "file_hash": r["file_hash"],
-                    "line_number": r["line_number"],
-                    "last_used": r.get("last_used", ""),
-                    "confirmations": r.get("confirmations", 0),
-                    "atom_type": r.get("atom_type", "semantic"),
-                    "tags": r.get("tags", ""),
-                } for r in batch_recs],
-            )
-
-    # v2.5: Invalidate collection cache after index rebuild
-    _invalidate_collection_cache()
+    elif not incremental:
+        # No records and full rebuild → create empty-ish table or skip
+        pass
 
     elapsed = time.time() - t0
     stats = {
@@ -638,24 +546,22 @@ def build_index(
 def get_index_status(config: Dict[str, Any]) -> Dict[str, Any]:
     """Get current index status."""
     try:
-        client = _get_db()
-        col = _get_collection(client)
-        total = col.count()
-        if total == 0:
-            return {"total_chunks": 0}
-
-        all_meta = col.get(include=["metadatas"])
+        db = _get_db()
+        table = db.open_table(TABLE_NAME)
+        total = table.count_rows()
+        # Use to_list() with select to avoid pandas dependency
+        rows = table.search().select(["atom_name", "layer"]).limit(total).to_list()
         atoms = set()
         layer_set = set()
-        for meta in all_meta["metadatas"]:
-            atoms.add(f"{meta.get('layer', '')}:{meta.get('atom_name', '')}")
-            layer_set.add(meta.get("layer", ""))
+        for row in rows:
+            atoms.add(f"{row.get('layer', '')}:{row.get('atom_name', '')}")
+            layer_set.add(row.get("layer", ""))
 
         return {
             "total_chunks": total,
             "unique_atoms": len(atoms),
             "layers": sorted(layer_set),
-            "collection": COLLECTION_NAME,
+            "table": TABLE_NAME,
             "db_path": str(DB_DIR),
         }
     except Exception as e:
@@ -667,52 +573,20 @@ def search_vectors(
     top_k: int = 10,
     layer_filter: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Search ChromaDB collection by vector. Returns list of dicts with _distance.
-
-    v2.5: Self-healing — on query failure, invalidates cache and retries once.
-    """
-    def _do_query(col):
-        where_filter = None
+    """Search LanceDB table by vector. Returns list of dicts with _distance."""
+    try:
+        db = _get_db()
+        table = db.open_table(TABLE_NAME)
+        q = table.search(query_vec).limit(top_k).metric("cosine")
         if layer_filter and layer_filter not in ("all", None):
             if layer_filter == "global":
-                where_filter = {"layer": "global"}
+                q = q.where(f"layer = 'global'")
             elif layer_filter.startswith("project:"):
-                where_filter = {"layer": layer_filter}
-
-        count = col.count()
-        kwargs = {
-            "query_embeddings": [query_vec],
-            "n_results": min(top_k, count) if count > 0 else top_k,
-        }
-        if where_filter:
-            kwargs["where"] = where_filter
-
-        results = col.query(**kwargs)
-
-        output = []
-        if results and results["ids"] and results["ids"][0]:
-            for i, doc_id in enumerate(results["ids"][0]):
-                meta = results["metadatas"][0][i] if results["metadatas"] else {}
-                dist = results["distances"][0][i] if results["distances"] else 1.0
-                output.append({
-                    "chunk_id": doc_id,
-                    "text": results["documents"][0][i] if results["documents"] else "",
-                    "_distance": dist,
-                    **meta,
-                })
-        return output
-
-    try:
-        col = _get_collection()
-        return _do_query(col)
+                q = q.where(f"layer = '{layer_filter}'")
+        results = q.to_list()
+        return results
     except Exception:
-        # v2.5: Self-healing retry — invalidate cache and try once more
-        try:
-            _invalidate_collection_cache()
-            col = _get_collection()
-            return _do_query(col)
-        except Exception:
-            return []
+        return []
 
 
 if __name__ == "__main__":

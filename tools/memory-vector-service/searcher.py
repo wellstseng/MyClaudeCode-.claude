@@ -1,14 +1,13 @@
 """
 searcher.py — 語意搜尋引擎
 
+使用 LanceDB 進行向量搜尋。
 v2.1: ranked_search() 加入 intent-aware 多因子排序。
-v2.5: Hybrid Search — 向量結果疊加 keyword matching boost。
 """
 
 import json
-import re
 from datetime import date
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
 from indexer import create_embedder, search_vectors
 
@@ -36,75 +35,6 @@ TYPE_INTENT_BONUS = {
     ("procedural", "build"): 0.05, ("procedural", "recall"): 0.03,
     ("episodic", "recall"): 0.05, ("episodic", "debug"): 0.03,
 }
-
-
-# ─── v2.5 Hybrid Search Keyword Boost ────────────────────────────────────────
-
-_CJK_RE = re.compile(r"[\u4e00-\u9fff]{2,}")
-_UPPER_RE = re.compile(r"[A-Z][A-Za-z0-9]*(?:[A-Z][a-z0-9]*)+|[A-Z]{2,}")
-_QUOTED_RE = re.compile(r'["\u201c\u300c]([^"\u201d\u300d]+)["\u201d\u300d]')
-_CJK_STOPWORDS = {"的", "了", "在", "是", "和", "與", "或", "為", "有", "這", "那", "不", "也", "都"}
-
-
-def _extract_keywords(query: str) -> Set[str]:
-    """Extract proper nouns and quoted phrases from query for keyword boosting."""
-    keywords: Set[str] = set()
-
-    # Quoted phrases
-    for m in _QUOTED_RE.finditer(query):
-        phrase = m.group(1).strip()
-        if phrase:
-            keywords.add(phrase.lower())
-
-    # Uppercase compound words (ChromaDB, MCP, GPU, OpenClaw)
-    for m in _UPPER_RE.finditer(query):
-        keywords.add(m.group().lower())
-
-    # CJK proper noun fragments (≥2 chars, excluding stopwords)
-    for m in _CJK_RE.finditer(query):
-        word = m.group()
-        if word not in _CJK_STOPWORDS:
-            keywords.add(word)
-
-    return keywords
-
-
-def _apply_keyword_boost(
-    results: List[Dict[str, Any]],
-    keywords: Set[str],
-    min_score: float,
-    score_field: str = "score",
-) -> List[Dict[str, Any]]:
-    """Boost results that match keywords. Mutates results in place."""
-    if not keywords:
-        return results
-
-    for hit in results:
-        # Build searchable text from atom fields
-        searchable = " ".join([
-            hit.get("text", ""),
-            hit.get("title", ""),
-            hit.get("atom_name", ""),
-        ]).lower()
-
-        matched = any(kw in searchable for kw in keywords)
-        if not matched:
-            continue
-
-        current_score = hit.get(score_field, 0.0)
-        if current_score >= min_score:
-            boost = 0.1  # Vector + keyword dual hit
-        else:
-            boost = 0.05  # Keyword rescue
-
-        hit[score_field] = round(current_score + boost, 4)
-        if "score_breakdown" in hit:
-            hit["score_breakdown"]["keyword_boost"] = boost
-            hit["final_score"] = round(hit["final_score"] + boost, 4)
-        else:
-            hit["keyword_boost"] = boost
-
-    return results
 
 
 def _classify_atom_category(hit: Dict[str, Any]) -> str:
@@ -205,8 +135,8 @@ def search(
     if not query_vec or not query_vec[0]:
         return []
 
-    # Search ChromaDB
-    # ChromaDB cosine metric: _distance = 1 - cosine_similarity
+    # Search LanceDB
+    # LanceDB cosine metric: _distance = 1 - cosine_similarity
     raw_results = search_vectors(
         query_vec[0],
         top_k=top_k * 3,  # Fetch more for dedup
@@ -252,13 +182,7 @@ def search(
             "line_number": int(row.get("line_number", 0)),
         })
 
-    # v2.5: Hybrid keyword boost
-    keywords = _extract_keywords(query)
-    if keywords:
-        _apply_keyword_boost(hits, keywords, min_score, score_field="score")
-        hits.sort(key=lambda x: x["score"], reverse=True)
-    else:
-        hits.sort(key=lambda x: x["score"], reverse=True)
+    hits.sort(key=lambda x: x["score"], reverse=True)
     return hits[:top_k]
 
 
@@ -337,11 +261,6 @@ def ranked_search(
         breakdown = _compute_final_score(hit, intent)
         hit["final_score"] = breakdown["final_score"]
         hit["score_breakdown"] = breakdown
-
-    # v2.5: Hybrid keyword boost
-    keywords = _extract_keywords(query)
-    if keywords:
-        _apply_keyword_boost(hits, keywords, min_score, score_field="final_score")
 
     hits.sort(key=lambda x: x["final_score"], reverse=True)
     return hits[:top_k]
