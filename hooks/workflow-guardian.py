@@ -1070,6 +1070,8 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         state = existing
         # Clear injected_atoms so atoms get re-injected after compact (context was truncated)
         state["injected_atoms"] = []
+        # Reset so episodic context gets re-injected on next UserPromptSubmit
+        state["session_context_injected"] = False
         # Re-inject full context after compaction
         mod_count = len(state.get("modified_files", []))
         kq_count = len(state.get("knowledge_queue", []))
@@ -1084,6 +1086,29 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         if kq_count > 0:
             items = [q["content"][:40] for q in state["knowledge_queue"][:3]]
             lines.append(f"Pending knowledge: {'; '.join(items)}")
+        # Inject topic_tracker context so AI knows what was being worked on
+        tracker = state.get("topic_tracker", {})
+        intent_dist = tracker.get("intent_distribution", {})
+        prompt_count = tracker.get("prompt_count", 0)
+        keywords = tracker.get("keyword_signals", [])
+        if prompt_count > 0 or intent_dist or keywords:
+            lines.append(f"Previous session context: {prompt_count} prompts.")
+            if intent_dist:
+                top_intents = sorted(intent_dist.items(), key=lambda x: x[1] if isinstance(x[1], (int, float)) else 0, reverse=True)[:3]
+                intent_str = ", ".join(f"{k}({v})" for k, v in top_intents)
+                lines.append(f"Intents: {intent_str}.")
+            if keywords:
+                lines.append(f"Topics: {', '.join(keywords[:8])}.")
+        # Check for staging next-phase prompt
+        project_mem_dir = get_project_memory_dir(cwd)
+        if project_mem_dir:
+            staging_path = Path(project_mem_dir) / "_staging" / "next-phase.md"
+            if staging_path.exists():
+                try:
+                    staging_content = staging_path.read_text(encoding="utf-8")[:500]
+                    lines.append(f"[Staging] next-phase.md found: {staging_content[:200]}...")
+                except Exception:
+                    lines.append("[Staging] next-phase.md exists but could not be read.")
         lines.append("Remember: check CLAUDE.md sync rules before ending.")
     else:
         state = new_state(session_id, cwd, source)
