@@ -62,6 +62,12 @@
 - [固] 震盪持久化：`_save_oscillation_state()` SessionEnd 寫 `workflow/oscillation_state.json`；`_load_oscillation_warnings()` SessionStart 讀取注入 `[Guardian:Oscillation]` 警告
 - [固] config.json `self_iteration` 欄位：decay_half_life_days, promote_min_confirmations, archive_score_threshold, oscillation_window, oscillation_threshold, review_interval
 
+### 覆轍偵測（V2.17）
+- [臨] 寄生式設計：不新增檔案/參數/子系統，附著在 episodic atom 上
+- [臨] SessionEnd：`edit_counts ≥ 3` → `same_file_3x:{filename}` 信號；`retry_count ≥ 2` → `retry_escalation` 信號，寫入 episodic 的「覆轍信號:」欄位
+- [臨] SessionStart：`_detect_rut_patterns()` 掃描最近 N 個 episodic（共用 oscillation_window），同一信號出現 ≥ 2 sessions → 注入 `[Guardian:覆轍]`
+- [臨] 職責切分：session 內重試 → fix-escalation；atom 反覆修改 → 震盪偵測；跨 session 行為模式 → 覆轍偵測
+
 ### 環境維護
 - [固] rules/ 模組化：CLAUDE.md ~50 行，4 規則檔自動載入
 - [固] Atom 健康度：atom-health-check.py（Related 完整性 + 懸空引用 + 過期掃描）
@@ -80,3 +86,4 @@
 | 2026-03-19 | 從 decisions.md 拆出技術細節 | 系統精修 |
 | 2026-03-19 | 新增 Token Diet V2.14 段落（7 條 [固]） | V2.14 驗證 |
 | 2026-03-22 | 新增自我迭代自動化（V2.16）段落（7 條 [固]） | V2.16 文件同步 |
+| 2026-03-22 | 新增覆轍偵測（V2.17）段落（4 條 [臨]） | 覆轍偵測實作 |

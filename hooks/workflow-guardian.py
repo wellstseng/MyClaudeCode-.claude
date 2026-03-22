@@ -1157,6 +1157,14 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
     except Exception as e:
         print(f"[v2.16] Oscillation load error: {e}", file=sys.stderr)
 
+    # ── V2.17: 覆轍偵測 — cross-session repeated failure patterns ──
+    try:
+        rut_warning = _detect_rut_patterns(state, config)
+        if rut_warning:
+            lines.append(rut_warning)
+    except Exception as e:
+        print(f"[v2.17] Rut detection error: {e}", file=sys.stderr)
+
     # ── V2.8: Wisdom Engine — reflection blind spots ───────────────
     if WISDOM_AVAILABLE:
         try:
@@ -2754,6 +2762,18 @@ def _generate_episodic_atom(
     if vcs:
         knowledge_lines.append(f"- [臨] 版控查詢 {len(vcs)} 次")
 
+    # V2.17: 覆轍信號 — record cross-session retry patterns
+    rut_signals = []
+    edit_counts = state.get("edit_counts", {})
+    for fpath, cnt in edit_counts.items():
+        if cnt >= 3:
+            short = Path(fpath).name
+            rut_signals.append(f"same_file_3x:{short}")
+    if state.get("wisdom_retry_count", 0) >= 2:
+        rut_signals.append("retry_escalation")
+    if rut_signals:
+        knowledge_lines.append(f"- [臨] 覆轍信號: {', '.join(rut_signals)}")
+
     # Build 摘要 section (v2.2)
     desc = summary.get("session_description", "")
     dom_intent = summary.get("dominant_intent", "general")
@@ -3363,6 +3383,63 @@ def _load_oscillation_warnings() -> Optional[str]:
         )
     except (json.JSONDecodeError, OSError):
         return None
+
+
+def _detect_rut_patterns(
+    state: Dict[str, Any], config: Dict[str, Any]
+) -> Optional[str]:
+    """V2.17: Scan recent episodic atoms for repeated 覆轍信號 across sessions.
+
+    Returns warning text if same pattern appears in 2+ sessions, None otherwise.
+    Piggybacks on the same episodic scan pattern as _detect_oscillation.
+    """
+    window = config.get("self_iteration", {}).get("oscillation_window", 3)
+
+    # Collect episodic dirs (same logic as _detect_oscillation)
+    episodic_dirs = set()
+    global_ep = MEMORY_DIR / "episodic"
+    if global_ep.exists():
+        episodic_dirs.add(global_ep)
+    cwd = state.get("session", {}).get("cwd", "")
+    proj_mem = get_project_memory_dir(cwd)
+    if proj_mem:
+        proj_ep = proj_mem / "episodic"
+        if proj_ep.exists():
+            episodic_dirs.add(proj_ep)
+
+    # Gather recent episodic files
+    recent_files = []
+    for ep_dir in episodic_dirs:
+        for f in ep_dir.glob("episodic-*.md"):
+            recent_files.append((f.stat().st_mtime, f))
+    recent_files.sort(key=lambda x: -x[0])
+    recent_files = recent_files[:window]
+
+    # Parse 覆轍信號 lines: "- [臨] 覆轍信號: same_file_3x:foo.py, retry_escalation:3"
+    signal_sessions: Dict[str, int] = {}  # signal -> session count
+    for _, ep_path in recent_files:
+        try:
+            text = ep_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for line in text.split("\n"):
+            if "覆轍信號:" not in line:
+                continue
+            signals_part = line.split("覆轍信號:")[-1].strip()
+            for sig in signals_part.split(","):
+                sig = sig.strip()
+                if sig:
+                    signal_sessions[sig] = signal_sessions.get(sig, 0) + 1
+
+    # Alert if any signal appeared in 2+ sessions
+    repeated = [s for s, c in signal_sessions.items() if c >= 2]
+    if not repeated:
+        return None
+
+    return (
+        f"[Guardian:覆轍] 以下模式跨 session 反覆出現，"
+        f"考慮深入根因分析：{', '.join(repeated)}"
+    )
 
 
 def _check_periodic_review_due(config: Dict[str, Any]) -> Optional[str]:
