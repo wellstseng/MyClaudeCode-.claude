@@ -1679,6 +1679,19 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         if "/memory/" in normalized and normalized.endswith(".md"):
             _trigger_incremental_index(config)
 
+        # V2.16: Staging filename validation — warn on non-standard names
+        if "/_staging/" in normalized and normalized.endswith(".md"):
+            staging_fname = normalized.rsplit("/", 1)[-1]
+            if staging_fname != "next-phase.md":
+                state["_staging_advisory"] = (
+                    f"⚠ `_staging/{staging_fname}` 非標準檔名。"
+                    f"/continue 優先讀 `next-phase.md`。"
+                    f"建議重新命名：mv → next-phase.md"
+                )
+                print(
+                    f"[v2.16] Staging name gate: {staging_fname}", file=sys.stderr
+                )
+
         # V2.15: _AIDocs content classification gate — warn on temporary files
         if "/_AIDocs/" in normalized or "/_aidocs/" in normalized.lower():
             fname = normalized.rsplit("/", 1)[-1]
@@ -1709,15 +1722,24 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             vcs.append({"command": command[:200], "at": _now_iso()})
             write_state(session_id, state)
 
-    # V2.15: Output advisory if _AIDocs gate triggered
-    advisory = state.get("_aidocs_advisory") if state else None
-    if advisory:
-        del state["_aidocs_advisory"]
+    # V2.15+V2.16: Output advisory if gate triggered
+    advisories = []
+    if state:
+        for key, prefix in [
+            ("_aidocs_advisory", "[Guardian:AIDocs]"),
+            ("_staging_advisory", "[Guardian:StagingName]"),
+        ]:
+            val = state.get(key)
+            if val:
+                advisories.append(f"{prefix} {val}")
+                del state[key]
+
+    if advisories:
         write_state(session_id, state)
         output_json({
             "hookSpecificOutput": {
                 "hookEventName": "PostToolUse",
-                "additionalContext": f"[Guardian:AIDocs] {advisory}",
+                "additionalContext": "\n".join(advisories),
             }
         })
     else:
