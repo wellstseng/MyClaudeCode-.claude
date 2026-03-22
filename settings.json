@@ -60,6 +60,16 @@
             "command": "node C:/Users/holyl/.claude/scripts/inbox-check.js"
           }
         ]
+      },
+      {
+        "matcher": "WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/webfetch-guard.sh\"",
+            "timeout": 20
+          }
+        ]
       }
     ],
     "PostToolUse": [
