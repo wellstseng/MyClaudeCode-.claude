@@ -255,8 +255,8 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             warmup_url = f"http://127.0.0.1:{vs_port}/search?q=warmup&top_k=1&min_score=0.99"
             warmup_req = urllib.request.Request(warmup_url)
             urllib.request.urlopen(warmup_req, timeout=15)
-        except Exception:
-            pass  # best-effort warmup
+        except Exception as e:
+            _atom_debug_error("注入:vector_warmup", e)
 
 
 def handle_user_prompt_submit(

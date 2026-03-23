@@ -120,7 +120,8 @@ def _search_episodic_context(
         req = urllib.request.Request(url, headers={"Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=timeout_s) as resp:
             return json.loads(resp.read())
-    except Exception:
+    except Exception as e:
+        _atom_debug_error("注入:_search_episodic_context", e)
         return []
 
 
@@ -256,8 +257,8 @@ def _ensure_vector_service(config: Dict[str, Any]) -> None:
         req = urllib.request.Request(f"http://127.0.0.1:{port}/health", method="GET")
         with urllib.request.urlopen(req, timeout=1):
             return
-    except Exception:
-        pass
+    except Exception as e:
+        _atom_debug_error("注入:_ensure_vector_service:health", e)
     service_path = CLAUDE_DIR / "tools" / "memory-vector-service" / "service.py"
     if not service_path.exists():
         return
@@ -272,8 +273,8 @@ def _ensure_vector_service(config: Dict[str, Any]) -> None:
             stdout=subprocess.DEVNULL,
             stderr=open(str(log_path), "a"),
         )
-    except Exception:
-        pass
+    except Exception as e:
+        _atom_debug_error("注入:_ensure_vector_service:start", e)
 
 
 def _semantic_search(
@@ -336,5 +337,5 @@ def _trigger_incremental_index(config: Dict[str, Any]) -> None:
             method="POST",
         )
         urllib.request.urlopen(req, timeout=1)
-    except Exception:
-        pass
+    except Exception as e:
+        _atom_debug_error("注入:_trigger_incremental_index", e)

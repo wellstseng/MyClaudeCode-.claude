@@ -185,7 +185,8 @@ def _call_ollama_generate(prompt: str, model: str = None,
             prompt, model=model, timeout=timeout,
             temperature=0.1, think="auto",
         )
-    except Exception:
+    except Exception as e:
+        _atom_debug_error("萃取:_call_ollama_generate", e)
         return ""
 
 
@@ -829,7 +830,8 @@ def _check_output_quality(
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
-    except Exception:
+    except Exception as e:
+        _atom_debug_error("萃取:_check_output_quality:glob", e)
         return None
 
     for sf in state_files[:scan_count + 5]:  # scan extra to skip active sessions
@@ -840,7 +842,8 @@ def _check_output_quality(
         try:
             with sf.open(encoding="utf-8") as f:
                 prev = json.load(f)
-        except Exception:
+        except Exception as e:
+            _atom_debug_error(f"萃取:_check_output_quality:parse:{sf.name}", e)
             continue
 
         # Only check ended sessions
