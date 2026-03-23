@@ -5,8 +5,9 @@
 - Type: semantic
 - Trigger: 系統架構, 檔案結構, file tree, architecture, hook, skill, tool, 升級, upgrade, 迭代, self-understand
 - Last-used: 2026-03-23
+- Updated: 2026-03-23
 - Created: 2026-03-13
-- Confirmations: 31
+- Confirmations: 32
 - Tags: doc-index, system-overview
 - Related: decisions, decisions-architecture, toolchain
 
@@ -43,12 +44,18 @@
 
 ### Hook 系統（hooks/）
 
-| 檔案 | 用途 |
-|------|------|
-| `workflow-guardian.py` (~2900 行) | 統一 dispatcher：6 event handlers + failure detection |
-| `extract-worker.py` (~530 行) | SessionEnd/per-turn/failure 子程序：LLM 萃取 + dedup + failure writeback |
-| `wisdom_engine.py` (~195 行) | 反思引擎：硬規則 + 反思指標 |
-| `user-init.sh` (~20 行) | 多人 USER.md 初始化 |
+| 檔案 | 行數 | 用途 |
+|------|------|------|
+| `workflow-guardian.py` | ~1130 | 瘦身 dispatcher：6 event handlers 編排 |
+| `wg_core.py` | ~266 | 共用常數/設定/state IO/output/debug |
+| `wg_atoms.py` | ~403 | 索引解析/trigger 匹配/ACT-R/載入/budget |
+| `wg_intent.py` | ~340 | 意圖分類/session context/MCP/vector service |
+| `wg_extraction.py` | ~257 | per-turn 萃取/worker 管理/failure 偵測 |
+| `wg_episodic.py` | ~863 | episodic 生成/衝突偵測/品質回饋 |
+| `wg_iteration.py` | ~415 | 自我迭代/震盪/衰減/晉升/覆轍 |
+| `extract-worker.py` | ~530 | SessionEnd/per-turn/failure 子程序：LLM 萃取 + dedup |
+| `wisdom_engine.py` | ~195 | 反思引擎：硬規則 + 反思指標 |
+| `user-init.sh` | ~20 | 多人 USER.md 初始化 |
 
 ### Skills（commands/）
 
@@ -117,3 +124,4 @@
 | 2026-03-13 | 初始建立 | /read-project |
 | 2026-03-19 | 精修：純索引化，移除架構描述，去重 decisions | 系統精修 |
 | 2026-03-19 | 更新 extract-worker/guardian 行數+功能（v2.13 failure mode） | failures 自動化 |
+| 2026-03-23 | Guardian 模組化：1 monolith → 7 模組（wg_core/atoms/intent/extraction/episodic/iteration） | 重構 Phase 1-6 |
