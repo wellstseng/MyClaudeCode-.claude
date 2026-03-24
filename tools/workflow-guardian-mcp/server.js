@@ -585,18 +585,33 @@ function apiHealth(req, res, forceRefresh) {
   if (!forceRefresh && healthCache.data && (now - healthCache.timestamp) < HEALTH_CACHE_TTL_MS) {
     return jsonRes(res, 200, healthCache.data);
   }
-  const scriptPath = path.join(TOOLS_DIR, "memory-audit.py");
-  exec(pyCmd(scriptPath, "--json"), { timeout: 30000 }, (err, stdout, stderr) => {
-    // Script may exit non-zero when issues found — still check stdout for valid JSON
-    if (stdout) {
-      try {
-        const data = JSON.parse(stdout);
-        healthCache = { data, timestamp: Date.now() };
-        return jsonRes(res, 200, data);
-      } catch {}
+  const auditScript = path.join(TOOLS_DIR, "memory-audit.py");
+  const healthScript = path.join(TOOLS_DIR, "atom-health-check.py");
+  // Run both tools in parallel
+  let auditDone = false, healthDone = false;
+  let auditData = null, healthData = null;
+  let responded = false;
+  const tryMerge = () => {
+    if (!auditDone || !healthDone || responded) return;
+    responded = true;
+    const merged = auditData || {};
+    if (healthData) {
+      merged.broken_refs = healthData.broken_refs || [];
+      merged.missing_reverse_refs = healthData.missing_reverse_refs || [];
+      merged.stale_atoms = healthData.stale_atoms || [];
     }
-    if (err) return jsonRes(res, 500, { error: "audit failed", details: (stderr || err.message).slice(0, 500) });
-    jsonRes(res, 500, { error: "empty audit output" });
+    healthCache = { data: merged, timestamp: Date.now() };
+    jsonRes(res, 200, merged);
+  };
+  exec(pyCmd(auditScript, "--json"), { timeout: 30000 }, (err, stdout) => {
+    if (stdout) { try { auditData = JSON.parse(stdout); } catch {} }
+    auditDone = true;
+    tryMerge();
+  });
+  exec(pyCmd(healthScript, "--report --json"), { timeout: 30000 }, (err, stdout) => {
+    if (stdout) { try { healthData = JSON.parse(stdout); } catch {} }
+    healthDone = true;
+    tryMerge();
   });
 }
 
@@ -1172,6 +1187,33 @@ async function renderHealth(force) {
         html += '<li><span style="font-family:monospace">' + esc(d.file) + '</span> ' + d.current + ' <span class="suggest-arrow">&rarr;</span> ' + d.suggested + '<br><span style="color:#8b949e;font-size:0.82em">' + esc(d.reason) + '</span></li>';
       }
       html += '</ul>';
+    }
+
+    // Reference integrity
+    const brokenRefs = data.broken_refs || [];
+    const missingRev = data.missing_reverse_refs || [];
+    const staleAtoms = data.stale_atoms || [];
+    html += '<div class="section-title">參照完整性</div>';
+    if (!brokenRefs.length && !missingRev.length && !staleAtoms.length) {
+      html += '<div style="color:#3fb950;margin-bottom:12px">✓ 所有參照完整、無過期 atom</div>';
+    } else {
+      if (brokenRefs.length) {
+        html += '<div style="margin-bottom:8px"><strong style="color:#f85149">斷裂參照 (' + brokenRefs.length + ')</strong></div>';
+        html += '<table class="issue-table"><tr><th>來源 Atom</th><th>指向（不存在）</th></tr>';
+        for (const r of brokenRefs) { html += '<tr><td>' + esc(r.atom || "") + '</td><td style="color:#f85149">' + esc(r.missing_ref || "") + '</td></tr>'; }
+        html += '</table>';
+      }
+      if (missingRev.length) {
+        html += '<div style="margin-bottom:8px"><strong style="color:#d2a826">缺反向參照 (' + missingRev.length + ')</strong></div>';
+        html += '<table class="issue-table"><tr><th>說明</th></tr>';
+        for (const r of missingRev) { html += '<tr><td style="color:#d2a826">' + esc(r.direction || (r.atom_a + " → " + r.atom_b)) + '</td></tr>'; }
+        html += '</table>';
+      }
+      if (staleAtoms.length) {
+        html += '<div style="margin-bottom:8px"><strong style="color:#f0883e">過期 Atom (' + staleAtoms.length + ')</strong></div><ul>';
+        for (const s of staleAtoms) { html += '<li>' + esc(s.name || s) + ' — Last-used: ' + esc(s.last_used || "?") + '</li>'; }
+        html += '</ul>';
+      }
     }
 
     // Audit stats
