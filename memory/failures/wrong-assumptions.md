@@ -4,9 +4,9 @@
 - Confidence: [固]
 - Type: procedural
 - Trigger: 假設, 直覺, 調查, 為何沒生效, 空目錄, metrics異常, 功能沒反應
-- Last-used: 2026-03-19
+- Last-used: 2026-03-24
 - Created: 2026-03-13
-- Confirmations: 35
+- Confirmations: 37
 - Tags: failure, assumption, debugging
 - Related: decisions
 

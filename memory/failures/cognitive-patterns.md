@@ -6,7 +6,7 @@
 - Trigger: 過度工程, 代理指標, proxy metric, 看不懂, 在打轉, 口水, 品質回饋
 - Last-used: 2026-03-23
 - Created: 2026-03-13
-- Confirmations: 37
+- Confirmations: 38
 - Tags: failure, cognitive, quality
 - Related: decisions
 

@@ -9,11 +9,6 @@
       "command": "C:\\Program Files\\nodejs\\node.exe",
       "args": ["C:\\Users\\holylight\\AppData\\Roaming\\npm\\node_modules\\@playwright\\mcp\\cli.js"]
     },
-    "openclaw-notify": {
-      "type": "stdio",
-      "command": "C:\\Program Files\\nodejs\\node.exe",
-      "args": ["C:\\OpenClawWorkspace\\scripts\\openclaw-notify-mcp.js"]
-    },
     "workflow-guardian": {
       "type": "stdio",
       "command": "C:\\Program Files\\nodejs\\node.exe",

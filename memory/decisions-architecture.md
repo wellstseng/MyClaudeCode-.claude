@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 架構細節, vector service, ollama backend, extraction, ACT-R, episodic tracking, context budget
-- Last-used: 2026-03-23
-- Confirmations: 69
+- Last-used: 2026-03-24
+- Confirmations: 79
 - Type: decision
 - Tags: architecture, infrastructure
 - Related: decisions, toolchain

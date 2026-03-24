@@ -3,28 +3,30 @@
   "metrics": {
     "first_approach_accuracy": {
       "single_file": {
-        "correct": 9,
-        "total": 10
+        "correct": 35,
+        "total": 36
       },
       "multi_file": {
         "correct": 1,
         "total": 1
       },
       "architecture": {
-        "correct": 0,
-        "total": 1
+        "correct": 1,
+        "total": 8
       }
     },
     "over_engineering_rate": {
       "user_reverted_or_simplified": 0,
-      "total_suggestions": 9
+      "total_suggestions": 42
     },
     "silence_accuracy": {
-      "held_back_ok": 10,
+      "held_back_ok": 36,
       "held_back_missed": 1
     }
   },
-  "blind_spots": [],
-  "arch_sensitivity_elevated": false,
-  "last_reflection": "2026-03-23T06:04:45.603407+00:00"
+  "blind_spots": [
+    "architecture 首次正確率 12%"
+  ],
+  "arch_sensitivity_elevated": true,
+  "last_reflection": "2026-03-24T01:42:28.178402+00:00"
 }
