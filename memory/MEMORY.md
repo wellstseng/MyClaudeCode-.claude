@@ -23,3 +23,4 @@
 | doc-index-system | memory/doc-index-system.md | 系統架構, 檔案結構, file tree, hook, skill, tool, 升級, 迭代, 檔案總覽, 目錄結構, 原子記憶環境, 記憶環境 |
 | fix-escalation | memory/feedback_fix_escalation.md | 修正, 重試, 第二次, 升級, escalation, 精確修正, fix, retry, 修不好, 改不動, 又壞了, 失敗 |
 | fail-misdiagnosis | memory/failures/misdiagnosis-verify-first.md | 誤診, 驗證優先, verify first, 診斷失敗, 先射箭再畫靶, 假設錯誤就規劃 |
+| mail-sorting | memory/mail-sorting.md | Mail2000, 信箱整理, 歸信, sort mail, 信件分類 |

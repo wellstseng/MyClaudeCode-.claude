@@ -6,7 +6,7 @@
 - Last-used: 2026-03-13
 - Confirmations: 1
 - Type: knowledge
-- Related: decisions, spec
+- Related: decisions
 
 ## 適用範圍
 

@@ -4,10 +4,10 @@
 - Confidence: [固]
 - Trigger: 工具, 環境, 指令, command, bash, git, python, npm
 - Last-used: 2026-03-24
-- Confirmations: 78
+- Confirmations: 84
 - Type: procedural
 - Tags: toolchain, environment, commands
-- Related: fail-env, toolchain-ollama
+- Related: fail-env, toolchain-ollama, decisions-architecture, doc-index-system
 
 ## 知識
 

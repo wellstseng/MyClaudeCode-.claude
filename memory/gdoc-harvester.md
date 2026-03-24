@@ -1,7 +1,7 @@
 # gdoc-harvester — Web Harvester 收割工具經驗
 
 - Scope: global
-- Confidence: [觀]
+- Confidence: [固]
 - Trigger: harvester, Google Docs, Sheets, 收割, Playwright, cookie, export
 - Last-used: 2026-03-23
 - Confirmations: 15

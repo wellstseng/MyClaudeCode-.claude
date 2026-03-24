@@ -1,12 +1,21 @@
----
-name: misdiagnosis-verify-first
-description: 大型/第三方專案診斷必須先 100% 驗證根因再規劃，不可靠假設展開計畫（LINE webhook 404 事件）
-type: feedback
----
+# 驗證優先：診斷前禁止規劃
 
-# AI 誤診事後報告：LINE Bot 不回應事件
+- Scope: global
+- Confidence: [固]
+- Trigger: 誤診, 驗證優先, verify first, 診斷失敗, 先射箭再畫靶, 假設錯誤就規劃
+- Last-used: 2026-03-22
+- Confirmations: 3
 
-> 2026-03-22 — 一次典型的「先射箭再畫靶」診斷失敗
+## 知識
+
+- [固] 大型/第三方專案診斷，必須先 100% 驗證根因再規劃，不可靠假設展開計畫
+- [固] 優先查 runtime 狀態（process age、temp logs、route registration），非 config 或程式碼
+- [固] 使用者的質疑是重要信號 — 他們比 AI 更了解自己的環境
+- [固] 三個 curl 測試 30 秒定位根因，比啟動 4 個 agent 研究程式碼有效得多
+
+## 案例：LINE Bot 不回應事件（2026-03-22）
+
+> 一次典型的「先射箭再畫靶」診斷失敗
 
 ## 使用者問題
 
