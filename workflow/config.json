@@ -1,5 +1,5 @@
 {
-  "atom_debug": true,
+  "atom_debug": false,
   "enabled": true,
   "stop_gate_max_blocks": 2,
   "min_files_to_block": 2,
@@ -80,6 +80,14 @@
     "promote_threshold": 2,
     "suggest_threshold": 4,
     "timeout_seconds": 5
+  },
+  "self_iteration": {
+    "decay_half_life_days": 30,
+    "promote_min_confirmations": 20,
+    "archive_score_threshold": 0.3,
+    "oscillation_window": 3,
+    "oscillation_threshold": 2,
+    "review_interval": 6
   },
   "response_capture": {
     "enabled": true,

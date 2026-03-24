@@ -2,7 +2,7 @@
 
 - Scope: global
 - Confidence: [固]
-- Trigger: 工具, 環境, 指令, command, bash, git, python, npm
+- Trigger: 工具鏈, 環境設定, bash指令, command, bash, git, python, npm
 - Last-used: 2026-03-24
 - Confirmations: 85
 - Type: procedural

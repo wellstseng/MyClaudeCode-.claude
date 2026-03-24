@@ -3,7 +3,7 @@
 - Scope: global
 - Confidence: [固]
 - Type: procedural
-- Trigger: ICLD, 閉環, Sprint, 功能拆解, 開發計畫, 新功能, 新系統, 規格書
+- Trigger: ICLD, 閉環, Sprint, 功能拆解, 開發計畫, 大型新功能, 新系統規劃, 規格書
 - Last-used: 2026-03-24
 - Created: 2026-03-19
 - Confirmations: 56

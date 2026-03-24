@@ -3,7 +3,7 @@
 - Scope: global
 - Confidence: [固]
 - Type: procedural
-- Trigger: 假設, 直覺, 調查, 為何沒生效, 空目錄, metrics異常, 功能沒反應
+- Trigger: 假設錯誤, 直覺偏差, 為何沒生效, 空目錄, metrics異常, 功能沒反應
 - Last-used: 2026-03-24
 - Created: 2026-03-13
 - Confirmations: 37

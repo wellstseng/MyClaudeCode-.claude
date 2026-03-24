@@ -3,7 +3,7 @@
 - Scope: global
 - Confidence: [固]
 - Type: semantic
-- Trigger: 系統架構, 檔案結構, hook, skill, tool, 升級, 迭代, 目錄結構
+- Trigger: 記憶系統架構, 檔案結構, hook, skill, tool, 記憶升級, 記憶迭代, 目錄結構
 - Last-used: 2026-03-24
 - Updated: 2026-03-23
 - Created: 2026-03-13
