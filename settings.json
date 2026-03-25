@@ -1,61 +1,11 @@
 {
-  "permissions": {
-    "allow": [
-      "Bash(*)",
-      "Edit(*)",
-      "Write(*)",
-      "Read(*)",
-      "Glob(*)",
-      "Grep(*)",
-      "WebSearch",
-      "WebFetch(*)",
-      "mcp__MCPControl__get_screen_size",
-      "mcp__workflow-guardian__workflow_signal",
-      "mcp__workflow-guardian__workflow_status",
-      "mcp__playwright__browser_navigate",
-      "mcp__playwright__browser_snapshot",
-      "mcp__playwright__browser_take_screenshot",
-      "mcp__playwright__browser_click",
-      "mcp__playwright__browser_tabs",
-      "mcp__playwright__browser_hover",
-      "mcp__playwright__browser_select_option",
-      "mcp__playwright__browser_fill_form",
-      "mcp__playwright__browser_network_requests",
-      "mcp__playwright__browser_evaluate"
-    ],
-    "defaultMode": "bypassPermissions",
-    "additionalDirectories": [
-      "C:\\Users\\holylight\\.claude",
-      "C:\\Users\\holylight\\.claude\\projects\\c--",
-      "C:\\Users\\holylight\\.claude\\projects\\c--Projects\\memory",
-      "C:\\Users\\holylight",
-      "c:\\tmp",
-      "C:\\Users\\holylight\\.claude\\workflow",
-      "C:\\Users\\holylight\\.claude\\projects\\c--Projects-sgi-server\\memory",
-      "C:\\Users\\holylight\\.claude\\memory\\_staging",
-      "C:\\Users\\holylight\\.claude\\projects\\c--Users-holylight--claude\\memory",
-      "C:\\Users\\holylight\\.claude\\projects\\c--Users-holylight--claude\\memory\\_staging",
-      "C:\\Users\\holylight\\.claude\\$HOME\\.claude\\memory",
-      "c:\\Projects\\_AIAtoms"
-    ]
-  },
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/user-init.sh\"",
-            "timeout": 3
-          },
-          {
-            "type": "command",
-            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/ensure-mcp.py'),run_name='__main__')\"",
+            "command": "python3 \"$HOME/.claude/hooks/workflow-guardian.py\"",
             "timeout": 5
           }
         ]
@@ -66,28 +16,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
-            "timeout": 8
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node C:/Users/holylight/.claude/scripts/inbox-check.js"
-          }
-        ]
-      },
-      {
-        "matcher": "WebFetch",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/webfetch-guard.sh\"",
-            "timeout": 20
+            "command": "python3 \"$HOME/.claude/hooks/workflow-guardian.py\"",
+            "timeout": 3
           }
         ]
       }
@@ -98,8 +28,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
-            "timeout": 5
+            "command": "python3 \"$HOME/.claude/hooks/workflow-guardian.py\"",
+            "timeout": 3
           }
         ]
       }
@@ -109,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
+            "command": "python3 \"$HOME/.claude/hooks/workflow-guardian.py\"",
             "timeout": 5
           }
         ]
@@ -120,7 +50,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
+            "command": "python3 \"$HOME/.claude/hooks/workflow-guardian.py\"",
             "timeout": 5
           }
         ]
@@ -131,12 +61,20 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
+            "command": "python3 \"$HOME/.claude/hooks/workflow-guardian.py\"",
             "timeout": 30
           }
         ]
       }
     ]
   },
-  "autoUpdatesChannel": "latest"
+  "extraKnownMarketplaces": {
+    "claude-plugins-official": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-plugins-official"
+      }
+    }
+  },
+  "effortLevel": "high"
 }

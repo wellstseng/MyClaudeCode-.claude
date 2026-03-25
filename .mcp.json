@@ -2,29 +2,11 @@
   "mcpServers": {
     "MCPControl": {
       "command": "C:\\Program Files\\nodejs\\node.exe",
-      "args": ["C:\\Users\\holylight\\AppData\\Roaming\\npm\\node_modules\\computer-use-mcp\\dist\\main.js"],
-      "env": {
-        "MCP_TIMEOUT": "60000",
-        "MCP_TOOL_TIMEOUT": "120000"
-      }
-    },
-    "playwright": {
-      "type": "stdio",
-      "command": "C:\\Program Files\\nodejs\\node.exe",
-      "args": ["C:\\Users\\holylight\\AppData\\Roaming\\npm\\node_modules\\@playwright\\mcp\\cli.js"]
+      "args": ["C:\\Users\\wellstseng\\AppData\\Roaming\\npm\\node_modules\\computer-use-mcp\\dist\\main.js"]
     },
     "workflow-guardian": {
-      "type": "stdio",
-      "command": "C:\\Program Files\\nodejs\\node.exe",
-      "args": ["C:\\Users\\holylight\\.claude\\tools\\workflow-guardian-mcp\\server.js"]
-    },
-    "excel": {
-      "type": "stdio",
-      "command": "C:\\Program Files\\nodejs\\node.exe",
-      "args": ["C:\\Users\\holylight\\AppData\\Roaming\\npm\\node_modules\\@negokaz\\excel-mcp-server\\dist\\launcher.js"],
-      "env": {
-        "EXCEL_MCP_PAGING_CELLS_LIMIT": "4000"
-      }
+      "command": "node",
+      "args": ["C:\\Users\\weiandwen\\.claude\\tools\\workflow-guardian-mcp\\server.js"]
     }
   }
 }
