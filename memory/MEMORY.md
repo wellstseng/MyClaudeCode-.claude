@@ -22,6 +22,11 @@
 | toolchain-ollama | memory/toolchain-ollama.md | ollama, dual-backend, rdchat, qwen3, embedding, 萃取品質 | [固] |
 | workflow-svn | memory/workflow-svn.md | svn, svn-update, TortoiseSVN, 衝突, conflict | [固] |
 | decisions-architecture | memory/decisions-architecture.md | 架構細節, vector service, ollama backend, extraction, ACT-R | [固] |
+| project-ecosystem | memory/project-ecosystem.md | 專案, SGI, TSLG, TCSM, 監控, 專案狀態 | [固] |
+| redmine-config | memory/redmine-config.md | Redmine, sgi, API, query, 日報, 週報, redmine-70 | [固] |
+| discord-channels | memory/discord-channels.md | Discord, 頻道, guild, channel, 程式群, 幹部群 | [固] |
+| team-roster | memory/team-roster.md | 團隊, 名冊, 成員, SVN帳號, Discord ID, Redmine ID | [固] |
+| hot-topics | memory/hot-topics.md | 監控, hot-topics, 警報, titan-rd, Key Man | [觀] |
 
 ---
 
