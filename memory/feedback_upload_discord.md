@@ -1,15 +1,19 @@
----
-name: feedback_upload_discord
-description: 使用者說「上傳MD」「傳附件」「壓縮傳我」時，自動寫檔並輸出 MEDIA token 上傳 Discord
-type: feedback
----
+# Discord 附件上傳流程
 
-當使用者說「上傳MD給我」、「存成MD傳我」、「壓縮傳我」、「上傳檔案」、「附件給我」等語句時，不需要詢問確認，直接執行：
+- Scope: global
+- Confidence: [固]
+- Trigger: 上傳, 傳附件, 壓縮傳, upload, MEDIA, Discord 附件
+- Last-used: 2026-03-25
+- Confirmations: 3
+- Related: preferences
 
-1. 判斷適合的格式（`.md`、`.py`、`.csv`、`.zip` 等）
-2. 用 Write 工具寫入 `/tmp/{合適的檔名}`
-3. 在回覆中輸出 `MEDIA: /tmp/{檔名}`，Discord bot 自動攔截並上傳
+## 知識
 
-**Why:** 使用者已建立 Discord bot 的 MEDIA token 上傳機制，每次確認流程太慢。
+- [固] 使用者說「上傳MD給我」「存成MD傳我」「壓縮傳我」「上傳檔案」「附件給我」時，不需詢問確認，直接執行
+- [固] 流程：判斷格式 → Write 寫入 `/tmp/{檔名}` → 回覆輸出 `MEDIA: /tmp/{檔名}`
+- [固] Discord bot 自動攔截 MEDIA token 並上傳
+- [固] 支援格式：.md、.py、.csv、.zip 等
 
-**How to apply:** 凡涉及「上傳」「傳附件」「壓縮傳」字眼，且當前環境是 Discord session（或不確定），直接走 MEDIA token 流程。不需問「要怎麼上傳」。
+## 行動
+
+- 凡涉及「上傳」「傳附件」「壓縮傳」字眼，直接走 MEDIA token 流程，不問「要怎麼上傳」

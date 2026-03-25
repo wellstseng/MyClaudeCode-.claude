@@ -16,6 +16,12 @@
 | feedback-research | memory/feedback_research_first.md | 試錯, trial-and-error, 不熟悉, API, 框架, 搜尋, research | [固] |
 | doc-index-system | memory/doc-index-system.md | 系統架構, 檔案結構, file tree, hook, skill, tool, 升級, 迭代 | [臨] |
 | feedback_upload_discord | memory/feedback_upload_discord.md | 上傳, 傳附件, 壓縮傳, upload, MEDIA, Discord 附件 | [固] |
+| feedback_global_install | memory/feedback_global_install.md | 安裝MCP, 安裝skill, install MCP, install skill, 新增MCP | [固] |
+| feedback_no_test_to_svn | memory/feedback_no_test_to_svn.md | 上SVN, svn commit, 測試碼, 新手作業, 不可上傳 | [固] |
+| workflow-icld | memory/workflow-icld.md | ICLD, 閉環, Sprint, 功能拆解, 開發計畫, 大型新功能 | [固] |
+| toolchain-ollama | memory/toolchain-ollama.md | ollama, dual-backend, rdchat, qwen3, embedding, 萃取品質 | [固] |
+| workflow-svn | memory/workflow-svn.md | svn, svn-update, TortoiseSVN, 衝突, conflict | [固] |
+| decisions-architecture | memory/decisions-architecture.md | 架構細節, vector service, ollama backend, extraction, ACT-R | [固] |
 
 ---
 
@@ -25,7 +31,7 @@
 - [固] Guardian @ localhost:3848 | Vector @ localhost:3849
 - [固] Vector DB: LanceDB | search_min_score: 0.65
 - [固] Dual-Backend: rdchat qwen3.5:9b(pri=1,think) → local qwen3:1.7b(pri=2) | embedding: local qwen3-embedding
-- [固] 原子記憶 V2.12：V2.11 + Fix Escalation Protocol + CLAUDE.md 精簡化 + ollama_client 多 backend 支援
+- [固] 原子記憶 V2.18：V2.12 基底 + upstream V2.18 系統升級 + 個人記憶保留
 - [固] Excel: `~/.claude/tools/read-excel.py`（Python3 + openpyxl + xlrd）
 - [固] SVN 專案修改前必問 svn update（每 session 一次）| Skill: /svn-update
 - [觀] Wisdom Engine: 硬規則情境分類 + 反思校準(over_engineering + silence_accuracy)
