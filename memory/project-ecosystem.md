@@ -5,7 +5,7 @@
 - Trigger: 專案, SGI, TSLG, TCSM, 監控, 專案狀態, 生態
 - Last-used: 2026-03-25
 - Confirmations: 1
-- Related: redmine-config, team-roster
+- Related: redmine-config, team-roster, hot-topics
 
 ## 知識
 

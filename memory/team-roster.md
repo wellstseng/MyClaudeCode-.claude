@@ -5,7 +5,7 @@
 - Trigger: 團隊, 名冊, 成員, SVN帳號, Discord ID, Redmine ID, 暱稱
 - Last-used: 2026-03-25
 - Confirmations: 1
-- Related: redmine-config, discord-channels
+- Related: redmine-config, discord-channels, hot-topics, project-ecosystem
 
 ## 知識
 
