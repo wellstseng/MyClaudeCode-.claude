@@ -8,6 +8,8 @@
 - Type: semantic
 - Tags: unity, yaml, serialization, prefab, guid
 
+- Related: unity-prefab-workflow
+
 ## 知識
 
 ### 文件位置
