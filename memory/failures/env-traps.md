@@ -8,7 +8,7 @@
 - Created: 2026-03-10
 - Confirmations: 45
 - Tags: failure, environment, pitfall
-- Related: toolchain
+- Related: toolchain, feedback_global_install
 
 ## 知識
 

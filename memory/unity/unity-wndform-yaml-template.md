@@ -2,6 +2,7 @@
 name: unity-wndform-yaml-template
 description: WndForm prefab YAML root structure template for programmatic creation
 type: reference
+related: unity-prefab-workflow
 ---
 
 ## WndForm Prefab Root Structure

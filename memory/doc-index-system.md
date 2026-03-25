@@ -7,7 +7,7 @@
 - Last-used: 2026-03-25
 - Updated: 2026-03-23
 - Created: 2026-03-13
-- Confirmations: 52
+- Confirmations: 53
 - Tags: doc-index, system-overview
 - Related: decisions, decisions-architecture, toolchain
 

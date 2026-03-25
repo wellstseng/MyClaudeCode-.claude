@@ -3,6 +3,7 @@
 
 Usage:
   python atom-health-check.py --validate-refs   檢查 Related 完整性
+  python atom-health-check.py --fix-refs        自動修復缺失的反向參照
   python atom-health-check.py --stale-check     列出 Last-used > 60 天的 atoms
   python atom-health-check.py --report          生成完整健康報告
   python atom-health-check.py --report --json   JSON 格式輸出
@@ -82,8 +83,8 @@ def parse_frontmatter(path: Path) -> dict:
 
 
 def parse_related(fm: dict) -> list[str]:
-    """Extract Related atom names from frontmatter."""
-    raw = fm.get("Related", "")
+    """Extract Related atom names from frontmatter (handles both 'Related' and 'related')."""
+    raw = fm.get("Related", "") or fm.get("related", "")
     if not raw or raw.strip() == "(none)":
         return []
     names = [n.strip().removesuffix(".md") for n in raw.split(",")]
@@ -161,6 +162,80 @@ def check_reverse_refs(atoms: dict[str, Path], aliases: dict[str, str] | None = 
                         "direction": f"{name} → {ref} exists, but {ref} → {name} missing",
                     })
     return issues
+
+
+def fix_reverse_refs(atoms: dict[str, Path], aliases: dict[str, str] | None = None) -> list[dict]:
+    """Auto-fix missing reverse references. Returns list of fixes applied."""
+    aliases = aliases or {}
+    issues = check_reverse_refs(atoms, aliases)
+    if not issues:
+        return []
+
+    fixes = []
+    for issue in issues:
+        atom_a = issue["atom_a"]  # A → B exists
+        atom_b = issue["atom_b"]  # B → A missing, need to add A to B's Related
+
+        if atom_b not in atoms:
+            continue
+
+        path_b = atoms[atom_b]
+        text = path_b.read_text(encoding="utf-8")
+        fm = parse_frontmatter(path_b)
+        fmt = fm.get("_format", "atom")
+
+        # Determine canonical name to add (use alias if B references A via alias)
+        add_name = atom_a
+        # Check if atom_a has an alias that atom_b might prefer
+        for alias, stem in aliases.items():
+            if stem == atom_a:
+                add_name = alias
+                break
+
+        # Re-read file (may have been modified by earlier fix in this loop)
+        text = path_b.read_text(encoding="utf-8")
+        fm = parse_frontmatter(path_b)
+        fmt = fm.get("_format", "atom")
+
+        # Dedup check: skip if back-ref already present in current file
+        existing_refs = parse_related(fm)
+        existing_resolved = {r for ref in existing_refs for r in [resolve_ref(ref, atoms, aliases) or ref]}
+        if atom_a in existing_resolved or add_name in existing_refs:
+            continue
+
+        if fmt == "claude-native":
+            # YAML frontmatter: add or append 'related:' field
+            existing_related = fm.get("related", "")
+            if existing_related:
+                new_related = f"{existing_related}, {add_name}"
+                text = text.replace(f"related: {existing_related}", f"related: {new_related}", 1)
+            else:
+                # Insert before closing ---
+                text = re.sub(r"\n---", f"\nrelated: {add_name}\n---", text, count=1)
+        else:
+            # Atom-style: add or append '- Related:' field
+            related_match = re.search(r"^- Related:\s*(.+)$", text, re.MULTILINE)
+            if related_match:
+                old_line = related_match.group(0)
+                new_line = f"{old_line}, {add_name}"
+                text = text.replace(old_line, new_line, 1)
+            else:
+                # Insert Related line before first ## section
+                section_match = re.search(r"^## ", text, re.MULTILINE)
+                if section_match:
+                    insert_pos = section_match.start()
+                    text = text[:insert_pos] + f"- Related: {add_name}\n\n" + text[insert_pos:]
+                else:
+                    text += f"\n- Related: {add_name}\n"
+
+        path_b.write_text(text, encoding="utf-8")
+        fixes.append({
+            "target": atom_b,
+            "added_ref": add_name,
+            "file": str(path_b),
+        })
+
+    return fixes
 
 
 def stale_check(atoms: dict[str, Path], days: int = 60) -> list[dict]:
@@ -291,6 +366,7 @@ def print_text_report(report: dict):
 def main():
     parser = argparse.ArgumentParser(description="Atom Health Check")
     parser.add_argument("--validate-refs", action="store_true", help="Check Related references exist")
+    parser.add_argument("--fix-refs", action="store_true", help="Auto-fix missing reverse references")
     parser.add_argument("--stale-check", action="store_true", help="List atoms with Last-used > 60 days")
     parser.add_argument("--stale-days", type=int, default=60, help="Stale threshold in days (default: 60)")
     parser.add_argument("--report", action="store_true", help="Full health report")
@@ -309,8 +385,20 @@ def main():
     atoms = find_atoms(MEMORY_ROOT)
     aliases = parse_memory_index(MEMORY_ROOT)
 
-    if not any([args.validate_refs, args.stale_check, args.report]):
+    if not any([args.validate_refs, args.fix_refs, args.stale_check, args.report]):
         parser.print_help()
+        sys.exit(0)
+
+    if args.fix_refs:
+        fixes = fix_reverse_refs(atoms, aliases)
+        if args.json:
+            print(json.dumps({"fixes": fixes, "count": len(fixes)}, indent=2, ensure_ascii=False))
+        elif fixes:
+            for f in fixes:
+                print(f"✅ {f['target']} ← added back-ref to {f['added_ref']}")
+            print(f"\nFixed {len(fixes)} missing reverse reference(s).")
+        else:
+            print("✅ No missing reverse references to fix.")
         sys.exit(0)
 
     if args.validate_refs:

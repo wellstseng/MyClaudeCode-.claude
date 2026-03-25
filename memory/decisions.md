@@ -4,14 +4,14 @@
 - Confidence: [固]
 - Trigger: 全域決策, workflow, guardian, hooks, MCP, 記憶系統決策, 記憶系統架構
 - Last-used: 2026-03-25
-- Confirmations: 89
+- Confirmations: 90
 - Type: decision
 - Related: decisions-architecture
 
 ## 知識
 
 ### 核心架構
-- [固] 原子記憶 V2.18：V2.17 全功能 + Section-Level 注入 + Trigger 精準化 + 規則精簡
+- [固] 原子記憶 V2.18：V2.17 全功能 + Section-Level 注入 + Trigger 精準化 + 規則精簡 + 反向參照自動修復
 - [固] 雙 LLM：Claude Code（雲端決策）+ Ollama（本地語意處理）
 - [固] 6 hook 事件全由 workflow-guardian.py 統一處理
 
@@ -41,6 +41,7 @@
 - [固] V2.16 自我迭代自動化：SessionEnd 衰減分數掃描 + [臨]→[觀] 自動晉升（Confirmations ≥ 20）+ 震盪狀態跨 Session 持久化
 - [固] V2.17 覆轍偵測：episodic 寫入覆轍信號（same_file_3x / retry_escalation）→ SessionStart 掃描跨 session 重複 → 注入 [Guardian:覆轍] 警告
 - [固] AIDocs 內容閘門：PostToolUse 偵測 _AIDocs/ 下暫時性檔名（Plan/TODO/Roadmap/Draft 等）→ additionalContext 警告（不硬擋）
+- [固] V2.18 反向參照自動修復：SessionEnd 呼叫 `atom-health-check.py --fix-refs`（全域+專案層），冪等去重，10s timeout
 
 ### Wisdom Engine
 - [固] 2 硬規則（file_count+is_feature → confirm; touches_arch+file_count → plan）

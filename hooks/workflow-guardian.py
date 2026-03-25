@@ -1056,6 +1056,25 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
     except Exception as e:
         print(f"[v2.11] Conflict detection error: {e}", file=sys.stderr)
 
+    # ─── V2.18: Auto-fix missing reverse references ─────────────────
+    try:
+        import subprocess as _sp
+        _hc_script = str(CLAUDE_DIR / "tools" / "atom-health-check.py")
+        # Fix global atoms
+        _sp.run(
+            [sys.executable, _hc_script, "--fix-refs"],
+            capture_output=True, timeout=10,
+        )
+        # Fix project atoms if present
+        _proj_mem = get_project_memory_dir(state.get("session", {}).get("cwd", ""))
+        if _proj_mem:
+            _sp.run(
+                [sys.executable, _hc_script, "--fix-refs", "--memory-root", str(_proj_mem)],
+                capture_output=True, timeout=10,
+            )
+    except Exception as e:
+        print(f"[v2.18] fix-refs error: {e}", file=sys.stderr)
+
     # v2.1 Task #2: Auto-generate episodic atom
     episodic_generated = False
     if config.get("episodic", {}).get("auto_generate", True):
