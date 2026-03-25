@@ -266,6 +266,103 @@ def ranked_search(
     return hits[:top_k]
 
 
+def ranked_search_sections(
+    query: str,
+    config: Dict[str, Any],
+    intent: str = "general",
+    top_k: int = 5,
+    max_sections: int = 3,
+    min_score: float = 0.50,
+    layer_filter: Optional[str] = None,
+    embedder=None,
+) -> List[Dict[str, Any]]:
+    """Intent-aware ranked search preserving section-level detail (v2.18).
+
+    Same scoring as ranked_search(), but dedup groups by atom and keeps
+    top-N chunks per atom instead of collapsing to 1.
+
+    Returns: [{atom_name, file_path, final_score, layer,
+               sections: [{section, text, score, line_number}]}]
+    """
+    if not query.strip():
+        return []
+
+    if embedder is None:
+        embedder = create_embedder(config)
+
+    query_vec = embedder.embed([query])
+    if not query_vec or not query_vec[0]:
+        return []
+
+    raw_results = search_vectors(
+        query_vec[0],
+        top_k=top_k * 4,
+        layer_filter=layer_filter,
+    )
+    if not raw_results:
+        return []
+
+    # Group chunks by atom, compute per-chunk score
+    from collections import defaultdict
+    atom_chunks: Dict[str, Dict[str, Any]] = {}   # atom_key → atom meta
+    chunk_map: Dict[str, List[Dict]] = defaultdict(list)  # atom_key → chunks
+
+    for row in raw_results:
+        distance = row.get("_distance", 1.0)
+        score = 1.0 - distance
+        if score < min_score:
+            continue
+
+        atom_key = f"{row.get('layer', '')}:{row.get('atom_name', '')}"
+
+        if layer_filter == "project" and not row.get("layer", "").startswith("project:"):
+            continue
+
+        if atom_key not in atom_chunks:
+            atom_chunks[atom_key] = {
+                "atom_name": row.get("atom_name", ""),
+                "file_path": row.get("file_path", ""),
+                "layer": row.get("layer", ""),
+                "score": score,
+                "last_used": row.get("last_used", ""),
+                "confirmations": row.get("confirmations", 0),
+                "atom_type": row.get("atom_type", "semantic"),
+                "tags": row.get("tags", ""),
+                "confidence": row.get("confidence", ""),
+            }
+        else:
+            # Track best semantic score for the atom (used in final_score)
+            if score > atom_chunks[atom_key]["score"]:
+                atom_chunks[atom_key]["score"] = score
+
+        chunk_map[atom_key].append({
+            "section": row.get("section", ""),
+            "text": row.get("text", ""),
+            "score": round(score, 4),
+            "line_number": int(row.get("line_number", 0)),
+        })
+
+    # Sort chunks per atom by score desc, keep top max_sections
+    results: List[Dict[str, Any]] = []
+    for atom_key, meta in atom_chunks.items():
+        chunks = sorted(chunk_map[atom_key], key=lambda c: c["score"], reverse=True)
+        chunks = chunks[:max_sections]
+
+        # Compute final_score using best chunk score
+        breakdown = _compute_final_score(meta, intent)
+        results.append({
+            "atom_name": meta["atom_name"],
+            "file_path": meta["file_path"],
+            "layer": meta["layer"],
+            "final_score": breakdown["final_score"],
+            "score_breakdown": breakdown,
+            "sections": chunks,
+        })
+
+    results.sort(key=lambda x: x["final_score"], reverse=True)
+    return results[:top_k]
+
+
 def episodic_search(
     query: str,
     config: Dict[str, Any],

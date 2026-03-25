@@ -8,7 +8,7 @@
 - Created: 2026-03-11
 - Confirmations: 0
 - Tags: v2.9, design, retrieval, architecture
-- Related: decisions, spec, v3-research
+- Related: decisions, v3-research-insights
 
 ## 背景
 

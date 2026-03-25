@@ -1,7 +1,7 @@
 # /continue — 續接暫存任務
 
 > 讀取 staging 區的續接 prompt 並立即執行。輕量版續接，適合已備好下一步的場景。
-> 全域 Skill，適用任何專案。
+> 全域 Skill，適用任何專案。支援多任務並存選擇。
 
 ---
 
@@ -11,40 +11,47 @@
 /continue
 ```
 
-無參數。直接執行。
+無需輸入參數。多個任務時自動列出選單，選數字即可。
 
 ---
 
-## Step 1: 檢查暫存區
+## Step 1: 掃描暫存區
 
-用 **Read tool** 讀取以下路徑取得 staging 根目錄：
+從系統 context 的 "Additional working directories" 或 CWD 推算專案 slug，用 **Glob tool** 掃描：
 
 ```
-~/.claude/projects/MEMORY.md
+~/.claude/projects/{slug}/memory/_staging/next-phase*.md
 ```
 
-從 MEMORY.md 所在目錄推算 staging 路徑：`{MEMORY.md 所在目錄}/_staging/`
+> `{slug}` 由 CWD 路徑轉換：小寫、`/` → `-`、`:` → ``。
+> 例：CWD `C:\Projects\MyApp` → slug `c--Projects-MyApp` → 掃描 `~/.claude/projects/c--Projects-MyApp/memory/_staging/next-phase*.md`
 
-> 例：如果 MEMORY.md 在 `~/.claude/projects/c--Projects/memory/MEMORY.md`，
-> 則 staging 在 `~/.claude/projects/c--Projects/memory/_staging/`
+每個專案有獨立的 staging 區，確保不同專案的續接互不干擾。
 
-**每個專案有獨立的 staging 區**，確保不同專案的續接互不干擾。
+### 分流
 
-### 讀取順序（容錯掃描）
+- **掃描到 1 個檔案** → 自動選定該檔案，繼續 Step 2
+- **掃描到多個檔案** → 列出清單讓使用者**選數字**：
 
-1. **優先**：直接 Read `_staging/next-phase.md`
-2. **Fallback**：若 Read 報錯（檔案不存在），用 Glob 掃描 `_staging/*.md`，取**最新的**（按修改時間）
-3. **都沒有** → 回覆「沒有待續任務。`_staging/` 目錄下無 `.md` 檔案。使用 `/resume` 可從 atoms/git/todo 推斷續接工作。」→ 結束
+```
+_staging/ 下有 N 個待續任務：
+  1. bundle-pipeline — [續接] AssetBundle 自建打包管線（Phase 1）
+  2. token-diet — [續接] Token 瘦身計畫
 
-**重要**：路徑在系統 context 的 "Additional working directories" 中可以找到 memory 目錄的位置。
+請選擇（輸入數字）：
+```
+
+> 清單中的名稱取自檔名 `next-phase-{name}.md` 的 `{name}` 部分，摘要取自檔案第一行。
+
+- **掃描到 0 個檔案** → 回覆「沒有待續任務。`_staging/` 目錄下無 `next-phase-*.md` 檔案。使用 `/resume` 可從 atoms/git/todo 推斷續接工作。」→ 結束
 
 ## Step 2: 讀取並刪除
 
-1. 讀取找到的 `.md` 檔案全部內容，記住內容
+1. 讀取選定檔案的全部內容，記住內容
 2. **立即刪除**該檔案（防止重複執行）
 
 ## Step 3: 執行
 
 將讀取到的內容視為**任務 prompt**，立即開始執行。不需要使用者確認，直接動工。
 
-**注意**：如果任務的完成條件中包含「產出下一階段續接 prompt」，在任務完成時寫入新的 `next-phase.md`。
+**注意**：如果任務的完成條件中包含「產出下一階段續接 prompt」，在任務完成時寫入新的 `next-phase-{name}.md`（保持原任務名稱）。

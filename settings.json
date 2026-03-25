@@ -1,6 +1,5 @@
 {
   "permissions": {
-    "defaultMode": "bypassPermissions",
     "allow": [
       "Bash(*)",
       "Edit(*)",
@@ -23,7 +22,8 @@
       "mcp__playwright__browser_fill_form",
       "mcp__playwright__browser_network_requests",
       "mcp__playwright__browser_evaluate"
-    ]
+    ],
+    "defaultMode": "bypassPermissions"
   },
   "hooks": {
     "SessionStart": [
@@ -121,6 +121,9 @@
       }
     ]
   },
+  "enabledPlugins": {
+    "discord@claude-plugins-official": true
+  },
   "extraKnownMarketplaces": {
     "claude-plugins-official": {
       "source": {
@@ -130,7 +133,5 @@
     }
   },
   "autoUpdatesChannel": "latest",
-  "enabledPlugins": {
-    "discord@claude-plugins-official": true
-  }
+  "skipDangerousModePermissionPrompt": true
 }

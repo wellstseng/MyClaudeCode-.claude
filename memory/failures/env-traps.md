@@ -3,12 +3,12 @@
 - Scope: global
 - Confidence: [固]
 - Type: procedural
-- Trigger: 環境, Windows, MSYS2, Node.js, npx, Ollama, thinking, port, MCP啟動, VSCode
-- Last-used: 2026-03-22
+- Trigger: Win環境陷阱, Windows, MSYS2, Node.js, npx, Ollama, port, MCP啟動, VSCode
+- Last-used: 2026-03-25
 - Created: 2026-03-10
-- Confirmations: 46
+- Confirmations: 45
 - Tags: failure, environment, pitfall
-- Related: toolchain, fail-assumptions, fail-silent, fail-cognitive
+- Related: toolchain, feedback_global_install
 
 ## 知識
 
@@ -22,7 +22,6 @@
 
 ### VSCode / MCP
 
-- [固] `bypassPermissions` 模式下編輯 `.claude/` 目錄內檔案仍跳權限提示 → 以為設定沒生效 → `.claude/`、`.git/`、`.vscode/`、`.idea/` 是硬編碼受保護目錄，bypassPermissions 不覆蓋（根因: Claude Code 安全機制防止意外破壞設定檔；設定方式: `settings.json` → `permissions.defaultMode: "bypassPermissions"`）
 - [固] "Claude Code: Open in New Tab" 的 `Ctrl+Shift+Esc` 與 Windows Task Manager 衝突 + MCP 安全機制擋住 → 改用 Command Palette 輸入指令名稱（根因: VS Code 快捷鍵與 Windows 系統快捷鍵重疊）
 - [固] VS Code "Open in New Tab" 開 Claude Code 會與側邊欄 CHAT 面板搶焦點 → 點擊/貼上操作進入錯誤面板 → 截圖確認焦點位置 + 點擊新 tab 標題切換焦點後重試（根因: 同視窗兩個 webview 輸入框座標重疊）
 - [固] 舊 MCP server process 佔住 port 3848 → 新 Guardian routes/cleanup 全不生效 → 先殺舊 process，heartbeat 15s 內自動 rebind（根因: process 未正常退出時 port 不釋放）

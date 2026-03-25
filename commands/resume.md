@@ -25,6 +25,8 @@
 /resume 接續上次的 UI 重構，從 HeroPanel 開始
 ```
 
+> staging 檔名（`next-phase-{name}.md`）由任務名稱自動推導，Step 4.5 會顯示讓使用者確認。
+
 ### 錯誤處理
 
 - **MCP 不可用**（無 MCPControl）→ 自動降級為手動模式：生成 prompt 並複製到剪貼簿，提示使用者手動開新 session 貼上
@@ -115,18 +117,25 @@ $ARGUMENTS
 
 ## Step 4.5: 存入 Staging（安全網）
 
-使用者確認 prompt 後，寫入**專案層** staging 路徑（確保目錄存在）：
+使用者確認 prompt 後，決定檔案名稱並寫入**專案層** staging 路徑（確保目錄存在）：
+
+### 檔案命名
 
 ```
-~/.claude/projects/{slug}/memory/_staging/next-phase.md
+~/.claude/projects/{slug}/memory/_staging/next-phase-{name}.md
 ```
+
+`{name}` 的決定順序：
+1. **有 `--name` 參數** → 直接使用
+2. **無 `--name`** → 從 Step 3 生成的任務名稱自動推導短名（英文小寫、空格換 `-`、去除特殊字元、不超過 40 字元）
+3. 推導後**顯示檔名讓使用者確認**：`「將存為 next-phase-{name}.md，OK？」`
 
 > `{slug}` 從系統 context 的 project memory 路徑推算，與 `/continue` 讀取路徑一致。
-> 例：工作目錄 `C:\Projects\MyApp` → slug `c--Projects-MyApp` → 寫入 `~/.claude/projects/c--Projects-MyApp/memory/_staging/next-phase.md`
+> 例：工作目錄 `C:\Projects\MyApp` → slug `c--Projects-MyApp`、name `ui-refactor` → 寫入 `~/.claude/projects/c--Projects-MyApp/memory/_staging/next-phase-ui-refactor.md`
 
-若檔案已存在，顯示舊內容第一行並詢問是否覆蓋。
+若同名檔案已存在，顯示舊內容第一行並詢問是否覆蓋。
 
-這樣即使後續 MCP 自動化失敗，使用者仍可透過 `/clear` → `/continue` 銜接。
+這樣即使後續 MCP 自動化失敗，使用者仍可透過 `/clear` → `/continue {name}` 銜接。
 
 ## Step 5: 執行
 

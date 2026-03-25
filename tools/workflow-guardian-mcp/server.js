@@ -64,29 +64,6 @@ function listStatePaths() {
 }
 
 function resolveSessionId(prefix) {
-  // "current" / "latest" → pick the most recently modified active session
-  if (prefix === "current" || prefix === "latest") {
-    const paths = listStatePaths();
-    if (paths.length === 0) return null;
-    // Sort by mtime descending, prefer non-ended sessions
-    const candidates = paths.map((p) => {
-      try {
-        const state = JSON.parse(fs.readFileSync(p, "utf-8"));
-        const sid = path.basename(p).replace("state-", "").replace(".json", "");
-        const phase = state.phase || "unknown";
-        const working = (phase === "working" || phase === "syncing");
-        return { sid, ended: !!state.ended_at, working, mtime: fs.statSync(p).mtimeMs };
-      } catch { return null; }
-    }).filter(Boolean);
-    // Priority: working > non-ended > ended, then most recent mtime
-    candidates.sort((a, b) => {
-      if (a.working !== b.working) return a.working ? -1 : 1;
-      if (a.ended !== b.ended) return a.ended ? 1 : -1;
-      return b.mtime - a.mtime;
-    });
-    return candidates.length > 0 ? candidates[0].sid : null;
-  }
-
   // Support prefix matching: "3c7a47d0" → full UUID
   // Direct hit: exact filename exists → fast path
   const directPath = path.join(WORKFLOW_DIR, `state-${prefix}.json`);
@@ -347,24 +324,6 @@ const TOOL_DEFINITIONS = [
           type: "string",
           description: "What triggered this knowledge discovery",
         },
-        // V2.4: Two-layer classification
-        scope: {
-          type: "string",
-          enum: ["global", "project"],
-          description: "Knowledge scope: global (cross-project) or project-specific",
-          default: "project",
-        },
-        knowledge_type: {
-          type: "string",
-          enum: ["factual", "procedural", "architectural", "pitfall"],
-          description: "Knowledge type: factual (facts/values), procedural (steps/SOP), architectural (design/patterns), pitfall (bugs/traps)",
-          default: "factual",
-        },
-        tags: {
-          type: "array",
-          items: { type: "string" },
-          description: "Optional tags for sub-classification",
-        },
       },
       required: ["session_id", "content", "classification"],
     },
@@ -485,8 +444,7 @@ function toolWorkflowSignal(id, args) {
 }
 
 function toolMemoryQueueAdd(id, args) {
-  const { session_id, content, classification, trigger_context,
-          scope, knowledge_type, tags } = args;
+  const { session_id, content, classification, trigger_context } = args;
   const resolved = resolveSessionId(session_id);
   if (!resolved) {
     return sendToolResult(id, `No state found for session ${session_id}`, true);
@@ -496,21 +454,13 @@ function toolMemoryQueueAdd(id, args) {
     return sendToolResult(id, `No state found for session ${session_id}`, true);
   }
 
-  const item = {
+  state.knowledge_queue = state.knowledge_queue || [];
+  state.knowledge_queue.push({
     content,
     classification: classification || "[臨]",
     context: trigger_context || "",
     at: new Date().toISOString(),
-    // V2.4: Two-layer classification
-    scope: scope || "project",
-    knowledge_type: knowledge_type || "factual",
-  };
-  if (tags && Array.isArray(tags) && tags.length > 0) {
-    item.tags = tags;
-  }
-
-  state.knowledge_queue = state.knowledge_queue || [];
-  state.knowledge_queue.push(item);
+  });
   state.sync_pending = true;
   writeState(resolved, state);
 
@@ -600,12 +550,26 @@ function parseEpisodicAtom(filePath) {
 
 function apiEpisodic(req, res) {
   try {
-    const files = fs.readdirSync(MEMORY_DIR)
-      .filter(f => f.startsWith("episodic-") && f.endsWith(".md"));
-    const atoms = files.map(f => {
-      try { return parseEpisodicAtom(path.join(MEMORY_DIR, f)); }
-      catch { return null; }
-    }).filter(Boolean);
+    const dirsToScan = [MEMORY_DIR];
+    // Also scan project-level episodic dirs
+    const projectsDir = path.join(CLAUDE_DIR, "projects");
+    if (fs.existsSync(projectsDir)) {
+      for (const proj of fs.readdirSync(projectsDir)) {
+        const projMemDir = path.join(projectsDir, proj, "memory");
+        if (fs.existsSync(projMemDir)) dirsToScan.push(projMemDir);
+      }
+    }
+    const atoms = [];
+    for (const dir of dirsToScan) {
+      try {
+        const files = fs.readdirSync(dir)
+          .filter(f => f.startsWith("episodic-") && f.endsWith(".md"));
+        for (const f of files) {
+          try { atoms.push(parseEpisodicAtom(path.join(dir, f))); }
+          catch {}
+        }
+      } catch {}
+    }
     atoms.sort((a, b) => (b.created || "").localeCompare(a.created || ""));
     jsonRes(res, 200, atoms);
   } catch { jsonRes(res, 200, []); }
@@ -621,18 +585,33 @@ function apiHealth(req, res, forceRefresh) {
   if (!forceRefresh && healthCache.data && (now - healthCache.timestamp) < HEALTH_CACHE_TTL_MS) {
     return jsonRes(res, 200, healthCache.data);
   }
-  const scriptPath = path.join(TOOLS_DIR, "memory-audit.py");
-  exec(pyCmd(scriptPath, "--json"), { timeout: 30000 }, (err, stdout, stderr) => {
-    // Script may exit non-zero when issues found — still check stdout for valid JSON
-    if (stdout) {
-      try {
-        const data = JSON.parse(stdout);
-        healthCache = { data, timestamp: Date.now() };
-        return jsonRes(res, 200, data);
-      } catch {}
+  const auditScript = path.join(TOOLS_DIR, "memory-audit.py");
+  const healthScript = path.join(TOOLS_DIR, "atom-health-check.py");
+  // Run both tools in parallel
+  let auditDone = false, healthDone = false;
+  let auditData = null, healthData = null;
+  let responded = false;
+  const tryMerge = () => {
+    if (!auditDone || !healthDone || responded) return;
+    responded = true;
+    const merged = auditData || {};
+    if (healthData) {
+      merged.broken_refs = healthData.broken_refs || [];
+      merged.missing_reverse_refs = healthData.missing_reverse_refs || [];
+      merged.stale_atoms = healthData.stale_atoms || [];
     }
-    if (err) return jsonRes(res, 500, { error: "audit failed", details: (stderr || err.message).slice(0, 500) });
-    jsonRes(res, 500, { error: "empty audit output" });
+    healthCache = { data: merged, timestamp: Date.now() };
+    jsonRes(res, 200, merged);
+  };
+  exec(pyCmd(auditScript, "--json"), { timeout: 30000 }, (err, stdout) => {
+    if (stdout) { try { auditData = JSON.parse(stdout); } catch {} }
+    auditDone = true;
+    tryMerge();
+  });
+  exec(pyCmd(healthScript, "--report --json"), { timeout: 30000 }, (err, stdout) => {
+    if (stdout) { try { healthData = JSON.parse(stdout); } catch {} }
+    healthDone = true;
+    tryMerge();
   });
 }
 
@@ -715,6 +694,105 @@ function apiKnowledgeQueue(req, res) {
   jsonRes(res, 200, items);
 }
 
+// --- Atoms Browser API ---
+
+function apiAtoms(req, res) {
+  const atoms = [];
+  const scanDirs = [
+    { dir: MEMORY_DIR, layer: "global" },
+    { dir: path.join(MEMORY_DIR, "failures"), layer: "failures" },
+    { dir: path.join(MEMORY_DIR, "unity"), layer: "unity" },
+  ];
+
+  for (const { dir, layer } of scanDirs) {
+    if (!fs.existsSync(dir)) continue;
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith(".md")) continue;
+      if (f === "MEMORY.md" || f.startsWith("SPEC_") || f.startsWith("_")) continue;
+
+      const filePath = path.join(dir, f);
+      try {
+        const content = fs.readFileSync(filePath, "utf-8");
+        const atom = { name: f.replace(".md", ""), layer, file: f };
+
+        // Parse metadata
+        const metaRe = /^-\s+([\w-]+):\s*(.+)$/gm;
+        let m;
+        while ((m = metaRe.exec(content)) !== null) {
+          const key = m[1].toLowerCase(), val = m[2].trim();
+          switch (key) {
+            case "confidence": atom.confidence = val; break;
+            case "last-used": atom.last_used = val; break;
+            case "confirmations": atom.confirmations = parseInt(val) || 0; break;
+            case "trigger": atom.triggers = val.split(",").map(t => t.trim()); break;
+            case "related": atom.related = val.split(",").map(t => t.trim()); break;
+            case "created": atom.created = val; break;
+            case "type": atom.type = val; break;
+            case "tags": atom.tags = val.split(",").map(t => t.trim()); break;
+          }
+        }
+
+        // Count knowledge items
+        let knowledgeCount = 0;
+        let inKnowledge = false;
+        for (const line of content.split("\n")) {
+          if (/^##\s+知識/.test(line)) { inKnowledge = true; continue; }
+          if (/^##\s+/.test(line) && inKnowledge) break;
+          if (inKnowledge && /^- \[/.test(line)) knowledgeCount++;
+        }
+        atom.knowledge_count = knowledgeCount;
+
+        // Line count
+        atom.line_count = content.split("\n").length;
+
+        // Days since last used
+        if (atom.last_used) {
+          const lu = new Date(atom.last_used);
+          atom.days_since_used = Math.floor((Date.now() - lu.getTime()) / 86400000);
+        }
+
+        // Full content for detail view
+        atom.content = content;
+
+        atoms.push(atom);
+      } catch {}
+    }
+  }
+
+  // Also scan project memory dirs
+  const projectsDir = path.join(CLAUDE_DIR, "projects");
+  if (fs.existsSync(projectsDir)) {
+    for (const proj of fs.readdirSync(projectsDir)) {
+      const projMemDir = path.join(projectsDir, proj, "memory");
+      if (!fs.existsSync(projMemDir)) continue;
+      for (const f of fs.readdirSync(projMemDir)) {
+        if (!f.endsWith(".md")) continue;
+        if (f === "MEMORY.md" || f.startsWith("_")) continue;
+        try {
+          const content = fs.readFileSync(path.join(projMemDir, f), "utf-8");
+          const atom = { name: f.replace(".md", ""), layer: "project:" + proj, file: f, content };
+          const metaRe = /^-\s+([\w-]+):\s*(.+)$/gm;
+          let m2;
+          while ((m2 = metaRe.exec(content)) !== null) {
+            const key = m2[1].toLowerCase(), val = m2[2].trim();
+            switch (key) {
+              case "confidence": atom.confidence = val; break;
+              case "last-used": atom.last_used = val; break;
+              case "confirmations": atom.confirmations = parseInt(val) || 0; break;
+              case "related": atom.related = val.split(",").map(t => t.trim()); break;
+            }
+          }
+          atom.line_count = content.split("\n").length;
+          atoms.push(atom);
+        } catch {}
+      }
+    }
+  }
+
+  atoms.sort((a, b) => (b.last_used || "").localeCompare(a.last_used || ""));
+  jsonRes(res, 200, atoms);
+}
+
 // ─── HTTP Dashboard ─────────────────────────────────────────────────────────
 
 const DASHBOARD_HTML = `<!DOCTYPE html>
@@ -722,7 +800,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Workflow Guardian v2.1</title>
+<title>工作流守衛 v2.1</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: -apple-system, "Segoe UI", sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
@@ -830,22 +908,40 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .status-online { background: #3fb950; }
   .status-offline { background: #f85149; }
   .section-title { font-size: 1em; font-weight: 600; color: #e6edf3; margin-bottom: 10px; }
+  /* Atoms */
+  .atom-table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+  .atom-table th { text-align: left; color: #8b949e; padding: 8px; border-bottom: 2px solid #30363d; cursor: pointer; user-select: none; }
+  .atom-table th:hover { color: #58a6ff; }
+  .atom-table td { padding: 8px; border-bottom: 1px solid #21262d; }
+  .atom-table tr:hover { background: #161b2288; }
+  .atom-name { color: #58a6ff; font-weight: 600; cursor: pointer; }
+  .atom-name:hover { text-decoration: underline; }
+  .atom-layer { font-size: 0.8em; padding: 1px 6px; border-radius: 8px; background: #30363d; color: #8b949e; }
+  .atom-conf { font-weight: bold; }
+  .conf-fixed { color: #3fb950; }
+  .conf-observe { color: #d2a826; }
+  .conf-temp { color: #f0883e; }
+  .atom-detail { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 16px; margin: 12px 0; white-space: pre-wrap; font-family: monospace; font-size: 0.82em; max-height: 500px; overflow-y: auto; }
+  .atom-filter { padding: 6px 12px; background: #161b22; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; font-size: 0.9em; margin-bottom: 12px; width: 300px; font-family: inherit; }
+  .atom-filter::placeholder { color: #484f58; }
+  .atom-stats { display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
 </style>
 </head>
 <body>
 <div style="display:flex;justify-content:space-between;align-items:baseline;">
-  <div><h1>Workflow Guardian v2.1</h1><p class="subtitle">Memory & Session Monitor</p></div>
-  <div class="auto-refresh"><label><input type="checkbox" id="autoRefresh" checked> Auto-refresh (5s)</label></div>
+  <div><h1>工作流守衛 v2.1</h1><p class="subtitle">記憶與對話監控</p></div>
+  <div class="auto-refresh"><label><input type="checkbox" id="autoRefresh" checked> 自動重整 (5秒)</label></div>
 </div>
 
 <div class="stats" id="statsBar"></div>
 
 <nav class="tab-nav">
-  <button class="tab-btn active" data-tab="sessions">Sessions</button>
-  <button class="tab-btn" data-tab="episodic">Episodic</button>
-  <button class="tab-btn" data-tab="health">Health</button>
-  <button class="tab-btn" data-tab="tests">Tests</button>
-  <button class="tab-btn" data-tab="vector">Vector</button>
+  <button class="tab-btn active" data-tab="sessions">對話</button>
+  <button class="tab-btn" data-tab="episodic">情境記憶</button>
+  <button class="tab-btn" data-tab="health">健康檢查</button>
+  <button class="tab-btn" data-tab="atoms">原子記憶</button>
+  <button class="tab-btn" data-tab="tests">測試</button>
+  <button class="tab-btn" data-tab="vector">向量服務</button>
 </nav>
 
 <div id="panelSessions" class="tab-panel active">
@@ -857,20 +953,24 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 </div>
 
 <div id="panelHealth" class="tab-panel">
-  <div id="healthContent"><div class="empty">Loading health data...</div></div>
+  <div id="healthContent"><div class="empty">載入健康資料中...</div></div>
+</div>
+
+<div id="panelAtoms" class="tab-panel">
+  <div id="atomsContent"><div class="empty">載入原子記憶中...</div></div>
 </div>
 
 <div id="panelTests" class="tab-panel">
   <div id="testsContent">
     <div style="text-align:center;padding:20px;">
-      <button class="run-btn" id="runTestsBtn" onclick="startTestRun()">Run E2E Tests</button>
+      <button class="run-btn" id="runTestsBtn" onclick="startTestRun()">執行端對端測試</button>
     </div>
     <div id="testResults"></div>
   </div>
 </div>
 
 <div id="panelVector" class="tab-panel">
-  <div id="vectorContent"><div class="empty">Loading vector status...</div></div>
+  <div id="vectorContent"><div class="empty">載入向量服務狀態中...</div></div>
 </div>
 
 <script>
@@ -897,6 +997,7 @@ function refreshCurrentTab() {
     case "sessions": renderSessions(); break;
     case "episodic": renderEpisodic(); break;
     case "health": renderHealth(false); break;
+    case "atoms": renderAtoms(); break;
     case "tests": break; // manual trigger only
     case "vector": renderVector(); break;
   }
@@ -918,7 +1019,7 @@ async function sendSignal(sid, signal) {
 }
 
 async function deleteSession(sid) {
-  if (!confirm("Delete session " + sid.slice(0,8) + "?")) return;
+  if (!confirm("確定要刪除對話 " + sid.slice(0,8) + "?")) return;
   await fetch("/api/sessions/" + sid, { method: "DELETE" });
   renderSessions();
 }
@@ -940,7 +1041,7 @@ async function renderSessions() {
   updateStats(sessions.length, active.length, pending.length);
 
   if (sessions.length === 0) {
-    document.getElementById("sessionList").innerHTML = '<div class="empty">No workflow sessions found.</div>';
+    document.getElementById("sessionList").innerHTML = '<div class="empty">無進行中的對話。</div>';
     return;
   }
 
@@ -953,24 +1054,24 @@ async function renderSessions() {
     const uniqueFiles = [...new Set(files.map(f => f.path))];
     let fileHtml = "";
     if (uniqueFiles.length > 0) {
-      fileHtml = '<details><summary>Modified files (' + uniqueFiles.length + ')</summary><ul class="file-list">' +
+      fileHtml = '<details><summary>修改檔案 (' + uniqueFiles.length + ')</summary><ul class="file-list">' +
         uniqueFiles.map(f => "<li>" + esc(f.split(/[\\\\/]/).pop()) + ' <span style="color:#484f58">' + esc(f) + "</span></li>").join("") + "</ul></details>";
     }
     let kqHtml = "";
     if (kq.length > 0) {
-      kqHtml = '<details><summary>Knowledge queue (' + kq.length + ')</summary><ul class="kq-list">' +
+      kqHtml = '<details><summary>知識佇列 (' + kq.length + ')</summary><ul class="kq-list">' +
         kq.map(q => "<li>" + clsBadge(q.classification) + " " + esc((q.content||"").slice(0,80)) + "</li>").join("") + "</ul></details>";
     }
     return '<div class="card">' +
-      '<div class="card-header"><span class="card-name">' + esc(s.name||"?") + '</span><span class="' + badgeClass(s.phase) + '">' + s.phase + (s.muted?" (muted)":"") + '</span></div>' +
-      '<div class="card-meta"><span class="card-id">' + s.session_id.slice(0,8) + '</span> &middot; ' + esc(s.project||"?") + ' &middot; ' + s.age_minutes + ' min' + (s.ended?" &middot; ended":"") + '</div>' +
-      '<div class="card-stats"><span>Files: <strong>' + s.modified_files_count + '</strong></span><span>Knowledge: <strong>' + s.knowledge_queue_count + '</strong></span><span>Sync: <strong>' + (s.sync_pending?"pending":"ok") + '</strong></span></div>' +
+      '<div class="card-header"><span class="card-name">' + esc(s.name||"?") + '</span><span class="' + badgeClass(s.phase) + '">' + s.phase + (s.muted?" (已靜音)":"") + '</span></div>' +
+      '<div class="card-meta"><span class="card-id">' + s.session_id.slice(0,8) + '</span> &middot; ' + esc(s.project||"?") + ' &middot; ' + s.age_minutes + ' 分鐘' + (s.ended?" &middot; 已結束":"") + '</div>' +
+      '<div class="card-stats"><span>檔案：<strong>' + s.modified_files_count + '</strong></span><span>知識：<strong>' + s.knowledge_queue_count + '</strong></span><span>同步：<strong>' + (s.sync_pending?"待處理":"完成") + '</strong></span></div>' +
       (fileHtml||kqHtml ? '<div class="details">' + fileHtml + kqHtml + '</div>' : '') +
       '<div class="actions">' +
-        '<button class="btn" onclick="sendSignal(\\'' + s.session_id + '\\',\\'sync_completed\\')">Mark Synced</button>' +
-        '<button class="btn" onclick="sendSignal(\\'' + s.session_id + '\\',\\'reset\\')">Reset</button>' +
-        (s.muted ? '' : '<button class="btn" onclick="sendSignal(\\'' + s.session_id + '\\',\\'mute\\')">Mute</button>') +
-        '<button class="btn btn-danger" onclick="deleteSession(\\'' + s.session_id + '\\')">Delete</button>' +
+        '<button class="btn" onclick="sendSignal(\\'' + s.session_id + '\\',\\'sync_completed\\')">標記已同步</button>' +
+        '<button class="btn" onclick="sendSignal(\\'' + s.session_id + '\\',\\'reset\\')">重置</button>' +
+        (s.muted ? '' : '<button class="btn" onclick="sendSignal(\\'' + s.session_id + '\\',\\'mute\\')">靜音</button>') +
+        '<button class="btn btn-danger" onclick="deleteSession(\\'' + s.session_id + '\\')">刪除</button>' +
       '</div></div>';
   }));
   document.getElementById("sessionList").innerHTML = cards.join("");
@@ -979,9 +1080,9 @@ async function renderSessions() {
 // ─── Stats Bar ───
 
 function updateStats(total, active, pending, extra) {
-  let html = '<div class="stat"><div class="stat-value">' + total + '</div><div class="stat-label">Sessions</div></div>' +
-    '<div class="stat"><div class="stat-value">' + active + '</div><div class="stat-label">Active</div></div>' +
-    '<div class="stat"><div class="stat-value">' + pending + '</div><div class="stat-label">Pending Sync</div></div>';
+  let html = '<div class="stat"><div class="stat-value">' + total + '</div><div class="stat-label">對話數</div></div>' +
+    '<div class="stat"><div class="stat-value">' + active + '</div><div class="stat-label">進行中</div></div>' +
+    '<div class="stat"><div class="stat-value">' + pending + '</div><div class="stat-label">待同步</div></div>';
   if (extra) html += extra;
   document.getElementById("statsBar").innerHTML = html;
 }
@@ -993,22 +1094,23 @@ async function renderEpisodic() {
   try {
     const atoms = await (await fetch("/api/episodic")).json();
     if (!atoms.length) {
-      el.innerHTML = '<div class="empty">No episodic atoms found.<br><span style="font-size:0.85em">They are auto-generated when sessions end.</span></div>';
+      el.innerHTML = '<div class="empty">無情境記憶紀錄。<br><span style="font-size:0.85em">情境記憶在對話結束時自動生成。</span></div>';
       return;
     }
     let html = '<div class="timeline">';
     for (const a of atoms) {
       const d = a.days_until_expiry;
       let dotCls = "ttl-green";
-      let ttlLabel = d + "d left";
+      let ttlLabel = d + "天剩餘";
       let ttlStyle = "background:#3fb95022;color:#3fb950";
-      if (d !== null && d <= 0) { dotCls = "ttl-expired"; ttlLabel = "expired"; ttlStyle = "background:#484f5822;color:#484f58"; }
-      else if (d !== null && d <= 3) { dotCls = "ttl-critical"; ttlLabel = d + "d left"; ttlStyle = "background:#f8514922;color:#f85149"; }
+      if (d !== null && d <= 0) { dotCls = "ttl-expired"; ttlLabel = "已過期"; ttlStyle = "background:#484f5822;color:#484f58"; }
+      else if (d !== null && d <= 3) { dotCls = "ttl-critical"; ttlLabel = d + "天剩餘"; ttlStyle = "background:#f8514922;color:#f85149"; }
       else if (d !== null && d <= 7) { dotCls = "ttl-red"; ttlStyle = "background:#f8514922;color:#f85149"; }
       else if (d !== null && d <= 14) { dotCls = "ttl-yellow"; ttlStyle = "background:#d2a82622;color:#d2a826"; }
 
       const knLines = (a.knowledge_lines || []).slice(0, 5).map(l => "<li>" + esc(l) + "</li>").join("");
-      const hasMore = (a.knowledge_lines||[]).length > 5;
+      const moreCount = (a.knowledge_lines||[]).length - 5;
+      const hasMore = moreCount > 0;
 
       html += '<div class="timeline-item"><div class="timeline-dot ' + dotCls + '"></div><div class="timeline-card">' +
         '<div style="display:flex;justify-content:space-between;align-items:center">' +
@@ -1017,15 +1119,15 @@ async function renderEpisodic() {
         '</div>' +
         '<div class="timeline-title">' + esc(a.title) + '</div>' +
         '<div style="font-size:0.78em;color:#8b949e">' + esc(a.triggers.join(", ")) + '</div>' +
-        (knLines ? '<ul class="timeline-knowledge">' + knLines + (hasMore ? '<li style="color:#58a6ff">... +' + ((a.knowledge_lines||[]).length - 5) + ' more</li>' : '') + '</ul>' : '') +
-        '<details><summary style="font-size:0.8em;color:#58a6ff;cursor:pointer;margin-top:6px">Full content</summary>' +
+        (knLines ? '<ul class="timeline-knowledge">' + knLines + (hasMore ? '<li style="color:#58a6ff">... +' + moreCount + ' 更多</li>' : '') + '</ul>' : '') +
+        '<details><summary style="font-size:0.8em;color:#58a6ff;cursor:pointer;margin-top:6px">完整內容</summary>' +
           '<div class="timeline-full">' + esc(a.full_content) + '</div></details>' +
       '</div></div>';
     }
     html += '</div>';
     el.innerHTML = html;
   } catch (e) {
-    el.innerHTML = '<div class="empty">Failed to load episodic data: ' + esc(e.message) + '</div>';
+    el.innerHTML = '<div class="empty">載入情境記憶失敗：' + esc(e.message) + '</div>';
   }
 }
 
@@ -1033,44 +1135,62 @@ async function renderEpisodic() {
 
 let lastHealthData = null;
 
+function toggleHealthInfo() {
+  document.querySelectorAll('.health-info-row').forEach(r => {
+    r.style.display = r.style.display === 'none' ? '' : 'none';
+  });
+}
+
 async function renderHealth(force) {
   const el = document.getElementById("healthContent");
   try {
     const url = "/api/health" + (force ? "?force=1" : "");
-    el.innerHTML = '<div class="empty"><span class="spinner"></span> Loading health report...</div>';
+    el.innerHTML = '<div class="empty"><span class="spinner"></span> 載入健康報告中...</div>';
     const data = await (await fetch(url)).json();
-    if (data.error) { el.innerHTML = '<div class="empty">Health check failed: ' + esc(data.error) + '</div>'; return; }
+    if (data.error) { el.innerHTML = '<div class="empty">健康檢查失敗：' + esc(data.error) + '</div>'; return; }
     lastHealthData = data;
 
     const cc = data.confidence_counts || {};
     let html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">' +
-      '<span class="section-title">Memory Health Report</span>' +
-      '<button class="btn btn-primary" onclick="renderHealth(true)">Refresh Now</button></div>';
+      '<span class="section-title">記憶健康報告</span>' +
+      '<button class="btn btn-primary" onclick="renderHealth(true)">立即重整</button></div>';
 
     // Confidence counts
     html += '<div class="health-grid">';
-    html += '<div class="health-stat"><div class="val" style="color:#3fb950">' + (cc["[固]"]||0) + '</div><div class="lbl">[固] Fixed</div></div>';
-    html += '<div class="health-stat"><div class="val" style="color:#d2a826">' + (cc["[觀]"]||0) + '</div><div class="lbl">[觀] Observe</div></div>';
-    html += '<div class="health-stat"><div class="val" style="color:#f0883e">' + (cc["[臨]"]||0) + '</div><div class="lbl">[臨] Temp</div></div>';
-    html += '<div class="health-stat"><div class="val">' + (data.total_atoms||0) + '</div><div class="lbl">Total Atoms</div></div>';
-    html += '<div class="health-stat"><div class="val">' + (data.distant_count||0) + '</div><div class="lbl">Distant</div></div>';
+    html += '<div class="health-stat"><div class="val" style="color:#3fb950">' + (cc["[固]"]||0) + '</div><div class="lbl">[固] 確定</div></div>';
+    html += '<div class="health-stat"><div class="val" style="color:#d2a826">' + (cc["[觀]"]||0) + '</div><div class="lbl">[觀] 觀察</div></div>';
+    html += '<div class="health-stat"><div class="val" style="color:#f0883e">' + (cc["[臨]"]||0) + '</div><div class="lbl">[臨] 臨時</div></div>';
+    html += '<div class="health-stat"><div class="val">' + (data.total_atoms||0) + '</div><div class="lbl">原子總數</div></div>';
+    html += '<div class="health-stat"><div class="val">' + (data.distant_count||0) + '</div><div class="lbl">疏遠區</div></div>';
     html += '</div>';
 
-    // Issues
+    // Issues — grouped by severity
     const issues = data.issues || [];
+    const errCount = issues.filter(i => i.level === "error").length;
+    const warnCount = issues.filter(i => i.level === "warning").length;
+    const infoCount = issues.filter(i => i.level === "info").length;
     if (issues.length) {
-      html += '<div class="section-title">Issues (' + issues.length + ')</div>';
-      html += '<table class="issue-table"><tr><th>Level</th><th>Category</th><th>File</th><th>Message</th></tr>';
+      html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">' +
+        '<span class="section-title">問題</span>' +
+        (errCount ? '<span style="color:#f85149;font-weight:bold">' + errCount + ' error</span>' : '') +
+        (warnCount ? '<span style="color:#d2a826;font-weight:bold">' + warnCount + ' warning</span>' : '') +
+        (infoCount ? '<span style="color:#8b949e">' + infoCount + ' info</span>' : '') +
+        '<button class="btn" style="font-size:0.75em;padding:2px 8px" onclick="toggleHealthInfo()">顯示/隱藏 info</button>' +
+        '</div>';
+      html += '<table class="issue-table"><tr><th>等級</th><th>分類</th><th>檔案</th><th>訊息</th></tr>';
       for (const i of issues) {
-        html += '<tr><td class="level-' + i.level + '">' + i.level + '</td><td>' + esc(i.category) + '</td><td style="font-family:monospace;font-size:0.85em">' + esc(i.file) + '</td><td>' + esc(i.message) + '</td></tr>';
+        const hideClass = i.level === "info" ? ' class="health-info-row" style="display:none"' : '';
+        html += '<tr' + hideClass + '><td class="level-' + i.level + '">' + i.level + '</td><td>' + esc(i.category) + '</td><td style="font-family:monospace;font-size:0.85em">' + esc(i.file) + '</td><td>' + esc(i.message) + '</td></tr>';
       }
       html += '</table>';
+    } else {
+      html += '<div style="color:#3fb950;margin-bottom:12px">✓ 無任何問題</div>';
     }
 
     // Promotions
     const promos = data.promotions || [];
     if (promos.length) {
-      html += '<div class="section-title">Promotion Candidates</div><ul class="suggest-list">';
+      html += '<div class="section-title">晉升候選</div><ul class="suggest-list">';
       for (const p of promos) {
         html += '<li><span style="font-family:monospace">' + esc(p.file) + '</span> ' + p.current + ' <span class="suggest-arrow">&rarr;</span> ' + p.suggested + '<br><span style="color:#8b949e;font-size:0.82em">' + esc(p.reason) + '</span></li>';
       }
@@ -1080,29 +1200,56 @@ async function renderHealth(force) {
     // Demotions
     const demos = data.demotions || [];
     if (demos.length) {
-      html += '<div class="section-title">Demotion / Stale Warnings</div><ul class="suggest-list">';
+      html += '<div class="section-title">降級 / 過期警告</div><ul class="suggest-list">';
       for (const d of demos) {
         html += '<li><span style="font-family:monospace">' + esc(d.file) + '</span> ' + d.current + ' <span class="suggest-arrow">&rarr;</span> ' + d.suggested + '<br><span style="color:#8b949e;font-size:0.82em">' + esc(d.reason) + '</span></li>';
       }
       html += '</ul>';
     }
 
+    // Reference integrity
+    const brokenRefs = data.broken_refs || [];
+    const missingRev = data.missing_reverse_refs || [];
+    const staleAtoms = data.stale_atoms || [];
+    html += '<div class="section-title">參照完整性</div>';
+    if (!brokenRefs.length && !missingRev.length && !staleAtoms.length) {
+      html += '<div style="color:#3fb950;margin-bottom:12px">✓ 所有參照完整、無過期 atom</div>';
+    } else {
+      if (brokenRefs.length) {
+        html += '<div style="margin-bottom:8px"><strong style="color:#f85149">斷裂參照 (' + brokenRefs.length + ')</strong></div>';
+        html += '<table class="issue-table"><tr><th>來源 Atom</th><th>指向（不存在）</th></tr>';
+        for (const r of brokenRefs) { html += '<tr><td>' + esc(r.atom || "") + '</td><td style="color:#f85149">' + esc(r.missing_ref || "") + '</td></tr>'; }
+        html += '</table>';
+      }
+      if (missingRev.length) {
+        html += '<div style="margin-bottom:8px"><strong style="color:#d2a826">缺反向參照 (' + missingRev.length + ')</strong></div>';
+        html += '<table class="issue-table"><tr><th>說明</th></tr>';
+        for (const r of missingRev) { html += '<tr><td style="color:#d2a826">' + esc(r.direction || (r.atom_a + " → " + r.atom_b)) + '</td></tr>'; }
+        html += '</table>';
+      }
+      if (staleAtoms.length) {
+        html += '<div style="margin-bottom:8px"><strong style="color:#f0883e">過期 Atom (' + staleAtoms.length + ')</strong></div><ul>';
+        for (const s of staleAtoms) { html += '<li>' + esc(s.name || s) + ' — Last-used: ' + esc(s.last_used || "?") + '</li>'; }
+        html += '</ul>';
+      }
+    }
+
     // Audit stats
     const as = data.audit_stats || {};
     if (as.total_entries) {
-      html += '<div class="section-title">Audit Trail Summary</div><div class="health-grid">';
+      html += '<div class="section-title">審計摘要</div><div class="health-grid">';
       const ba = as.by_action || {};
       for (const [k, v] of Object.entries(ba)) {
         html += '<div class="health-stat"><div class="val">' + v + '</div><div class="lbl">' + k + '</div></div>';
       }
-      html += '<div class="health-stat"><div class="val">' + as.total_entries + '</div><div class="lbl">Total Entries</div></div>';
+      html += '<div class="health-stat"><div class="val">' + as.total_entries + '</div><div class="lbl">總筆數</div></div>';
       html += '</div>';
     }
 
-    html += '<div class="cache-info">Scanned: ' + esc(data.scan_date || "?") + ' | Layers: ' + (data.layers||[]).join(", ") + '</div>';
+    html += '<div class="cache-info">掃描時間：' + esc(data.scan_date || "?") + ' | 層級：' + (data.layers||[]).join(", ") + '</div>';
     el.innerHTML = html;
   } catch (e) {
-    el.innerHTML = '<div class="empty">Failed to load health data: ' + esc(e.message) + '</div>';
+    el.innerHTML = '<div class="empty">載入健康資料失敗：' + esc(e.message) + '</div>';
   }
 }
 
@@ -1112,7 +1259,7 @@ async function startTestRun() {
   const btn = document.getElementById("runTestsBtn");
   const el = document.getElementById("testResults");
   btn.disabled = true;
-  el.innerHTML = '<div style="text-align:center;padding:16px"><span class="spinner"></span> Running tests... <span id="testElapsed">0s</span></div>';
+  el.innerHTML = '<div style="text-align:center;padding:16px"><span class="spinner"></span> 測試執行中... <span id="testElapsed">0s</span></div>';
   const startTime = Date.now();
   const elapsedTimer = setInterval(() => {
     const s = ((Date.now() - startTime) / 1000).toFixed(0);
@@ -1139,7 +1286,7 @@ async function startTestRun() {
       } catch {}
     }, 2000);
   } catch (e) {
-    el.innerHTML = '<div class="empty">Failed: ' + esc(e.message) + '</div>';
+    el.innerHTML = '<div class="empty">測試執行失敗：' + esc(e.message) + '</div>';
     btn.disabled = false;
     clearInterval(elapsedTimer);
   }
@@ -1149,17 +1296,17 @@ function renderTestResults(job) {
   const el = document.getElementById("testResults");
   if (job.status === "error") {
     const err = job.result || {};
-    el.innerHTML = '<div class="empty" style="color:#f85149">Test run failed: ' + esc(err.error || "unknown") + (err.stderr ? '<br><pre style="text-align:left;font-size:0.8em;margin-top:8px">' + esc(err.stderr) + '</pre>' : '') + '</div>';
+    el.innerHTML = '<div class="empty" style="color:#f85149">測試失敗：' + esc(err.error || "unknown") + (err.stderr ? '<br><pre style="text-align:left;font-size:0.8em;margin-top:8px">' + esc(err.stderr) + '</pre>' : '') + '</div>';
     return;
   }
   const r = job.result || {};
   const results = r.results || [];
   let html = '<div class="test-summary">' +
-    '<span style="color:#3fb950;font-weight:600">Passed: ' + (r.passed||0) + '</span>' +
-    '<span style="color:#f85149;font-weight:600">Failed: ' + (r.failed||0) + '</span>' +
-    '<span style="color:#8b949e">Skipped: ' + (r.skipped||0) + '</span>' +
-    '<span style="color:#8b949e">Total: ' + (r.total||0) + '</span>' +
-    '<span style="color:#8b949e">Duration: ' + ((job.elapsed_ms||0)/1000).toFixed(1) + 's</span>' +
+    '<span style="color:#3fb950;font-weight:600">通過：' + (r.passed||0) + '</span>' +
+    '<span style="color:#f85149;font-weight:600">失敗：' + (r.failed||0) + '</span>' +
+    '<span style="color:#8b949e">略過：' + (r.skipped||0) + '</span>' +
+    '<span style="color:#8b949e">總計：' + (r.total||0) + '</span>' +
+    '<span style="color:#8b949e">耗時：' + ((job.elapsed_ms||0)/1000).toFixed(1) + 's</span>' +
   '</div>';
   for (const t of results) {
     const cls = t.skipped ? "test-skip" : (t.passed ? "test-pass" : "test-fail");
@@ -1185,7 +1332,7 @@ async function renderVector() {
     const r = await fetch("/api/vector-status");
     const d = await r.json();
     if (d.error) {
-      el.innerHTML = '<div class="card" style="text-align:center;padding:24px"><span class="status-dot status-offline"></span><strong style="color:#f85149">Offline</strong><br><span style="color:#8b949e;font-size:0.85em">' + esc(d.error) + '</span></div>';
+      el.innerHTML = '<div class="card" style="text-align:center;padding:24px"><span class="status-dot status-offline"></span><strong style="color:#f85149">離線</strong><br><span style="color:#8b949e;font-size:0.85em">' + esc(d.error) + '</span></div>';
       return;
     }
     const svc = d.service || {};
@@ -1195,56 +1342,156 @@ async function renderVector() {
     const upH = Math.floor((svc.uptime_seconds||0)/3600);
     const upM = Math.floor(((svc.uptime_seconds||0)%3600)/60);
 
-    let html = '<div style="margin-bottom:12px"><span class="status-dot status-online"></span><strong style="color:#3fb950">Online</strong> <span style="color:#8b949e;font-size:0.85em">(' + esc(svc.embedder||"?") + ' on port ' + (svc.port||3849) + ')</span></div>';
+    let html = '<div style="margin-bottom:12px"><span class="status-dot status-online"></span><strong style="color:#3fb950">線上</strong> <span style="color:#8b949e;font-size:0.85em">(' + esc(svc.embedder||"?") + ' on port ' + (svc.port||3849) + ')</span></div>';
     html += '<div class="vec-grid">';
 
     // Service info
-    html += '<div class="vec-section"><h3>Service</h3>';
-    html += '<div class="vec-row"><span class="k">Uptime</span><span class="v">' + upH + 'h ' + upM + 'm</span></div>';
-    html += '<div class="vec-row"><span class="k">Requests</span><span class="v">' + (svc.requests_served||0) + '</span></div>';
-    html += '<div class="vec-row"><span class="k">Embedder</span><span class="v">' + esc(svc.embedder||"?") + '</span></div>';
+    html += '<div class="vec-section"><h3>服務</h3>';
+    html += '<div class="vec-row"><span class="k">運行時間</span><span class="v">' + upH + 'h ' + upM + 'm</span></div>';
+    html += '<div class="vec-row"><span class="k">請求次數</span><span class="v">' + (svc.requests_served||0) + '</span></div>';
+    html += '<div class="vec-row"><span class="k">嵌入模型</span><span class="v">' + esc(svc.embedder||"?") + '</span></div>';
     html += '</div>';
 
     // Index info
-    html += '<div class="vec-section"><h3>Index</h3>';
-    html += '<div class="vec-row"><span class="k">Total Chunks</span><span class="v">' + (idx.total_chunks||0) + '</span></div>';
-    html += '<div class="vec-row"><span class="k">Unique Atoms</span><span class="v">' + (idx.unique_atoms||0) + '</span></div>';
-    html += '<div class="vec-row"><span class="k">Layers</span><span class="v">' + (idx.layers||[]).length + '</span></div>';
+    html += '<div class="vec-section"><h3>索引</h3>';
+    html += '<div class="vec-row"><span class="k">總區塊數</span><span class="v">' + (idx.total_chunks||0) + '</span></div>';
+    html += '<div class="vec-row"><span class="k">獨立原子</span><span class="v">' + (idx.unique_atoms||0) + '</span></div>';
+    html += '<div class="vec-row"><span class="k">層級數</span><span class="v">' + (idx.layers||[]).length + '</span></div>';
     html += '</div>';
 
     // Config
-    html += '<div class="vec-section"><h3>Config</h3>';
-    html += '<div class="vec-row"><span class="k">Backend</span><span class="v">' + esc(cfg.embedding_backend||"?") + '</span></div>';
-    html += '<div class="vec-row"><span class="k">Model</span><span class="v">' + esc(cfg.embedding_model||"?") + '</span></div>';
-    html += '<div class="vec-row"><span class="k">Top-K</span><span class="v">' + (cfg.search_top_k||5) + '</span></div>';
-    html += '<div class="vec-row"><span class="k">Min Score</span><span class="v">' + (cfg.search_min_score||0.5) + '</span></div>';
+    html += '<div class="vec-section"><h3>設定</h3>';
+    html += '<div class="vec-row"><span class="k">後端</span><span class="v">' + esc(cfg.embedding_backend||"?") + '</span></div>';
+    html += '<div class="vec-row"><span class="k">模型</span><span class="v">' + esc(cfg.embedding_model||"?") + '</span></div>';
+    html += '<div class="vec-row"><span class="k">搜尋上限</span><span class="v">' + (cfg.search_top_k||5) + '</span></div>';
+    html += '<div class="vec-row"><span class="k">最低分數</span><span class="v">' + (cfg.search_min_score||0.5) + '</span></div>';
     html += '</div>';
 
     // Index job
-    html += '<div class="vec-section"><h3>Last Index Job</h3>';
+    html += '<div class="vec-section"><h3>最近索引任務</h3>';
     if (job.running) {
-      html += '<div style="color:#d2a826"><span class="spinner"></span> Indexing in progress...</div>';
+      html += '<div style="color:#d2a826"><span class="spinner"></span> 索引建立中...</div>';
     } else if (job.result) {
       const jr = job.result;
-      html += '<div class="vec-row"><span class="k">Atoms Found</span><span class="v">' + (jr.atoms_found||0) + '</span></div>';
-      html += '<div class="vec-row"><span class="k">Atoms Indexed</span><span class="v">' + (jr.atoms_indexed||0) + '</span></div>';
-      html += '<div class="vec-row"><span class="k">Chunks</span><span class="v">' + (jr.total_chunks||0) + '</span></div>';
-      html += '<div class="vec-row"><span class="k">Duration</span><span class="v">' + ((jr.elapsed_seconds||0)).toFixed(1) + 's</span></div>';
-      html += '<div class="vec-row"><span class="k">Type</span><span class="v">' + (jr.incremental?"Incremental":"Full") + '</span></div>';
+      html += '<div class="vec-row"><span class="k">發現原子</span><span class="v">' + (jr.atoms_found||0) + '</span></div>';
+      html += '<div class="vec-row"><span class="k">已索引原子</span><span class="v">' + (jr.atoms_indexed||0) + '</span></div>';
+      html += '<div class="vec-row"><span class="k">區塊數</span><span class="v">' + (jr.total_chunks||0) + '</span></div>';
+      html += '<div class="vec-row"><span class="k">耗時</span><span class="v">' + ((jr.elapsed_seconds||0)).toFixed(1) + 's</span></div>';
+      html += '<div class="vec-row"><span class="k">類型</span><span class="v">' + (jr.incremental?"增量":"全量") + '</span></div>';
       if (job.finished_at) {
         const fin = new Date(job.finished_at * 1000);
-        html += '<div class="vec-row"><span class="k">Finished</span><span class="v">' + fin.toLocaleString() + '</span></div>';
+        html += '<div class="vec-row"><span class="k">完成時間</span><span class="v">' + fin.toLocaleString() + '</span></div>';
       }
     } else {
-      html += '<div style="color:#8b949e">No recent index job</div>';
+      html += '<div style="color:#8b949e">無近期索引紀錄</div>';
     }
     html += '</div>';
 
     html += '</div>';
     el.innerHTML = html;
   } catch (e) {
-    el.innerHTML = '<div class="empty">Failed to load vector status: ' + esc(e.message) + '</div>';
+    el.innerHTML = '<div class="empty">載入向量服務狀態失敗：' + esc(e.message) + '</div>';
   }
+}
+
+// ─── Atoms Browser ───
+
+let atomsData = [];
+
+async function renderAtoms() {
+  const el = document.getElementById("atomsContent");
+  try {
+    atomsData = await (await fetch("/api/atoms")).json();
+    if (!atomsData.length) {
+      el.innerHTML = '<div class="empty">無原子記憶。</div>';
+      return;
+    }
+    renderAtomsTable(atomsData);
+  } catch (e) {
+    el.innerHTML = '<div class="empty">載入原子記憶失敗：' + esc(e.message) + '</div>';
+  }
+}
+
+function renderAtomsTable(atoms) {
+  const el = document.getElementById("atomsContent");
+  const confCounts = {};
+  for (const a of atoms) { confCounts[a.confidence] = (confCounts[a.confidence]||0) + 1; }
+
+  let html = '<div class="atom-stats">';
+  html += '<div class="stat"><div class="stat-value">' + atoms.length + '</div><div class="stat-label">原子總數</div></div>';
+  if (confCounts["[固]"]) html += '<div class="stat"><div class="stat-value" style="color:#3fb950">' + confCounts["[固]"] + '</div><div class="stat-label">[固] 確定</div></div>';
+  if (confCounts["[觀]"]) html += '<div class="stat"><div class="stat-value" style="color:#d2a826">' + confCounts["[觀]"] + '</div><div class="stat-label">[觀] 觀察</div></div>';
+  if (confCounts["[臨]"]) html += '<div class="stat"><div class="stat-value" style="color:#f0883e">' + confCounts["[臨]"] + '</div><div class="stat-label">[臨] 臨時</div></div>';
+  html += '</div>';
+
+  html += '<input class="atom-filter" type="text" placeholder="搜尋原子名稱、觸發詞..." oninput="filterAtoms(this.value)">';
+
+  html += '<table class="atom-table" id="atomTable">';
+  html += '<thead><tr>' +
+    '<th onclick="sortAtoms(\\'name\\')">名稱 &#8597;</th>' +
+    '<th onclick="sortAtoms(\\'layer\\')">層級 &#8597;</th>' +
+    '<th onclick="sortAtoms(\\'confidence\\')">信心 &#8597;</th>' +
+    '<th onclick="sortAtoms(\\'confirmations\\')">確認數 &#8597;</th>' +
+    '<th onclick="sortAtoms(\\'last_used\\')">最後使用 &#8597;</th>' +
+    '<th onclick="sortAtoms(\\'knowledge_count\\')">知識數 &#8597;</th>' +
+    '<th>行數</th>' +
+  '</tr></thead>';
+  html += '<tbody id="atomTableBody">';
+  html += buildAtomRows(atoms);
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+function buildAtomRows(atoms) {
+  let html = '';
+  for (const a of atoms) {
+    const confClass = a.confidence === "[固]" ? "conf-fixed" : a.confidence === "[觀]" ? "conf-observe" : "conf-temp";
+    const daysAgo = a.days_since_used != null ? a.days_since_used + ' 天前' : '-';
+    html += '<tr data-name="' + esc(a.name) + '">' +
+      '<td><span class="atom-name" onclick="toggleAtomDetail(\\'' + esc(a.name) + '\\')">' + esc(a.name) + '</span></td>' +
+      '<td><span class="atom-layer">' + esc(a.layer) + '</span></td>' +
+      '<td><span class="atom-conf ' + confClass + '">' + esc(a.confidence||"-") + '</span></td>' +
+      '<td>' + (a.confirmations||0) + '</td>' +
+      '<td title="' + esc(a.last_used||"") + '">' + daysAgo + '</td>' +
+      '<td>' + (a.knowledge_count||'-') + '</td>' +
+      '<td>' + (a.line_count||'-') + '</td>' +
+    '</tr>';
+    html += '<tr id="detail-' + esc(a.name) + '" style="display:none"><td colspan="7"><div class="atom-detail">' + esc(a.content||"") + '</div></td></tr>';
+  }
+  return html;
+}
+
+function toggleAtomDetail(name) {
+  const row = document.getElementById("detail-" + name);
+  if (row) row.style.display = row.style.display === "none" ? "" : "none";
+}
+
+let atomSortKey = "last_used";
+let atomSortAsc = false;
+
+function sortAtoms(key) {
+  if (atomSortKey === key) atomSortAsc = !atomSortAsc;
+  else { atomSortKey = key; atomSortAsc = key === "name"; }
+
+  const sorted = [...atomsData].sort((a, b) => {
+    let va = a[key] ?? "", vb = b[key] ?? "";
+    if (typeof va === "number" && typeof vb === "number") return atomSortAsc ? va - vb : vb - va;
+    va = String(va); vb = String(vb);
+    return atomSortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+  });
+  document.getElementById("atomTableBody").innerHTML = buildAtomRows(sorted);
+}
+
+function filterAtoms(query) {
+  const q = query.toLowerCase();
+  const filtered = atomsData.filter(a => {
+    if (a.name.toLowerCase().includes(q)) return true;
+    if ((a.triggers||[]).some(t => t.toLowerCase().includes(q))) return true;
+    if ((a.related||[]).some(r => r.toLowerCase().includes(q))) return true;
+    if ((a.layer||"").toLowerCase().includes(q)) return true;
+    return false;
+  });
+  document.getElementById("atomTableBody").innerHTML = buildAtomRows(filtered);
 }
 
 // ─── Auto Refresh ───
@@ -1376,6 +1623,9 @@ const httpServer = http.createServer((req, res) => {
   }
   if (pathname === "/api/knowledge-queue" && req.method === "GET") {
     return apiKnowledgeQueue(req, res);
+  }
+  if (pathname === "/api/atoms" && req.method === "GET") {
+    return apiAtoms(req, res);
   }
 
   res.writeHead(404);

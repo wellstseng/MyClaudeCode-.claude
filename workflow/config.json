@@ -1,5 +1,5 @@
 {
-  "atom_debug": true,
+  "atom_debug": false,
   "enabled": true,
   "stop_gate_max_blocks": 2,
   "min_files_to_block": 2,
@@ -42,7 +42,7 @@
         "llm_model": "qwen3.5:latest",
         "embedding_model": "qwen3-embedding:latest",
         "priority": 1,
-        "enabled": false,
+        "enabled": true,
         "think": true,
         "llm_num_predict": 8192
       },
@@ -101,6 +101,14 @@
       "max_items": 3,
       "skip_cross_session": true,
       "cooldown_seconds": 120
+    },
+    "failure_extraction": {
+      "enabled": true,
+      "cooldown_seconds": 180,
+      "max_items": 2,
+      "strong_keywords": ["又錯了", "沒修好", "還是壞", "修復失敗", "一樣的問題", "又壞了", "怎麼又", "再次失敗"],
+      "weak_keywords": ["錯了", "不對", "壞了", "失敗", "沒用", "沒效", "不行", "bug", "broken", "failed", "still broken", "same error", "為什麼還", "怎麼還", "反覆", "踩坑", "又踩", "沒生效", "白做了"],
+      "weak_min_match": 3
     }
   }
 }

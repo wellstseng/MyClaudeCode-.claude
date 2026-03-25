@@ -26,7 +26,7 @@ sys.path.insert(0, str(SERVICE_DIR))
 
 from config import load_config, VECTORDB_DIR
 from indexer import build_index, create_embedder, get_index_status
-from searcher import search, search_raw, ranked_search, episodic_search
+from searcher import search, search_raw, ranked_search, ranked_search_sections, episodic_search
 
 # ─── Globals ─────────────────────────────────────────────────────────────────
 
@@ -98,6 +98,7 @@ class VectorServiceHandler(BaseHTTPRequestHandler):
         routes = {
             "/search": self._handle_search,
             "/search/ranked": self._handle_search_ranked,
+            "/search/ranked-sections": self._handle_search_ranked_sections,
             "/search/episodic": self._handle_search_episodic,
             "/health": self._handle_health,
             "/status": self._handle_status,
@@ -188,6 +189,31 @@ class VectorServiceHandler(BaseHTTPRequestHandler):
             config=_config,
             intent=intent,
             top_k=top_k,
+            min_score=min_score,
+            layer_filter=layer if layer != "all" else None,
+            embedder=_embedder,
+        )
+        self._send_json(results)
+
+    def _handle_search_ranked_sections(self, params: Dict):
+        """GET /search/ranked-sections?q=...&intent=general&top_k=5&max_sections=3"""
+        q = params.get("q", [""])[0]
+        if not q:
+            self._send_error(400, "Missing query parameter 'q'")
+            return
+
+        intent = params.get("intent", ["general"])[0]
+        top_k = int(params.get("top_k", [str(_config.get("search_top_k", 5))])[0])
+        max_sections = int(params.get("max_sections", ["3"])[0])
+        min_score = float(params.get("min_score", ["0.50"])[0])
+        layer = params.get("layer", ["all"])[0]
+
+        results = ranked_search_sections(
+            query=q,
+            config=_config,
+            intent=intent,
+            top_k=top_k,
+            max_sections=max_sections,
             min_score=min_score,
             layer_filter=layer if layer != "all" else None,
             embedder=_embedder,

@@ -90,3 +90,8 @@ Thumbs.db
 *.swp
 *~
 memory/mail-sorting.md
+
+# ─── Sensitive local data ──────────────────────────────
+channels/
+history.jsonl
+sessions/

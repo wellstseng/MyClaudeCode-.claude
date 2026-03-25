@@ -51,19 +51,30 @@ def _empty_result() -> Dict[str, Any]:
 # ─── Atom Debug Log ──────────────────────────────────────────────────────────
 
 
+def _estimate_tokens(text: str) -> int:
+    """CJK-aware token estimation. Chinese ~1.5 tok/char, ASCII ~0.25 tok/word."""
+    if not text:
+        return 0
+    cjk = sum(1 for c in text if '\u4e00' <= c <= '\u9fff' or '\u3000' <= c <= '\u303f')
+    ascii_part = len(text) - cjk
+    return int(cjk * 1.5 + ascii_part * 0.25)
+
+
 def _atom_debug_log(tag: str, content: str, config: Dict[str, Any] = None) -> None:
     """Write to atom-debug.log when atom_debug flag is on.
-    For ERROR tag, always write regardless of flag."""
+    For ERROR tag, always write regardless of flag.
+    Skips empty/NONE entries to reduce noise."""
     if tag != "ERROR" and not (config or {}).get("atom_debug", False):
         return
+    if not content or not content.strip():
+        return  # suppress empty entries
     try:
         log_dir = Path.home() / ".claude" / "Logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / f"atom-debug-{datetime.now().strftime('%Y-%m-%d_%H')}.log"
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        body = content if content and content.strip() else "NONE"
         with open(log_path, "a", encoding="utf-8") as f:
-            f.write(f"[{ts}][{tag}] {body}\n\n")
+            f.write(f"[{ts}][{tag}] {content.strip()}\n\n")
     except Exception:
         pass
 
@@ -146,7 +157,7 @@ def _call_ollama(prompt: str, model: str = None, timeout: int = 120) -> str:
             think=True, temperature=0.1, num_predict=8192,
         )
     except Exception as e:
-        _atom_debug_error("_call_ollama", e)
+        _atom_debug_error("萃取:_call_ollama", e)
         return ""
 
 
@@ -402,7 +413,7 @@ def _cross_session_search(
             observations.append(obs)
 
         except Exception as e:
-            _atom_debug_error("_cross_session_search", e)
+            _atom_debug_error("萃取:_cross_session_search", e)
             continue  # Skip this item, try next
 
     return observations
@@ -560,7 +571,7 @@ def _per_turn_writeback(ctx: dict, result: dict) -> None:
     if result.get("final_offset"):
         state["extraction_offset"] = result["final_offset"]
 
-    state["extract_worker_pid"] = 0
+    state["extract_worker_pid"] = 0  # clear lease (worker done)
     state["last_updated"] = _now_iso()
     _write_state_atomic(state_path, state)
 
@@ -676,12 +687,28 @@ def main():
         ctx = json.loads(raw_input)
         result = run_extraction(ctx)
 
-        # atom-debug: log extraction results
+        # atom-debug: log extraction results (human-readable)
         _cfg = ctx.get("config", {})
         mode = ctx.get("mode", "session_end")
         items = result.get("extracted_items", [])
         tag = f"萃取:{mode}"
-        body = json.dumps(items, ensure_ascii=False, indent=2) if items else None
+
+        # Build human-readable summary
+        _KT_LABEL = {"factual": "事實", "procedural": "程序", "architectural": "架構",
+                      "pitfall": "踩坑", "decision": "決策", "observation": "觀察"}
+        if items:
+            dest_label = {"per_turn": "→ knowledge_queue", "session_end": "→ knowledge_queue",
+                          "failure": "→ failure atom 檔"}
+            dest = dest_label.get(mode, "→ ?")
+            summary_lines = [f"{len(items)} 筆萃取 {dest}"]
+            for i, it in enumerate(items, 1):
+                cls = it.get("classification", "?")
+                kt = _KT_LABEL.get(it.get("knowledge_type", ""), it.get("knowledge_type", "?"))
+                content = it.get("content", "")[:80]
+                summary_lines.append(f"  {i}. {cls}{kt}: {content}")
+            body = "\n".join(summary_lines)
+        else:
+            body = None
         _atom_debug_log(tag, body, _cfg)
 
         # Mode-specific writeback
@@ -695,7 +722,7 @@ def main():
         sys.stdout.write(json.dumps(result, ensure_ascii=False))
     except Exception as e:
         print(f"[extract-worker] error: {e}", file=sys.stderr)
-        _atom_debug_error("extract-worker:main", e)
+        _atom_debug_error("萃取:extract-worker:main", e)
         sys.stdout.write(json.dumps(_empty_result()))
 
 

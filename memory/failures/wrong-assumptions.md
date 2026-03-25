@@ -3,22 +3,20 @@
 - Scope: global
 - Confidence: [固]
 - Type: procedural
-- Trigger: 假設, 直覺, 調查, 為何沒生效, 空目錄, metrics異常, 功能沒反應
-- Last-used: 2026-03-21
+- Trigger: 假設錯誤, 直覺偏差, 為何沒生效, 空目錄, metrics異常, 功能沒反應
+- Last-used: 2026-03-24
 - Created: 2026-03-13
-- Confirmations: 42
+- Confirmations: 37
 - Tags: failure, assumption, debugging
-- Related: decisions, fail-env, fail-silent, fail-cognitive
+- Related: decisions
 
 ## 知識
 
 （格式：觸發情境 → 直覺假設 → 正確做法）
 
-- [固] 調查某功能為何沒生效 → 直覺假設「獨立檔案一定有被呼叫」→ 正確做法：先 grep 呼叫端確認是否真的有 import/spawn，再看被呼叫端的邏輯（案例：extract-worker.py 存在但 guardian 從未呼叫它）
-- [固] 看到某目錄是空的 → 直覺假設「資料被清理了」→ 正確做法：先查資料的存放路徑邏輯，確認是存到別的位置還是真的沒生成（案例：episodic 依 CWD 存到 project 層，全域層空是正常的）
-- [固] 看到 metrics 數值異常 → 直覺假設「那個功能有問題」→ 正確做法：先驗證 metrics 的計算邏輯本身是否正確、是否真的有在跑（案例：architecture 0/6 的分類邏輯是「檔案 > 4 個就算」，跟真正架構無關）
-
-- [觀] 要寫入 skill 使用的檔案 → 直覺假設「我知道檔名」→ 正確做法：先讀 skill 的 spec（commands/*.md）確認預期檔名（案例：/continue 固定讀 next-phase.md，自行命名 continue-v216-iteration.md 導致找不到）
+- [觀] 調查某功能為何沒生效 → 直覺假設「獨立檔案一定有被呼叫」→ 正確做法：先 grep 呼叫端確認是否真的有 import/spawn，再看被呼叫端的邏輯（案例：extract-worker.py 存在但 guardian 從未呼叫它）
+- [觀] 看到某目錄是空的 → 直覺假設「資料被清理了」→ 正確做法：先查資料的存放路徑邏輯，確認是存到別的位置還是真的沒生成（案例：episodic 依 CWD 存到 project 層，全域層空是正常的）
+- [觀] 看到 metrics 數值異常 → 直覺假設「那個功能有問題」→ 正確做法：先驗證 metrics 的計算邏輯本身是否正確、是否真的有在跑（案例：architecture 0/6 的分類邏輯是「檔案 > 4 個就算」，跟真正架構無關）
 
 ## 行動
 

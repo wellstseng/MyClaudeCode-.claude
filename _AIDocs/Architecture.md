@@ -2,7 +2,7 @@
 
 ## Hooks 系統
 
-6 個 hook 事件，定義在 `settings.json`，全部由 `workflow-guardian.py`（~2770 行）處理：
+6 個 hook 事件，定義在 `settings.json`，全部由 `workflow-guardian.py`（~3500 行）處理：
 
 | Hook | 觸發時機 | 用途 |
 |------|---------|------|
@@ -105,21 +105,6 @@ config.json → ollama_backends:
 - **情境分類器**：2 條硬規則（file_count/is_feature → confirm; touches_arch → plan）
 - **反思引擎**：first_approach_accuracy + over_engineering_rate + silence_accuracy + Bayesian 校準
 - **Fix Escalation Protocol**：同一問題修正第 2 次起強制 6 Agent 精確修正會議，Guardian 自動偵測 + /fix-escalation skill
-
-### 自我迭代自動化（V2.16）
-
-- **衰減分數掃描**：`score = 0.5 * recency + 0.5 * usage`，half_life=30d
-- **[臨]→[觀] 自動晉升**：Confirmations ≥ 20 自動覆寫
-- **Archive candidates**：score < 0.3 的 atoms 寫入 `_staging/archive-candidates.md`
-- **震盪持久化**：SessionEnd 寫 `oscillation_state.json`，SessionStart 讀取注入 `[Guardian:Oscillation]`
-- **config.json `self_iteration` 區塊**：decay_half_life_days, promote_min_confirmations, archive_score_threshold 等參數可調
-
-### 覆轍偵測（V2.17）
-
-- **寄生式設計**：不新增檔案/參數/子系統，附著在 episodic atom 上
-- **SessionEnd 信號寫入**：`edit_counts ≥ 3` → `same_file_3x:{filename}`；`retry_count ≥ 2` → `retry_escalation`
-- **SessionStart 掃描**：`_detect_rut_patterns()` 掃最近 N 個 episodic，同一信號 ≥ 2 sessions → 注入 `[Guardian:覆轍]`
-- **職責切分**：session 內重試 → fix-escalation；atom 反覆修改 → 震盪偵測；跨 session 行為模式 → 覆轍偵測
 
 ### 工具鏈
 

@@ -1,4 +1,4 @@
-# Atomic Memory V2.17 — 安裝指南
+# Atomic Memory V2.18 — 安裝指南
 
 > **目標讀者**：使用 VS Code + Claude Code Extension，但完全不知道原子記憶是什麼的開發者。
 > 本指南會幫你把原子記憶系統**合併安裝**到你現有的 `~/.claude/` 目錄中。
@@ -95,7 +95,22 @@ cp /tmp/atomic-memory/USER.md ~/.claude/USER.md
 # ── Hook 腳本 ──
 mkdir -p ~/.claude/hooks
 cp /tmp/atomic-memory/hooks/workflow-guardian.py ~/.claude/hooks/
+cp /tmp/atomic-memory/hooks/wg_core.py ~/.claude/hooks/
+cp /tmp/atomic-memory/hooks/wg_atoms.py ~/.claude/hooks/
+cp /tmp/atomic-memory/hooks/wg_intent.py ~/.claude/hooks/
+cp /tmp/atomic-memory/hooks/wg_extraction.py ~/.claude/hooks/
+cp /tmp/atomic-memory/hooks/wg_episodic.py ~/.claude/hooks/
+cp /tmp/atomic-memory/hooks/wg_iteration.py ~/.claude/hooks/
+cp /tmp/atomic-memory/hooks/extract-worker.py ~/.claude/hooks/
 cp /tmp/atomic-memory/hooks/wisdom_engine.py ~/.claude/hooks/
+cp /tmp/atomic-memory/hooks/user-init.sh ~/.claude/hooks/
+
+# ── 規則模組 ──
+mkdir -p ~/.claude/rules
+cp /tmp/atomic-memory/rules/aidocs.md ~/.claude/rules/
+cp /tmp/atomic-memory/rules/memory-system.md ~/.claude/rules/
+cp /tmp/atomic-memory/rules/sync-workflow.md ~/.claude/rules/
+cp /tmp/atomic-memory/rules/session-management.md ~/.claude/rules/
 
 # ── Ollama Client (Dual-Backend) ──
 cp /tmp/atomic-memory/tools/ollama_client.py ~/.claude/tools/
@@ -243,7 +258,7 @@ cat > ~/.claude/memory/MEMORY.md << 'EOF'
 
 ## 高頻事實
 
-- 原子記憶 V2.17
+- 原子記憶 V2.18
 EOF
 ```
 
@@ -449,8 +464,20 @@ python ~/.claude/tools/memory-audit.py
 ├── USER.md                       ★ 操作者個人資料（@import 載入，⚠ 需改為你的資料）
 ├── settings.json                   已合併 hooks 區塊
 │
+├── rules/                        ★ 模組化規則 (Claude Code 自動載入)
+│   ├── aidocs.md                 ★ _AIDocs 知識庫維護
+│   ├── memory-system.md          ★ 原子記憶系統規則
+│   ├── sync-workflow.md          ★ 工作結束同步 + Guardian 閘門
+│   └── session-management.md     ★ 對話管理 + 續航 + 識流
+│
 ├── hooks/                        ★
 │   ├── workflow-guardian.py       ★ 統一 Hook 入口
+│   ├── wg_core.py                ★ 共用常數/設定/IO
+│   ├── wg_atoms.py               ★ 索引解析/trigger/ACT-R/section 注入
+│   ├── wg_intent.py              ★ 意圖分類/向量搜尋
+│   ├── wg_extraction.py          ★ 回應萃取
+│   ├── wg_episodic.py            ★ Episodic 管理
+│   ├── wg_iteration.py           ★ 自我迭代/衰減/覆轍
 │   └── wisdom_engine.py          ★ Wisdom Engine
 │
 ├── tools/                        ★
