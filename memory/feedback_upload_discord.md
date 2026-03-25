@@ -4,7 +4,7 @@
 - Confidence: [固]
 - Trigger: 上傳, 傳附件, 壓縮傳, upload, MEDIA, Discord 附件
 - Last-used: 2026-03-25
-- Confirmations: 5
+- Confirmations: 9
 - Related: preferences
 
 ## 知識
