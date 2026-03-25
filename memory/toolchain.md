@@ -4,7 +4,7 @@
 - Confidence: [固]
 - Trigger: 工具鏈, 環境設定, bash指令, command, bash, git, python, npm
 - Last-used: 2026-03-25
-- Confirmations: 103
+- Confirmations: 104
 - Type: procedural
 - Tags: toolchain, environment, commands
 - Related: fail-env, toolchain-ollama, decisions-architecture, doc-index-system
@@ -47,7 +47,7 @@
 - [固] 全域安裝：`npm i -g @negokaz/excel-mcp-server`，目前版本 0.12.0
 - [固] 功能：describe_sheets / read_sheet / write_to_sheet / create_table / format_range / screen_capture
 - [固] 支援 xlsx/xlsm/xltx/xltm；**不支援舊版 .xls**（舊版用 `tools/read-excel.py` + xlrd）
-- [固] 跨專案可用（全域 `.mcp.json`）
+- [固] 跨專案可用（`~/.claude.json` User scope）
 
 ### MCP 新增規則
 
