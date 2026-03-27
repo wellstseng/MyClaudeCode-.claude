@@ -1515,7 +1515,7 @@ async function renderProjects() {
         ? '<div class="proj-alias">' + p.aliases.map(a => esc(a)).join(', ') + '</div>'
         : '';
       const filterBtn = p.has_memory
-        ? '<button class="proj-filter-btn" onclick="filterAtomsByProject(' + JSON.stringify('project:' + p.slug) + ')">查看 Atoms</button>'
+        ? '<button class="proj-filter-btn" onclick="filterAtomsByProject(&#39;project:' + p.slug + '&#39;)">查看 Atoms</button>'
         : '';
       html += '<tr>';
       html += '<td><strong>' + esc(p.slug) + '</strong>' + aliases + '</td>';
@@ -1557,6 +1557,8 @@ let atomsData = [];
 
 async function renderAtoms() {
   const el = document.getElementById("atomsContent");
+  const prevFilter = document.getElementById("atomFilter");
+  const savedFilter = prevFilter ? prevFilter.value : "";
   try {
     atomsData = await (await fetch("/api/atoms")).json();
     if (!atomsData.length) {
@@ -1564,6 +1566,10 @@ async function renderAtoms() {
       return;
     }
     renderAtomsTable(atomsData);
+    if (savedFilter) {
+      const fi = document.getElementById("atomFilter");
+      if (fi) { fi.value = savedFilter; filterAtoms(savedFilter); }
+    }
   } catch (e) {
     el.innerHTML = '<div class="empty">載入原子記憶失敗：' + esc(e.message) + '</div>';
   }
@@ -1581,7 +1587,7 @@ function renderAtomsTable(atoms) {
   if (confCounts["[臨]"]) html += '<div class="stat"><div class="stat-value" style="color:#f0883e">' + confCounts["[臨]"] + '</div><div class="stat-label">[臨] 臨時</div></div>';
   html += '</div>';
 
-  html += '<input class="atom-filter" type="text" placeholder="搜尋原子名稱、觸發詞..." oninput="filterAtoms(this.value)">';
+  html += '<input id="atomFilter" class="atom-filter" type="text" placeholder="搜尋原子名稱、觸發詞..." oninput="filterAtoms(this.value)">';
 
   html += '<table class="atom-table" id="atomTable">';
   html += '<thead><tr>' +
