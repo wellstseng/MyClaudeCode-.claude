@@ -4,10 +4,10 @@
 - Confidence: [固]
 - Type: semantic
 - Trigger: 記憶系統架構, 檔案結構, hook, skill, tool, 記憶升級, 記憶迭代, 目錄結構
-- Last-used: 2026-03-25
+- Last-used: 2026-03-27
 - Updated: 2026-03-23
 - Created: 2026-03-13
-- Confirmations: 53
+- Confirmations: 54
 - Tags: doc-index, system-overview
 - Related: decisions, decisions-architecture, toolchain
 
@@ -32,6 +32,7 @@
 | `settings.json` | Hook 綁定 + 權限 + MCP |
 | `.mcp.json` | MCP server 定義 |
 | `workflow/config.json` | Guardian/Vector/WriteGate/Capture 參數 |
+| `install.py` | 一鍵安裝腳本（npm 套件 + ~/.claude.json MCP 合併 + bootstrap） |
 
 ### 規則模組（rules/）
 
@@ -130,3 +131,4 @@
 | 2026-03-19 | 精修：純索引化，移除架構描述，去重 decisions | 系統精修 |
 | 2026-03-19 | 更新 extract-worker/guardian 行數+功能（v2.13 failure mode） | failures 自動化 |
 | 2026-03-23 | Guardian 模組化：1 monolith → 7 模組（wg_core/atoms/intent/extraction/episodic/iteration） | 重構 Phase 1-6 |
+| 2026-03-27 | 新增 install.py（一鍵安裝腳本） | 安裝體驗改善 |
