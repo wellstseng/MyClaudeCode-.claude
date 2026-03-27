@@ -13,6 +13,7 @@ Requirements: Python 3.8+, zero external dependencies.
 
 import json
 import os
+import subprocess
 import sys
 import re
 import time
@@ -104,6 +105,34 @@ except ImportError:
 
 # (Intent, Topic Tracker, Session Context, MCP, Vector Service moved to wg_intent.py)
 
+# ─── Project Delegate Hook (V2.21) ───────────────────────────────────────────
+
+
+def _call_project_hook(project_root: Path, action: str, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Call project-level delegate hook via subprocess isolation.
+
+    Looks for {project_root}/.claude/hooks/project_hooks.py.
+    Communicates via stdin/stdout JSON. Timeout 5s.
+    Never raises — hook failure must not block core flow.
+    """
+    hook_script = project_root / ".claude" / "hooks" / "project_hooks.py"
+    if not hook_script.exists():
+        return None
+    try:
+        result = subprocess.run(
+            [sys.executable, str(hook_script), action],
+            input=json.dumps(context, ensure_ascii=False),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return json.loads(result.stdout)
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError, Exception) as e:
+        _atom_debug_error(f"project_hook:{action}", e)
+    return None
+
+
 # ─── Event Handlers ──────────────────────────────────────────────────────────
 
 
@@ -174,6 +203,20 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         if aidocs_entries:
             fnames = [f for f, _d, _kw in aidocs_entries[:max_entries]]
             lines.append(f"[AIDocs] {len(aidocs_entries)} docs: {', '.join(fnames)}")
+
+        # ── V2.21: Project delegate hook — on_session_start ──────────────
+        if project_root:
+            try:
+                ph_result = _call_project_hook(
+                    project_root, "session_start",
+                    {"cwd": cwd, "session_id": session_id},
+                )
+                if ph_result:
+                    for extra_line in ph_result.get("lines", []):
+                        if extra_line:
+                            lines.append(extra_line)
+            except Exception as e:
+                _atom_debug_error("project_hook:session_start", e)
 
     # ── V2.6: Periodic review check ─────────────────────────────────────
     try:
