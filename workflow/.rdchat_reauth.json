@@ -1,6 +1,6 @@
 {
   "type": "setup_needed",
-  "user": "root",
+  "user": "wellstseng",
   "message": "rdchat 密碼檔不存在。請建立 ~/.claude/workflow/.rdchat_password，內容為你的 LDAP 密碼（公司登入密碼）。此檔案已在 .gitignore 中，不會被上傳。",
-  "created_at": "2026-03-29T15:56:28"
+  "created_at": "2026-03-29T16:36:00"
 }
