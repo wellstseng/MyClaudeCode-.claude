@@ -1104,16 +1104,18 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
   });
 });
 
-function refreshCurrentTab() {
+async function refreshCurrentTab() {
+  const prevScroll = window.scrollY;
   switch (currentTab) {
-    case "sessions": renderSessions(); break;
-    case "episodic": renderEpisodic(); break;
-    case "health": renderHealth(false); break;
-    case "atoms": renderAtoms(); break;
-    case "projects": renderProjects(); break;
-    case "tests": break; // manual trigger only
-    case "vector": renderVector(); break;
+    case "sessions": await renderSessions(); break;
+    case "episodic": await renderEpisodic(); break;
+    case "health": await renderHealth(false); break;
+    case "atoms": await renderAtoms(); break;
+    case "projects": await renderProjects(); break;
+    case "tests": break;
+    case "vector": await renderVector(); break;
   }
+  window.scrollTo(0, prevScroll);
 }
 
 // ─── Sessions Panel (existing logic) ───
@@ -1581,17 +1583,11 @@ async function renderAtoms() {
       return;
     }
     renderAtomsTable(atomsData);
-    // restore filter
     if (savedFilter) {
       const fi = document.getElementById("atomFilter");
       if (fi) { fi.value = savedFilter; filterAtoms(savedFilter); }
-    }
-    // restore sort (reapply current sort key)
-    if (atomSortKey) { reapplySort(); }
-    // restore expanded rows
-    for (const name of expandedAtoms) {
-      const row = document.getElementById("detail-" + name);
-      if (row) row.style.display = "";
+    } else if (atomSortKey) {
+      reapplySort();
     }
   } catch (e) {
     el.innerHTML = '<div class="empty">載入原子記憶失敗：' + esc(e.message) + '</div>';
@@ -1642,7 +1638,8 @@ function buildAtomRows(atoms) {
       '<td>' + (a.knowledge_count||'-') + '</td>' +
       '<td>' + (a.line_count||'-') + '</td>' +
     '</tr>';
-    html += '<tr id="detail-' + esc(a.name) + '" style="display:none"><td colspan="7"><div class="atom-detail">' + esc(a.content||"") + '</div></td></tr>';
+    const detailVis = expandedAtoms.has(a.name) ? '' : 'none';
+    html += '<tr id="detail-' + esc(a.name) + '" style="display:' + detailVis + '"><td colspan="7"><div class="atom-detail">' + esc(a.content||"") + '</div></td></tr>';
   }
   return html;
 }
@@ -1690,11 +1687,6 @@ function filterAtoms(query) {
     return false;
   });
   applySortToBody(filtered);
-  // restore expanded rows after filter rebuild
-  for (const name of expandedAtoms) {
-    const row = document.getElementById("detail-" + name);
-    if (row) row.style.display = "";
-  }
 }
 
 // ─── Auto Refresh ───
