@@ -4,9 +4,9 @@
 - Confidence: [固]
 - Type: procedural
 - Trigger: ICLD, 閉環, Sprint, 功能拆解, 開發計畫, 大型新功能, 新系統規劃, 規格書
-- Last-used: 2026-03-25
+- Last-used: 2026-03-27
 - Created: 2026-03-19
-- Confirmations: 58
+- Confirmations: 59
 - Tags: workflow, icld, sprint
 - Related: workflow-rules, icld-sprint-template
 
