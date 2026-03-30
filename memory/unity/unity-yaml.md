@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: Unity YAML, fileID, GUID, PrefabInstance, .prefab, .meta, 型別ID, 序列化, Missing Script
-- Last-used: 2026-03-24
-- Confirmations: 8
+- Last-used: 2026-03-27
+- Confirmations: 13
 - Type: semantic
 - Tags: unity, yaml, serialization, prefab, guid
 

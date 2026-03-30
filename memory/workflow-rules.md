@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 工作流程, 大型任務, 分階段, SOP, 任務拆分, 上版, GIT, SVN, svn-update, 版本控制, vcs, 功能拆解, 實作拆解, 開發計畫, 新功能, 新系統, 實作計畫, 規格書, ICLD, 閉環, Sprint
-- Last-used: 2026-03-25
-- Confirmations: 46
+- Last-used: 2026-03-27
+- Confirmations: 75
 - Type: procedural
 - Tags: workflow, svn, git, vcs
 - Related: decisions, workflow-icld, workflow-svn

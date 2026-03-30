@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: Discord, 頻道, guild, channel, 程式群, 幹部群, ai-code-review
-- Last-used: 2026-03-25
-- Confirmations: 1
+- Last-used: 2026-03-26
+- Confirmations: 9
 - Related: team-roster
 
 ## 知識

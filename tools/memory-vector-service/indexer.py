@@ -308,7 +308,7 @@ class OllamaEmbedder:
 
     def embed(self, texts: List[str]) -> List[List[float]]:
         """Embed a batch of texts via OllamaClient."""
-        embeddings = self._client.embed(texts)
+        embeddings = self._client.embed(texts, timeout=300)
         if embeddings and self._dimension is None:
             self._dimension = len(embeddings[0])
         return embeddings
@@ -499,6 +499,10 @@ def build_index(
         for i in range(0, len(texts), batch_size):
             batch = texts[i:i + batch_size]
             vecs = embedder.embed(batch)
+            if len(vecs) != len(batch):
+                # Partial or empty result — pad with zero vectors
+                dim = len(vecs[0]) if vecs else (embedder.dimension if hasattr(embedder, "dimension") else 1024)
+                vecs = list(vecs) + [[0.0] * dim] * (len(batch) - len(vecs))
             all_vecs.extend(vecs)
 
         for i, rec in enumerate(records):

@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 安裝MCP, 安裝skill, install MCP, install skill, add MCP, 新增MCP, 新增skill
-- Last-used: 2026-03-25
-- Confirmations: 1
+- Last-used: 2026-03-27
+- Confirmations: 2
 - Related: toolchain, env-traps
 
 ## 知識

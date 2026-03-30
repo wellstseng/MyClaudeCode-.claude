@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 全域決策, 工具, 工作流, workflow, guardian, hooks, MCP, 記憶系統
-- Last-used: 2026-03-25
-- Confirmations: 56
+- Last-used: 2026-03-27
+- Confirmations: 70
 - Type: decision
 
 ## 知識
