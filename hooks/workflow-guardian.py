@@ -1127,8 +1127,9 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
     except Exception as e:
         print(f"[v2.11] Over-engineering metrics error: {e}", file=sys.stderr)
 
-    # V2.10: Staging area reminder
-    staging_dir = MEMORY_DIR / "_staging"
+    # V2.10: Staging area reminder (V2.21: project-aware)
+    cwd = state.get("session", {}).get("cwd", "")
+    staging_dir = resolve_staging_dir(cwd)
     if staging_dir.exists():
         staging_files = list(staging_dir.glob("*.md"))
         if staging_files:
@@ -1183,7 +1184,12 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
     # V2.11-fix: Save review marker if review was due this session
     if state.get("review_due"):
         try:
+            # V2.21: count global + all project episodic atoms
             total = sum(1 for _ in EPISODIC_DIR.glob("episodic-*.md")) if EPISODIC_DIR.exists() else 0
+            for _slug, _mem_dir in discover_all_project_memory_dirs():
+                _ep = _mem_dir / "episodic"
+                if _ep.exists():
+                    total += sum(1 for _ in _ep.glob("episodic-*.md"))
             _save_review_marker(total)
             print(f"[v2.6] Review marker saved (total={total})", file=sys.stderr)
         except Exception as e:

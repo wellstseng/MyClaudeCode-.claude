@@ -27,16 +27,13 @@
     "defaultMode": "bypassPermissions",
     "additionalDirectories": [
       "C:\\Users\\holylight\\.claude",
-      "C:\\Users\\holylight\\.claude\\projects\\c--",
       "C:\\Users\\holylight\\.claude\\projects\\c--projects\\memory",
       "C:\\Users\\holylight",
       "c:\\tmp",
       "C:\\Users\\holylight\\.claude\\workflow",
-      "C:\\Users\\holylight\\.claude\\projects\\c--projects-sgi-server\\memory",
       "C:\\Users\\holylight\\.claude\\memory\\_staging",
       "C:\\Users\\holylight\\.claude\\projects\\c--users-holylight--claude\\memory",
-      "C:\\Users\\holylight\\.claude\\projects\\c--users-holylight--claude\\memory\\_staging",
-      "c:\\Projects\\_AIAtoms"
+      "C:\\Users\\holylight\\.claude\\projects\\c--users-holylight--claude\\memory\\_staging"
     ]
   },
   "hooks": {
