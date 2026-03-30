@@ -870,6 +870,36 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                     f"[v2.16] Staging name gate: {staging_fname}", file=sys.stderr
                 )
 
+        # V2.22: Memory path enforcement — block writes to legacy personal project path
+        # when the current project has been migrated to V2.21 (project_root exists).
+        # Exempt: MEMORY.md pointer file itself (used by project registry/init),
+        #         episodic/, access.json, transcript files (Claude Code managed).
+        _claude_projects_pat = "/.claude/projects/"
+        if _claude_projects_pat in normalized and "/memory/" in normalized:
+            _proj_root = state.get("atom_index", {}).get("project_root", "")
+            # Only enforce when project has been migrated (project_root is set)
+            if _proj_root:
+                _rel_part = normalized.split("/memory/", 1)[-1]
+                # Exempt: MEMORY.md pointer, episodic/, access.json — these stay in personal path
+                _exempt = (
+                    _rel_part == "MEMORY.md"
+                    or _rel_part.startswith("episodic/")
+                    or _rel_part == "access.json"
+                )
+                if not _exempt:
+                    _proj_root_norm = _proj_root.replace("\\", "/")
+                    _correct_base = f"{_proj_root_norm}/.claude/memory/"
+                    state["_path_enforcement_advisory"] = (
+                        f"🚫 **路徑錯誤** — 寫入了舊個人層路徑 `~/.claude/projects/*/memory/`。\n"
+                        f"V2.21 規則：專案記憶必須寫到 `{_correct_base}`。\n"
+                        f"正確路徑：`{_correct_base}{_rel_part}`\n"
+                        f"請立即搬移檔案並刪除錯誤路徑的副本。"
+                    )
+                    print(
+                        f"[v2.22] Path enforcement BLOCKED: {normalized} → should be {_correct_base}{_rel_part}",
+                        file=sys.stderr,
+                    )
+
         # V2.15: _AIDocs content classification gate — warn on temporary files
         if "/_AIDocs/" in normalized or "/_aidocs/" in normalized.lower():
             fname = normalized.rsplit("/", 1)[-1]
@@ -900,6 +930,7 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
     advisories = []
     if state:
         for key, prefix in [
+            ("_path_enforcement_advisory", "[Guardian:PathEnforce]"),
             ("_aidocs_advisory", "[Guardian:AIDocs]"),
             ("_staging_advisory", "[Guardian:StagingName]"),
         ]:

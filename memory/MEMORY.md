@@ -26,3 +26,4 @@
 | fail-misdiagnosis | memory/failures/misdiagnosis-verify-first.md | 誤診, 驗證優先, verify first, 診斷失敗, 先射箭再畫靶, 假設錯誤就規劃, 過度規劃, 沒驗證就動手 |
 | feedback-no-test-to-svn | memory/feedback_no_test_to_svn.md | 上SVN, svn commit, 測試碼, 新手作業, 練習, 不可上傳 |
 | feedback-global-install | memory/feedback_global_install.md | 安裝MCP, 安裝skill, install MCP, install skill, add MCP, 新增MCP, 新增skill |
+| feedback-memory-path | memory/feedback_memory_path.md | 寫入記憶, 暫存, _staging, memory path, 寫atom, Write memory, 記憶路徑 |
