@@ -40,12 +40,19 @@ SKIP_PREFIXES = ("SPEC_", "_")
 BULLET_RE = re.compile(r"^- \[([固觀臨])\]\s*(.+)")
 
 
-def discover_layers() -> List[Tuple[str, Path]]:
-    """Discover global + project memory layers."""
+def discover_layers(project_dir: Optional[Path] = None) -> List[Tuple[str, Path]]:
+    """Discover global + project memory layers.
+
+    V2.21: project_dir 若提供，優先列在全域層之前。
+    """
     layers = []
+    # V2.21: 專案自治層優先（project_dir 若有效才加）
+    if project_dir is not None and project_dir.is_dir() and (project_dir / "MEMORY.md").exists():
+        layers.append(("project", project_dir))
     global_mem = CLAUDE_DIR / "memory"
     if global_mem.is_dir():
         layers.append(("global", global_mem))
+    # Legacy: ~/.claude/projects/{slug}/memory/
     projects_dir = CLAUDE_DIR / "projects"
     if projects_dir.is_dir():
         for proj_dir in sorted(projects_dir.iterdir()):
@@ -212,6 +219,7 @@ def write_audit(entries: List[Dict]) -> None:
 def scan_conflicts(
     target_atom: Optional[str] = None,
     dry_run: bool = False,
+    project_dir: Optional[Path] = None,
 ) -> List[Dict[str, Any]]:
     """Scan for conflicts across all active atoms.
 
@@ -221,7 +229,7 @@ def scan_conflicts(
     3. Pairs with score 0.70-0.95 = candidate conflicts
     4. LLM classifies each candidate (unless dry_run)
     """
-    layers = discover_layers()
+    layers = discover_layers(project_dir=project_dir)
     atoms = discover_atoms(layers)
 
     if target_atom:
@@ -385,9 +393,12 @@ def main():
     parser.add_argument("--atom", help="Only scan conflicts for this atom")
     parser.add_argument("--dry-run", action="store_true", help="List candidates without LLM classification")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
+    parser.add_argument("--project-dir", type=str, default=None,
+                        help="V2.21 專案記憶目錄（{project_root}/.claude/memory/），優先掃描")
     args = parser.parse_args()
 
-    results = scan_conflicts(target_atom=args.atom, dry_run=args.dry_run)
+    project_dir = Path(args.project_dir) if args.project_dir else None
+    results = scan_conflicts(target_atom=args.atom, dry_run=args.dry_run, project_dir=project_dir)
 
     if args.json:
         print(json.dumps(results, indent=2, ensure_ascii=False))

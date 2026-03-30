@@ -2,7 +2,7 @@
 
 ## Hooks 系統
 
-6 個 hook 事件，定義在 `settings.json`，全部由 `workflow-guardian.py`（~3500 行）處理：
+6 個 hook 事件，定義在 `settings.json`。主 dispatcher `workflow-guardian.py`（~1259 行）+ 7 個模組化子檔（合計 ~5300 行）：
 
 | Hook | 觸發時機 | 用途 |
 |------|---------|------|
@@ -10,20 +10,52 @@
 | `PostToolUse` | Edit/Write 後 | 追蹤修改檔案 + 增量索引 + Read Tracking + over_engineering 追蹤 |
 | `PreCompact` | Context 壓縮前 | 快照 state（壓縮前保護） |
 | `Stop` | 對話結束前 | 閘門：未同步則阻止結束 + Fix Escalation 信號注入 + 逐輪增量萃取 |
-| `SessionStart` | Session 開始 | 初始化 session state + Wisdom 盲點提醒 + 定期檢閱提醒 |
+| `SessionStart` | Session 開始 | 初始化 session state + Wisdom 盲點提醒 + 定期檢閱提醒 + 專案自治層 delegate |
 | `SessionEnd` | Session 結束 | Episodic atom 生成 + 回應萃取（全量）+ 鞏固（簡化計數）+ 衝突偵測 + Wisdom 反思 |
+
+### Hook 模組拆分
+
+| 模組 | 行數 | 職責 |
+|------|------|------|
+| `workflow-guardian.py` | ~1259 | 瘦身 dispatcher：6 event handlers 編排 |
+| `wg_paths.py` | ~314 | 路徑唯一真相來源：slug/root/staging/registry |
+| `wg_core.py` | ~270 | 共用常數/設定/state IO/output/debug |
+| `wg_atoms.py` | ~563 | 索引解析/trigger 匹配/ACT-R/載入/budget/section-level 注入 |
+| `wg_intent.py` | ~357 | 意圖分類/session context/MCP/vector service |
+| `wg_extraction.py` | ~285 | per-turn 萃取/worker 管理/failure 偵測 |
+| `wg_episodic.py` | ~856 | episodic 生成/衝突偵測/品質回饋 |
+| `wg_iteration.py` | ~431 | 自我迭代/震盪/衰減/晉升/覆轍偵測 |
+| `extract-worker.py` | ~774 | SessionEnd/per-turn/failure 子程序：LLM 萃取 + dedup |
+| `wisdom_engine.py` | ~199 | 反思引擎：硬規則 + 反思指標 |
+
+### 輔助 Hook 腳本
+
+| 檔案 | 用途 |
+|------|------|
+| `user-init.sh` | 多人 USER.md 初始化（SessionStart） |
+| `ensure-mcp.py` | MCP server 可用性確認 |
+| `webfetch-guard.sh` | WebFetch 安全護欄 |
 
 ## Skills（/Slash Commands）
 
 | Skill | 檔案 | 用途 |
 |-------|------|------|
-| `/init-project` | `commands/init-project.md` | 專案知識庫（_AIDocs）初始化 |
+| `/init-project` | `commands/init-project.md` | 專案知識庫（_AIDocs）+ 專案自治層初始化 |
 | `/resume` | `commands/resume.md` | 自動續接 Session（MCP 桌面自動化） |
+| `/continue` | `commands/continue.md` | 讀取 _staging/next-phase.md 續接任務 |
 | `/consciousness-stream` | `commands/consciousness-stream.md` | 識流處理（高風險跨系統任務） |
 | `/svn-update` | `commands/svn-update.md` | SVN 更新工作目錄 |
 | `/unity-yaml` | `commands/unity-yaml.md` | Unity YAML Asset 操作 |
 | `/upgrade` | `commands/upgrade.md` | 環境升級比對工具 |
 | `/fix-escalation` | `commands/fix-escalation.md` | 精確修正升級（6 Agent 會議：蒐集→辯論 2 輪→決策→驗證） |
+| `/extract` | `commands/extract.md` | 手動知識萃取（不等 SessionEnd） |
+| `/conflict` | `commands/conflict.md` | 記憶衝突偵測（向量比對 + LLM 判定） |
+| `/memory-health` | `commands/memory-health.md` | 記憶品質診斷（audit + health-check） |
+| `/memory-review` | `commands/memory-review.md` | 自我迭代檢閱（衰減/晉升/震盪/覆轍） |
+| `/atom-debug` | `commands/atom-debug.md` | Debug log 開關 |
+| `/harvest` | `commands/harvest.md` | 網頁收割→Markdown（Playwright） |
+| `/read-project` | `commands/read-project.md` | 系統性閱讀→doc-index atom |
+| `/vector` | `commands/vector.md` | 向量服務管理（啟停/索引/搜尋） |
 
 ## 規則模組
 
@@ -36,7 +68,7 @@
 | `rules/session-management.md` | 對話管理 + 續航 + 自我迭代 + 精確修正升級 |
 | `rules/sync-workflow.md` | 工作結束同步 + Guardian 閘門 |
 
-## 記憶系統（原子記憶 V2.17）
+## 記憶系統（原子記憶 V2.21）
 
 ### 雙 LLM 架構 + Dual-Backend
 
@@ -63,11 +95,12 @@ config.json → ollama_backends:
 
 ### 資料層
 
-1. **MEMORY.md**（always-loaded）: Atom 索引 + 高頻事實
+1. **MEMORY.md**（always-loaded）: Atom 索引（全域 25 atoms + 專案層各自索引）
 2. **Atom 檔案**（按需載入）: 由 Trigger 欄位 + 向量搜尋發現
 3. **Vector DB**: LanceDB（`memory/_vectordb/`）
 4. **Episodic atoms**: 自動生成 session 摘要（`memory/episodic/`，TTL 24d，不進 git）
 5. **Wisdom Engine**: 反思統計（`memory/wisdom/`）
+6. **專案自治層**（V2.21）: `{project_root}/.claude/memory/` — 每專案獨立 atoms + episodic + failures
 
 ### 記憶檢索管線
 
@@ -93,6 +126,13 @@ config.json → ollama_backends:
 
 情境感知萃取（依 intent 調整 prompt）。萃取結果一律 `[臨]`。注入前 Token Diet strip 9 種 metadata + 行動/演化日誌。
 
+### 專案自治層（V2.21）
+
+- **Project Registry**（`memory/project-registry.json`）：SessionStart 自動 `register_project(cwd)`，跨專案發現
+- **路徑切換**：`get_project_memory_dir()` 新路徑 `{project_root}/.claude/memory/` 優先，舊路徑 fallback
+- **專案 Delegate**：`{project_root}/.claude/hooks/project_hooks.py`（inject/extract/on_session_start），subprocess 隔離呼叫（5s timeout）
+- **遷移工具**：`tools/migrate-v221.py`（_AIAtoms + 個人 memory → .claude/memory/）
+
 ### 跨 Session 鞏固
 
 - 廢除自動晉升，改為 Confirmations +1 簡單計數
@@ -113,12 +153,16 @@ config.json → ollama_backends:
 | ollama_client.py | `tools/ollama_client.py` | Dual-Backend Ollama Client（三階段退避+auth+failover） |
 | rag-engine.py | `tools/rag-engine.py` | CLI: search/index/status/health |
 | memory-write-gate.py | `tools/memory-write-gate.py` | 寫入品質閘門 + 去重 |
-| memory-audit.py | `tools/memory-audit.py` | 格式驗證、過期、晉升建議 |
-| memory-conflict-detector.py | `tools/memory-conflict-detector.py` | 矛盾偵測 |
+| memory-audit.py | `tools/memory-audit.py` | 格式驗證、過期、晉升建議（支援 `--project-dir`） |
+| memory-conflict-detector.py | `tools/memory-conflict-detector.py` | 矛盾偵測（支援 `--project-dir`） |
 | atom-health-check.py | `tools/atom-health-check.py` | Atom 健康度（Related 完整性） |
+| migrate-v221.py | `tools/migrate-v221.py` | V2.21 遷移（_AIAtoms + 個人記憶 → .claude/memory/） |
 | cleanup-old-files.py | `tools/cleanup-old-files.py` | 環境清理 |
 | read-excel.py | `tools/read-excel.py` | Excel 讀取工具 |
+| unity-yaml-tool.py | `tools/unity-yaml-tool.py` | Unity YAML 解析/生成 |
 | memory-vector-service/ | `tools/memory-vector-service/` | HTTP 服務 (port 3849) |
+| gdoc-harvester/ | `tools/gdoc-harvester/` | Google Docs/Sheets 收割 + dashboard |
+| workflow-guardian-mcp/ | `tools/workflow-guardian-mcp/` | MCP server + Dashboard (port 3848) |
 | wisdom_engine.py | `hooks/wisdom_engine.py` | Wisdom Engine（情境分類+反思） |
 
 ## MCP Servers

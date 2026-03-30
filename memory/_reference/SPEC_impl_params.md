@@ -1,5 +1,12 @@
 # 實作參數參考（從 decisions-architecture 拆出）
 
+- Scope: global
+- Confidence: [固]
+- Trigger: 實作參數, SPEC_impl_params, per_turn, byte_offset, Token Diet, extract-worker, cooldown
+- Last-used: 2026-03-19
+- Confirmations: 0
+- Related: decisions-architecture
+
 > 開發/調修記憶系統時參考。`_` 前綴不被 hook 掃描，零誤注入。
 
 ## 回應捕獲技術細節

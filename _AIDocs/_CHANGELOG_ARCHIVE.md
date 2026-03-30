@@ -6,6 +6,14 @@
 
 | 日期 | 變更 | 涉及檔案 |
 |------|------|---------|
+| 2026-03-23 | **V2.17 合併升級**：V2.16 自我迭代自動化 + V2.17 覆轍偵測 + AIDocs 內容閘門 + WebFetch Guard | `hooks/workflow-guardian.py`, `settings.json`, `rules/aidocs.md`, `memory/decisions*.md`, `CLAUDE.md`, `README.md`, `_AIDocs/*.md` |
+| 2026-03-19 | **V2.15 定義版本**：全文件版本號 V2.12→V2.15 統一。README 版本歷史補 V2.13/V2.14/V2.15 | `CLAUDE.md`, `README.md`, `Install-forAI.md`, `_AIDocs/*.md`, `memory/decisions*.md`, `rules/session-management.md` |
+| 2026-03-19 | **V2.14 Token Diet**：`_strip_atom_for_injection()` 注入前 strip 9 種 metadata + 行動/演化日誌。SessionEnd 從 byte_offset 跳已萃取段。cross-session lazy search 預篩。省 ~1550 tok/session | `hooks/workflow-guardian.py`, `hooks/extract-worker.py`, `memory/MEMORY.md`, `workflow/config.json` |
+| 2026-03-19 | **atom 精準拆分+設定精修**：toolchain-ollama 獨立拆分 + workflow-icld 拆分 + trigger 瘦身 + failures 拆分子 atoms + GIT 流程去重 + 設定檔去重/瘦身/統一管理 | `memory/*.md`, `workflow/config.json` |
+| 2026-03-19 | **V2.13 Failures 自動化系統**：Guardian 偵測失敗關鍵字 → detached extract-worker 萃取失敗模式 → 三維路由自動寫入對應 failure atom | `hooks/extract-worker.py`, `hooks/workflow-guardian.py`, `workflow/config.json`, `memory/failures/` |
+| 2026-03-19 | **vector service timeout 修正**：冷啟動 7.5s 但 caller timeout 2-5s，調整 timeout + 預熱 | `hooks/workflow-guardian.py`, `tools/memory-vector-service/` |
+| 2026-03-18 | **V2.12 逐輪增量萃取**：Stop hook per-turn extraction（byte_offset + cooldown 120s + PID guard）+ 萃取 dedup 統一 0.65 + intent 選取 bug 修正 | `hooks/extract-worker.py`, `hooks/workflow-guardian.py`, `workflow/config.json` |
+| 2026-03-18 | **注入精準化**：AIDocs keyword 重新設計 + IDE 標籤過濾 + keyword boundary 防誤匹配 + `/atom-debug` skill | `_AIDocs/_INDEX.md`, `hooks/workflow-guardian.py`, `commands/atom-debug.md` |
 | 2026-03-13 | **選擇性 cherry-pick**：從來源 V2.10 合併 `/continue` skill + `/resume` staging 安全網 + `BOOTSTRAP.md` + `workflow-rules.md` 補回大型計畫/GIT/同步判斷段落 | `commands/continue.md`, `commands/resume.md`, `BOOTSTRAP.md`, `memory/workflow-rules.md` |
 | 2026-03-13 | **/read-project**: 新增 DocIndex-System.md（76 檔系統索引）+ doc-index-system atom | `_AIDocs/DocIndex-System.md`, `memory/doc-index-system.md`, `memory/MEMORY.md` |
 

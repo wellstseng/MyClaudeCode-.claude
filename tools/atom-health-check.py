@@ -18,7 +18,7 @@ from pathlib import Path
 
 MEMORY_ROOT = Path.home() / ".claude" / "memory"
 SKIP_FILES = {"MEMORY.md", "SPEC_Atomic_Memory_System.md"}
-SKIP_DIRS = {"_distant", "_staging", "_vectordb", "episodic"}
+SKIP_DIRS = {"_distant", "_staging", "_vectordb", "episodic", "_reference", "templates"}
 # Central hub atoms — skip reverse-link warnings for these
 CENTRAL_HUBS = {"decisions", "spec"}
 

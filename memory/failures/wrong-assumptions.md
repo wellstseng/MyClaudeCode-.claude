@@ -8,7 +8,7 @@
 - Created: 2026-03-13
 - Confirmations: 37
 - Tags: failure, assumption, debugging
-- Related: decisions
+- Related: decisions, _INDEX
 
 ## 知識
 

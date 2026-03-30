@@ -13,6 +13,7 @@ Requirements: Python 3.8+, zero external dependencies.
 
 import json
 import os
+import subprocess
 import sys
 import re
 import time
@@ -25,13 +26,19 @@ from typing import Any, Dict, List, Optional, Tuple
 # ─── 確保模組搜尋路徑包含 hooks/ 目錄（runpy.run_path 不會自動加）─────────
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-# ─── wg_core: shared constants, config, state I/O, output, debug ────────────
-from wg_core import (
+# ─── wg_paths: path constants & functions (V2.20 single source of truth) ─────
+from wg_paths import (
     CLAUDE_DIR, WORKFLOW_DIR, MEMORY_DIR, EPISODIC_DIR, CONFIG_PATH,
-    MEMORY_INDEX, CONTEXT_BUDGET_DEFAULT, DEFAULTS,
+    MEMORY_INDEX,
+    cwd_to_project_slug, get_project_memory_dir, find_project_root,
+    resolve_episodic_dir, resolve_failures_dir, resolve_staging_dir,
+    resolve_access_json, discover_all_project_memory_dirs, register_project,
+)
+# ─── wg_core: config, state I/O, output, debug ──────────────────────────────
+from wg_core import (
+    CONTEXT_BUDGET_DEFAULT, DEFAULTS,
     load_config,
-    _now_iso, _estimate_tokens, cwd_to_project_slug, get_project_memory_dir,
-    find_project_root,
+    _now_iso, _estimate_tokens,
     state_path, read_state, write_state, new_state, _ensure_state,
     output_json, output_nothing, output_block,
     _atom_debug_log, _atom_debug_error,
@@ -98,6 +105,34 @@ except ImportError:
 
 # (Intent, Topic Tracker, Session Context, MCP, Vector Service moved to wg_intent.py)
 
+# ─── Project Delegate Hook (V2.21) ───────────────────────────────────────────
+
+
+def _call_project_hook(project_root: Path, action: str, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Call project-level delegate hook via subprocess isolation.
+
+    Looks for {project_root}/.claude/hooks/project_hooks.py.
+    Communicates via stdin/stdout JSON. Timeout 5s.
+    Never raises — hook failure must not block core flow.
+    """
+    hook_script = project_root / ".claude" / "hooks" / "project_hooks.py"
+    if not hook_script.exists():
+        return None
+    try:
+        result = subprocess.run(
+            [sys.executable, str(hook_script), action],
+            input=json.dumps(context, ensure_ascii=False),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return json.loads(result.stdout)
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError, Exception) as e:
+        _atom_debug_error(f"project_hook:{action}", e)
+    return None
+
+
 # ─── Event Handlers ──────────────────────────────────────────────────────────
 
 
@@ -135,14 +170,8 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         project_atoms = parse_memory_index(project_mem_dir) if project_mem_dir else []
         project_root = find_project_root(cwd)
 
-        # Merge shared atoms from _AIAtoms/_ATOM_INDEX.md (single source of truth)
-        if project_root:
-            atom_index_path = project_root / "_AIAtoms" / "_ATOM_INDEX.md"
-            if atom_index_path.exists():
-                shared_atoms = _parse_atom_index_file(atom_index_path)
-                if shared_atoms:
-                    existing_names = {a[0] for a in shared_atoms}
-                    project_atoms = [a for a in project_atoms if a[0] not in existing_names] + shared_atoms
+        # V2.21: Register project in registry (update last_seen)
+        register_project(cwd)
 
         state["atom_index"] = {
             "global": [(n, p, t) for n, p, t in global_atoms],
@@ -174,6 +203,20 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         if aidocs_entries:
             fnames = [f for f, _d, _kw in aidocs_entries[:max_entries]]
             lines.append(f"[AIDocs] {len(aidocs_entries)} docs: {', '.join(fnames)}")
+
+        # ── V2.21: Project delegate hook — on_session_start ──────────────
+        if project_root:
+            try:
+                ph_result = _call_project_hook(
+                    project_root, "session_start",
+                    {"cwd": cwd, "session_id": session_id},
+                )
+                if ph_result:
+                    for extra_line in ph_result.get("lines", []):
+                        if extra_line:
+                            lines.append(extra_line)
+            except Exception as e:
+                _atom_debug_error("project_hook:session_start", e)
 
     # ── V2.6: Periodic review check ─────────────────────────────────────
     try:
@@ -230,27 +273,51 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
     except Exception as e:
         print(f"[mcp-health] Check error: {e}", file=sys.stderr)
 
-    # CRITICAL: write state + output BEFORE warmup, so even if warmup
-    # times out (and hook gets killed), state file exists for subsequent hooks.
+    # CRITICAL: write state before any output so subsequent hooks can read it.
     write_state(session_id, state)
 
-    output_json({
+    # ── Vector Service auto-start (before output — best-effort, quick) ──
+    # C5/W11 fix: _ensure_vector_service was dead code after output_json(exit).
+    # Now called before print so service starts even if warmup subprocess is slow.
+    if config.get("vector_search", {}).get("auto_start_service", True):
+        try:
+            _ensure_vector_service(config)
+        except Exception as e:
+            _atom_debug_error("注入:vector_service_start", e)
+
+    # C5/W11 fix: print directly (not via output_json which exits),
+    # then spawn warmup as fire-and-forget subprocess, then exit.
+    print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
             "additionalContext": "\n".join(lines),
         }
-    })
+    }, ensure_ascii=False))
 
-    # ── Vector Service auto-start + warmup (best-effort, after state saved) ──
+    # ── Vector warmup (fire-and-forget subprocess, non-blocking) ──────────
     if config.get("vector_search", {}).get("auto_start_service", True):
-        _ensure_vector_service(config)
         try:
             vs_port = config.get("vector_search", {}).get("service_port", 3849)
             warmup_url = f"http://127.0.0.1:{vs_port}/search?q=warmup&top_k=1&min_score=0.99"
-            warmup_req = urllib.request.Request(warmup_url)
-            urllib.request.urlopen(warmup_req, timeout=15)
+            import subprocess as _wusp
+            _wu_kwargs: dict = {
+                "stdin": _wusp.DEVNULL,
+                "stdout": _wusp.DEVNULL,
+                "stderr": _wusp.DEVNULL,
+            }
+            if sys.platform == "win32":
+                _wu_kwargs["creationflags"] = _wusp.CREATE_NO_WINDOW
+            else:
+                _wu_kwargs["start_new_session"] = True
+            _wusp.Popen(
+                [sys.executable, "-c",
+                 f"import urllib.request; urllib.request.urlopen({repr(warmup_url)}, timeout=15)"],
+                **_wu_kwargs,
+            )
         except Exception as e:
             _atom_debug_error("注入:vector_warmup", e)
+
+    sys.exit(0)
 
 
 def handle_user_prompt_submit(
@@ -382,42 +449,50 @@ def handle_user_prompt_submit(
 
     # ── Cross-project atom discovery (v2.5) + alias matching (v2.9) ──
     # Scan ALL project memory dirs for trigger matches, not just CWD project.
+    _MAX_CROSS_PROJECT_SCAN = 20
+
     loaded_proj_names = set()
     if proj_dir_str:
         loaded_proj_names.add(Path(proj_dir_str).parent.name)
-    projects_dir = CLAUDE_DIR / "projects"
-    if projects_dir.is_dir():
-        for proj_dir in projects_dir.iterdir():
-            if not proj_dir.is_dir() or proj_dir.name in loaded_proj_names:
-                continue
-            cross_mem = proj_dir / "memory"
-            if not cross_mem.exists():
-                continue
-            # v2.9: Check project aliases before trigger matching
-            aliases = parse_project_aliases(cross_mem)
-            if aliases and any(alias in prompt_lower for alias in aliases):
-                try:
-                    mem_text = (cross_mem / MEMORY_INDEX).read_text(encoding="utf-8-sig")
-                    # v2.18: Strip index table from ProjectMemory injection
-                    mem_lines = mem_text.split("\n")
-                    mem_lines = [l for l in mem_lines if not (l.startswith("|") and "|" in l[1:])]
-                    mem_text = "\n".join(l for l in mem_lines if l.strip()).strip()
-                    lines.append(f"[Guardian:AliasMatch] {proj_dir.name} matched via alias")
-                    if mem_text:
-                        lines.append(f"[ProjectMemory:{proj_dir.name}]\n{mem_text}")
-                    alias_injected_projects.add(proj_dir.name)
-                except (OSError, UnicodeDecodeError):
-                    pass
-            # Existing trigger-based cross-atom discovery
-            cross_atoms = parse_memory_index(cross_mem)
-            if not cross_atoms:
-                continue
-            cross_parent = cross_mem.parent
-            for name, rel_path, triggers in cross_atoms:
-                if name not in already_injected and sum(_kw_match(kw, prompt_lower) for kw in triggers) >= 2:
-                    all_atoms.append(((name, rel_path, triggers), cross_parent))
-                    # CrossProject match notification → debug log only
-                    _atom_debug_log("CrossProject", f"{proj_dir.name}/{name} matched", config)
+    # V2.20 W13: limit cross-project scan; sort by recency to keep most active first
+    _all_cross = [
+        (s, m) for s, m in discover_all_project_memory_dirs()
+        if s not in loaded_proj_names
+    ]
+    if len(_all_cross) > _MAX_CROSS_PROJECT_SCAN:
+        def _mem_mtime(item: Tuple[str, Path]) -> float:
+            try:
+                return item[1].stat().st_mtime
+            except OSError:
+                return 0.0
+        _all_cross = sorted(_all_cross, key=_mem_mtime, reverse=True)[:_MAX_CROSS_PROJECT_SCAN]
+    for _cross_slug, cross_mem in _all_cross:
+        if _cross_slug in loaded_proj_names:
+            continue
+        # v2.9: Check project aliases before trigger matching
+        aliases = parse_project_aliases(cross_mem)
+        if aliases and any(alias in prompt_lower for alias in aliases):
+            try:
+                mem_text = (cross_mem / MEMORY_INDEX).read_text(encoding="utf-8-sig")
+                # v2.18: Strip index table from ProjectMemory injection
+                mem_lines = mem_text.split("\n")
+                mem_lines = [l for l in mem_lines if not (l.startswith("|") and "|" in l[1:])]
+                mem_text = "\n".join(l for l in mem_lines if l.strip()).strip()
+                lines.append(f"[Guardian:AliasMatch] {_cross_slug} matched via alias")
+                if mem_text:
+                    lines.append(f"[ProjectMemory:{_cross_slug}]\n{mem_text}")
+                alias_injected_projects.add(_cross_slug)
+            except (OSError, UnicodeDecodeError):
+                pass
+        # Existing trigger-based cross-atom discovery
+        cross_atoms = parse_memory_index(cross_mem)
+        if not cross_atoms:
+            continue
+        cross_parent = cross_mem.parent
+        for name, rel_path, triggers in cross_atoms:
+            if name not in already_injected and sum(_kw_match(kw, prompt_lower) for kw in triggers) >= 2:
+                all_atoms.append(((name, rel_path, triggers), cross_parent))
+                _atom_debug_log("CrossProject", f"{_cross_slug}/{name} matched", config)
     for (name, rel_path, triggers), base_dir in all_atoms:
         if name not in already_injected and any(_kw_match(kw, prompt_lower) for kw in triggers):
             matched_with_dir.append(((name, rel_path, triggers), base_dir))
@@ -479,6 +554,7 @@ def handle_user_prompt_submit(
 
     # Load atoms within budget
     newly_injected: List[str] = []
+    atom_source_dirs: Dict[str, Path] = {}
     if matched_with_dir:
         atom_lines: List[str] = []
         used_tokens = 0
@@ -487,6 +563,7 @@ def handle_user_prompt_submit(
             atom_path = (base_dir / rel_path) if rel_path else (base_dir / "memory" / f"{name}.md")
             if not atom_path.exists():
                 continue
+            atom_source_dirs[name] = atom_path.parent
             try:
                 content = atom_path.read_text(encoding="utf-8-sig")
             except (OSError, UnicodeDecodeError):
@@ -524,6 +601,7 @@ def handle_user_prompt_submit(
             rpath = (base_dir / rel_path) if rel_path else (base_dir / "memory" / f"{rname}.md")
             if not rpath.exists():
                 continue
+            atom_source_dirs[rname] = rpath.parent
             try:
                 content = rpath.read_text(encoding="utf-8-sig")
             except (OSError, UnicodeDecodeError):
@@ -713,7 +791,7 @@ def handle_user_prompt_submit(
 
     if lines:
         # V2.11: Context budget hard cap
-        lines = _truncate_context_by_activation(lines, budget)
+        lines = _truncate_context_by_activation(lines, budget, atom_source_dirs)
         output_json({
             "hookSpecificOutput": {
                 "hookEventName": "UserPromptSubmit",
@@ -932,6 +1010,17 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
     output_block(reason)
 
 
+def _cleanup_old_states() -> None:
+    """W10: Remove state files older than 7 days (regardless of phase)."""
+    cutoff = time.time() - 7 * 86400
+    for f in WORKFLOW_DIR.glob("state-*.json"):
+        try:
+            if f.stat().st_mtime < cutoff:
+                f.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
     session_id = input_data.get("session_id", "")
     state = _ensure_state(session_id, input_data, config)
@@ -941,6 +1030,12 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
 
     state["ended_at"] = _now_iso()
     state["phase"] = "done"
+
+    # W10: Clean up stale state files (older than 7 days)
+    try:
+        _cleanup_old_states()
+    except Exception as e:
+        print(f"[v2.20] State cleanup error: {e}", file=sys.stderr)
 
     # ─── Spawn extract-worker.py as detached subprocess (V2.12) ─────────
     rc = config.get("response_capture", {})
@@ -1032,8 +1127,9 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
     except Exception as e:
         print(f"[v2.11] Over-engineering metrics error: {e}", file=sys.stderr)
 
-    # V2.10: Staging area reminder
-    staging_dir = MEMORY_DIR / "_staging"
+    # V2.10: Staging area reminder (V2.21: project-aware)
+    cwd = state.get("session", {}).get("cwd", "")
+    staging_dir = resolve_staging_dir(cwd)
     if staging_dir.exists():
         staging_files = list(staging_dir.glob("*.md"))
         if staging_files:
@@ -1088,7 +1184,12 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
     # V2.11-fix: Save review marker if review was due this session
     if state.get("review_due"):
         try:
+            # V2.21: count global + all project episodic atoms
             total = sum(1 for _ in EPISODIC_DIR.glob("episodic-*.md")) if EPISODIC_DIR.exists() else 0
+            for _slug, _mem_dir in discover_all_project_memory_dirs():
+                _ep = _mem_dir / "episodic"
+                if _ep.exists():
+                    total += sum(1 for _ in _ep.glob("episodic-*.md"))
             _save_review_marker(total)
             print(f"[v2.6] Review marker saved (total={total})", file=sys.stderr)
         except Exception as e:

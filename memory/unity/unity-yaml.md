@@ -4,11 +4,10 @@
 - Confidence: [固]
 - Trigger: Unity YAML, fileID, GUID, PrefabInstance, .prefab, .meta, 型別ID, 序列化, Missing Script
 - Last-used: 2026-03-27
-- Confirmations: 13
+- Confirmations: 17
 - Type: semantic
 - Tags: unity, yaml, serialization, prefab, guid
-
-- Related: unity-prefab-workflow
+- Related: unity-prefab-workflow, unity-yaml-detail
 
 ## 知識
 
@@ -66,9 +65,12 @@ grep -r "m_Script: {fileID: 0}" Assets/ --include="*.prefab"
 - Missing Script 修復：換 `m_Script` 的 guid，fileID=11500000，type=3
 - 手改 YAML 前先 SVN commit 作為回滾點，縮排用空格不用 Tab
 - 操作型需求使用 `/unity-yaml` skill（parse/generate/modify/template）
+- **建立 WndForm prefab**：使用 `generate-ui-prefab` 命令 + JSON spec → 自動建 root 6 元件 + RefDb（見 `unity-prefab-workflow` atom）
+- **驗證 prefab**：使用 `validate` 命令檢查 fileID 交叉引用 + m_Script 非零
 
 ## 演化日誌
 
 | 日期 | 變更 |
 |------|------|
 | 2026-03-11 | 從 Wells V2.5 fork 合併至 V2.10，修正路徑，補充 /unity-yaml skill 連結 |
+| 2026-03-24 | 補充 generate-ui-prefab / validate 命令、CLASS_IDS 擴充（222-225）、UI_GUIDS 對照表、Anchor presets |

@@ -20,9 +20,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# V2.20: import wg_paths for centralized path logic
+sys.path.insert(0, str(Path.home() / ".claude" / "hooks"))
 from ollama_client import get_client
-
-CLAUDE_DIR = Path.home() / ".claude"
+from wg_paths import CLAUDE_DIR, MEMORY_DIR, discover_memory_layers
 COLLECTION_NAME = "atom_memory"
 
 # Atom 檔案排除清單
@@ -44,28 +45,15 @@ def discover_layers(
     include_distant: bool = False,
     additional_dirs: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Tuple[str, Path]]:
-    """Discover all memory layers. Returns [(layer_name, memory_dir), ...]."""
-    layers: List[Tuple[str, Path]] = []
+    """Discover all memory layers. Returns [(layer_name, memory_dir), ...].
 
-    # Global layer
-    global_mem = CLAUDE_DIR / "memory"
-    if global_mem.is_dir():
-        if not layer_filter or layer_filter == "global":
-            layers.append(("global", global_mem))
+    V2.20: Delegates to wg_paths.discover_memory_layers() for global + project layers.
+    Additional dirs handled locally (config-driven, not path-logic).
+    """
+    # Global + project layers via wg_paths (single source of truth)
+    layers = discover_memory_layers(layer_filter)
 
-    # Project layers
-    projects_dir = CLAUDE_DIR / "projects"
-    if projects_dir.is_dir():
-        for proj_dir in sorted(projects_dir.iterdir()):
-            if not proj_dir.is_dir():
-                continue
-            if layer_filter and layer_filter not in ("all", "project") and layer_filter != proj_dir.name:
-                continue
-            mem_dir = proj_dir / "memory"
-            if mem_dir.is_dir():
-                layers.append((f"project:{proj_dir.name}", mem_dir))
-
-    # Additional atom directories (from config)
+    # Additional atom directories (from config, local logic)
     if additional_dirs:
         for entry in additional_dirs:
             name = entry.get("name", "extra")

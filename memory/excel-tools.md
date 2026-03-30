@@ -3,10 +3,10 @@
 - Scope: global
 - Confidence: [固]
 - Type: procedural
-- Trigger: Excel, xls, xlsx, 讀取, 試算表, spreadsheet, openpyxl, xlrd
+- Trigger: Excel, xls, xlsx, 試算表, spreadsheet, openpyxl, xlrd
 - Last-used: 2026-03-27
 - Created: 2026-03-03
-- Confirmations: 31
+- Confirmations: 24
 - Tags: tool, excel, python
 
 ## 知識

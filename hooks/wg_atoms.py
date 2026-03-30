@@ -12,9 +12,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from wg_core import (
-    MEMORY_DIR, EPISODIC_DIR, MEMORY_INDEX, CONTEXT_BUDGET_DEFAULT,
-)
+from wg_paths import MEMORY_DIR, EPISODIC_DIR, MEMORY_INDEX, resolve_access_json
+from wg_core import CONTEXT_BUDGET_DEFAULT
 
 # ─── Memory Index Parsing ────────────────────────────────────────────────────
 
@@ -26,13 +25,26 @@ AtomEntry = Tuple[str, str, List[str]]
 
 
 def parse_memory_index(memory_dir: Path) -> List[AtomEntry]:
-    """Parse MEMORY.md atom index, return list of (name, path, triggers)."""
+    """Parse MEMORY.md atom index, return list of (name, path, triggers).
+
+    V2.21: 如果 MEMORY.md 是指標型（Status: migrated-v2.21），
+    自動重導向到 Root 指向的新路徑讀取。
+    """
     index_path = memory_dir / MEMORY_INDEX
     if not index_path.exists():
         return []
     try:
         text = index_path.read_text(encoding="utf-8-sig")
     except (OSError, UnicodeDecodeError):
+        return []
+
+    # V2.21: 指標型 MEMORY.md 重導向
+    if "Status: migrated-v2.21" in text:
+        root_m = re.search(r"^-\s+Root:\s*(.+)$", text, re.MULTILINE)
+        if root_m:
+            redirect_dir = Path(root_m.group(1).strip()) / ".claude" / "memory"
+            if redirect_dir.is_dir() and redirect_dir != memory_dir:
+                return parse_memory_index(redirect_dir)
         return []
 
     atoms: List[AtomEntry] = []
@@ -265,7 +277,8 @@ def load_atoms_within_budget(
 
 
 def _truncate_context_by_activation(
-    lines: List[str], limit: int = CONTEXT_BUDGET_DEFAULT
+    lines: List[str], limit: int = CONTEXT_BUDGET_DEFAULT,
+    source_dirs: Optional[Dict[str, Path]] = None,
 ) -> List[str]:
     """V2.11: Truncate additionalContext lines to fit within token budget.
 
@@ -306,9 +319,13 @@ def _truncate_context_by_activation(
 
     for ab in atom_blocks:
         atom_name = ab["name"]
-        ab["activation"] = compute_activation(atom_name, MEMORY_DIR)
-        if ab["activation"] <= -10.0:
-            ab["activation"] = compute_activation(atom_name, EPISODIC_DIR)
+        src_dir = source_dirs.get(atom_name) if source_dirs else None
+        if src_dir:
+            ab["activation"] = compute_activation(atom_name, src_dir)
+        else:
+            ab["activation"] = compute_activation(atom_name, MEMORY_DIR)
+            if ab["activation"] <= -10.0:
+                ab["activation"] = compute_activation(atom_name, EPISODIC_DIR)
 
     atom_blocks.sort(key=lambda x: x["activation"])
 

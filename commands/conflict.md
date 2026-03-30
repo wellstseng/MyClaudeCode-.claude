@@ -1,7 +1,7 @@
 # /conflict — 記憶衝突偵測
 
 > 手動觸發向量衝突偵測，找出語意相似但內容矛盾的 atom 條目。
-> 全域 Skill，適用任何專案。需要向量服務運行中。
+> **V2.21**：有專案自治層時，自動納入專案層一起掃描。
 
 ---
 
@@ -21,6 +21,27 @@
 - 空 → 全量掃描
 - atom 名稱 → `--atom {名稱}`
 - `--dry-run` → 只列候選不判定
+
+---
+
+## Step 0: 偵測專案記憶目錄
+
+用 Bash tool 執行：
+
+```bash
+python -c "
+import sys, os
+sys.path.insert(0, os.path.expanduser('~/.claude/hooks'))
+try:
+    from wg_paths import get_project_memory_dir
+    d = get_project_memory_dir(os.getcwd())
+    print(d or '')
+except Exception:
+    print('')
+"
+```
+
+若輸出非空 → 記為 `PROJECT_MEM_DIR`，後續加 `--project-dir $PROJECT_MEM_DIR`。
 
 ---
 
@@ -46,7 +67,7 @@ curl -s http://127.0.0.1:11434/api/tags 2>/dev/null | head -1
 用 Bash tool 執行：
 
 ```bash
-python ~/.claude/tools/memory-conflict-detector.py [--atom X] [--dry-run] --json
+python ~/.claude/tools/memory-conflict-detector.py [--atom X] [--dry-run] [--project-dir $PROJECT_MEM_DIR] --json
 ```
 
 捕獲 JSON 輸出。

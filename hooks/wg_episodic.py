@@ -16,11 +16,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from wg_core import (
+from wg_paths import (
     CLAUDE_DIR, MEMORY_DIR, EPISODIC_DIR, MEMORY_INDEX, WORKFLOW_DIR,
     cwd_to_project_slug, get_project_memory_dir,
-    _now_iso, _atom_debug_log, _atom_debug_error,
+    resolve_episodic_dir, get_transcript_path,
 )
+from wg_core import _now_iso, _atom_debug_log, _atom_debug_error
 
 sys.path.insert(0, str(Path.home() / ".claude" / "tools"))
 from ollama_client import get_client
@@ -116,12 +117,7 @@ def _resolve_episodic_dir(state: Dict[str, Any]) -> Tuple[Path, str]:
     Returns (episodic_dir, scope_label).
     """
     cwd = state.get("session", {}).get("cwd", "")
-    if cwd:
-        project_mem = get_project_memory_dir(cwd)
-        if project_mem:
-            slug = cwd_to_project_slug(cwd)
-            return project_mem / "episodic", f"project:{slug}"
-    return EPISODIC_DIR, "global"
+    return resolve_episodic_dir(cwd)
 
 
 # ─── V2.4: Response Knowledge Capture (Ollama LLM) ──────────────────────────
@@ -132,13 +128,7 @@ def _find_session_transcript(session_id: str, cwd: str) -> Optional[Path]:
 
     Path format: ~/.claude/projects/{slug}/{session_id}.jsonl
     """
-    if not session_id or not cwd:
-        return None
-    slug = cwd_to_project_slug(cwd)
-    candidate = CLAUDE_DIR / "projects" / slug / f"{session_id}.jsonl"
-    if candidate.exists():
-        return candidate
-    return None
+    return get_transcript_path(session_id, cwd)
 
 
 def _extract_all_assistant_texts(transcript_path: Path, max_chars: int = 20000) -> List[str]:

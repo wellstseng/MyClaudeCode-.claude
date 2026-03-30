@@ -8,7 +8,7 @@
 - Created: 2026-03-13
 - Confirmations: 36
 - Tags: failure, silent, debugging
-- Related: decisions-architecture
+- Related: decisions-architecture, _INDEX
 
 ## 知識
 

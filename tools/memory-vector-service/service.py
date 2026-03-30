@@ -23,6 +23,8 @@ from urllib.parse import parse_qs, urlparse
 # Add parent dir to path for imports
 SERVICE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SERVICE_DIR))
+# V2.20: import wg_paths for centralized path resolution
+sys.path.insert(0, str(Path.home() / ".claude" / "hooks"))
 
 from config import load_config, VECTORDB_DIR
 from indexer import build_index, create_embedder, get_index_status
@@ -243,18 +245,19 @@ class VectorServiceHandler(BaseHTTPRequestHandler):
         )
 
         # Enrich each result with summary + triggers from the atom file
-        memory_dir = Path.home() / ".claude" / "memory"
+        # V2.20: use wg_paths for path resolution
+        from wg_paths import MEMORY_DIR as _mem_dir, discover_all_project_memory_dirs
+        _proj_dir_map = {s: d for s, d in discover_all_project_memory_dirs()}
         for r in results:
             file_path = r.get("file_path", "")
             layer = r.get("layer", "global")
             if not file_path:
                 continue
-            # Resolve absolute path: global → ~/.claude/memory/, project → projects/slug/memory/
             if layer.startswith("project:"):
                 slug = layer.split(":", 1)[1]
-                abs_path = Path.home() / ".claude" / "projects" / slug / "memory" / file_path
+                abs_path = _proj_dir_map.get(slug, _mem_dir) / file_path
             else:
-                abs_path = memory_dir / file_path
+                abs_path = _mem_dir / file_path
             if not abs_path.exists():
                 continue
             try:

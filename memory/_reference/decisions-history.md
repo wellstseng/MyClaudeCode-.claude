@@ -1,5 +1,12 @@
 # 全域決策 — 版本演進歷史
 
+- Scope: global
+- Confidence: [固]
+- Trigger: 決策歷史, 版本演進, decisions-history, V2 changelog
+- Last-used: 2026-03-23
+- Confirmations: 0
+- Related: decisions
+
 從 decisions.md 拆出，僅供追溯參考。
 
 ## 演化日誌
@@ -17,3 +24,7 @@
 - 2026-03-22: V2.16 自我迭代自動化 — SessionEnd 衰減分數掃描 + [臨]→[觀] 自動晉升 + 震盪持久化
 - 2026-03-22: V2.17 覆轍偵測 — 寄生式 episodic 信號 + 跨 session 掃描 + AIDocs 內容閘門
 - 2026-03-23: V2.17 合併升級至公司電腦（從 C:\myHomeClaude 合併）
+- 2026-03-23: V2.18 Phase 0+1 — 環境清理（LanceDB 289→25MB）+ 9 atom Trigger 精準化 + misdiagnosis/harvester 精簡
+- 2026-03-24: V2.18 Phase 2 Section-Level 注入 — ranked_search_sections + _extract_sections + 服務端 ranked-sections endpoint，大 atom 省 70-90% tokens
+- 2026-03-27: V2.20 路徑集中化 — wg_paths.py 路徑唯一真相來源 + activation C2 修復（專案層 ACT-R score）+ bug 修復 C5~C7, W8~W13
+- 2026-03-27: V2.21 專案自治層 — Project Registry + .claude/memory/ 獨立專案層 + init-project Step 6 + migrate-v221.py + wg_atoms 指標型重導向

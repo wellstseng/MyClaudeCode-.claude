@@ -1,55 +1,34 @@
 # Atom Index — Global
 
 > Session 啟動時先讀此索引。比對 Trigger → Read 對應 atom。
-
-| Atom | Path | Trigger | Confidence |
-|------|------|---------|------------|
-| preferences | memory/preferences.md | 偏好, 風格, 習慣, style, preference, 語言, 回應, 執P, 執驗上P, 上GIT, 上傳GIT | [固] |
-| decisions | memory/decisions.md | 全域決策, 工具, 工作流, workflow, guardian, hooks, MCP, 記憶系統 | [固] |
-| excel-tools | memory/excel-tools.md | Excel, xls, xlsx, 讀取, 試算表, spreadsheet, openpyxl, xlrd | [固] |
-| workflow-rules | memory/workflow-rules.md | 工作流程, 大型任務, 分階段, SOP, 任務拆分, 上版, GIT, svn, svn-update, 版本控制, 同步, vcs | [固] |
-| failures | memory/failures.md | 失敗, 錯誤, debug, 踩坑, pitfall, crash, 重試, retry, workaround, 陷阱 | [固] |
-| toolchain | memory/toolchain.md | 工具, 環境, 指令, command, path, 路徑, bash, git, python, npm, ollama | [固] |
-| fix-escalation | memory/feedback_fix_escalation.md | 修正, 重試, 第二次, 升級, escalation, 精確修正, fix, retry | [固] |
-| unity-yaml | memory/unity/unity-yaml.md | Unity YAML, fileID, GUID, PrefabInstance, .prefab, .meta, 型別ID, 序列化, Missing Script | [固] |
-| gdoc-harvester | memory/gdoc-harvester.md | harvester, Google Docs, Sheets, 收割, Playwright, cookie, export | [觀] |
-| feedback-research | memory/feedback_research_first.md | 試錯, trial-and-error, 不熟悉, API, 框架, 搜尋, research | [固] |
-| doc-index-system | memory/doc-index-system.md | 系統架構, 檔案結構, file tree, hook, skill, tool, 升級, 迭代 | [臨] |
-| feedback_upload_discord | memory/feedback_upload_discord.md | 上傳, 傳附件, 壓縮傳, upload, MEDIA, Discord 附件 | [固] |
-| feedback_global_install | memory/feedback_global_install.md | 安裝MCP, 安裝skill, install MCP, install skill, 新增MCP | [固] |
-| feedback_no_test_to_svn | memory/feedback_no_test_to_svn.md | 上SVN, svn commit, 測試碼, 新手作業, 不可上傳 | [固] |
-| workflow-icld | memory/workflow-icld.md | ICLD, 閉環, Sprint, 功能拆解, 開發計畫, 大型新功能 | [固] |
-| toolchain-ollama | memory/toolchain-ollama.md | ollama, dual-backend, rdchat, qwen3, embedding, 萃取品質 | [固] |
-| workflow-svn | memory/workflow-svn.md | svn, svn-update, TortoiseSVN, 衝突, conflict | [固] |
-| decisions-architecture | memory/decisions-architecture.md | 架構細節, vector service, ollama backend, extraction, ACT-R | [固] |
-| project-ecosystem | memory/project-ecosystem.md | 專案, SGI, TSLG, TCSM, 監控, 專案狀態 | [固] |
-| redmine-config | memory/redmine-config.md | Redmine, sgi, API, query, 日報, 週報, redmine-70 | [固] |
-| discord-channels | memory/discord-channels.md | Discord, 頻道, guild, channel, 程式群, 幹部群 | [固] |
-| team-roster | memory/team-roster.md | 團隊, 名冊, 成員, SVN帳號, Discord ID, Redmine ID | [固] |
-| hot-topics | memory/hot-topics.md | 監控, hot-topics, 警報, titan-rd, Key Man | [觀] |
-
----
-
-## 高頻事實
-
-- [固] 使用者: wellstseng | 平台: Windows 11 Pro
-- [固] Guardian @ localhost:3848 | Vector @ localhost:3849
-- [固] Vector DB: LanceDB | search_min_score: 0.65
-- [固] Dual-Backend: rdchat qwen3.5:9b(pri=1,think) → local qwen3:1.7b(pri=2) | embedding: local qwen3-embedding
-- [固] 原子記憶 V2.18：V2.12 基底 + upstream V2.18 系統升級 + 個人記憶保留
-- [固] Excel: `~/.claude/tools/read-excel.py`（Python3 + openpyxl + xlrd）
-- [固] SVN 專案修改前必問 svn update（每 session 一次）| Skill: /svn-update
-- [觀] Wisdom Engine: 硬規則情境分類 + 反思校準(over_engineering + silence_accuracy)
-
----
-
-## 參考文件（不自動注入，開發記憶系統時手動讀取）
-
-> 提到「改 hook」「改記憶系統」「atom 格式」「迭代規則」「檢索演算法」時，先讀這些：
-
-| 文件 | Path | 用途 |
-|------|------|------|
-| SPEC | memory/_reference/SPEC_Atomic_Memory_System.md | 完整系統規格（950 行） |
-| self-iteration | memory/_reference/self-iteration.md | 自我迭代 3 條原則 + 演進紀錄 |
-| v2.9-design | memory/_reference/v3-design-spec.md | V2.9 檢索強化設計（ACT-R/Aliases/Spreading） |
-| v3-research | memory/_reference/v3-research-insights.md | 認知科學/唯識理論研究筆記 |
+| Atom | Path | Trigger |
+|------|------|---------|
+| preferences | memory/preferences.md | 偏好, 風格, 習慣, 語言, 回應, 執P, 執驗上P, 上GIT |
+| decisions | memory/decisions.md | 全域決策, workflow, guardian, hooks, MCP, 記憶系統決策, 記憶系統架構, 記憶系統, 原子記憶, atom memory, 決策 |
+| decisions-architecture | memory/decisions-architecture.md | 架構細節, vector service, ollama backend, extraction, ACT-R, episodic tracking, context budget, 萃取, 注入, injection, vector, 向量, token budget |
+| excel-tools | memory/excel-tools.md | Excel, xls, xlsx, 試算表, spreadsheet, openpyxl, xlrd |
+| workflow-rules | memory/workflow-rules.md | 工作流程, 大型任務, 分階段, SOP, 任務拆分, 上版, GIT, Phase |
+| workflow-icld | memory/workflow-icld.md | ICLD, 閉環, Sprint, 功能拆解, 開發計畫, 大型新功能, 新系統規劃, 規格書 |
+| workflow-svn | memory/workflow-svn.md | svn, svn-update, TortoiseSVN, 衝突, conflict |
+| fail-env | memory/failures/env-traps.md | Win環境陷阱, Windows, MSYS2, Node.js, npx, Ollama, port, MCP啟動, VSCode |
+| fail-assumptions | memory/failures/wrong-assumptions.md | 假設錯誤, 直覺偏差, 為何沒生效, 空目錄, metrics異常, 功能沒反應 |
+| fail-silent | memory/failures/silent-failures.md | 靜默, silent, 看似正常, setdefault, knowledge_queue為空, 吞掉錯誤 |
+| fail-cognitive | memory/failures/cognitive-patterns.md | 過度工程, 代理指標, proxy metric, AI看不懂, AI在打轉, 品質回饋 |
+| toolchain | memory/toolchain.md | 工具鏈, 環境設定, bash指令, command, bash, git, python, npm |
+| toolchain-ollama | memory/toolchain-ollama.md | ollama, dual-backend, rdchat, qwen3, embedding, 萃取品質, thinking, Open WebUI |
+| unity-yaml | memory/unity/unity-yaml.md | Unity YAML, fileID, GUID, PrefabInstance, .prefab, .meta, 型別ID, 序列化, Missing Script |
+| unity-prefab-component-guids | memory/unity/unity-prefab-component-guids.md | prefab GUID, component GUID, m_Script, ILUIWnd GUID, UIButtonCustom GUID, EnhancedScroller GUID, UI component registry |
+| unity-wndform-yaml-template | memory/unity/unity-wndform-yaml-template.md | WndForm template, prefab YAML, RefDb, AutoGenUICode, Scroller stack, Canvas template, prefab 建立 |
+| unity-prefab-workflow | memory/unity/unity-prefab-workflow.md | prefab SOP, 程式化建立 prefab, generate-ui-prefab, WndForm 建立, 元件 stack, Console 警告 |
+| feedback-research | memory/feedback_research_first.md | 試錯, trial-and-error, 不熟悉, API試錯, 框架不熟, 搜尋策略, research |
+| doc-index-system | memory/doc-index-system.md | 記憶系統架構, 檔案結構, hook, skill, tool, 記憶升級, 記憶迭代, 目錄結構 |
+| fix-escalation | memory/feedback_fix_escalation.md | 重試, retry, escalation, 精確修正, fix-escalation, 修不好, 又壞了, 失敗 |
+| fail-misdiagnosis | memory/failures/misdiagnosis-verify-first.md | 誤診, 驗證優先, verify first, 診斷失敗, 先射箭再畫靶, 假設錯誤就規劃, 過度規劃, 沒驗證就動手 |
+| feedback-no-test-to-svn | memory/feedback_no_test_to_svn.md | 上SVN, svn commit, 測試碼, 新手作業, 練習, 不可上傳 |
+| feedback-global-install | memory/feedback_global_install.md | 安裝MCP, 安裝skill, install MCP, install skill, add MCP, 新增MCP, 新增skill |
+| feedback-upload-discord | memory/feedback_upload_discord.md | 上傳, 傳附件, 壓縮傳, upload, MEDIA, Discord 附件 |
+| project-ecosystem | memory/project-ecosystem.md | 專案, SGI, TSLG, TCSM, 監控, 專案狀態 |
+| redmine-config | memory/redmine-config.md | Redmine, sgi, API, query, 日報, 週報, redmine-70 |
+| discord-channels | memory/discord-channels.md | Discord, 頻道, guild, channel, 程式群, 幹部群, ai-code-review |
+| team-roster | memory/team-roster.md | 團隊, 名冊, 成員, SVN帳號, Discord ID, Redmine ID |
+| hot-topics | memory/hot-topics.md | 監控, hot-topics, 警報, titan-rd, Key Man |

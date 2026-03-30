@@ -1,7 +1,7 @@
 # /memory-review — 自我迭代檢閱
 
 > 手動觸發記憶系統自我迭代：衰減掃描、晉升候選、震盪偵測、覆轍偵測、episodic 回顧。
-> 全域 Skill，適用任何專案。通常在收到「定期檢閱到期」提醒時使用。
+> **V2.21**：有專案自治層時，優先檢閱專案層，再檢閱全域層。
 
 ---
 
@@ -15,6 +15,28 @@
 
 ---
 
+## Step 0: 偵測專案記憶目錄
+
+用 Bash tool 執行：
+
+```bash
+python -c "
+import sys, os
+sys.path.insert(0, os.path.expanduser('~/.claude/hooks'))
+try:
+    from wg_paths import get_project_memory_dir, get_project_claude_dir
+    d = get_project_memory_dir(os.getcwd())
+    print(d or '')
+except Exception:
+    print('')
+"
+```
+
+- 若輸出非空 → 記為 `PROJECT_MEM_DIR`（後續步驟納入此目錄）
+- 若輸出為空 → 純全域模式
+
+---
+
 ## Step 1: 收集基礎資訊
 
 並行讀取以下檔案：
@@ -25,7 +47,11 @@
 
 ## Step 2: 衰減分數掃描
 
-掃描 `~/.claude/memory/` 和 `~/.claude/memory/failures/` 下所有 atom `.md` 檔（跳過 MEMORY.md、SPEC_*、_* 開頭）。
+掃描目標：
+1. **若有 PROJECT_MEM_DIR**：先掃 `$PROJECT_MEM_DIR/` + `$PROJECT_MEM_DIR/failures/`
+2. 再掃 `~/.claude/memory/` + `~/.claude/memory/failures/`（全域層）
+
+兩層均跳過 MEMORY.md、SPEC_*、_* 開頭的檔案。
 
 對每個 atom 計算：
 - 從 frontmatter 取 `Last-used` 和 `Confirmations`
@@ -48,7 +74,7 @@
 
 ## Step 4: 震盪偵測
 
-掃描最近 3 個 episodic atom（全域 + 當前專案），找出：
+掃描最近 3 個 episodic atom（**PROJECT_MEM_DIR/episodic/** 優先，再 `~/.claude/memory/episodic/`），找出：
 - 同一 atom 在 2+ 個 session 中被修改 → 震盪警告
 
 ## Step 5: 覆轍偵測
@@ -59,7 +85,7 @@
 
 ## Step 6: Episodic 回顧
 
-列出最近 5 個 episodic atom 的摘要：
+列出最近 5 個 episodic atom 的摘要（**PROJECT_MEM_DIR/episodic/** 優先，不足再補全域）：
 - 檔名（含日期）
 - 工作區域
 - 修改 atoms

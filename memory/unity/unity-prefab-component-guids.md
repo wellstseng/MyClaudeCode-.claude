@@ -1,9 +1,11 @@
----
-name: unity-prefab-component-guids
-description: SGI Client 專案專屬的 UI component script GUID 對照表（不適用其他 Unity 專案）
-type: reference
-related: unity-prefab-workflow
----
+# unity-prefab-component-guids
+
+- Scope: global
+- Confidence: [固]
+- Trigger: prefab GUID, component GUID, m_Script, ILUIWnd GUID, UIButtonCustom GUID, EnhancedScroller GUID, UI component registry
+- Last-used: 2026-03-27
+- Confirmations: 2
+- Related: unity-prefab-workflow
 
 ## UI Component Script GUIDs (SGI Client, Unity 2022.3.62f2)
 

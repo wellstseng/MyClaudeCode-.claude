@@ -12,8 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
+from wg_paths import CLAUDE_DIR, cwd_to_project_slug, get_transcript_path
 from wg_core import (
-    CLAUDE_DIR, cwd_to_project_slug,
     _now_iso, _atom_debug_log, _atom_debug_error,
     write_state,
 )
@@ -81,9 +81,7 @@ def _set_lease(state: dict, key: str, pid: int, ttl: int = _DEFAULT_LEASE_TTL) -
 
 def _find_transcript(session_id: str, cwd: str):
     """Find session transcript JSONL file."""
-    slug = cwd_to_project_slug(cwd)
-    candidate = CLAUDE_DIR / "projects" / slug / f"{session_id}.jsonl"
-    return candidate if candidate.exists() else None
+    return get_transcript_path(session_id, cwd)
 
 
 def _count_new_assistant_chars(transcript_path, byte_offset: int) -> int:

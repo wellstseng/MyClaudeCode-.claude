@@ -1,4 +1,4 @@
-# Atomic Memory V2.18 — 安裝指南
+# Atomic Memory V2.21 — 安裝指南
 
 > **目標讀者**：使用 VS Code + Claude Code Extension，但完全不知道原子記憶是什麼的開發者。
 > 本指南會幫你把原子記憶系統**合併安裝**到你現有的 `~/.claude/` 目錄中。
@@ -68,6 +68,32 @@ pip install sentence-transformers>=4.0  # Fallback embedding
 
 ## 安裝步驟
 
+### 路徑 A：全新安裝（推薦）
+
+適用：`~/.claude/` 是全新目錄，或準備完整重建。
+
+```bash
+# 1. Clone repo 直接到 ~/.claude
+git clone <你的-repo-URL> ~/.claude
+
+# 2. 一鍵安裝
+python ~/.claude/install.py
+```
+
+`install.py` 自動完成（5 個步驟 + 驗證報告）：
+- npm i -g 全域套件（MCPControl、Playwright）
+- `~/.claude.json` MCP servers 合併（冪等，不覆蓋已有設定）
+- `IDENTITY.md` / `USER.md` 從 template 初始化
+
+完成後跳至 **[Step 5：安裝 Vector Service 依賴](#step-5-安裝-vector-service-依賴並建立索引)**（Python 套件 + 向量服務）。
+
+---
+
+### 路徑 B：手動 / 合併安裝（已有 ~/.claude 設定）
+
+適用：已有 `~/.claude/` 設定需逐項合併，不想覆蓋現有內容。
+路徑 B 完成 Step 0–3 後，可執行 `python ~/.claude/install.py` 一次補齊 npm 套件 + MCP 設定。
+
 ### Step 0: 備份你的現有設定
 
 ```bash
@@ -95,6 +121,7 @@ cp /tmp/atomic-memory/USER.md ~/.claude/USER.md
 # ── Hook 腳本 ──
 mkdir -p ~/.claude/hooks
 cp /tmp/atomic-memory/hooks/workflow-guardian.py ~/.claude/hooks/
+cp /tmp/atomic-memory/hooks/wg_paths.py ~/.claude/hooks/
 cp /tmp/atomic-memory/hooks/wg_core.py ~/.claude/hooks/
 cp /tmp/atomic-memory/hooks/wg_atoms.py ~/.claude/hooks/
 cp /tmp/atomic-memory/hooks/wg_intent.py ~/.claude/hooks/
@@ -258,7 +285,7 @@ cat > ~/.claude/memory/MEMORY.md << 'EOF'
 
 ## 高頻事實
 
-- 原子記憶 V2.18
+- 原子記憶 V2.21
 EOF
 ```
 
@@ -409,6 +436,10 @@ Dashboard 網址：`http://127.0.0.1:3848`
 ### 快速驗證（命令列）
 
 ```bash
+# 0. 一鍵驗證（npm + MCP + bootstrap 部分）
+python ~/.claude/install.py
+# 全部 ✓ 即表示基礎環境就緒；項目失敗時腳本會提示修復指令
+
 # 1. Python + 套件
 python -c "import lancedb; print('lancedb OK')"
 python -c "import sentence_transformers; print('sentence-transformers OK')"
@@ -459,6 +490,7 @@ python ~/.claude/tools/memory-audit.py
 
 ```
 ~/.claude/
+├── install.py                    ★ 一鍵安裝腳本（npm + MCP + bootstrap）
 ├── CLAUDE.md                     ★ 系統指令（每 session 自動載入）
 ├── IDENTITY.md                   ★ AI 身份與行為準則（@import 載入，團隊共用）
 ├── USER.md                       ★ 操作者個人資料（@import 載入，⚠ 需改為你的資料）
@@ -472,13 +504,15 @@ python ~/.claude/tools/memory-audit.py
 │
 ├── hooks/                        ★
 │   ├── workflow-guardian.py       ★ 統一 Hook 入口
+│   ├── wg_paths.py               ★ 路徑唯一真相來源 [V2.20]
 │   ├── wg_core.py                ★ 共用常數/設定/IO
 │   ├── wg_atoms.py               ★ 索引解析/trigger/ACT-R/section 注入
 │   ├── wg_intent.py              ★ 意圖分類/向量搜尋
 │   ├── wg_extraction.py          ★ 回應萃取
 │   ├── wg_episodic.py            ★ Episodic 管理
 │   ├── wg_iteration.py           ★ 自我迭代/衰減/覆轍
-│   └── wisdom_engine.py          ★ Wisdom Engine
+│   ├── wisdom_engine.py          ★ Wisdom Engine
+│   └── user-init.sh              ★ 多人 USER.md 初始化
 │
 ├── tools/                        ★
 │   ├── ollama_client.py          ★ Dual-Backend Ollama Client

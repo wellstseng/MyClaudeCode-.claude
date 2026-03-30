@@ -4,11 +4,11 @@
 - Confidence: [固]
 - Type: procedural
 - Trigger: Win環境陷阱, Windows, MSYS2, Node.js, npx, Ollama, port, MCP啟動, VSCode
-- Last-used: 2026-03-25
+- Last-used: 2026-03-27
 - Created: 2026-03-10
-- Confirmations: 45
+- Confirmations: 46
 - Tags: failure, environment, pitfall
-- Related: toolchain, feedback_global_install
+- Related: toolchain, feedback_global_install, _INDEX
 
 ## 知識
 

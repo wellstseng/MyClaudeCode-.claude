@@ -124,7 +124,119 @@ _AIDocs/
 | [今日] | 知識庫建立 | 初始化 _AIDocs 與記憶工作流 |
 ```
 
-### Step 6: 回報結果
+### Step 6: 建立 .claude/ 自治層（若不存在）
+
+建立 V2.21 專案自治目錄，讓專案記憶隨 repo 一起版控。
+
+**目錄結構**：
+```
+.claude/
+├── memory/
+│   ├── MEMORY.md        ← 空索引模板
+│   ├── episodic/
+│   ├── failures/
+│   └── _staging/
+├── hooks/
+│   └── project_hooks.py ← delegate 模板
+└── .gitignore
+```
+
+**執行步驟**：
+
+1. 若 `.claude/memory/MEMORY.md` 已存在 → 跳過（不覆蓋）
+
+2. 建立上述所有目錄（`mkdir -p` 等價）
+
+3. 建立 `.claude/memory/MEMORY.md`（若不存在）：
+```markdown
+# [專案名稱] — Atom Index
+
+> 專案層原子記憶索引。Session 啟動時自動載入。
+
+| Atom | Path | Trigger |
+|------|------|---------|
+
+> Project-Aliases:
+```
+
+4. 建立 `.claude/hooks/project_hooks.py`（若不存在）：
+```python
+"""project_hooks.py — 專案層 delegate hooks
+
+由核心引擎 (workflow-guardian.py) 在 SessionStart 時載入。
+透過 subprocess 呼叫，stdin/stdout JSON 通訊。
+自訂邏輯寫在 on_session_start / inject / extract 內。
+"""
+import json
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).parent.parent.parent  # .claude/hooks/ → project root
+MEMORY_DIR = PROJECT_ROOT / ".claude" / "memory"
+
+
+def inject(context: dict) -> list:
+    """回傳要注入的 atom 檔案絕對路徑列表。"""
+    paths = []
+    for md in MEMORY_DIR.glob("*.md"):
+        if md.name != "MEMORY.md":
+            paths.append(str(md))
+    return paths
+
+
+def extract(knowledge: list, context: dict) -> None:
+    """接收萃取出的知識項目，決定如何寫入專案記憶。
+    knowledge 格式: [{"type": "fact|failure|decision", "content": "...", "confidence": "[臨]"}]
+    """
+    # 預設：由核心引擎處理寫入，此處可加自訂邏輯
+    pass
+
+
+def on_session_start(context: dict) -> dict:
+    """Session 初始化時呼叫，可回傳補充 lines。
+    回傳格式: {"lines": ["額外注入的文字行"]}
+    """
+    return {}
+
+
+# ── CLI 入口（subprocess 呼叫）──
+if __name__ == "__main__":
+    action = sys.argv[1] if len(sys.argv) > 1 else ""
+    ctx = json.loads(sys.stdin.read()) if not sys.stdin.isatty() else {}
+
+    if action == "inject":
+        print(json.dumps(inject(ctx)))
+    elif action == "extract":
+        items = ctx.get("knowledge", [])
+        extract(items, ctx)
+        print(json.dumps({"status": "ok"}))
+    elif action == "session_start":
+        print(json.dumps(on_session_start(ctx)))
+    else:
+        print(json.dumps({"error": f"unknown action: {action}"}))
+        sys.exit(1)
+```
+
+5. 建立 `.claude/.gitignore`（若不存在）：
+```gitignore
+# Ephemeral — 不版控
+*.access.json
+episodic/
+_staging/
+vector-db/
+
+# 版控（明確保留）
+!memory/MEMORY.md
+!memory/*.md
+!memory/failures/*.md
+!hooks/
+```
+
+6. 檢查 `_AIAtoms/` 是否存在：
+   - 若有 → 向使用者提示：「偵測到舊式 _AIAtoms/ 目錄，建議執行 `python ~/.claude/tools/migrate-v221.py` 遷移至新結構」
+   - 若無 → 無需處理
+
+### Step 7: 回報結果
 
 向使用者彙報：
 - 建立了哪些檔案

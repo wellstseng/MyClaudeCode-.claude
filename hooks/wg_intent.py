@@ -15,9 +15,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from wg_core import (
-    CLAUDE_DIR, _atom_debug_error,
-)
+from wg_paths import CLAUDE_DIR
+from wg_core import _atom_debug_error
 
 # ─── Intent Classifier (v2.1 Sprint 2) ───────────────────────────────────────
 

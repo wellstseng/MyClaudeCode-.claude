@@ -1,5 +1,12 @@
 # 失敗模式記憶 — 子索引
 
+- Scope: global
+- Confidence: [固]
+- Trigger: 失敗模式索引, failures index, 自動萃取, failure routing, 三維路由
+- Last-used: 2026-03-19
+- Confirmations: 0
+- Related: fail-env, fail-assumptions, fail-silent, fail-cognitive
+
 > 原 `failures.md` 拆分為獨立子 atoms，各自 trigger 精準注入。
 
 | Atom | 檔案 | 說明 |

@@ -21,7 +21,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-CLAUDE_DIR = Path.home() / ".claude"
+# ─── Import centralized paths from wg_paths ─────────────────────────────────
+_HOOKS_DIR = str(Path.home() / ".claude" / "hooks")
+if _HOOKS_DIR not in sys.path:
+    sys.path.insert(0, _HOOKS_DIR)
+
+from wg_paths import (
+    cwd_to_project_slug,
+    get_transcript_path,
+    resolve_failures_dir,
+    CLAUDE_DIR,
+    MEMORY_DIR,
+)
+
 WORKFLOW_DIR = CLAUDE_DIR / "workflow"
 
 # Windows cp950 → UTF-8 (detached subprocess doesn't inherit guardian's encoding)
@@ -89,19 +101,6 @@ def _atom_debug_error(source: str, exc: Exception) -> None:
 
 
 # ─── Transcript helpers ──────────────────────────────────────────────────────
-
-
-def _cwd_to_project_slug(cwd: str) -> str:
-    slug = cwd.replace(":", "-").replace("\\", "-").replace("/", "-").replace(".", "-")
-    if slug:
-        slug = slug[0].lower() + slug[1:]
-    return slug
-
-
-def _find_transcript(session_id: str, cwd: str) -> Optional[Path]:
-    slug = _cwd_to_project_slug(cwd)
-    candidate = CLAUDE_DIR / "projects" / slug / f"{session_id}.jsonl"
-    return candidate if candidate.exists() else None
 
 
 def _extract_all_assistant_texts(
@@ -437,7 +436,7 @@ def run_extraction(ctx: Dict[str, Any]) -> Dict[str, Any]:
         return _empty_result()
 
     # Find and read transcript
-    transcript = _find_transcript(session_id, cwd)
+    transcript = get_transcript_path(session_id, cwd)
     if not transcript:
         return _empty_result()
 
@@ -599,15 +598,7 @@ def _failure_writeback(ctx: dict, items: list) -> None:
     config = ctx.get("config", {})
 
     # 路由：有專案 memory dir → 專案層；否則 → 全域層
-    failures_dir = CLAUDE_DIR / "memory" / "failures"
-    if cwd:
-        slug = _cwd_to_project_slug(cwd)
-        if slug:
-            proj_mem = CLAUDE_DIR / "projects" / slug / "memory"
-            if proj_mem.exists():
-                proj_fail = proj_mem / "failures"
-                proj_fail.mkdir(exist_ok=True)
-                failures_dir = proj_fail
+    failures_dir = resolve_failures_dir(cwd)
 
     written = 0
     for item in items:

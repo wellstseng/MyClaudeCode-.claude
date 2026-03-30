@@ -1,5 +1,12 @@
 # Unity YAML 序列化格式完整知識庫
 
+- Scope: global
+- Confidence: [固]
+- Trigger: Unity YAML detail, 序列化格式, PrefabInstance, m_Modifications, ScriptableObject, AnimationClip, AnimatorController, Merge 衝突, fileID, YAML 1.1
+- Last-used: 2026-03-25
+- Confirmations: 0
+- Related: unity-yaml, unity-prefab-workflow
+
 > 版本：Unity 2022.3.x
 > 建立：2026-03-10
 > 來源：TSLG Client _AIDocs，晉升至全域 2026-03-11

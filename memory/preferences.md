@@ -1,34 +1,21 @@
-# 使用者偏好
+# 使用者偏好（補充）
 
 - Scope: global
 - Confidence: [固]
-- Trigger: 偏好, 風格, 習慣, style, preference, 語言, 回應, 執P, 執驗上P, 上GIT, 上傳GIT
+- Trigger: 偏好, 風格, 習慣, 語言, 回應, 執P, 執驗上P, 上GIT
 - Last-used: 2026-03-27
-- Confirmations: 60
+- Confirmations: 91
 - Type: preference
-
-- Related: feedback_upload_discord
 
 ## 知識
 
-- 回應語言: 繁體中文，技術術語可英文
-- 程式風格: 輕量極簡，不做多餘抽象，三行重複優於過早抽象
-- 可讀性: 一個檔案看完相關邏輯，減少跨檔跳轉
+> 核心偏好已在 USER.md / IDENTITY.md 必載，此處僅放延伸補充。
+
 - 框架觀: 薄框架，開發者要能理解底層運作
-- 文件: 不主動產生 README/文件，除非明確要求
-- Prompt 輸出: 給使用者複製貼上的 prompt 一律包在 code block 裡
-- 程式碼修改: 最小變動範圍，不加多餘 docstring / type annotation / 註解
-- 「上 GIT」: 等同 git add + commit + push（三步都做完）
-- 大型計畫執行: 分階段 session 執行，每階段完成+驗證+上傳GIT後，提供下一階段的 prompt 給使用者
 - 「執驗上P」/「執P」: 縮寫指令，等同「由 AI 考量拆分 session 接續處理，單一階段執行完畢，且驗證無誤後，上傳 GIT（如有可上傳的 repo），再給使用者下一階段接續用的 prompt；此規則延伸到本項目全數完成」
 - 「上GIT」/「上傳GIT」: 縮寫指令，針對當次批量作業（單一或多 session）所異動的範圍內容執行 git add + commit + push。若沒有當次異動，須向使用者確認是否要查詢所有異動來執行。若專案屬於 SVN，則此縮寫也代表 commit 到 SVN repo，完成後主動向使用者報備「已上傳 SVN repo」。
 - [固] 專案知識庫深度運用: 處理專案程式邏輯、架構、結構、踩坑經驗等，都要系統性記錄到專案 _AIDocs 內（不重複前提下）；同時確保寫入向量記憶庫供後續語意檢索。目標：專案知識被智慧儲存→精準注入→高效協助
 
 ## 行動
 
-- 回應用繁體中文
-- 程式碼修改保持最小變動範圍
-- 不加多餘 docstring / type annotation / 註解
-- 不主動重構周圍程式碼
-- 決策時提供分析表 + 明確建議（「建議選 X，因為 Y」）
-- 大型任務自動拆分為多個 session 階段，每階段結束提供延續 prompt
+- 處理專案程式碼後，將邏輯/架構/結構/經驗寫入 _AIDocs（去重）+ 向量記憶庫，確保知識可被檢索與注入

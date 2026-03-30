@@ -833,11 +833,18 @@ def delete_atom(
     return True, "\n".join(actions)
 
 
+def _project_dir_from_args(args: argparse.Namespace) -> Optional[Path]:
+    """Helper: extract project_dir from parsed args."""
+    val = getattr(args, "project_dir", None)
+    return Path(val) if val else None
+
+
 def enforce_decay(args: argparse.Namespace) -> None:
     """Execute automated decay: move stale [臨] to _distant/, mark stale [觀] as pending-review."""
     today = date.today()
     dry_run = args.dry_run
-    layers = discover_layers(global_only=args.global_only, project_filter=args.project)
+    layers = discover_layers(global_only=args.global_only, project_filter=args.project,
+                             project_dir=_project_dir_from_args(args))
     actions: List[str] = []
 
     for layer_name, mem_dir in layers:
@@ -1000,10 +1007,20 @@ def parse_audit_log() -> Dict[str, Any]:
 
 
 def discover_layers(
-    global_only: bool = False, project_filter: Optional[str] = None
+    global_only: bool = False,
+    project_filter: Optional[str] = None,
+    project_dir: Optional[Path] = None,
 ) -> List[Tuple[str, Path]]:
-    """Discover all memory layers."""
+    """Discover all memory layers.
+
+    V2.21: project_dir 若提供，優先列在 global 之前（專案層優先）。
+    """
     layers: List[Tuple[str, Path]] = []
+
+    # V2.21: 專案自治層（{project_root}/.claude/memory/）
+    # global_only=True 時跳過專案層
+    if not global_only and project_dir and project_dir.is_dir() and (project_dir / MEMORY_INDEX).exists():
+        layers.append(("project", project_dir))
 
     # Global layer
     global_mem = CLAUDE_DIR / "memory"
@@ -1013,7 +1030,7 @@ def discover_layers(
     if global_only:
         return layers
 
-    # Project layers
+    # Legacy project layers（~/.claude/projects/{slug}/memory/）
     projects_dir = CLAUDE_DIR / "projects"
     if projects_dir.is_dir():
         for proj_dir in sorted(projects_dir.iterdir()):
@@ -1184,6 +1201,7 @@ def run_audit(args: argparse.Namespace) -> HealthReport:
     layers = discover_layers(
         global_only=args.global_only,
         project_filter=args.project,
+        project_dir=Path(args.project_dir) if getattr(args, "project_dir", None) else None,
     )
 
     all_atoms: List[AtomMetadata] = []
@@ -1262,7 +1280,9 @@ def main():
 
     # Scan options
     parser.add_argument("--global-only", action="store_true", help="只掃描全域層")
-    parser.add_argument("--project", type=str, default=None, help="指定專案名稱過濾")
+    parser.add_argument("--project", type=str, default=None, help="指定專案名稱過濾（舊路徑過濾）")
+    parser.add_argument("--project-dir", type=str, default=None,
+                        help="V2.21 專案記憶目錄（{project_root}/.claude/memory/），列在全域層之前")
     parser.add_argument("--json", action="store_true", help="JSON 格式輸出")
     parser.add_argument("--verbose", action="store_true", help="含逐 atom 詳細資訊")
 
@@ -1302,7 +1322,8 @@ def main():
     # Handle distant memory operations
     if args.search_distant:
         keyword = args.search_distant
-        layers = discover_layers(global_only=args.global_only, project_filter=args.project)
+        layers = discover_layers(global_only=args.global_only, project_filter=args.project,
+                                 project_dir=_project_dir_from_args(args))
         found_any = False
         for layer_name, mem_dir in layers:
             results = search_distant(mem_dir, keyword)
@@ -1335,7 +1356,8 @@ def main():
 
     # Compact evolution logs (v2.1 Sprint 3)
     if args.compact_logs:
-        layers = discover_layers(global_only=args.global_only, project_filter=args.project)
+        layers = discover_layers(global_only=args.global_only, project_filter=args.project,
+                                 project_dir=_project_dir_from_args(args))
         actions: List[str] = []
         for layer_name, mem_dir in layers:
             for md_file in sorted(mem_dir.glob("*.md")):
