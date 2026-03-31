@@ -3,9 +3,9 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: ollama, dual-backend, rdchat, qwen3, embedding, 萃取品質, thinking, Open WebUI
-- Last-used: 2026-03-24
+- Last-used: 2026-03-31
 - Created: 2026-03-19
-- Confirmations: 67
+- Confirmations: 68
 - Type: procedural
 - Tags: ollama, dual-backend, extraction
 - Related: toolchain, decisions-architecture
@@ -48,7 +48,8 @@ A/B 對比：2 段真實 transcript（Redmine debug + NuGet build），各 4000 
 
 ### 硬體限制
 
-- [固] Local fallback（GTX 1050 Ti 4GB）同時只能跑一個模型，embedding 和推論需輪替；rdchat（RTX 3090）無此限制
+- [固] Local fallback（GTX 1050 Ti 4GB，公司 Windows 機）同時只能跑一個模型，embedding 和推論需輪替；rdchat（RTX 3090）無此限制
+- [固] catclaw 開發機：Mac Mini（Apple Silicon），Ollama 跑在本地 unified memory，與 GTX 1050 Ti 架構不同，模型 swap 策略不適用同一假設
 
 ## 行動
 
