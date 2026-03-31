@@ -28,3 +28,5 @@
 | mail-sorting | memory/mail-sorting.md | Mail2000, 信箱整理, 歸信, sort mail, 信件分類 |
 | feedback-no-test-to-svn | memory/feedback_no_test_to_svn.md | 上SVN, svn commit, 測試碼, 新手作業, 練習, 不可上傳 |
 | feedback-global-install | memory/feedback_global_install.md | 安裝MCP, 安裝skill, install MCP, install skill, add MCP, 新增MCP, 新增skill |
+| nodejs-ecosystem | memory/nodejs-ecosystem.md | Node.js, NodeJS, npm, npx, package.json, node_modules, TypeScript, tsc, pm2, ecosystem.config, JavaScript, JS, TS, ESM, CommonJS, CJS |
+| collab-anchor-catclaw | memory/collab-anchor-catclaw.md | CatClaw, 個人專案, 跑偏, 過度擴張, 焦慮, 收斂, 方向校正, 提醒, 副駕, 協作規則, 邊界, 失焦 |
