@@ -32,3 +32,4 @@
 | discord-channels | memory/discord-channels.md | Discord, 頻道, guild, channel, 程式群, 幹部群, ai-code-review |
 | team-roster | memory/team-roster.md | 團隊, 名冊, 成員, SVN帳號, Discord ID, Redmine ID |
 | hot-topics | memory/hot-topics.md | 監控, hot-topics, 警報, titan-rd, Key Man |
+| collaboration-protocol | memory/collaboration-protocol.md | 協作, 協作原則, 副駕, 收斂, 跑偏, 發散, 焦慮, 經驗汲取, 避危, 工作流拆解, session回顧 |

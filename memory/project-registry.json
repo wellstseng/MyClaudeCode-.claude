@@ -35,6 +35,33 @@
         "辦公",
         "MyOfficeAI"
       ]
+    },
+    "c--users-wellstseng--catclaw": {
+      "root": "c:\\Users\\wellstseng\\.catclaw",
+      "last_seen": "2026-03-31"
+    },
+    "c--workspace-catclaw": {
+      "root": "c:\\WorkSpace\\catclaw",
+      "last_seen": "2026-03-30"
+    },
+    "c--olgcase-mobileanime": {
+      "root": "c:\\OlgCase\\MobileAnime",
+      "last_seen": "2026-03-31"
+    },
+    "c--projects-tslg-develop": {
+      "root": "c:\\Projects\\TSLG\\Develop",
+      "last_seen": "2026-04-01",
+      "aliases": [
+        "TSLG"
+      ],
+      "note": "sub-directory, uses parent root"
+    },
+    "c--projects-tslg": {
+      "root": "C:\\Projects\\TSLG",
+      "last_seen": "2026-03-31",
+      "aliases": [
+        "TSLG"
+      ]
     }
   }
 }

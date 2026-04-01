@@ -3,11 +3,11 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 工具鏈, 環境設定, bash指令, command, bash, git, python, npm
-- Last-used: 2026-03-30
-- Confirmations: 122
+- Last-used: 2026-04-01
+- Confirmations: 127
 - Type: procedural
 - Tags: toolchain, environment, commands
-- Related: fail-env, toolchain-ollama, decisions-architecture, doc-index-system, feedback_global_install
+- Related: fail-env, toolchain-ollama, decisions-architecture, doc-index-system, feedback_global_install, failures
 
 ## 知識
 

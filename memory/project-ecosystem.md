@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 專案, SGI, TSLG, TCSM, 監控, 專案狀態, 生態
-- Last-used: 2026-03-27
-- Confirmations: 15
+- Last-used: 2026-04-01
+- Confirmations: 18
 - Related: redmine-config, team-roster, hot-topics
 
 ## 知識
