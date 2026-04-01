@@ -5,7 +5,7 @@
 - Trigger: 安裝MCP, 安裝skill, install MCP, install skill, add MCP, 新增MCP, 新增skill
 - Last-used: 2026-03-25
 - Confirmations: 1
-- Related: toolchain, fail-env
+- Related: toolchain
 
 ## 知識
 

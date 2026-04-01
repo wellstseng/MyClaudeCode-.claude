@@ -7,7 +7,7 @@
 - Confirmations: 103
 - Type: decision
 - Tags: architecture, infrastructure
-- Related: decisions, toolchain, toolchain-ollama, doc-index-system, silent-failures, DESIGN, SPEC_impl_params
+- Related: decisions, toolchain, toolchain-ollama, DESIGN, SPEC_impl_params
 
 ## 知識
 
