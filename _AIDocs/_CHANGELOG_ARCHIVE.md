@@ -6,6 +6,17 @@
 
 | 日期 | 變更 | 涉及檔案 |
 |------|------|---------|
+| 2026-03-30 | **全面清理 + V2.21 自治修正**：修復 2 處硬編碼 + 刪除 backups/Logs/debug + 清理孤兒 slugs | `hooks/workflow-guardian.py`, `settings.json`, `_AIDocs/`, `memory/_reference/` |
+| 2026-03-30 | **Dashboard 4 修復 + 版本集中化** | `tools/workflow-guardian-mcp/server.js`, `version.json` |
+| 2026-03-27 | **V2.21 Phase 7 Skills/Tools 專案層支援** | `tools/memory-audit.py`, `tools/memory-conflict-detector.py`, `commands/*.md`, `server.js` |
+| 2026-03-27 | **文件版本同步 V2.21** | `README.md`, `Install-forAI.md`, `memory/_reference/*`, `memory/MEMORY.md` |
+| 2026-03-27 | **V2.21 Phase 3 專案自治層建置**：`init-project` skill 新增 Step 6 建立 `.claude/` 自治層。`workflow-guardian.py` 新增 `_call_project_hook()` subprocess 隔離呼叫 | `commands/init-project.md`, `hooks/workflow-guardian.py` |
+| 2026-03-27 | **V2.21 Phase 2 Project Registry + 路徑切換**：`register_project()` + registry 管理。`find_project_root()` 加 `.claude/memory/MEMORY.md` 辨識。`get_project_memory_dir()` 新路徑優先 | `hooks/wg_paths.py`, `hooks/workflow-guardian.py`, `hooks/wg_atoms.py`, `tools/workflow-guardian-mcp/server.js` |
+| 2026-03-27 | **V2.20 Phase 0.3 C2 修復**：`_truncate_context_by_activation` 加 `source_dirs` 參數修正專案層 ACT-R score 永遠 -10.0 問題 | `hooks/wg_atoms.py`, `hooks/workflow-guardian.py` |
+| 2026-03-24 | **V2.18 Phase 2 Section-Level 注入**：向量服務新增 `ranked_search_sections()` + `/search/ranked-sections` endpoint。`_semantic_search()` 回傳帶 sections。注入迴圈新增 section 提取（`_extract_sections()`），大 atom 省 69-87% tokens。安全防護：0 匹配/70% 閾值/服務不可用皆 fallback 全量注入 | `searcher.py`, `service.py`, `wg_intent.py`, `wg_atoms.py`, `workflow-guardian.py` |
+| 2026-03-23 | **V2.18 Phase 0+1**：環境清理（LanceDB 289→25MB、刪 7 死檔）+ 9 atom Trigger 精準化 + misdiagnosis/harvester 內容精簡 | `memory/*.md`, `MEMORY.md`, `workflow/config.json` |
+| 2026-03-23 | **V2.17 合併升級**：V2.16 自我迭代自動化 + V2.17 覆轍偵測 + AIDocs 內容閘門 + WebFetch Guard | `hooks/workflow-guardian.py`, `settings.json`, `rules/aidocs.md`, `memory/decisions*.md`, `CLAUDE.md`, `README.md`, `_AIDocs/*.md` |
+| 2026-03-19 | **V2.15 定義版本**：全文件版本號 V2.12→V2.15 統一。README 版本歷史補 V2.13/V2.14/V2.15 | `CLAUDE.md`, `README.md`, `Install-forAI.md`, `_AIDocs/*.md`, `memory/decisions*.md`, `rules/session-management.md` |
 | 2026-03-19 | **V2.14 Token Diet**：`_strip_atom_for_injection()` 注入前 strip 9 種 metadata + 行動/演化日誌。SessionEnd 從 byte_offset 跳已萃取段。cross-session lazy search 預篩。省 ~1550 tok/session | `hooks/workflow-guardian.py`, `hooks/extract-worker.py`, `memory/MEMORY.md`, `workflow/config.json` |
 | 2026-03-19 | **atom 精準拆分+設定精修**：toolchain-ollama 獨立拆分 + workflow-icld 拆分 + trigger 瘦身 + failures 拆分子 atoms + GIT 流程去重 + 設定檔去重/瘦身/統一管理 | `memory/*.md`, `workflow/config.json` |
 | 2026-03-19 | **V2.13 Failures 自動化系統**：Guardian 偵測失敗關鍵字 → detached extract-worker 萃取失敗模式 → 三維路由自動寫入對應 failure atom | `hooks/extract-worker.py`, `hooks/workflow-guardian.py`, `workflow/config.json`, `memory/failures/` |

@@ -3,9 +3,9 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: ollama, dual-backend, rdchat, qwen3, embedding, 萃取品質, thinking, Open WebUI
-- Last-used: 2026-03-31
+- Last-used: 2026-04-02
 - Created: 2026-03-19
-- Confirmations: 68
+- Confirmations: 77
 - Type: procedural
 - Tags: ollama, dual-backend, extraction
 - Related: toolchain, decisions-architecture
@@ -26,30 +26,15 @@
 - [固] Open WebUI /api/v1/embeddings 要求完整 model tag（如 `model:latest`），省略 tag 會 500
 - [固] LDAP 認證端點是 /api/v1/auths/ldap，payload 用 `user` 欄位（非 `email`）。token expires_at: null（永不過期）
 
-### 萃取品質實測（2026-03-13）
-
-A/B 對比：2 段真實 transcript（Redmine debug + NuGet build），各 4000 字送入萃取 prompt。
-
-| 維度 | rdchat qwen3.5 (think=T, 8192) | local qwen3:1.7b (think=F, 2048) |
-|------|------|------|
-| JSON 格式 | OK | OK |
-| 回應時間 | 38-43s | 6-13s |
-| 萃取項目數 | 2-4 項（精簡） | 4-6 項（較多但淺） |
-| 平均 content 長度 | 83-89 字 | 38-49 字 |
-| type 多樣性 | factual+architectural+decision+procedural | 幾乎全 factual |
-| 具體性 | 高（含路徑+數值+決策理由） | 中（偏短，缺細節） |
-| 噪音 | 極低 | 低（偶有淺層重複） |
-
-**關鍵發現**：
-- [固] qwen3.5 + think=false + 長 prompt → 秒回空 `[]`（退化），必須 think=true 才能正確萃取
-- [固] qwen3.5 thinking 約消耗 10K-13K 字元（~3K tokens），num_predict 需 ≥4096（設 8192 留餘量）
-- [固] qwen3:1.7b 不支援 think 參數（自動忽略），think=false 正常運作
-- [固] 結論：extract-worker 統一用 think=true + num_predict=8192，rdchat 品質高但慢，local 品質中但快，failover 機制不受影響
+### 萃取品質結論
+- [固] qwen3.5 必須 think=true 才能正確萃取（think=false 秒回空 `[]`），num_predict ≥4096（設 8192）
+- [固] qwen3:1.7b 不支援 think（自動忽略），think=false 正常運作
+- [固] extract-worker 統一 think=true + num_predict=8192；rdchat 品質高但慢，local 品質中但快
+- → 完整 A/B 數據：`_AIDocs/DevHistory/ab-test-ollama.md`
 
 ### 硬體限制
 
-- [固] Local fallback（GTX 1050 Ti 4GB，公司 Windows 機）同時只能跑一個模型，embedding 和推論需輪替；rdchat（RTX 3090）無此限制
-- [固] catclaw 開發機：Mac Mini（Apple Silicon），Ollama 跑在本地 unified memory，與 GTX 1050 Ti 架構不同，模型 swap 策略不適用同一假設
+- [固] Local fallback（GTX 1050 Ti 4GB）同時只能跑一個模型，embedding 和推論需輪替；rdchat（RTX 3090）無此限制
 
 ## 行動
 
@@ -57,9 +42,3 @@ A/B 對比：2 段真實 transcript（Redmine debug + NuGet build），各 4000 
 - 修改 ollama_client.py 或 extract-worker.py 前先查此處參數
 - failover 問題排查時確認 model name 是否跟著 backend 切換
 
-## 演化日誌
-
-| 日期 | 變更 | 來源 |
-|------|------|------|
-| 2026-03-19 | 從 toolchain.md 拆出 Ollama 區段 | atom-debug 精準化 |
-| 2026-03-13 | 原始 A/B 實測數據 | ab-extract-test |

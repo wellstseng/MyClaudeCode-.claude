@@ -442,14 +442,14 @@ def _extract_sections(
     parent_indices: set = set()
     for sec in matched_sections:
         if sec["level"] == 3:
-            # Find parent ##
+            # Find parent ## (last ## before this ### section)
             sec_start = sec["start"]
+            candidate_idx = None
             for idx, s in enumerate(section_map):
                 if s["level"] == 2 and s["start"] < sec_start:
                     candidate_idx = idx
-                    candidate = s
             # Add parent header line only (not content)
-            if candidate_idx not in matched_indices:
+            if candidate_idx is not None and candidate_idx not in matched_indices:
                 parent_indices.add(candidate_idx)
 
     # Collect lines to include
@@ -492,10 +492,6 @@ def _extract_sections(
         prev = i
 
     if omitted > 0:
-        atom_file = ""
-        for line in lines:
-            if line.startswith("# "):
-                break
         output_lines.append(f"\n[+{omitted} sections omitted]")
 
     result = "\n".join(output_lines)

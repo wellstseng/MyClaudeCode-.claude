@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: prefab GUID, component GUID, m_Script, ILUIWnd GUID, UIButtonCustom GUID, EnhancedScroller GUID, UI component registry
-- Last-used: 2026-03-27
-- Confirmations: 1
+- Last-used: 2026-04-01
+- Confirmations: 5
 - Related: unity-prefab-workflow
 
 ## UI Component Script GUIDs (SGI Client, Unity 2022.3.62f2)

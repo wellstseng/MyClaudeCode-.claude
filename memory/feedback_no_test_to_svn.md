@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 上SVN, svn commit, 測試碼, 新手作業, 練習, 不可上傳
-- Last-used: 2026-03-27
-- Confirmations: 5
+- Last-used: 2026-04-02
+- Confirmations: 6
 
 ## 知識
 
@@ -20,9 +20,3 @@
 - 執行同步前，檢查異動清單中是否有測試/練習/新手作業檔案
 - 可疑檔案不自動加入，先向使用者確認
 
-## 演化日誌
-
-| 日期 | 變更 | 來源 |
-|------|------|------|
-| 2026-03-24 | 初始建立（claude-native 格式） | 使用者明確糾正 r10854 誤上傳 |
-| 2026-03-25 | 格式修正：claude-native → 原子記憶標準格式 | memory-health 診斷 |

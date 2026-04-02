@@ -5,7 +5,7 @@
 - Trigger: 安裝MCP, 安裝skill, install MCP, install skill, add MCP, 新增MCP, 新增skill
 - Last-used: 2026-03-25
 - Confirmations: 1
-- Related: toolchain, fail-env
+- Related: toolchain
 
 ## 知識
 
@@ -45,8 +45,3 @@
 - 若使用者指定「只給某專案用」→ 才寫入專案層 `.mcp.json`，否則一律全域
 - 記錄新安裝的 MCP/Skill 到 toolchain atom
 
-## 演化日誌
-
-| 日期 | 變更 | 來源 |
-|------|------|------|
-| 2026-03-25 | 初始建立：從 excel MCP 安裝踩坑經驗萃取 | 使用者明確要求 |

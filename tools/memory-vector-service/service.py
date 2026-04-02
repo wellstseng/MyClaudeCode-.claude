@@ -64,6 +64,14 @@ class VectorServiceHandler(BaseHTTPRequestHandler):
         """Override to write to stderr with timestamp."""
         print(f"[service] {self.client_address[0]} - {format % args}", file=sys.stderr)
 
+    def handle_one_request(self):
+        """Override to catch ConnectionAbortedError / BrokenPipeError."""
+        try:
+            super().handle_one_request()
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            # Client disconnected mid-response — safe to ignore
+            pass
+
     def _send_json(self, data: Any, status: int = 200):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(status)

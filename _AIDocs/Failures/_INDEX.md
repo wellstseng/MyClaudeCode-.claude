@@ -1,0 +1,16 @@
+# Failures — 踩坑記錄與失敗模式
+
+> 跨專案累積的環境陷阱、假設錯誤、靜默失敗、認知偏差、誤診案例
+> 最近更新：2026-04-01
+
+---
+
+## 文件清單
+
+| # | 文件 | 說明 | keywords |
+|---|------|------|----------|
+| 1 | env-traps.md | Windows/MSYS2/Node.js/Ollama/MCP/VSCode 環境踩坑 | Win環境陷阱, Windows, MSYS2, Node.js, npx, Ollama, port, MCP啟動, VSCode |
+| 2 | wrong-assumptions.md | 假設錯誤案例（直覺偏差、空目錄、metrics 異常） | 假設錯誤, 直覺偏差, 為何沒生效, 空目錄, metrics異常, 功能沒反應 |
+| 3 | silent-failures.md | 靜默失敗案例（看似正常實際沒生效） | 靜默, silent, 看似正常, setdefault, knowledge_queue為空, 吞掉錯誤 |
+| 4 | cognitive-patterns.md | 認知偏差案例（過度工程、代理指標） | 過度工程, 代理指標, proxy metric, AI看不懂, AI在打轉, 品質回饋 |
+| 5 | misdiagnosis-verify-first.md | 誤診案例 + 驗證優先原則 | 誤診, 驗證優先, verify first, 診斷失敗, 先射箭再畫靶, 假設錯誤就規劃, 過度規劃, 沒驗證就動手 |

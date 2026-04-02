@@ -4,9 +4,9 @@
 - Confidence: [固]
 - Type: procedural
 - Trigger: ICLD, 閉環, Sprint, 功能拆解, 開發計畫, 大型新功能, 新系統規劃, 規格書
-- Last-used: 2026-03-25
+- Last-used: 2026-03-27
 - Created: 2026-03-19
-- Confirmations: 58
+- Confirmations: 59
 - Tags: workflow, icld, sprint
 - Related: workflow-rules, icld-sprint-template
 
@@ -49,9 +49,3 @@
 - 功能需求 / 拆解請求 → 先評估規模 → 滿足 ICLD 條件則主動建議
 - 使用者拒絕 → 退回 Phase 模式（見 workflow-rules.md）
 
-## 演化日誌
-
-| 日期 | 變更 | 來源 |
-|------|------|------|
-| 2026-03-17 | 原始建立（含在 workflow-rules.md） | session:wellstseng merge |
-| 2026-03-19 | 從 workflow-rules.md 拆分為獨立 atom | atom-debug 精準化 |

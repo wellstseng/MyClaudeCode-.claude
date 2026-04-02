@@ -40,6 +40,7 @@ from wg_core import (
     load_config,
     _now_iso, _estimate_tokens,
     state_path, read_state, write_state, new_state, _ensure_state,
+    _find_active_sibling_state,  # V3/1.5A: SessionStart dedup
     output_json, output_nothing, output_block,
     _atom_debug_log, _atom_debug_error,
 )
@@ -99,11 +100,21 @@ try:
 except ImportError:
     WISDOM_AVAILABLE = False
 
+# ─── V3: Hot Cache (lazy import, graceful fallback) ─────────────────────────
+try:
+    from wg_hot_cache import read_hot_cache, mark_injected, HOT_CACHE_PATH
+except ImportError:
+    read_hot_cache = None
+
 
 # (State I/O moved to wg_core.py)
 
 
 # (Intent, Topic Tracker, Session Context, MCP, Vector Service moved to wg_intent.py)
+
+# V2.22: Use shared content classifier (was inline _AIDOCS_TEMP_PATTERNS)
+from wg_content_classify import is_plan_filename, is_plan_content
+_SUPERSEDES_RE = re.compile(r"^- Supersedes:\s*(.+)", re.MULTILINE)
 
 # ─── Project Delegate Hook (V2.21) ───────────────────────────────────────────
 
@@ -141,10 +152,32 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
     cwd = input_data.get("cwd", "")
     source = input_data.get("source", "startup")
 
+    # ── V3/1.5A: SessionStart 去重 — 同 cwd 60s 內有活躍 state 則複用 ──
+    sibling = None
+    if source != "compact":
+        sibling = _find_active_sibling_state(cwd, session_id)
+        if sibling and source == "resume":
+            # Resume 合併到既有 startup session
+            redirect_state = new_state(session_id, cwd, source)
+            redirect_state["merged_into"] = sibling["session"]["id"]
+            redirect_state["phase"] = "merged"
+            write_state(session_id, redirect_state)
+            lines = [f"[Workflow Guardian] Session merged ({source})."]
+            print(json.dumps({
+                "hookSpecificOutput": {
+                    "hookEventName": "SessionStart",
+                    "additionalContext": "\n".join(lines),
+                }
+            }, ensure_ascii=False))
+            sys.exit(0)
+        # startup + sibling: 繼續正常流程但後面跳過 vector init
+
     # On compact/resume, reuse existing state
     existing = read_state(session_id)
     if existing and source in ("compact", "resume"):
         state = existing
+        # V3/Phase 2: Atom Recovery — 告知壓縮前已載入的 atoms
+        prev_atoms = state.get("injected_atoms", [])
         # Clear injected_atoms so atoms get re-injected after compact (context was truncated)
         state["injected_atoms"] = []
         # Re-inject full context after compaction
@@ -161,8 +194,15 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         if kq_count > 0:
             items = [q["content"][:40] for q in state["knowledge_queue"][:3]]
             lines.append(f"Pending knowledge: {'; '.join(items)}")
+        # V3/Phase 2: Atom Recovery hint
+        if prev_atoms:
+            atom_names = ", ".join(prev_atoms)
+            lines.append(f"[Atom Recovery] 壓縮前已載入: {atom_names}")
     else:
         state = new_state(session_id, cwd, source)
+        # V3/1.5A: startup + sibling → skip vector init
+        if sibling and source == "startup":
+            state["_skip_vector_init"] = True
 
         # Parse memory indices (store as serializable lists)
         global_atoms = parse_memory_index(MEMORY_DIR)
@@ -276,17 +316,20 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
     # CRITICAL: write state before any output so subsequent hooks can read it.
     write_state(session_id, state)
 
-    # ── Vector Service auto-start (before output — best-effort, quick) ──
-    # C5/W11 fix: _ensure_vector_service was dead code after output_json(exit).
-    # Now called before print so service starts even if warmup subprocess is slow.
-    if config.get("vector_search", {}).get("auto_start_service", True):
-        try:
-            _ensure_vector_service(config)
-        except Exception as e:
-            _atom_debug_error("注入:vector_service_start", e)
+    # V3/2.2A: Clean up stale state files on every SessionStart
+    try:
+        _cleanup_old_states()
+    except Exception as e:
+        print(f"[v3] SessionStart cleanup error: {e}", file=sys.stderr)
+
+    # V3/1.5C: Clear vector_ready.flag (will be re-created by background process)
+    try:
+        (WORKFLOW_DIR / "vector_ready.flag").unlink(missing_ok=True)
+    except OSError:
+        pass
 
     # C5/W11 fix: print directly (not via output_json which exits),
-    # then spawn warmup as fire-and-forget subprocess, then exit.
+    # then spawn vector init as fire-and-forget subprocess, then exit.
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
@@ -294,30 +337,94 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         }
     }, ensure_ascii=False))
 
-    # ── Vector warmup (fire-and-forget subprocess, non-blocking) ──────────
-    if config.get("vector_search", {}).get("auto_start_service", True):
+    # ── V3/1.5C: Vector service — fire-and-forget subprocess ────────────
+    # Replaces synchronous _ensure_vector_service + separate warmup.
+    # Background subprocess: health check → port guard + spawn → poll ready → flag → warmup.
+    if (config.get("vector_search", {}).get("auto_start_service", True)
+            and not state.get("_skip_vector_init")):
         try:
             vs_port = config.get("vector_search", {}).get("service_port", 3849)
-            warmup_url = f"http://127.0.0.1:{vs_port}/search?q=warmup&top_k=1&min_score=0.99"
-            import subprocess as _wusp
-            _wu_kwargs: dict = {
-                "stdin": _wusp.DEVNULL,
-                "stdout": _wusp.DEVNULL,
-                "stderr": _wusp.DEVNULL,
+            vs_script = str(CLAUDE_DIR / "tools" / "vector-service.py")
+            flag_path = str(WORKFLOW_DIR / "vector_ready.flag")
+            # Inline script: health check → spawn if needed → poll → flag → warmup
+            _bg_code = f"""
+import urllib.request, urllib.error, subprocess, sys, time, os
+from pathlib import Path
+
+port = {vs_port}
+base = f"http://127.0.0.1:{{port}}"
+
+# 1. Health check (2s timeout)
+try:
+    urllib.request.urlopen(f"{{base}}/health", timeout=2)
+except Exception:
+    # 2. Port guard + spawn service
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(("127.0.0.1", port))
+        sock.close()
+        # Port free → spawn
+        kw = {{"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}}
+        if sys.platform == "win32":
+            kw["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+        else:
+            kw["start_new_session"] = True
+        subprocess.Popen([sys.executable, {repr(vs_script)}], **kw)
+    except OSError:
+        sock.close()  # Port in use — service likely starting
+
+# 3. Poll ready (30 × 0.5s = 15s max)
+for _ in range(30):
+    try:
+        urllib.request.urlopen(f"{{base}}/health", timeout=2)
+        break
+    except Exception:
+        time.sleep(0.5)
+
+# 4. Write ready flag
+Path({repr(flag_path)}).write_text("ready", encoding="utf-8")
+
+# 5. Warmup query
+try:
+    urllib.request.urlopen(f"{{base}}/search?q=warmup&top_k=1&min_score=0.99", timeout=15)
+except Exception:
+    pass
+"""
+            _bg_kwargs: dict = {
+                "stdin": subprocess.DEVNULL,
+                "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.DEVNULL,
             }
             if sys.platform == "win32":
-                _wu_kwargs["creationflags"] = _wusp.CREATE_NO_WINDOW
+                _bg_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
             else:
-                _wu_kwargs["start_new_session"] = True
-            _wusp.Popen(
-                [sys.executable, "-c",
-                 f"import urllib.request; urllib.request.urlopen({repr(warmup_url)}, timeout=15)"],
-                **_wu_kwargs,
+                _bg_kwargs["start_new_session"] = True
+            subprocess.Popen(
+                [sys.executable, "-c", _bg_code],
+                **_bg_kwargs,
             )
         except Exception as e:
-            _atom_debug_error("注入:vector_warmup", e)
+            _atom_debug_error("注入:vector_service_bg", e)
 
     sys.exit(0)
+
+
+def _is_memory_system_dev(prompt_lower: str, cwd: str) -> bool:
+    """嚴格判斷是否為記憶系統開發場景。需 2+ 命中或 CWD 匹配。"""
+    # Rule 1: CWD 在 hooks/tools 目錄下 → 直接觸發
+    cwd_norm = cwd.replace("\\", "/")
+    if "/.claude/hooks" in cwd_norm or "/.claude/tools" in cwd_norm:
+        return True
+    # Rule 2: 複合關鍵詞（需 2+ 命中）
+    MEM_KEYWORDS = [
+        "workflow-guardian", "wg_", "atom memory", "原子記憶",
+        "wisdom_engine", "記憶系統", "memory system",
+        "hot_cache", "extract-worker", "vector service",
+        "hook pipeline", "萃取管線", "注入管線",
+    ]
+    hits = sum(1 for kw in MEM_KEYWORDS if kw in prompt_lower)
+    return hits >= 2
 
 
 def handle_user_prompt_submit(
@@ -355,8 +462,21 @@ def handle_user_prompt_submit(
     except Exception as e:
         print(f"[dual-backend] Long DIE response error: {e}", file=sys.stderr)
 
+    # ─── V3/Phase -1: Hot Cache Fast Path ───────────────────────────────
+    hot_cache_tokens = 0
+    if read_hot_cache:
+        try:
+            hot_data = read_hot_cache(session_id)
+            if hot_data:
+                lines.append(f"[HotCache:{hot_data.get('source', '?')}] {hot_data.get('summary', '')}")
+                hot_cache_tokens = hot_data.get("token_estimate", 50)
+                mark_injected(session_id)
+        except Exception:
+            pass
+
     # ─── Phase 0: Session Context Injection (first prompt only) ────────
     budget = compute_token_budget(prompt)
+    budget = max(budget - hot_cache_tokens, 500)  # V3: deduct hot cache tokens
     if not state.get("session_context_injected", False):
         state["session_context_injected"] = True
         episodic_results = _search_episodic_context(prompt, config)
@@ -416,6 +536,20 @@ def handle_user_prompt_submit(
                 doc_path = f"_AIDocs/{doc}" if aidocs_root else doc
                 pointer_lines.append(f"  \u2192 Read `{doc_path}` \u2014 {desc[:80]}")
             lines.extend(pointer_lines)
+
+    # ── V3.1: JIT load internal pipeline reference for memory system dev ──
+    if _is_memory_system_dev(prompt_lower, state.get("session", {}).get("cwd", "")):
+        ref_path = MEMORY_DIR / "_reference" / "internal-pipeline.md"
+        if ref_path.exists():
+            try:
+                ref_text = ref_path.read_text(encoding="utf-8")
+                ref_tokens = len(ref_text) // 4
+                jit_budget = min(ref_tokens, 250)
+                if jit_budget <= budget:
+                    lines.append(f"[JIT:InternalPipeline]\n{ref_text[:jit_budget * 4]}")
+                    budget -= jit_budget
+            except (OSError, UnicodeDecodeError):
+                pass
 
     # ─── Phase 1: Atom auto-injection (Trigger matching) ─────────────
     atom_index = state.get("atom_index", {})
@@ -521,7 +655,6 @@ def handle_user_prompt_submit(
 
     # ── Supersedes filtering (v2.1 Sprint 3) ────────────────────
     # If atom A supersedes atom B, and both matched, drop B
-    SUPERSEDES_RE = re.compile(r"^- Supersedes:\s*(.+)", re.MULTILINE)
     superseded_names: set = set()
     for (name, rel_path, triggers), base_dir in matched_with_dir:
         atom_path = (base_dir / rel_path) if rel_path else (base_dir / "memory" / f"{name}.md")
@@ -531,7 +664,7 @@ def handle_user_prompt_submit(
             text = atom_path.read_text(encoding="utf-8-sig")
         except (OSError, UnicodeDecodeError):
             continue
-        sm = SUPERSEDES_RE.search(text)
+        sm = _SUPERSEDES_RE.search(text)
         if sm:
             for old in sm.group(1).split(","):
                 old = old.strip()
@@ -867,14 +1000,40 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                     f"[v2.16] Staging name gate: {staging_fname}", file=sys.stderr
                 )
 
+        # V2.22: Memory path enforcement — block writes to legacy personal project path
+        # when the current project has been migrated to V2.21 (project_root exists).
+        # Exempt: MEMORY.md pointer file itself (used by project registry/init),
+        #         episodic/, access.json, transcript files (Claude Code managed).
+        _claude_projects_pat = "/.claude/projects/"
+        if _claude_projects_pat in normalized and "/memory/" in normalized:
+            _proj_root = state.get("atom_index", {}).get("project_root", "")
+            # Only enforce when project has been migrated (project_root is set)
+            if _proj_root:
+                _rel_part = normalized.split("/memory/", 1)[-1]
+                # Exempt: MEMORY.md pointer, episodic/, access.json — these stay in personal path
+                _exempt = (
+                    _rel_part == "MEMORY.md"
+                    or _rel_part.startswith("episodic/")
+                    or _rel_part == "access.json"
+                )
+                if not _exempt:
+                    _proj_root_norm = _proj_root.replace("\\", "/")
+                    _correct_base = f"{_proj_root_norm}/.claude/memory/"
+                    state["_path_enforcement_advisory"] = (
+                        f"🚫 **路徑錯誤** — 寫入了舊個人層路徑 `~/.claude/projects/*/memory/`。\n"
+                        f"V2.21 規則：專案記憶必須寫到 `{_correct_base}`。\n"
+                        f"正確路徑：`{_correct_base}{_rel_part}`\n"
+                        f"請立即搬移檔案並刪除錯誤路徑的副本。"
+                    )
+                    print(
+                        f"[v2.22] Path enforcement BLOCKED: {normalized} → should be {_correct_base}{_rel_part}",
+                        file=sys.stderr,
+                    )
+
         # V2.15: _AIDocs content classification gate — warn on temporary files
         if "/_AIDocs/" in normalized or "/_aidocs/" in normalized.lower():
             fname = normalized.rsplit("/", 1)[-1]
-            _TEMP_PATTERNS = re.compile(
-                r"(?i)(plan|todo|roadmap|draft|wip|scratch|調查|規劃|暫存)"
-                r"|phase[- _]?\d"
-            )
-            if _TEMP_PATTERNS.search(fname):
+            if is_plan_filename(fname):
                 state["_aidocs_advisory"] = (
                     f"⚠ {fname} 看起來是暫時性文件，"
                     f"建議放 memory/_staging/ 而非 _AIDocs/。"
@@ -901,6 +1060,7 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
     advisories = []
     if state:
         for key, prefix in [
+            ("_path_enforcement_advisory", "[Guardian:PathEnforce]"),
             ("_aidocs_advisory", "[Guardian:AIDocs]"),
             ("_staging_advisory", "[Guardian:StagingName]"),
         ]:
@@ -908,6 +1068,16 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             if val:
                 advisories.append(f"{prefix} {val}")
                 del state[key]
+
+    # V3/1C: Hot Cache mid-turn injection
+    if read_hot_cache:
+        try:
+            hot_data = read_hot_cache(session_id)
+            if hot_data:
+                advisories.append(f"[HotCache] {hot_data.get('summary', '')}")
+                mark_injected(session_id)
+        except Exception:
+            pass
 
     if advisories:
         write_state(session_id, state)
@@ -930,6 +1100,21 @@ def handle_pre_compact(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
 
     # Mark snapshot for recovery after compaction
     state["pre_compact_snapshot"] = _now_iso()
+
+    # V2.22: Episodic checkpoint — generate episodic here because SessionEnd
+    # often doesn't fire (user closes window / context limit / VSCode reload).
+    # Only once per session to avoid duplicates.
+    if not state.get("episodic_checkpoint_done"):
+        ep_cfg = config.get("episodic", {})
+        if ep_cfg.get("auto_generate", True) and _should_generate_episodic(state, config):
+            try:
+                result = _generate_episodic_atom(session_id, state, config)
+                if result:
+                    state["episodic_checkpoint_done"] = True
+                    print(f"[v2.22] episodic checkpoint: {result}", file=sys.stderr)
+            except Exception as e:
+                print(f"[v2.22] episodic checkpoint failed: {e}", file=sys.stderr)
+
     write_state(session_id, state)
     output_nothing()
 
@@ -1011,11 +1196,49 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
 
 
 def _cleanup_old_states() -> None:
-    """W10: Remove state files older than 7 days (regardless of phase)."""
-    cutoff = time.time() - 7 * 86400
+    """V3/2.2A: Tiered TTL cleanup for state files.
+
+    - age < 600s (10m): always keep (protect fresh states)
+    - merged_into + > 600s: delete
+    - prompt_count=0 + working + > 600s: delete (empty startup)
+    - prompt_count>0 + working + > 1800s (30m): delete (orphaned)
+    - done + sync_pending=false + > 3600s (1h): delete (synced, no value)
+    - done + sync_pending=true + > 14400s (4h): delete (stale pending)
+    - fallback > 7d: delete
+    """
+    now = time.time()
     for f in WORKFLOW_DIR.glob("state-*.json"):
         try:
-            if f.stat().st_mtime < cutoff:
+            age = now - f.stat().st_mtime
+            if age < 600:
+                continue
+
+            # Parse state for tiered decisions
+            try:
+                with open(f, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except (json.JSONDecodeError, OSError):
+                # Corrupt file — delete if old enough
+                if age > 7 * 86400:
+                    f.unlink(missing_ok=True)
+                continue
+
+            phase = data.get("phase", "")
+            prompt_count = data.get("topic_tracker", {}).get("prompt_count", 0)
+            merged = data.get("merged_into")
+            sync_pending = data.get("sync_pending", False)
+
+            if merged and age > 600:
+                f.unlink(missing_ok=True)
+            elif prompt_count == 0 and phase == "working" and age > 600:
+                f.unlink(missing_ok=True)
+            elif prompt_count > 0 and phase == "working" and age > 1800:
+                f.unlink(missing_ok=True)
+            elif phase == "done" and not sync_pending and age > 3600:
+                f.unlink(missing_ok=True)
+            elif phase == "done" and sync_pending and age > 14400:
+                f.unlink(missing_ok=True)
+            elif age > 7 * 86400:
                 f.unlink(missing_ok=True)
         except OSError:
             pass
@@ -1031,11 +1254,11 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
     state["ended_at"] = _now_iso()
     state["phase"] = "done"
 
-    # W10: Clean up stale state files (older than 7 days)
+    # W10/V3-2.2A: Clean up stale state files (tiered TTL)
     try:
         _cleanup_old_states()
     except Exception as e:
-        print(f"[v2.20] State cleanup error: {e}", file=sys.stderr)
+        print(f"[v3] SessionEnd cleanup error: {e}", file=sys.stderr)
 
     # ─── Spawn extract-worker.py as detached subprocess (V2.12) ─────────
     rc = config.get("response_capture", {})
@@ -1127,8 +1350,9 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
     except Exception as e:
         print(f"[v2.11] Over-engineering metrics error: {e}", file=sys.stderr)
 
-    # V2.10: Staging area reminder
-    staging_dir = MEMORY_DIR / "_staging"
+    # V2.10: Staging area reminder (V2.21: project-aware)
+    cwd = state.get("session", {}).get("cwd", "")
+    staging_dir = resolve_staging_dir(cwd)
     if staging_dir.exists():
         staging_files = list(staging_dir.glob("*.md"))
         if staging_files:
@@ -1170,9 +1394,9 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
     except Exception as e:
         print(f"[v2.18] fix-refs error: {e}", file=sys.stderr)
 
-    # v2.1 Task #2: Auto-generate episodic atom
-    episodic_generated = False
-    if config.get("episodic", {}).get("auto_generate", True):
+    # v2.1 Task #2: Auto-generate episodic atom (skip if PreCompact already did it)
+    episodic_generated = state.get("episodic_checkpoint_done", False)
+    if not episodic_generated and config.get("episodic", {}).get("auto_generate", True):
         try:
             _generate_episodic_atom(session_id, state, config)
             episodic_generated = True
@@ -1183,7 +1407,12 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
     # V2.11-fix: Save review marker if review was due this session
     if state.get("review_due"):
         try:
+            # V2.21: count global + all project episodic atoms
             total = sum(1 for _ in EPISODIC_DIR.glob("episodic-*.md")) if EPISODIC_DIR.exists() else 0
+            for _slug, _mem_dir in discover_all_project_memory_dirs():
+                _ep = _mem_dir / "episodic"
+                if _ep.exists():
+                    total += sum(1 for _ in _ep.glob("episodic-*.md"))
             _save_review_marker(total)
             print(f"[v2.6] Review marker saved (total={total})", file=sys.stderr)
         except Exception as e:

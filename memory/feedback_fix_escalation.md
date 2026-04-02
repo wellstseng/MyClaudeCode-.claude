@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 重試, retry, escalation, 精確修正, fix-escalation, 修不好, 又壞了, 失敗
-- Last-used: 2026-03-27
-- Confirmations: 7
+- Last-used: 2026-04-02
+- Confirmations: 13
 
 ## 知識
 
@@ -21,9 +21,3 @@
 - 收到 `[Guardian:FixEscalation]` 或自我察覺重試 → 立即執行 `/fix-escalation`
 - 連續 3 次未解決 → 強制暫停，向使用者報告
 
-## 演化日誌
-
-| 日期 | 變更 | 來源 |
-|------|------|------|
-| 2026-03-17 | 初始建立：6 Agent 會議制 + Guardian hook 自動偵測 + /fix-escalation skill | 使用者明確要求 |
-| 2026-03-24 | 格式轉換：claude-native → 原子記憶標準格式 | memory-health 診斷 |

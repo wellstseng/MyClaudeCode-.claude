@@ -4,9 +4,9 @@
 - Confidence: [固]
 - Type: procedural
 - Trigger: svn, svn-update, TortoiseSVN, 衝突, conflict
-- Last-used: 2026-03-27
+- Last-used: 2026-04-02
 - Created: 2026-03-18
-- Confirmations: 96
+- Confirmations: 121
 - Tags: svn, vcs
 - Related: workflow-rules
 
@@ -40,9 +40,3 @@
 - 使用者拒絕 → 記錄已詢問，不再重複
 - 衝突不自動解決，AI 分析 + 使用者確認
 
-## 演化日誌
-
-| 日期 | 變更 | 來源 |
-|------|------|------|
-| 2026-03-06 | 原始規則（含在 workflow-rules.md 中） | session:SVN 工作流規則建立 |
-| 2026-03-18 | 從 workflow-rules.md 拆分為獨立 atom | atom-debug 精準化 |

@@ -14,10 +14,12 @@ Survives hook timeout — runs ~60s on GTX 1050 Ti.
 import json
 import re
 import sys
+import time
 import urllib.request
 import urllib.parse
 import urllib.error
 from datetime import datetime
+from wg_content_classify import classify_extracted_item
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -184,6 +186,7 @@ _RULES_COMMON = (
     "規則:\n"
     "- 只萃取此專案/環境特有的具體事實（含數值、路徑、版本、錯誤碼）\n"
     "- 跳過：程式碼片段、session 進度、隨便 Google 就能查到的知識\n"
+    "- 跳過：規劃/計畫/待辦/下一步/草稿/TODO/Phase 排程等未來意圖（只取已確定的事實）\n"
     "- 沒有值得萃取的內容就輸出 []\n"
     "- 直接輸出 JSON，不要解釋\n"
     "/no_think\n\n"
@@ -253,7 +256,9 @@ def _parse_llm_response(raw: str) -> List[dict]:
     try:
         match = re.search(r"\[.*\]", raw, re.DOTALL)
         if match:
-            items = json.loads(match.group(0))
+            parsed = json.loads(match.group(0))
+            # Filter: only keep dict items (LLM may emit strings/ints in array)
+            items = [x for x in parsed if isinstance(x, dict)]
     except (json.JSONDecodeError, ValueError):
         for m in re.finditer(r'"content"\s*:\s*"([^"]{10,150})"', raw):
             items.append({"content": m.group(1), "type": "factual"})
@@ -493,6 +498,14 @@ def run_extraction(ctx: Dict[str, Any]) -> Dict[str, Any]:
     if not items:
         return _empty_result()
 
+    # V2.22: Content-type gate — filter out plan/draft items (route to _staging)
+    plan_items = [it for it in items if classify_extracted_item(it) == "plan"]
+    items = [it for it in items if classify_extracted_item(it) != "plan"]
+    if plan_items:
+        print(f"[v2.22] Filtered {len(plan_items)} plan-type items from extraction", file=sys.stderr)
+    if not items and not is_failure:
+        return _empty_result()
+
     # Tag source
     source_tag = "failure" if is_failure else ("per-turn" if is_per_turn else "session-end")
     for item in items:
@@ -573,6 +586,25 @@ def _per_turn_writeback(ctx: dict, result: dict) -> None:
     state["extract_worker_pid"] = 0  # clear lease (worker done)
     state["last_updated"] = _now_iso()
     _write_state_atomic(state_path, state)
+
+    # ── V3: deep extract → hot cache writeback ──
+    try:
+        from wg_hot_cache import write_hot_cache
+        if items:
+            summary = "; ".join(
+                it.get("content", "")[:60] for it in items[:3]
+            )
+            write_hot_cache({
+                "session_id": session_id,
+                "timestamp": time.time(),
+                "source": "deep_extract",
+                "injected": False,
+                "knowledge": items[:5],
+                "summary": summary[:200],
+                "token_estimate": max(len(summary) // 4, 10),
+            })
+    except Exception:
+        pass  # hot cache 是增強功能，失敗不影響主流程
 
 
 # ─── Failure writeback ────────────────────────────────────────────────────────

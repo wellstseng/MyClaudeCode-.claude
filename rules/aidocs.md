@@ -18,3 +18,23 @@
 4. **文件與原始碼同步**：讀取 _AIDocs 文件後，若發現與實際原始碼有差異（函式已更名/移除/新增、簽名變更、檔案搬遷等），**立即更新該文件**，不需等到任務結束。差異修正同樣記入 `_CHANGELOG.md`。
 5. **活文件更新**：修改核心結構、發現新認知、踩到陷阱 → 更新 `_AIDocs/*.md` + `_CHANGELOG.md`
 6. **新增文件時**：同步更新 `_AIDocs/_INDEX.md`
+
+## 檔案組織規則（_AIDocs/ vs memory/）
+
+| 位置 | 定位 | 放什麼 |
+|------|------|--------|
+| `_AIDocs/` | 專案知識庫 | 以知識庫形態存在的細節檔案（架構分析、工具文件、領域知識、外部收錄） |
+| `memory/` | 索引 + 行為層 | MEMORY.md 總索引、偏好、行為校正（feedback）、工作流規則、失敗模式 |
+
+### 判定規則
+1. 「這份內容是某個領域的參考資料？」→ `_AIDocs/` 對應子資料夾
+2. 「這份內容直接影響 AI 的行為方式？」→ `memory/`
+3. 高頻觸發且為當前專案核心決策 → 留 `memory/`（維持自動注入）
+
+### _AIDocs 子資料夾組織
+- 依知識類型建立子資料夾（如 `ClaudeCodeInternals/`、`Tools/`、`AtomMemorySystem/` 等）
+- 每個子資料夾有自己的 `_INDEX.md`（含 keywords 欄位供 hook keyword 匹配）
+- 頂層 `_AIDocs/_INDEX.md` 統一索引所有子資料夾
+
+### MEMORY.md 導航
+- `MEMORY.md` 必須包含 _AIDocs 導航區塊，讓 AI 知道去 `_AIDocs/_INDEX.md` 查閱知識庫

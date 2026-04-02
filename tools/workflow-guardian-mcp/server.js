@@ -10,6 +10,7 @@
 const fs = require("fs");
 const path = require("path");
 const http = require("http");
+const https = require("https");
 const { exec } = require("child_process");
 
 // ─── Crash protection & logging ─────────────────────────────────────────────
@@ -18,11 +19,15 @@ const CLAUDE_DIR = path.join(require("os").homedir(), ".claude");
 const WORKFLOW_DIR = path.join(CLAUDE_DIR, "workflow");
 const CRASH_LOG = path.join(WORKFLOW_DIR, "guardian-crash.log");
 
+let _crashLogging = false;
 function crashLog(label, err) {
+  if (_crashLogging) return;          // re-entry guard: prevent EPIPE cascade
+  _crashLogging = true;
   const ts = new Date().toISOString();
   const msg = `[${ts}] ${label}: ${err?.stack || err}\n`;
   try { fs.appendFileSync(CRASH_LOG, msg); } catch {}
-  process.stderr.write(`[workflow-guardian] ${label}: ${err?.message || err}\n`);
+  try { process.stderr.write(`[workflow-guardian] ${label}: ${err?.message || err}\n`); } catch {}
+  _crashLogging = false;
 }
 
 process.on("uncaughtException", (err) => {
@@ -41,7 +46,14 @@ const MEMORY_DIR = path.join(CLAUDE_DIR, "memory");
 const TOOLS_DIR = path.join(CLAUDE_DIR, "tools");
 const CONFIG_PATH = path.join(WORKFLOW_DIR, "config.json");
 const REGISTRY_PATH = path.join(MEMORY_DIR, "project-registry.json");
+const VERSION_PATH = path.join(CLAUDE_DIR, "version.json");
 const DASHBOARD_PORT = loadConfig().dashboard_port || 3848;
+
+function loadVersions() {
+  try { return JSON.parse(fs.readFileSync(VERSION_PATH, "utf-8")); }
+  catch { return { guardian: "0.0.0", atom_memory: "?" }; }
+}
+const VERSIONS = loadVersions();
 
 function loadRegistry() {
   try {
@@ -202,6 +214,8 @@ function listAllSessions() {
         age_minutes: Math.round(ageMs / 60000),
         ended: !!state.ended_at,
         muted: !!state.muted,
+        merged_into: state.merged_into || null,
+        skip_vector_init: !!state._skip_vector_init,
       };
     } catch {
       return null;
@@ -265,7 +279,7 @@ function handleMessage(msg) {
       sendResponse(id, {
         protocolVersion: "2025-11-25",
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: "workflow-guardian", version: "2.1.0" },
+        serverInfo: { name: "workflow-guardian", version: VERSIONS.guardian },
       });
       break;
 
@@ -364,6 +378,67 @@ const TOOL_DEFINITIONS = [
       required: ["session_id"],
     },
   },
+  {
+    name: "atom_write",
+    description:
+      "Write or update an atom file with validated format. " +
+      "Ensures correct metadata structure, runs write-gate dedup, " +
+      "updates MEMORY.md index, and triggers vector indexing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Atom title (becomes # heading and filename slug)" },
+        scope: { type: "string", enum: ["global", "project"], description: "global or project scope" },
+        confidence: { type: "string", enum: ["[固]", "[觀]", "[臨]"], description: "Confidence level" },
+        triggers: {
+          type: "array", items: { type: "string" },
+          description: "Trigger keywords for MEMORY.md index",
+        },
+        knowledge: {
+          type: "array", items: { type: "string" },
+          description: "Knowledge lines (each prefixed with [固]/[觀]/[臨])",
+        },
+        actions: {
+          type: "array", items: { type: "string" },
+          description: "Action guidelines",
+        },
+        related: {
+          type: "array", items: { type: "string" },
+          description: "Related atom names (optional)",
+        },
+        mode: {
+          type: "string", enum: ["create", "append", "replace"],
+          description: "create=new atom, append=add knowledge lines, replace=overwrite knowledge section",
+        },
+        project_cwd: {
+          type: "string",
+          description: "Project root path (required when scope=project)",
+        },
+        skip_gate: {
+          type: "boolean",
+          description: "Skip write-gate quality check (for [固] or explicit user request)",
+        },
+      },
+      required: ["title", "scope", "confidence", "triggers", "knowledge", "mode"],
+    },
+  },
+  {
+    name: "atom_promote",
+    description:
+      "Promote an atom's confidence level. " +
+      "Checks promotion thresholds: [臨]≥20 confirmations→[觀], [觀]≥40→[固]. " +
+      "Use execute=false for dry-run.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        atom_name: { type: "string", description: "Atom filename without .md extension" },
+        scope: { type: "string", enum: ["global", "project"], description: "Scope to search in" },
+        project_cwd: { type: "string", description: "Project root (required for project scope)" },
+        execute: { type: "boolean", description: "true=execute promotion, false=dry-run check only" },
+      },
+      required: ["atom_name", "scope", "execute"],
+    },
+  },
 ];
 
 // ─── Tool Handlers ──────────────────────────────────────────────────────────
@@ -378,6 +453,10 @@ function handleToolCall(id, toolName, args) {
       return toolMemoryQueueAdd(id, args);
     case "memory_queue_flush":
       return toolMemoryQueueFlush(id, args);
+    case "atom_write":
+      return toolAtomWrite(id, args).catch(e => sendToolResult(id, `atom_write error: ${e.message}`, true));
+    case "atom_promote":
+      return toolAtomPromote(id, args);
     default:
       sendError(id, -32601, `Unknown tool: ${toolName}`);
   }
@@ -511,6 +590,434 @@ function toolMemoryQueueFlush(id, args) {
   return sendToolResult(id, `Flushed ${count} knowledge queue items.`);
 }
 
+// ─── Atom Write/Promote Helpers ────────────────────────────────────────────
+
+/** Convert title to a safe filename slug (lowercase, hyphens, no special chars) */
+function slugify(title) {
+  return title
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-")
+    .replace(/[^a-z0-9\u4e00-\u9fff\u3400-\u4dbf-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    || "untitled";
+}
+
+/** Build atom file content from structured parameters */
+function buildAtomContent({ title, scope, confidence, triggers, knowledge, actions, related }) {
+  const lines = [`# ${title}`, ""];
+  lines.push(`- Scope: ${scope}`);
+  lines.push(`- Confidence: ${confidence}`);
+  lines.push(`- Trigger: ${triggers.join(", ")}`);
+  lines.push(`- Last-used: ${new Date().toISOString().slice(0, 10)}`);
+  lines.push("- Confirmations: 0");
+  if (related && related.length > 0) {
+    lines.push(`- Related: ${related.join(", ")}`);
+  }
+  lines.push("", "## 知識", "");
+  for (const k of knowledge) {
+    lines.push(k.startsWith("- ") ? k : `- ${k}`);
+  }
+  lines.push("", "## 行動", "");
+  if (actions && actions.length > 0) {
+    for (const a of actions) {
+      lines.push(a.startsWith("- ") ? a : `- ${a}`);
+    }
+  } else {
+    lines.push("- （依知識內容判斷）");
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
+/** Validate atom content structure. Returns null if valid, error string if invalid. */
+function validateAtomContent(content) {
+  if (content.includes("---\n") && content.indexOf("---\n") < 5) {
+    return "YAML frontmatter (---) is forbidden in atom files";
+  }
+  if (!content.match(/^# .+/m)) {
+    return "Missing # title heading";
+  }
+  if (!content.includes("## 知識")) {
+    return "Missing ## 知識 section";
+  }
+  if (!content.includes("## 行動")) {
+    return "Missing ## 行動 section";
+  }
+  const confMatch = content.match(/^- Confidence:\s*(.+)$/m);
+  if (!confMatch || !["[固]", "[觀]", "[臨]"].includes(confMatch[1].trim())) {
+    return "Missing or invalid Confidence metadata";
+  }
+  return null;
+}
+
+/** Resolve the memory directory for a given scope */
+function resolveMemDir(scope, projectCwd) {
+  if (scope === "project" && projectCwd) {
+    const projMem = path.join(projectCwd, ".claude", "memory");
+    if (fs.existsSync(projMem)) return projMem;
+    // Also check Claude projects dir
+    const norm = projectCwd.replace(/\\/g, "/").replace(/\/+$/, "");
+    const slug = norm.replace(/[^a-zA-Z0-9]/g, "-").replace(/-+/g, "-");
+    const projDir = path.join(CLAUDE_DIR, "projects", slug, "memory");
+    if (fs.existsSync(projDir)) return projDir;
+    return projMem; // default: create under project root
+  }
+  return MEMORY_DIR;
+}
+
+/** Find MEMORY.md path for a given scope */
+function resolveMemoryIndex(memDir) {
+  const indexPath = path.join(memDir, "MEMORY.md");
+  return indexPath;
+}
+
+/** Run write-gate Python script for dedup check. Returns Promise<{action, reason}> */
+function execWriteGate(content, classification) {
+  return new Promise((resolve) => {
+    const scriptPath = path.join(TOOLS_DIR, "memory-write-gate.py");
+    if (!fs.existsSync(scriptPath)) {
+      return resolve({ action: "add", reason: "write-gate script not found, allowing" });
+    }
+    // Escape content for CLI: use stdin via echo pipe
+    const escaped = JSON.stringify({ content, classification });
+    const cmd = `echo ${escaped.replace(/"/g, '\\"')} | python "${scriptPath.replace(/\\/g, "/")}"`;
+    exec(cmd, { timeout: 15000 }, (err, stdout) => {
+      if (err || !stdout) {
+        return resolve({ action: "add", reason: "write-gate unavailable, allowing" });
+      }
+      try {
+        const result = JSON.parse(stdout.trim());
+        resolve(result);
+      } catch {
+        resolve({ action: "add", reason: "write-gate parse error, allowing" });
+      }
+    });
+  });
+}
+
+/** Append or update an atom entry in MEMORY.md index table */
+function appendToIndex(memDir, atomName, relPath, triggers) {
+  const indexPath = resolveMemoryIndex(memDir);
+  const triggerStr = triggers.join(", ");
+  const newRow = `| ${atomName} | ${relPath} | ${triggerStr} |`;
+
+  let content = "";
+  try {
+    content = fs.readFileSync(indexPath, "utf-8");
+  } catch {
+    // Create new MEMORY.md with table header
+    content = [
+      "# Atom Index",
+      "",
+      "> Session 啟動時先讀此索引。比對 Trigger → Read 對應 atom。",
+      "| Atom | Path | Trigger |",
+      "|------|------|---------|",
+      "",
+    ].join("\n");
+  }
+
+  // Check if atom already exists in the table
+  const escapedName = atomName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const existingRe = new RegExp(`^\\|\\s*${escapedName}\\s*\\|.*$`, "m");
+  if (existingRe.test(content)) {
+    // Update existing row
+    content = content.replace(existingRe, newRow);
+  } else {
+    // Insert before the first empty line after the table header separator
+    const sepIdx = content.indexOf("|------|");
+    if (sepIdx >= 0) {
+      const afterSep = content.indexOf("\n", sepIdx);
+      if (afterSep >= 0) {
+        // Find the end of the table (first line that doesn't start with |)
+        const lines = content.split("\n");
+        let insertIdx = -1;
+        let foundSep = false;
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].startsWith("|------")) { foundSep = true; continue; }
+          if (foundSep && !lines[i].startsWith("|")) {
+            insertIdx = i;
+            break;
+          }
+        }
+        if (insertIdx >= 0) {
+          lines.splice(insertIdx, 0, newRow);
+          content = lines.join("\n");
+        } else {
+          // Table runs to end of file
+          content = content.trimEnd() + "\n" + newRow + "\n";
+        }
+      }
+    } else {
+      // No table found, append
+      content += "\n" + newRow + "\n";
+    }
+  }
+
+  // Write atomically
+  const tmp = indexPath + ".tmp";
+  fs.writeFileSync(tmp, content, "utf-8");
+  fs.renameSync(tmp, indexPath);
+}
+
+/** Trigger vector service re-index (fire and forget) */
+function triggerVectorReindex() {
+  try {
+    const url = "http://127.0.0.1:3849/reindex";
+    const req = http.request(url, { method: "POST", timeout: 3000 }, () => {});
+    req.on("error", () => {}); // ignore
+    req.end();
+  } catch {}
+}
+
+/** Parse atom metadata from file content. Returns {confidence, confirmations, ...} */
+function parseAtomMeta(content) {
+  const meta = {};
+  const re = /^- ([\w-]+):\s*(.+)$/gm;
+  let m;
+  while ((m = re.exec(content)) !== null) {
+    const key = m[1].toLowerCase();
+    const val = m[2].trim();
+    switch (key) {
+      case "confidence": meta.confidence = val; break;
+      case "confirmations": meta.confirmations = parseInt(val, 10) || 0; break;
+      case "scope": meta.scope = val; break;
+      case "trigger": meta.triggers = val; break;
+      case "last-used": meta.lastUsed = val; break;
+      case "related": meta.related = val; break;
+    }
+  }
+  const titleMatch = content.match(/^# (.+)$/m);
+  if (titleMatch) meta.title = titleMatch[1];
+  return meta;
+}
+
+// ─── Atom Write Handler ────────────────────────────────────────────────────
+
+async function toolAtomWrite(id, args) {
+  const { title, scope, confidence, triggers, knowledge, actions, related, mode, project_cwd, skip_gate } = args;
+
+  // Validate required fields
+  if (!title || !scope || !confidence || !triggers || !knowledge || !mode) {
+    return sendToolResult(id, "Missing required parameters (title, scope, confidence, triggers, knowledge, mode)", true);
+  }
+
+  const memDir = resolveMemDir(scope, project_cwd);
+  const slug = slugify(title);
+  const filePath = path.join(memDir, slug + ".md");
+  const relPath = "memory/" + slug + ".md";
+
+  // ── Mode: create ──
+  if (mode === "create") {
+    if (fs.existsSync(filePath)) {
+      return sendToolResult(id, `Atom already exists: ${slug}.md — use mode=append or mode=replace`, true);
+    }
+
+    // Write-gate check (unless skipped)
+    if (!skip_gate && confidence !== "[固]") {
+      const gateResult = await execWriteGate(knowledge.join("\n"), confidence);
+      if (gateResult.action === "skip") {
+        return sendToolResult(id, `Write-gate rejected: ${gateResult.reason}`, true);
+      }
+      if (gateResult.action === "update" && gateResult.dedup_match) {
+        return sendToolResult(id,
+          `Write-gate: similar to existing atom "${gateResult.dedup_match.atom_name}" ` +
+          `(score=${gateResult.dedup_match.score}). Use mode=append on that atom instead.`, true);
+      }
+    }
+
+    const content = buildAtomContent({ title, scope, confidence, triggers, knowledge, actions, related });
+    const err = validateAtomContent(content);
+    if (err) {
+      return sendToolResult(id, `Validation failed: ${err}`, true);
+    }
+
+    // Ensure directory exists
+    fs.mkdirSync(memDir, { recursive: true });
+
+    // Write atom file (atomic)
+    const tmp = filePath + ".tmp";
+    fs.writeFileSync(tmp, content, "utf-8");
+    fs.renameSync(tmp, filePath);
+
+    // Update MEMORY.md index
+    appendToIndex(memDir, slug, relPath, triggers);
+
+    // Trigger vector reindex
+    triggerVectorReindex();
+
+    return sendToolResult(id,
+      `Created atom: ${slug}.md (${confidence})\n` +
+      `Path: ${filePath}\n` +
+      `Triggers: ${triggers.join(", ")}\n` +
+      `MEMORY.md index updated.`
+    );
+  }
+
+  // ── Mode: append ──
+  if (mode === "append") {
+    if (!fs.existsSync(filePath)) {
+      return sendToolResult(id, `Atom not found: ${slug}.md — use mode=create first`, true);
+    }
+
+    let existing = fs.readFileSync(filePath, "utf-8");
+    // Strip UTF-8 BOM if present
+    if (existing.charCodeAt(0) === 0xFEFF) existing = existing.slice(1);
+
+    // Insert new knowledge lines before ## 行動
+    const actionIdx = existing.indexOf("## 行動");
+    if (actionIdx < 0) {
+      return sendToolResult(id, `Atom ${slug}.md has no ## 行動 section — cannot append`, true);
+    }
+
+    const newLines = knowledge.map(k => k.startsWith("- ") ? k : `- ${k}`).join("\n");
+    const before = existing.slice(0, actionIdx).trimEnd();
+    const after = existing.slice(actionIdx);
+    const updated = before + "\n" + newLines + "\n\n" + after;
+
+    // Update Last-used
+    const finalContent = updated.replace(
+      /^- Last-used:\s*.+$/m,
+      `- Last-used: ${new Date().toISOString().slice(0, 10)}`
+    );
+
+    const err = validateAtomContent(finalContent);
+    if (err) {
+      return sendToolResult(id, `Validation failed after append: ${err}`, true);
+    }
+
+    const tmp = filePath + ".tmp";
+    fs.writeFileSync(tmp, finalContent, "utf-8");
+    fs.renameSync(tmp, filePath);
+
+    triggerVectorReindex();
+
+    return sendToolResult(id,
+      `Appended ${knowledge.length} knowledge lines to ${slug}.md\n` +
+      `Last-used updated.`
+    );
+  }
+
+  // ── Mode: replace ──
+  if (mode === "replace") {
+    const content = buildAtomContent({ title, scope, confidence, triggers, knowledge, actions, related });
+    const err = validateAtomContent(content);
+    if (err) {
+      return sendToolResult(id, `Validation failed: ${err}`, true);
+    }
+
+    // Preserve Confirmations from existing file
+    let confirmations = 0;
+    if (fs.existsSync(filePath)) {
+      try {
+        const old = fs.readFileSync(filePath, "utf-8");
+        const meta = parseAtomMeta(old);
+        confirmations = meta.confirmations || 0;
+      } catch {}
+    }
+
+    const finalContent = content.replace(
+      /^- Confirmations:\s*\d+$/m,
+      `- Confirmations: ${confirmations}`
+    );
+
+    fs.mkdirSync(memDir, { recursive: true });
+    const tmp = filePath + ".tmp";
+    fs.writeFileSync(tmp, finalContent, "utf-8");
+    fs.renameSync(tmp, filePath);
+
+    appendToIndex(memDir, slug, relPath, triggers);
+    triggerVectorReindex();
+
+    return sendToolResult(id,
+      `Replaced atom: ${slug}.md (${confidence}, preserved confirmations=${confirmations})\n` +
+      `MEMORY.md index updated.`
+    );
+  }
+
+  return sendToolResult(id, `Unknown mode: ${mode}. Use create/append/replace.`, true);
+}
+
+// ─── Atom Promote Handler ──────────────────────────────────────────────────
+
+function toolAtomPromote(id, args) {
+  const { atom_name, scope, project_cwd, execute } = args;
+
+  const memDir = resolveMemDir(scope, project_cwd);
+  const filePath = path.join(memDir, atom_name + ".md");
+
+  if (!fs.existsSync(filePath)) {
+    return sendToolResult(id, `Atom not found: ${atom_name}.md in ${scope} scope`, true);
+  }
+
+  let content = fs.readFileSync(filePath, "utf-8");
+  if (content.charCodeAt(0) === 0xFEFF) content = content.slice(1);
+
+  const meta = parseAtomMeta(content);
+  if (!meta.confidence) {
+    return sendToolResult(id, `Cannot parse confidence from ${atom_name}.md`, true);
+  }
+
+  // Determine promotion path
+  const THRESHOLDS = {
+    "[臨]": { next: "[觀]", required: 20 },
+    "[觀]": { next: "[固]", required: 40 },
+    "[固]": null, // already max
+  };
+
+  const path_info = THRESHOLDS[meta.confidence];
+  if (!path_info) {
+    return sendToolResult(id,
+      `${atom_name} is already at ${meta.confidence} — no promotion available.`
+    );
+  }
+
+  const { next, required } = path_info;
+  const confirmations = meta.confirmations || 0;
+
+  if (confirmations < required) {
+    return sendToolResult(id,
+      `## Dry-run: ${atom_name}\n` +
+      `Current: ${meta.confidence} (${confirmations} confirmations)\n` +
+      `Required: ${required} confirmations for → ${next}\n` +
+      `Deficit: ${required - confirmations} more confirmations needed.`
+    );
+  }
+
+  // Eligible for promotion
+  if (!execute) {
+    return sendToolResult(id,
+      `## Dry-run: ${atom_name}\n` +
+      `Current: ${meta.confidence} (${confirmations} confirmations)\n` +
+      `Eligible for promotion → ${next}\n` +
+      `Set execute=true to apply.`
+    );
+  }
+
+  // Execute promotion
+  const updated = content
+    .replace(/^- Confidence:\s*.+$/m, `- Confidence: ${next}`)
+    .replace(/^- Last-used:\s*.+$/m, `- Last-used: ${new Date().toISOString().slice(0, 10)}`);
+
+  // Also update individual knowledge lines: [臨] → [觀] etc.
+  const finalContent = updated.replace(
+    new RegExp(`- \\${meta.confidence.replace(/[[\]]/g, "\\$&")}`, "g"),
+    `- ${next}`
+  );
+
+  const tmp = filePath + ".tmp";
+  fs.writeFileSync(tmp, finalContent, "utf-8");
+  fs.renameSync(tmp, filePath);
+
+  triggerVectorReindex();
+
+  return sendToolResult(id,
+    `Promoted ${atom_name}: ${meta.confidence} → ${next}\n` +
+    `Confirmations: ${confirmations}\n` +
+    `Knowledge lines updated to ${next}.`
+  );
+}
+
 function sendToolResult(id, text, isError = false) {
   sendResponse(id, {
     content: [{ type: "text", text }],
@@ -588,11 +1095,13 @@ function apiEpisodic(req, res) {
     }
     const atoms = [];
     for (const dir of dirsToScan) {
+      const epicDir = path.join(dir, "episodic");
+      if (!fs.existsSync(epicDir)) continue;
       try {
-        const files = fs.readdirSync(dir)
+        const files = fs.readdirSync(epicDir)
           .filter(f => f.startsWith("episodic-") && f.endsWith(".md"));
         for (const f of files) {
-          try { atoms.push(parseEpisodicAtom(path.join(dir, f))); }
+          try { atoms.push(parseEpisodicAtom(path.join(epicDir, f))); }
           catch {}
         }
       } catch {}
@@ -705,6 +1214,115 @@ function apiVectorStatus(req, res) {
   proxyReq.end();
 }
 
+// --- Ollama Backends Status (30s server-side cache) ---
+
+let _ollamaCache = { data: null, ts: 0 };
+const OLLAMA_CACHE_TTL = 30000; // 30s
+
+function apiOllamaBackendsStatus(req, res) {
+  const now = Date.now();
+  if (_ollamaCache.data && (now - _ollamaCache.ts) < OLLAMA_CACHE_TTL) {
+    return jsonRes(res, 200, _ollamaCache.data);
+  }
+
+  const cfg = loadConfig();
+  const backends = cfg.vector_search?.ollama_backends || {};
+  const names = Object.keys(backends);
+  if (!names.length) return jsonRes(res, 200, { backends: [], cached: false });
+
+  // Read long_die marker
+  let longDie = null;
+  try {
+    const marker = fs.readFileSync(path.join(WORKFLOW_DIR, ".backend_long_die.json"), "utf-8");
+    longDie = JSON.parse(marker);
+  } catch {}
+
+  // Read auth token for rdchat
+  let rdchatToken = null;
+  try {
+    const tf = fs.readFileSync(path.join(WORKFLOW_DIR, ".rdchat_token.json"), "utf-8");
+    rdchatToken = JSON.parse(tf).token;
+  } catch {}
+
+  const results = [];
+  let pending = names.length;
+
+  function finish() {
+    if (--pending > 0) return;
+    const payload = { backends: results, long_die: longDie, cached: false, checked_at: now };
+    _ollamaCache = { data: { ...payload, cached: true }, ts: now };
+    payload.cached = false;
+    jsonRes(res, 200, payload);
+  }
+
+  for (const name of names) {
+    const b = backends[name];
+    const entry = {
+      name,
+      base_url: b.base_url,
+      llm_model: b.llm_model || "?",
+      embedding_model: b.embedding_model || "?",
+      priority: b.priority || 99,
+      enabled: b.enabled !== false,
+      status: "unknown",
+      latency_ms: null,
+      long_die: longDie && longDie.backend === name ? longDie : null,
+    };
+
+    if (!entry.enabled) {
+      entry.status = "disabled";
+      results.push(entry);
+      finish();
+      continue;
+    }
+
+    const url = new URL(b.base_url.replace(/\/+$/, "") + "/api/tags");
+    const isHttps = url.protocol === "https:";
+    const mod = isHttps ? https : http;
+    const headers = {};
+    if (b.auth && rdchatToken) {
+      headers["Authorization"] = "Bearer " + rdchatToken;
+    }
+    const t0 = Date.now();
+    const opts = {
+      hostname: url.hostname,
+      port: url.port || (isHttps ? 443 : 80),
+      path: url.pathname + url.search,
+      method: "GET",
+      headers,
+      timeout: 5000,
+      rejectUnauthorized: false,
+    };
+
+    const probe = mod.request(opts, (probeRes) => {
+      // Drain response body
+      probeRes.on("data", () => {});
+      probeRes.on("end", () => {
+        entry.latency_ms = Date.now() - t0;
+        entry.status = probeRes.statusCode === 200 ? "online"
+                     : probeRes.statusCode === 401 ? "auth_expired"
+                     : "error_" + probeRes.statusCode;
+        results.push(entry);
+        finish();
+      });
+    });
+    probe.on("error", () => {
+      entry.latency_ms = Date.now() - t0;
+      entry.status = "offline";
+      results.push(entry);
+      finish();
+    });
+    probe.on("timeout", () => {
+      probe.destroy();
+      entry.latency_ms = Date.now() - t0;
+      entry.status = "timeout";
+      results.push(entry);
+      finish();
+    });
+    probe.end();
+  }
+}
+
 // --- Knowledge Queue Aggregation ---
 
 function apiKnowledgeQueue(req, res) {
@@ -737,7 +1355,12 @@ function apiProjects(req, res) {
       failure_count: 0,
       episodic_count: 0,
     };
-    const memDir = path.join(info.root || "", ".claude", "memory");
+    // V2.21: if root itself is the .claude dir, memory is at root/memory/ directly
+    const rootNorm = path.resolve(info.root || "");
+    const isClaudeDir = rootNorm.toLowerCase() === path.resolve(CLAUDE_DIR).toLowerCase();
+    const memDir = isClaudeDir
+      ? path.join(rootNorm, "memory")
+      : path.join(rootNorm, ".claude", "memory");
     if (fs.existsSync(memDir) && fs.existsSync(path.join(memDir, "MEMORY.md"))) {
       proj.has_memory = true;
       try {
@@ -883,7 +1506,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>工作流守衛 v2.1</title>
+<title>工作流守衛 v${VERSIONS.guardian}</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: -apple-system, "Segoe UI", sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
@@ -909,6 +1532,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .badge-working { background: #f0883e33; color: #f0883e; }
   .badge-syncing { background: #d2a82633; color: #d2a826; }
   .badge-done { background: #23863633; color: #3fb950; }
+  .badge-merged { background: #a371f733; color: #a371f7; }
   .card-meta { font-size: 0.8em; color: #8b949e; margin-bottom: 8px; }
   .card-stats { display: flex; gap: 16px; font-size: 0.85em; }
   .card-stats span { color: #8b949e; }
@@ -990,6 +1614,13 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
   .status-online { background: #3fb950; }
   .status-offline { background: #f85149; }
+  .status-warn { background: #d2a826; }
+  .status-disabled { background: #484f58; }
+  .backend-card { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 14px; }
+  .backend-card .bc-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .backend-card .bc-name { font-weight: 600; font-size: 0.95em; }
+  .backend-card .bc-tag { font-size: 0.75em; padding: 1px 6px; border-radius: 3px; background: #30363d; color: #8b949e; }
+  .backend-card .bc-tag.pri { background: #58a6ff22; color: #58a6ff; }
   .section-title { font-size: 1em; font-weight: 600; color: #e6edf3; margin-bottom: 10px; }
   /* Atoms */
   .atom-table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
@@ -1018,21 +1649,32 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .proj-alias { font-size: 0.8em; color: #8b949e; }
   .proj-filter-btn { background: none; border: 1px solid #30363d; color: #58a6ff; padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8em; font-family: inherit; }
   .proj-filter-btn:hover { background: #58a6ff22; }
+  .hot-cache-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 12px; font-size: 0.85em; }
+  .hot-cache-card.has-cache { border-color: #3fb95066; }
+  .hot-cache-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .hot-cache-dot.green { background: #3fb950; }
+  .hot-cache-dot.gray { background: #484f58; }
+  .vector-indicator { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; }
+  .vector-indicator:hover { background: #30363d; }
+  .vector-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+  .vector-dot.ready { background: #3fb950; }
+  .vector-dot.not-ready { background: #f85149; }
 </style>
 </head>
 <body>
 <div style="display:flex;justify-content:space-between;align-items:baseline;">
-  <div><h1>工作流守衛 v2.1</h1><p class="subtitle">記憶與對話監控</p></div>
+  <div><h1>工作流守衛 v${VERSIONS.guardian}</h1><p class="subtitle">記憶與對話監控</p></div>
   <div class="auto-refresh"><label><input type="checkbox" id="autoRefresh" checked> 自動重整 (5秒)</label></div>
 </div>
 
 <div class="stats" id="statsBar"></div>
+<div id="hotCacheCard" class="hot-cache-card" style="display:none"></div>
 
 <nav class="tab-nav">
   <button class="tab-btn active" data-tab="sessions">對話</button>
   <button class="tab-btn" data-tab="episodic">情境記憶</button>
   <button class="tab-btn" data-tab="health">健康檢查</button>
-  <button class="tab-btn" data-tab="atoms">原子記憶</button>
+  <button class="tab-btn" data-tab="atoms">原子記憶 v${VERSIONS.atom_memory}</button>
   <button class="tab-btn" data-tab="projects">已知專案</button>
   <button class="tab-btn" data-tab="tests">測試</button>
   <button class="tab-btn" data-tab="vector">向量服務</button>
@@ -1077,29 +1719,38 @@ let currentTab = "sessions";
 let testJobId = null;
 let testPollTimer = null;
 
+function switchTab(name) {
+  const btn = document.querySelector('[data-tab="' + name + '"]');
+  if (btn) btn.click();
+}
+
 // ─── Tab Switching ───
 
 document.querySelectorAll(".tab-btn").forEach(btn => {
   btn.addEventListener("click", () => {
+    const prevTab = currentTab;
     currentTab = btn.dataset.tab;
     document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
     document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
     document.getElementById("panel" + currentTab.charAt(0).toUpperCase() + currentTab.slice(1)).classList.add("active");
+    if (prevTab === "vector" && currentTab !== "vector") stopBackendsPolling();
     refreshCurrentTab();
   });
 });
 
-function refreshCurrentTab() {
+async function refreshCurrentTab() {
+  const prevScroll = window.scrollY;
   switch (currentTab) {
-    case "sessions": renderSessions(); break;
-    case "episodic": renderEpisodic(); break;
-    case "health": renderHealth(false); break;
-    case "atoms": renderAtoms(); break;
-    case "projects": renderProjects(); break;
-    case "tests": break; // manual trigger only
-    case "vector": renderVector(); break;
+    case "sessions": await renderSessions(); break;
+    case "episodic": await renderEpisodic(); break;
+    case "health": await renderHealth(false); break;
+    case "atoms": await renderAtoms(); break;
+    case "projects": await renderProjects(); break;
+    case "tests": break;
+    case "vector": await renderVector(); break;
   }
+  window.scrollTo(0, prevScroll);
 }
 
 // ─── Sessions Panel (existing logic) ───
@@ -1134,10 +1785,12 @@ function clsBadge(c) {
 function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
 
 async function renderSessions() {
-  const sessions = await fetchSessions();
+  const [sessions, vecReady] = await Promise.all([fetchSessions(), fetchVectorReady()]);
   const active = sessions.filter(s => !s.ended);
   const pending = sessions.filter(s => s.sync_pending && !s.ended);
-  updateStats(sessions.length, active.length, pending.length);
+  const vecHtml = '<div class="stat"><div class="vector-indicator" onclick="switchTab(\\'vector\\')"><span class="vector-dot ' + (vecReady?"ready":"not-ready") + '"></span> Vector</div></div>';
+  updateStats(sessions.length, active.length, pending.length, vecHtml);
+  renderHotCache();
 
   if (sessions.length === 0) {
     document.getElementById("sessionList").innerHTML = '<div class="empty">無進行中的對話。</div>';
@@ -1163,7 +1816,7 @@ async function renderSessions() {
     }
     return '<div class="card">' +
       '<div class="card-header"><span class="card-name">' + esc(s.name||"?") + '</span><span class="' + badgeClass(s.phase) + '">' + s.phase + (s.muted?" (已靜音)":"") + '</span></div>' +
-      '<div class="card-meta"><span class="card-id">' + s.session_id.slice(0,8) + '</span> &middot; ' + esc(s.project||"?") + ' &middot; ' + s.age_minutes + ' 分鐘' + (s.ended?" &middot; 已結束":"") + '</div>' +
+      '<div class="card-meta"><span class="card-id">' + s.session_id.slice(0,8) + '</span> &middot; ' + esc(s.project||"?") + ' &middot; ' + s.age_minutes + ' 分鐘' + (s.ended?" &middot; 已結束":"") + (s.merged_into?' &middot; <span style="color:#a371f7">已合併至 '+s.merged_into.slice(0,8)+'</span>':"") + '</div>' +
       '<div class="card-stats"><span>檔案：<strong>' + s.modified_files_count + '</strong></span><span>知識：<strong>' + s.knowledge_queue_count + '</strong></span><span>同步：<strong>' + (s.sync_pending?"待處理":"完成") + '</strong></span></div>' +
       (fileHtml||kqHtml ? '<div class="details">' + fileHtml + kqHtml + '</div>' : '') +
       '<div class="actions">' +
@@ -1184,6 +1837,37 @@ function updateStats(total, active, pending, extra) {
     '<div class="stat"><div class="stat-value">' + pending + '</div><div class="stat-label">待同步</div></div>';
   if (extra) html += extra;
   document.getElementById("statsBar").innerHTML = html;
+}
+
+// ─── V3: Hot Cache Card ───
+
+async function renderHotCache() {
+  const el = document.getElementById("hotCacheCard");
+  try {
+    const data = await (await fetch("/api/hot-cache")).json();
+    if (data.empty) { el.style.display = "none"; return; }
+    const hasUninjected = !data.injected && (data.knowledge||[]).length > 0;
+    el.className = "hot-cache-card" + (hasUninjected ? " has-cache" : "");
+    el.style.display = "flex";
+    const ageMin = Math.round((data.age_seconds||0) / 60);
+    const ageStr = ageMin < 1 ? "<1 分鐘" : ageMin + " 分鐘前";
+    el.innerHTML =
+      '<span class="hot-cache-dot ' + (hasUninjected ? "green" : "gray") + '"></span>' +
+      '<span><strong>Hot Cache</strong></span>' +
+      '<span>來源: ' + (data.source||"?") + '</span>' +
+      '<span>知識: ' + (data.knowledge||[]).length + ' 條</span>' +
+      '<span>注入: ' + (data.injected ? "已注入" : "待注入") + '</span>' +
+      '<span style="color:#8b949e">' + ageStr + '</span>';
+  } catch { el.style.display = "none"; }
+}
+
+// ─── V3: Vector Ready Indicator ───
+
+async function fetchVectorReady() {
+  try {
+    const data = await (await fetch("/api/vector-ready")).json();
+    return data.ready;
+  } catch { return false; }
 }
 
 // ─── Episodic Timeline ───
@@ -1234,9 +1918,11 @@ async function renderEpisodic() {
 
 let lastHealthData = null;
 
+let _healthInfoVisible = false;
 function toggleHealthInfo() {
+  _healthInfoVisible = !_healthInfoVisible;
   document.querySelectorAll('.health-info-row').forEach(r => {
-    r.style.display = r.style.display === 'none' ? '' : 'none';
+    r.style.display = _healthInfoVisible ? '' : 'none';
   });
 }
 
@@ -1278,7 +1964,7 @@ async function renderHealth(force) {
         '</div>';
       html += '<table class="issue-table"><tr><th>等級</th><th>分類</th><th>檔案</th><th>訊息</th></tr>';
       for (const i of issues) {
-        const hideClass = i.level === "info" ? ' class="health-info-row" style="display:none"' : '';
+        const hideClass = i.level === "info" ? ' class="health-info-row" style="display:' + (_healthInfoVisible ? '' : 'none') + '"' : '';
         html += '<tr' + hideClass + '><td class="level-' + i.level + '">' + i.level + '</td><td>' + esc(i.category) + '</td><td style="font-family:monospace;font-size:0.85em">' + esc(i.file) + '</td><td>' + esc(i.message) + '</td></tr>';
       }
       html += '</table>';
@@ -1425,13 +2111,80 @@ function renderTestResults(job) {
 
 // ─── Vector Status ───
 
+let _backendsHtml = "";  // cached backend HTML (refreshed independently)
+let _backendsTimer = null;
+
+async function fetchBackendsStatus() {
+  try {
+    const r = await fetch("/api/ollama-backends-status");
+    const d = await r.json();
+    const bs = (d.backends || []).sort((a,b) => a.priority - b.priority);
+    if (!bs.length) { _backendsHtml = ""; return; }
+
+    const statusMap = {
+      online: { dot: "status-online", label: "線上", color: "#3fb950" },
+      offline: { dot: "status-offline", label: "離線", color: "#f85149" },
+      timeout: { dot: "status-offline", label: "逾時", color: "#f85149" },
+      auth_expired: { dot: "status-warn", label: "Token 過期", color: "#d2a826" },
+      disabled: { dot: "status-disabled", label: "停用", color: "#484f58" },
+    };
+    const checkedAt = d.checked_at ? new Date(d.checked_at).toLocaleTimeString() : "?";
+    const cached = d.cached ? ' <span style="color:#484f58;font-size:0.75em">(快取)</span>' : "";
+
+    let html = '<div style="margin-top:16px"><h3 style="font-size:0.95em;color:#e6edf3;margin-bottom:8px">Ollama 後端' + cached + ' <span style="color:#484f58;font-size:0.75em;font-weight:normal">最後檢查 ' + checkedAt + '</span></h3>';
+
+    // Long DIE warning
+    if (d.long_die) {
+      html += '<div style="background:#d2a82622;border:1px solid #d2a82644;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:0.85em;color:#d2a826">';
+      html += '⚠ ' + esc(d.long_die.backend) + ' 長期停用至 ' + esc(d.long_die.until||"?") + '：' + esc(d.long_die.message||"");
+      html += '</div>';
+    }
+
+    html += '<div class="vec-grid">';
+    for (const b of bs) {
+      const s = statusMap[b.status] || { dot: "status-warn", label: b.status, color: "#d2a826" };
+      const isRemote = !b.base_url.includes("127.0.0.1") && !b.base_url.includes("localhost");
+      html += '<div class="backend-card">';
+      html += '<div class="bc-header"><span class="status-dot ' + s.dot + '"></span>';
+      html += '<span class="bc-name">' + esc(b.name) + '</span>';
+      html += '<span class="bc-tag pri">P' + b.priority + '</span>';
+      html += '<span class="bc-tag">' + (isRemote ? "遠端" : "本機") + '</span>';
+      html += '</div>';
+      html += '<div class="vec-row"><span class="k">狀態</span><span class="v" style="color:' + s.color + '">' + s.label;
+      if (b.latency_ms != null && b.status === "online") html += ' (' + b.latency_ms + 'ms)';
+      html += '</span></div>';
+      html += '<div class="vec-row"><span class="k">URL</span><span class="v" style="font-size:0.8em;word-break:break-all">' + esc(b.base_url) + '</span></div>';
+      html += '<div class="vec-row"><span class="k">LLM</span><span class="v">' + esc(b.llm_model) + '</span></div>';
+      html += '<div class="vec-row"><span class="k">Embedding</span><span class="v">' + esc(b.embedding_model) + '</span></div>';
+      if (b.long_die) {
+        html += '<div class="vec-row"><span class="k">DIE 狀態</span><span class="v" style="color:#d2a826">長期停用至 ' + esc(b.long_die.until||"?") + '</span></div>';
+      }
+      html += '</div>';
+    }
+    html += '</div></div>';
+    _backendsHtml = html;
+  } catch (e) {
+    _backendsHtml = '<div style="margin-top:16px;color:#8b949e;font-size:0.85em">Ollama 後端狀態載入失敗：' + esc(e.message) + '</div>';
+  }
+}
+
+function startBackendsPolling() {
+  if (_backendsTimer) return;
+  fetchBackendsStatus();
+  _backendsTimer = setInterval(fetchBackendsStatus, 30000);
+}
+function stopBackendsPolling() {
+  if (_backendsTimer) { clearInterval(_backendsTimer); _backendsTimer = null; }
+}
+
 async function renderVector() {
   const el = document.getElementById("vectorContent");
+  startBackendsPolling();
   try {
     const r = await fetch("/api/vector-status");
     const d = await r.json();
     if (d.error) {
-      el.innerHTML = '<div class="card" style="text-align:center;padding:24px"><span class="status-dot status-offline"></span><strong style="color:#f85149">離線</strong><br><span style="color:#8b949e;font-size:0.85em">' + esc(d.error) + '</span></div>';
+      el.innerHTML = '<div class="card" style="text-align:center;padding:24px"><span class="status-dot status-offline"></span><strong style="color:#f85149">離線</strong><br><span style="color:#8b949e;font-size:0.85em">' + esc(d.error) + '</span></div>' + _backendsHtml;
       return;
     }
     const svc = d.service || {};
@@ -1487,6 +2240,7 @@ async function renderVector() {
     html += '</div>';
 
     html += '</div>';
+    html += _backendsHtml;
     el.innerHTML = html;
   } catch (e) {
     el.innerHTML = '<div class="empty">載入向量服務狀態失敗：' + esc(e.message) + '</div>';
@@ -1554,6 +2308,7 @@ function filterAtomsByProject(layerPrefix) {
 // ─── Atoms Browser ───
 
 let atomsData = [];
+const expandedAtoms = new Set();  // track expanded detail rows across refreshes
 
 async function renderAtoms() {
   const el = document.getElementById("atomsContent");
@@ -1569,6 +2324,8 @@ async function renderAtoms() {
     if (savedFilter) {
       const fi = document.getElementById("atomFilter");
       if (fi) { fi.value = savedFilter; filterAtoms(savedFilter); }
+    } else if (atomSortKey) {
+      reapplySort();
     }
   } catch (e) {
     el.innerHTML = '<div class="empty">載入原子記憶失敗：' + esc(e.message) + '</div>';
@@ -1619,30 +2376,43 @@ function buildAtomRows(atoms) {
       '<td>' + (a.knowledge_count||'-') + '</td>' +
       '<td>' + (a.line_count||'-') + '</td>' +
     '</tr>';
-    html += '<tr id="detail-' + esc(a.name) + '" style="display:none"><td colspan="7"><div class="atom-detail">' + esc(a.content||"") + '</div></td></tr>';
+    const detailVis = expandedAtoms.has(a.name) ? '' : 'none';
+    html += '<tr id="detail-' + esc(a.name) + '" style="display:' + detailVis + '"><td colspan="7"><div class="atom-detail">' + esc(a.content||"") + '</div></td></tr>';
   }
   return html;
 }
 
 function toggleAtomDetail(name) {
   const row = document.getElementById("detail-" + name);
-  if (row) row.style.display = row.style.display === "none" ? "" : "none";
+  if (!row) return;
+  if (row.style.display === "none") {
+    row.style.display = "";
+    expandedAtoms.add(name);
+  } else {
+    row.style.display = "none";
+    expandedAtoms.delete(name);
+  }
 }
 
 let atomSortKey = "last_used";
 let atomSortAsc = false;
 
-function sortAtoms(key) {
-  if (atomSortKey === key) atomSortAsc = !atomSortAsc;
-  else { atomSortKey = key; atomSortAsc = key === "name"; }
-
-  const sorted = [...atomsData].sort((a, b) => {
-    let va = a[key] ?? "", vb = b[key] ?? "";
+function applySortToBody(data) {
+  const sorted = [...data].sort((a, b) => {
+    let va = a[atomSortKey] ?? "", vb = b[atomSortKey] ?? "";
     if (typeof va === "number" && typeof vb === "number") return atomSortAsc ? va - vb : vb - va;
     va = String(va); vb = String(vb);
     return atomSortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
   });
   document.getElementById("atomTableBody").innerHTML = buildAtomRows(sorted);
+}
+
+function reapplySort() { applySortToBody(atomsData); }
+
+function sortAtoms(key) {
+  if (atomSortKey === key) atomSortAsc = !atomSortAsc;
+  else { atomSortKey = key; atomSortAsc = key === "name"; }
+  applySortToBody(atomsData);
 }
 
 function filterAtoms(query) {
@@ -1654,7 +2424,7 @@ function filterAtoms(query) {
     if ((a.layer||"").toLowerCase().includes(q)) return true;
     return false;
   });
-  document.getElementById("atomTableBody").innerHTML = buildAtomRows(filtered);
+  applySortToBody(filtered);
 }
 
 // ─── Auto Refresh ───
@@ -1784,6 +2554,9 @@ const httpServer = http.createServer((req, res) => {
   if (pathname === "/api/vector-status" && req.method === "GET") {
     return apiVectorStatus(req, res);
   }
+  if (pathname === "/api/ollama-backends-status" && req.method === "GET") {
+    return apiOllamaBackendsStatus(req, res);
+  }
   if (pathname === "/api/knowledge-queue" && req.method === "GET") {
     return apiKnowledgeQueue(req, res);
   }
@@ -1792,6 +2565,29 @@ const httpServer = http.createServer((req, res) => {
   }
   if (pathname === "/api/projects" && req.method === "GET") {
     return apiProjects(req, res);
+  }
+
+  // ── V3: Hot Cache status ──
+  if (pathname === "/api/hot-cache" && req.method === "GET") {
+    const cachePath = path.join(WORKFLOW_DIR, "hot_cache.json");
+    try {
+      const raw = fs.readFileSync(cachePath, "utf-8");
+      const data = JSON.parse(raw);
+      data.age_seconds = Math.round(Date.now() / 1000 - (data.timestamp || 0));
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify(data));
+    } catch {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ empty: true }));
+    }
+  }
+
+  // ── V3: Vector Ready indicator ──
+  if (pathname === "/api/vector-ready" && req.method === "GET") {
+    const flagPath = path.join(WORKFLOW_DIR, "vector_ready.flag");
+    const ready = fs.existsSync(flagPath);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    return res.end(JSON.stringify({ ready }));
   }
 
   res.writeHead(404);
