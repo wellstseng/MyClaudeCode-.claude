@@ -4,7 +4,7 @@
 - Confidence: [固]
 - Trigger: 偏好, 風格, 習慣, 語言, 回應, 執P, 執驗上P, 上GIT
 - Last-used: 2026-04-02
-- Confirmations: 102
+- Confirmations: 104
 - Type: preference
 
 ## 知識

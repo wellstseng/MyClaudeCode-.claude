@@ -14,6 +14,7 @@ Survives hook timeout — runs ~60s on GTX 1050 Ti.
 import json
 import re
 import sys
+import time
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -585,6 +586,25 @@ def _per_turn_writeback(ctx: dict, result: dict) -> None:
     state["extract_worker_pid"] = 0  # clear lease (worker done)
     state["last_updated"] = _now_iso()
     _write_state_atomic(state_path, state)
+
+    # ── V3: deep extract → hot cache writeback ──
+    try:
+        from wg_hot_cache import write_hot_cache
+        if items:
+            summary = "; ".join(
+                it.get("content", "")[:60] for it in items[:3]
+            )
+            write_hot_cache({
+                "session_id": session_id,
+                "timestamp": time.time(),
+                "source": "deep_extract",
+                "injected": False,
+                "knowledge": items[:5],
+                "summary": summary[:200],
+                "token_estimate": max(len(summary) // 4, 10),
+            })
+    except Exception:
+        pass  # hot cache 是增強功能，失敗不影響主流程
 
 
 # ─── Failure writeback ────────────────────────────────────────────────────────

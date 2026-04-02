@@ -40,6 +40,7 @@ from wg_core import (
     load_config,
     _now_iso, _estimate_tokens,
     state_path, read_state, write_state, new_state, _ensure_state,
+    _find_active_sibling_state,  # V3/1.5A: SessionStart dedup
     output_json, output_nothing, output_block,
     _atom_debug_log, _atom_debug_error,
 )
@@ -99,6 +100,12 @@ try:
 except ImportError:
     WISDOM_AVAILABLE = False
 
+# ─── V3: Hot Cache (lazy import, graceful fallback) ─────────────────────────
+try:
+    from wg_hot_cache import read_hot_cache, mark_injected, HOT_CACHE_PATH
+except ImportError:
+    read_hot_cache = None
+
 
 # (State I/O moved to wg_core.py)
 
@@ -145,10 +152,32 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
     cwd = input_data.get("cwd", "")
     source = input_data.get("source", "startup")
 
+    # ── V3/1.5A: SessionStart 去重 — 同 cwd 60s 內有活躍 state 則複用 ──
+    sibling = None
+    if source != "compact":
+        sibling = _find_active_sibling_state(cwd, session_id)
+        if sibling and source == "resume":
+            # Resume 合併到既有 startup session
+            redirect_state = new_state(session_id, cwd, source)
+            redirect_state["merged_into"] = sibling["session"]["id"]
+            redirect_state["phase"] = "merged"
+            write_state(session_id, redirect_state)
+            lines = [f"[Workflow Guardian] Session merged ({source})."]
+            print(json.dumps({
+                "hookSpecificOutput": {
+                    "hookEventName": "SessionStart",
+                    "additionalContext": "\n".join(lines),
+                }
+            }, ensure_ascii=False))
+            sys.exit(0)
+        # startup + sibling: 繼續正常流程但後面跳過 vector init
+
     # On compact/resume, reuse existing state
     existing = read_state(session_id)
     if existing and source in ("compact", "resume"):
         state = existing
+        # V3/Phase 2: Atom Recovery — 告知壓縮前已載入的 atoms
+        prev_atoms = state.get("injected_atoms", [])
         # Clear injected_atoms so atoms get re-injected after compact (context was truncated)
         state["injected_atoms"] = []
         # Re-inject full context after compaction
@@ -165,8 +194,15 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         if kq_count > 0:
             items = [q["content"][:40] for q in state["knowledge_queue"][:3]]
             lines.append(f"Pending knowledge: {'; '.join(items)}")
+        # V3/Phase 2: Atom Recovery hint
+        if prev_atoms:
+            atom_names = ", ".join(prev_atoms)
+            lines.append(f"[Atom Recovery] 壓縮前已載入: {atom_names}")
     else:
         state = new_state(session_id, cwd, source)
+        # V3/1.5A: startup + sibling → skip vector init
+        if sibling and source == "startup":
+            state["_skip_vector_init"] = True
 
         # Parse memory indices (store as serializable lists)
         global_atoms = parse_memory_index(MEMORY_DIR)
@@ -280,17 +316,14 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
     # CRITICAL: write state before any output so subsequent hooks can read it.
     write_state(session_id, state)
 
-    # ── Vector Service auto-start (before output — best-effort, quick) ──
-    # C5/W11 fix: _ensure_vector_service was dead code after output_json(exit).
-    # Now called before print so service starts even if warmup subprocess is slow.
-    if config.get("vector_search", {}).get("auto_start_service", True):
-        try:
-            _ensure_vector_service(config)
-        except Exception as e:
-            _atom_debug_error("注入:vector_service_start", e)
+    # V3/1.5C: Clear vector_ready.flag (will be re-created by background process)
+    try:
+        (WORKFLOW_DIR / "vector_ready.flag").unlink(missing_ok=True)
+    except OSError:
+        pass
 
     # C5/W11 fix: print directly (not via output_json which exits),
-    # then spawn warmup as fire-and-forget subprocess, then exit.
+    # then spawn vector init as fire-and-forget subprocess, then exit.
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
@@ -298,28 +331,75 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         }
     }, ensure_ascii=False))
 
-    # ── Vector warmup (fire-and-forget subprocess, non-blocking) ──────────
-    if config.get("vector_search", {}).get("auto_start_service", True):
+    # ── V3/1.5C: Vector service — fire-and-forget subprocess ────────────
+    # Replaces synchronous _ensure_vector_service + separate warmup.
+    # Background subprocess: health check → port guard + spawn → poll ready → flag → warmup.
+    if (config.get("vector_search", {}).get("auto_start_service", True)
+            and not state.get("_skip_vector_init")):
         try:
             vs_port = config.get("vector_search", {}).get("service_port", 3849)
-            warmup_url = f"http://127.0.0.1:{vs_port}/search?q=warmup&top_k=1&min_score=0.99"
-            import subprocess as _wusp
-            _wu_kwargs: dict = {
-                "stdin": _wusp.DEVNULL,
-                "stdout": _wusp.DEVNULL,
-                "stderr": _wusp.DEVNULL,
+            vs_script = str(CLAUDE_DIR / "tools" / "vector-service.py")
+            flag_path = str(WORKFLOW_DIR / "vector_ready.flag")
+            # Inline script: health check → spawn if needed → poll → flag → warmup
+            _bg_code = f"""
+import urllib.request, urllib.error, subprocess, sys, time, os
+from pathlib import Path
+
+port = {vs_port}
+base = f"http://127.0.0.1:{{port}}"
+
+# 1. Health check (2s timeout)
+try:
+    urllib.request.urlopen(f"{{base}}/health", timeout=2)
+except Exception:
+    # 2. Port guard + spawn service
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(("127.0.0.1", port))
+        sock.close()
+        # Port free → spawn
+        kw = {{"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}}
+        if sys.platform == "win32":
+            kw["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+        else:
+            kw["start_new_session"] = True
+        subprocess.Popen([sys.executable, {repr(vs_script)}], **kw)
+    except OSError:
+        sock.close()  # Port in use — service likely starting
+
+# 3. Poll ready (30 × 0.5s = 15s max)
+for _ in range(30):
+    try:
+        urllib.request.urlopen(f"{{base}}/health", timeout=2)
+        break
+    except Exception:
+        time.sleep(0.5)
+
+# 4. Write ready flag
+Path({repr(flag_path)}).write_text("ready", encoding="utf-8")
+
+# 5. Warmup query
+try:
+    urllib.request.urlopen(f"{{base}}/search?q=warmup&top_k=1&min_score=0.99", timeout=15)
+except Exception:
+    pass
+"""
+            _bg_kwargs: dict = {
+                "stdin": subprocess.DEVNULL,
+                "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.DEVNULL,
             }
             if sys.platform == "win32":
-                _wu_kwargs["creationflags"] = _wusp.CREATE_NO_WINDOW
+                _bg_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
             else:
-                _wu_kwargs["start_new_session"] = True
-            _wusp.Popen(
-                [sys.executable, "-c",
-                 f"import urllib.request; urllib.request.urlopen({repr(warmup_url)}, timeout=15)"],
-                **_wu_kwargs,
+                _bg_kwargs["start_new_session"] = True
+            subprocess.Popen(
+                [sys.executable, "-c", _bg_code],
+                **_bg_kwargs,
             )
         except Exception as e:
-            _atom_debug_error("注入:vector_warmup", e)
+            _atom_debug_error("注入:vector_service_bg", e)
 
     sys.exit(0)
 
@@ -359,8 +439,21 @@ def handle_user_prompt_submit(
     except Exception as e:
         print(f"[dual-backend] Long DIE response error: {e}", file=sys.stderr)
 
+    # ─── V3/Phase -1: Hot Cache Fast Path ───────────────────────────────
+    hot_cache_tokens = 0
+    if read_hot_cache:
+        try:
+            hot_data = read_hot_cache(session_id)
+            if hot_data:
+                lines.append(f"[HotCache:{hot_data.get('source', '?')}] {hot_data.get('summary', '')}")
+                hot_cache_tokens = hot_data.get("token_estimate", 50)
+                mark_injected(session_id)
+        except Exception:
+            pass
+
     # ─── Phase 0: Session Context Injection (first prompt only) ────────
     budget = compute_token_budget(prompt)
+    budget = max(budget - hot_cache_tokens, 500)  # V3: deduct hot cache tokens
     if not state.get("session_context_injected", False):
         state["session_context_injected"] = True
         episodic_results = _search_episodic_context(prompt, config)
@@ -939,6 +1032,16 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                 advisories.append(f"{prefix} {val}")
                 del state[key]
 
+    # V3/1C: Hot Cache mid-turn injection
+    if read_hot_cache:
+        try:
+            hot_data = read_hot_cache(session_id)
+            if hot_data:
+                advisories.append(f"[HotCache] {hot_data.get('summary', '')}")
+                mark_injected(session_id)
+        except Exception:
+            pass
+
     if advisories:
         write_state(session_id, state)
         output_json({
@@ -1056,11 +1159,45 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
 
 
 def _cleanup_old_states() -> None:
-    """W10: Remove state files older than 7 days (regardless of phase)."""
-    cutoff = time.time() - 7 * 86400
+    """V3/1.5B: Tiered TTL cleanup for state files.
+
+    - age < 600s (10m): always keep (protect fresh states)
+    - merged_into + > 600s: delete
+    - prompt_count=0 + working + > 600s: delete (empty startup)
+    - prompt_count>0 + working + > 1800s (30m): delete (orphaned)
+    - done + > 86400s (24h): delete
+    - fallback > 7d: delete
+    """
+    now = time.time()
     for f in WORKFLOW_DIR.glob("state-*.json"):
         try:
-            if f.stat().st_mtime < cutoff:
+            age = now - f.stat().st_mtime
+            if age < 600:
+                continue
+
+            # Parse state for tiered decisions
+            try:
+                with open(f, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except (json.JSONDecodeError, OSError):
+                # Corrupt file — delete if old enough
+                if age > 7 * 86400:
+                    f.unlink(missing_ok=True)
+                continue
+
+            phase = data.get("phase", "")
+            prompt_count = data.get("topic_tracker", {}).get("prompt_count", 0)
+            merged = data.get("merged_into")
+
+            if merged and age > 600:
+                f.unlink(missing_ok=True)
+            elif prompt_count == 0 and phase == "working" and age > 600:
+                f.unlink(missing_ok=True)
+            elif prompt_count > 0 and phase == "working" and age > 1800:
+                f.unlink(missing_ok=True)
+            elif phase == "done" and age > 86400:
+                f.unlink(missing_ok=True)
+            elif age > 7 * 86400:
                 f.unlink(missing_ok=True)
         except OSError:
             pass
