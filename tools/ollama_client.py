@@ -1,7 +1,7 @@
 """
-ollama_client.py — Dual-Backend Ollama Client
+ollama_client.py — Multi-Backend Ollama Client
 
-統一所有 Ollama 呼叫，支援 primary (rdchat) + fallback (local) 自動切換。
+統一所有 Ollama 呼叫，支援多 backend 優先順序 + 自動切換。
 三階段退避：正常 → 短DIE (60s) → 長DIE (等到下一個 6h 時間段)。
 
 純 stdlib，不引入新依賴。
@@ -23,7 +23,6 @@ logger = logging.getLogger("ollama_client")
 CLAUDE_DIR = Path.home() / ".claude"
 CONFIG_PATH = CLAUDE_DIR / "workflow" / "config.json"
 TOKEN_PATH = CLAUDE_DIR / "workflow" / ".rdchat_token.json"
-REAUTH_MARKER = CLAUDE_DIR / "workflow" / ".rdchat_reauth.json"
 
 # Health check cache TTL
 HEALTH_TTL = 60  # seconds
@@ -117,7 +116,14 @@ class OllamaClient:
         )
         if result is None:
             return ""
-        return result.get("message", {}).get("content", "")
+        if not isinstance(result, dict):
+            return str(result) if result else ""
+        msg = result.get("message", {})
+        if isinstance(msg, str):
+            return msg
+        if isinstance(msg, dict):
+            return msg.get("content", "")
+        return ""
 
     def chat(self, messages: List[Dict[str, str]], system: str = "",
              model: str = None, timeout: int = 30) -> str:
@@ -141,10 +147,17 @@ class OllamaClient:
         )
         if result is None:
             return ""
-        return result.get("message", {}).get("content", "")
+        if not isinstance(result, dict):
+            return str(result) if result else ""
+        msg = result.get("message", {})
+        if isinstance(msg, str):
+            return msg
+        if isinstance(msg, dict):
+            return msg.get("content", "")
+        return ""
 
     def embed(self, texts: List[str], model: str = None,
-              timeout: int = 60) -> List[List[float]]:
+              timeout: int = 120) -> List[List[float]]:
         """POST embedding request.
 
         Uses /api/embed (Ollama native) for direct backends,
@@ -459,7 +472,7 @@ class OllamaClient:
         # Login
         auth = backend.auth
         if auth.get("type") == "bearer_ldap":
-            token = self._ldap_login(auth)
+            token = self._ldap_login(auth, backend.name)
             if token:
                 self._token_cache[backend.name] = token
                 self._save_token_to_file(backend.name, token)
@@ -467,7 +480,7 @@ class OllamaClient:
 
         return None
 
-    def _ldap_login(self, auth: dict) -> Optional[str]:
+    def _ldap_login(self, auth: dict, backend_name: str = "") -> Optional[str]:
         """POST to login_url with user/password, return JWT token."""
         import os
         login_url = auth.get("login_url", "")
@@ -478,10 +491,7 @@ class OllamaClient:
             logger.error("LDAP auth config incomplete (no login_url or user)")
             return None
         if not password:
-            # 密碼檔不存在 → 寫 setup marker，提示使用者
-            self._write_reauth_marker("setup_needed", user,
-                "rdchat 密碼檔不存在。請建立 ~/.claude/workflow/.rdchat_password，"
-                "內容為你的 LDAP 密碼（公司登入密碼）。此檔案已在 .gitignore 中，不會被上傳。")
+            logger.warning("[%s] LDAP password file not found", backend_name)
             return None
 
         payload = json.dumps({"user": user, "password": password}).encode("utf-8")
@@ -501,7 +511,6 @@ class OllamaClient:
                 token = data.get("token")
                 if token:
                     logger.info("LDAP login success: %s", user)
-                    self._clear_reauth_marker()
                     return token
         except urllib.error.HTTPError as e:
             body = ""
@@ -510,19 +519,14 @@ class OllamaClient:
             except Exception:
                 pass
             if e.code == 400 and ("incorrect" in body.lower() or "invalid" in body.lower()):
-                # 密碼錯誤（過期或打錯）→ 寫 reauth marker
-                self._write_reauth_marker("reauth_needed", user,
-                    "rdchat LDAP 登入失敗（密碼錯誤或已過期）。"
-                    "請更新 ~/.claude/workflow/.rdchat_password 的內容為新密碼。")
-                # 清除快取的 token，下次強制重新登入
-                self._token_cache.pop("rdchat", None)
+                self._token_cache.pop(backend_name, None)
                 try:
                     TOKEN_PATH.unlink(missing_ok=True)
                 except OSError:
                     pass
-            logger.error("LDAP login failed (HTTP %s): %s", e.code, user)
+            logger.error("[%s] LDAP login failed (HTTP %s): %s", backend_name, e.code, user)
         except Exception as e:
-            logger.error("LDAP login failed: %s", e)
+            logger.error("[%s] LDAP login failed: %s", backend_name, e)
         return None
 
     def _resolve_password(self, auth: dict) -> str:
@@ -577,33 +581,6 @@ class OllamaClient:
                     self._token_cache[name] = token
             except (json.JSONDecodeError, OSError):
                 pass
-
-    # -----------------------------------------------------------------------
-    # Reauth marker (密碼設定/過期提示)
-    # -----------------------------------------------------------------------
-
-    @staticmethod
-    def _write_reauth_marker(kind: str, user: str, message: str):
-        """Write marker file so hooks/sessions can detect setup/reauth needs."""
-        try:
-            REAUTH_MARKER.parent.mkdir(parents=True, exist_ok=True)
-            REAUTH_MARKER.write_text(json.dumps({
-                "type": kind,
-                "user": user,
-                "message": message,
-                "created_at": datetime.now().isoformat(timespec="seconds"),
-            }, ensure_ascii=False, indent=2), encoding="utf-8")
-            logger.warning("[rdchat] %s — %s", kind, message)
-        except OSError:
-            pass
-
-    @staticmethod
-    def _clear_reauth_marker():
-        """Clear marker after successful login."""
-        try:
-            REAUTH_MARKER.unlink(missing_ok=True)
-        except OSError:
-            pass
 
     # -----------------------------------------------------------------------
     # Long DIE marker (向使用者確認是否永久停用)
@@ -736,6 +713,7 @@ def _build_backends_from_config(config: dict) -> List[OllamaBackend]:
         # New format
         backends = []
         for name, cfg in backends_cfg.items():
+            enabled = cfg.get("enabled", True)
             backends.append(OllamaBackend(
                 name=name,
                 base_url=cfg.get("base_url", "http://127.0.0.1:11434"),
@@ -743,7 +721,7 @@ def _build_backends_from_config(config: dict) -> List[OllamaBackend]:
                 llm_model=cfg.get("llm_model"),
                 embedding_model=cfg.get("embedding_model"),
                 priority=cfg.get("priority", 99),
-                enabled=cfg.get("enabled", True),
+                enabled=enabled,
                 think=cfg.get("think", False),
                 llm_num_predict=cfg.get("llm_num_predict", 2048),
             ))
@@ -783,22 +761,6 @@ def reset_client():
     """Reset singleton (for testing)."""
     global _client_instance
     _client_instance = None
-
-
-def check_rdchat_status() -> Optional[Dict[str, str]]:
-    """Check if rdchat needs setup or reauth.
-
-    Returns None if everything is fine, or a dict with:
-      {"type": "setup_needed"|"reauth_needed", "user": ..., "message": ...}
-
-    Hooks / session-start can call this and display the message to the user.
-    """
-    if REAUTH_MARKER.exists():
-        try:
-            return json.loads(REAUTH_MARKER.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
-    return None
 
 
 # ---------------------------------------------------------------------------

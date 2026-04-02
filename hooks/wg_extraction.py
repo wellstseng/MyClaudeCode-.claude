@@ -128,17 +128,27 @@ def _spawn_extract_worker(ctx_dict: dict) -> int:
             kwargs["start_new_session"] = True
         worker_log = CLAUDE_DIR / "workflow" / "extract-worker.log"
         worker_log_fh = open(worker_log, "a", encoding="utf-8")
-        json_ctx = json.dumps(ctx_dict, ensure_ascii=False)
-        proc = _sp.Popen(
-            [sys.executable, str(worker_path)],
-            stdin=_sp.PIPE,
-            stdout=_sp.DEVNULL,
-            stderr=worker_log_fh,
-            **kwargs,
-        )
-        worker_log_fh.close()
+        # Force UTF-8 encoding in worker subprocess (prevents cp950 errors on CJK Windows)
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        try:
+            json_ctx = json.dumps(ctx_dict, ensure_ascii=False)
+            proc = _sp.Popen(
+                [sys.executable, str(worker_path)],
+                stdin=_sp.PIPE,
+                stdout=_sp.DEVNULL,
+                stderr=worker_log_fh,
+                env=env,
+                **kwargs,
+            )
+        except Exception:
+            worker_log_fh.close()
+            raise
         proc.stdin.write(json_ctx.encode("utf-8"))
         proc.stdin.close()
+        # Close our copy of the log fd — child process has its own fd via inheritance.
+        # Without this, this process holds the fd open until exit.
+        worker_log_fh.close()
         return proc.pid
     except Exception as e:
         _atom_debug_error("萃取:_spawn_extract_worker", e)

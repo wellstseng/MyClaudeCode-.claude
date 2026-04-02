@@ -4,7 +4,7 @@
 - Confidence: [固]
 - Trigger: 工具鏈, 環境設定, bash指令, command, bash, git, python, npm
 - Last-used: 2026-04-02
-- Confirmations: 139
+- Confirmations: 147
 - Type: procedural
 - Tags: toolchain, environment, commands
 - Related: fail-env, toolchain-ollama, decisions-architecture, doc-index-system, feedback_global_install, failures
@@ -69,12 +69,3 @@
 - 成功執行新工具指令後，評估是否值得記錄（跨 session 重用性 ≥ 2 次預期）
 - 環境問題 debug 時，優先查此 atom 再嘗試盲目探索
 - 版本資訊在確認後更新，不猜測
-
-## 演化日誌
-
-| 日期 | 變更 | 來源 |
-|------|------|------|
-| 2026-03-10 | 初始建立：從 hardware.md + decisions.md 整理已知工具鏈知識，4 大分類 | manual |
-| 2026-03-10 | [觀]→[固] 定期檢閱晉升，Confirmations=4 | periodic-review |
-| 2026-03-13 | Dual-Backend A/B 萃取品質實測 + generate() think 參數 + extract-worker think=true | ab-extract-test |
-| 2026-03-19 | 拆出 Ollama 區段至 toolchain-ollama.md，移除 path/路徑 trigger | atom-debug 精準化 |

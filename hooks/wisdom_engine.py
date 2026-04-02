@@ -3,7 +3,6 @@
 wisdom_engine.py — Wisdom Engine V2.11
 
 Two forces: Situation Classifier (hard rules), Reflection Engine (enhanced).
-Causal Graph removed in V2.11 — stubs kept for API compat.
 Called by workflow-guardian.py. Cold start = zero tokens.
 """
 import json
@@ -16,9 +15,6 @@ WISDOM_DIR = Path.home() / ".claude" / "memory" / "wisdom"
 REFLECTION_PATH = WISDOM_DIR / "reflection_metrics.json"
 
 ARCH_KEYWORDS = {"架構", "refactor", "重構", "migrate", "migration", "重寫"}
-
-# Module-level state for silence_accuracy tracking (same process as guardian)
-_last_approach: str = "direct"
 
 
 def _load_json(path: Path, default: Any) -> Any:
@@ -44,29 +40,10 @@ def _save_json(path: Path, data: Any) -> None:
             tmp.unlink()
 
 
-# ── [V2.11 移除] Causal Graph — stubs for API compat ────────────────────────
-
-def get_causal_warnings(touched_files: List[str], max_depth: int = 2) -> List[str]:
-    """Stub: causal graph removed in V2.11."""
-    return []
-
-
-def add_causal_edge(edge_from: str, edge_to: str, **kwargs) -> bool:
-    """Stub: causal graph removed in V2.11."""
-    return False
-
-
-def update_causal_confidence(edge_from: str, edge_to: str, hit: bool) -> None:
-    """Stub: causal graph removed in V2.11."""
-    pass
-
-
 # ── Force 1: Situation Classifier (V2.11 hard rules) ────────────────────────
 
 def classify_situation(prompt_analysis: Dict[str, Any]) -> Dict[str, str]:
     """Hard rules → approach (direct/confirm/plan) + inject string."""
-    global _last_approach
-
     keywords = set(prompt_analysis.get("keywords", []))
     file_count = prompt_analysis.get("estimated_files", 1)
     is_feature = prompt_analysis.get("intent", "") == "feature"
@@ -78,13 +55,14 @@ def classify_situation(prompt_analysis: Dict[str, Any]) -> Dict[str, str]:
     plan_threshold = 2 if arch_elevated else 3
 
     if touches_arch or file_count > plan_threshold:
-        result = {"approach": "plan", "inject": "[情境:規劃] 架構級變更，建議 Plan Mode"}
+        result = {"approach": "plan", "inject": "[情境:規劃] 架構級變更。行動：先 EnterPlanMode 列出影響範圍再動手"}
     elif file_count > 2 and is_feature:
-        result = {"approach": "confirm", "inject": "[情境:確認] 跨檔修改，建議先列範圍"}
+        result = {"approach": "confirm", "inject": "[情境:確認] 跨檔修改。行動：先列出要修改的完整檔案清單確認再開始"}
     else:
         result = {"approach": "direct", "inject": ""}
 
-    _last_approach = result["approach"]
+    # V2.11: _last_approach removed — approach is now persisted in
+    # state["wisdom_approach"] by the caller (workflow-guardian.py).
     return result
 
 
@@ -113,13 +91,28 @@ def _empty_reflection() -> Dict[str, Any]:
     }
 
 
+# V3.1: 自描述行動指令，依 task_type 分支
+_BLIND_SPOT_ACTIONS = {
+    "single_file": "行動：修改前先確認理解正確，避免假設",
+    "multi_file": "行動：修改 >2 檔時先列清單確認範圍",
+    "architecture": "行動：架構級任務先用 Plan Mode",
+}
+
+
 def get_reflection_summary() -> List[str]:
-    """SessionStart: inject blind spot reminders (only if data exists)."""
+    """SessionStart: inject blind spot reminders with actionable guidance."""
     metrics = _load_json(REFLECTION_PATH, {})
-    blind_spots = metrics.get("blind_spots", [])
-    if not blind_spots:
-        return []
-    return [f"[自知] {spot}" for spot in blind_spots[:2]]
+    faa = metrics.get("metrics", {}).get("first_approach_accuracy", {})
+    lines = []
+    for tt, b in faa.items():
+        total = b.get("total", 0)
+        correct = b.get("correct", 0)
+        if total >= 3:
+            rate = correct / total
+            if rate < 0.7:
+                action = _BLIND_SPOT_ACTIONS.get(tt, "")
+                lines.append(f"[自知] {tt} 首次正確率 {rate:.0%}。{action}")
+    return lines[:2]
 
 
 def reflect(state: Dict[str, Any]) -> None:
@@ -181,7 +174,7 @@ def reflect(state: Dict[str, Any]) -> None:
     arch = faa.get("architecture", {"correct": 0, "total": 0})
     if arch["total"] >= 3 and arch["correct"] / max(arch["total"], 1) < 0.34:
         metrics["arch_sensitivity_elevated"] = True
-    elif arch["total"] >= 3 and arch["correct"] / arch["total"] >= 0.5:
+    elif arch["total"] >= 3 and arch["correct"] / max(arch["total"], 1) >= 0.5:
         metrics["arch_sensitivity_elevated"] = False
 
     metrics["last_reflection"] = datetime.now(timezone.utc).isoformat()

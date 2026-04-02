@@ -22,6 +22,7 @@ from wg_paths import (
     resolve_episodic_dir, get_transcript_path,
 )
 from wg_core import _now_iso, _atom_debug_log, _atom_debug_error
+from wg_content_classify import is_plan_content
 
 sys.path.insert(0, str(Path.home() / ".claude" / "tools"))
 from ollama_client import get_client
@@ -693,6 +694,9 @@ def _generate_episodic_atom(
             f"- [臨] 引用 atoms: {', '.join(summary['atoms_referenced'])}"
         )
     for ki in summary["knowledge_items"]:
+        # V2.22: Filter out plan-type knowledge items from episodic atoms
+        if is_plan_content(ki.get("content", "")):
+            continue
         knowledge_lines.append(f"- [{ki['classification'].strip('[]')}] {ki['content']}")
 
     # V2.10: Read tracking summary

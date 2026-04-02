@@ -9,10 +9,16 @@ Usage:
   python atom-health-check.py --report --json   JSON 格式輸出
 """
 
+import sys, io
+# Force UTF-8 stdout on Windows (cp950 codepage causes mojibake in JSON output)
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+if sys.stderr.encoding != 'utf-8':
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 import argparse
 import json
 import re
-import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 

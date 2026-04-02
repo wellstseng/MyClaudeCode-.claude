@@ -1,4 +1,5 @@
 {
+  "atom_debug": false,
   "enabled": true,
   "stop_gate_max_blocks": 2,
   "min_files_to_block": 2,
@@ -31,6 +32,15 @@
     "ollama_base_url": "http://127.0.0.1:11434",
     "ollama_llm_model": "qwen3:1.7b",
     "ollama_backends": {
+      "rdchat-direct": {
+        "base_url": "http://192.168.199.130:11434",
+        "llm_model": "qwen3.5:latest",
+        "embedding_model": "qwen3-embedding:latest",
+        "priority": 1,
+        "enabled": true,
+        "think": true,
+        "llm_num_predict": 8192
+      },
       "rdchat": {
         "base_url": "https://rdchat.uj.com.tw/ollama",
         "auth": {
@@ -38,10 +48,10 @@
           "login_url": "https://rdchat.uj.com.tw/api/v1/auths/ldap",
           "password_file": "~/.claude/workflow/.rdchat_password"
         },
-        "llm_model": "qwen3.5:9b",
+        "llm_model": "qwen3.5:latest",
         "embedding_model": "qwen3-embedding:latest",
-        "priority": 1,
-        "enabled": false,
+        "priority": 2,
+        "enabled": true,
         "think": true,
         "llm_num_predict": 8192
       },
@@ -49,30 +59,16 @@
         "base_url": "http://127.0.0.1:11434",
         "llm_model": "qwen3:1.7b",
         "embedding_model": "qwen3-embedding",
-        "priority": 2,
+        "priority": 3,
         "think": false,
         "llm_num_predict": 2048
       }
     },
     "search_top_k": 5,
     "search_min_score": 0.65,
-    "search_timeout_ms": 2000,
+    "search_timeout_ms": 3500,
     "auto_start_service": true,
-    "auto_index_on_change": true,
-    "additional_atom_dirs": [
-      {
-        "name": "sgi-atoms",
-        "path": "C:\\Projects\\SGI\\_AIAtoms",
-        "skip_files": [
-          "README"
-        ]
-      },
-      {
-        "name": "sgi-docs",
-        "path": "C:\\Projects\\SGI\\_AIDocs",
-        "skip_files": []
-      }
-    ]
+    "auto_index_on_change": true
   },
   "write_gate": {
     "enabled": true,
@@ -94,11 +90,42 @@
     "suggest_threshold": 4,
     "timeout_seconds": 5
   },
+  "self_iteration": {
+    "decay_half_life_days": 30,
+    "promote_min_confirmations": 20,
+    "archive_score_threshold": 0.3,
+    "oscillation_window": 3,
+    "oscillation_threshold": 2,
+    "review_interval": 6
+  },
+  "hot_cache": {
+    "enabled": true,
+    "quick_extract_timeout": 15,
+    "quick_extract_num_predict": 512,
+    "quick_extract_min_chars": 100,
+    "max_summary_tokens": 100,
+    "deep_overwrite": true
+  },
   "response_capture": {
     "enabled": true,
     "session_end_max_chars": 20000,
     "session_end_max_items": 5,
     "session_end_timeout_seconds": 10,
-    "classification_default": "[臨]"
+    "classification_default": "[臨]",
+    "per_turn": {
+      "enabled": true,
+      "min_new_chars": 500,
+      "max_items": 3,
+      "skip_cross_session": true,
+      "cooldown_seconds": 120
+    },
+    "failure_extraction": {
+      "enabled": true,
+      "cooldown_seconds": 180,
+      "max_items": 2,
+      "strong_keywords": ["又錯了", "沒修好", "還是壞", "修復失敗", "一樣的問題", "又壞了", "怎麼又", "再次失敗"],
+      "weak_keywords": ["錯了", "不對", "壞了", "失敗", "沒用", "沒效", "不行", "bug", "broken", "failed", "still broken", "same error", "為什麼還", "怎麼還", "反覆", "踩坑", "又踩", "沒生效", "白做了"],
+      "weak_min_match": 3
+    }
   }
 }
