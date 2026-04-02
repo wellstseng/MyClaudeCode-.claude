@@ -4,10 +4,10 @@
 - Confidence: [固]
 - Trigger: 偏好, 風格, 習慣, 語言, 回應, 執P, 執驗上P, 上GIT
 - Last-used: 2026-04-01
-- Confirmations: 94
+- Confirmations: 99
 - Type: preference
 
-- Related: feedback-upload-discord
+- Related: feedback-upload-discord, collaboration-protocol
 
 ## 知識
 

@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 修正, 重試, 第二次, 升級, escalation, 精確修正, fix, retry
-- Last-used: 2026-03-30
-- Confirmations: 23
+- Last-used: 2026-04-01
+- Confirmations: 24
 - Related: failures, decisions
 
 ## 知識

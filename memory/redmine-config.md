@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: Redmine, sgi, API, query, 日報, 週報, redmine-70
-- Last-used: 2026-03-30
-- Confirmations: 16
+- Last-used: 2026-04-02
+- Confirmations: 19
 - Related: project-ecosystem, team-roster
 
 ## 知識

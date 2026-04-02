@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 全域決策, workflow, guardian, hooks, MCP, 記憶系統決策, 記憶系統架構
-- Last-used: 2026-04-01
-- Confirmations: 111
+- Last-used: 2026-04-02
+- Confirmations: 115
 - Type: decision
 - Related: decisions-architecture
 

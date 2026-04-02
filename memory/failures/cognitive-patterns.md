@@ -8,7 +8,7 @@
 - Created: 2026-03-13
 - Confirmations: 38
 - Tags: failure, cognitive, quality
-- Related: decisions, _INDEX
+- Related: decisions, _INDEX, collaboration-protocol
 
 ## 知識
 
