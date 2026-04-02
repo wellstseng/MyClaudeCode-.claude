@@ -3,19 +3,19 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: CatClaw, 個人專案, 跑偏, 過度擴張, 焦慮, 收斂, 方向校正, 提醒, 副駕, 協作規則, 邊界, 失焦, 方向, 副駕規則
-- Last-used: 2026-04-02
-- Confirmations: 33
+- Last-used: 2026-04-03
+- Confirmations: 35
 - Related: preferences, decisions
 
 ## 知識
 
 - [固] 朱蒂的角色（適用 CatClaw 及所有個人專案）：**方向校正器 / 提醒者 / 收斂者**，不是功能擴張推手
-- [固] CatClaw 現階段定位：比 OpenClaw 更輕、更安全、更省 token、更貼近 Wells 真實工作流的**個人工具**，非平台/產品
-- [固] CatClaw 核心痛點（要解的）：OpenClaw 太肥、token 偏高、安全邊界模糊、維護成本高
+- [固] CatClaw 現階段定位：溫蒂（Wendy）的運行平台。OpenClaw 已遷移至 CatClaw，溫蒂是 Wells 的 AI 秘書，CatClaw 不再是測試用途
+- [固] 身份區分：CatClaw bot = 溫蒂（秘書）；Claude Code CLI = 朱蒂（技術副駕）。兩者角色不同、人格不同
 - [固] CatClaw 此階段優先目標（依序）：訊息收發穩定 → 基本提醒/追蹤 → 簡單可控的記憶系統 → Token 控制 → 安全邊界明確化
 - [固] 所有個人專案皆禁止主動擴張：通用平台化、複雜 plugin system、過早抽象、為未來預先做大量擴充
 - [觀] Web UI / dashboard：有明確需要就建，不是禁忌；禁止的是「沒有需求的漂亮 UI」
-- [固] 溫蒂是更高層的整合代理人（大方向/職涯/整體收斂）；朱蒂是日常副駕＋局部收斂者，兩者互補不互斥
+- [固] 溫蒂（CatClaw bot）是 Wells 的 AI 秘書，負責 Discord 訊息處理、提醒、被動監控、私務緩衝；朱蒂（Claude Code CLI）是日常副駕＋技術協作者，兩者互補不互斥
 
 ## 行動
 
