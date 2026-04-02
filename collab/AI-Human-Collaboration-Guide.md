@@ -1,7 +1,7 @@
 # AI 與人類完整協作教程指南
 ## — 以 CatClaw Sprint 2 自主開發實驗為範本
 
-> 版本：v1.0  
+> 版本：v1.2  
 > 日期：2026-04-02  
 > 作者：Wells Tseng（人類 PM）× 朱蒂 Claude（AI 開發者）  
 > 適用範圍：本文件作為團隊與 AI 協作的基準準則，適用於所有需要 AI 深度參與的開發任務
@@ -751,6 +751,16 @@ npx pm2 logs catclaw --lines 50 --nostream 2>&1 | grep -E "功能關鍵字"
 - 現象：PM 說「報告請輸出 MD 檔」才改格式
 - 規則：重要報告必須輸出 MD 檔，存在 `_AIDocs/` 或 `_staging/`
 
+**坑 #13：Discord 頻道訊息只在 terminal 回答**
+- 現象（S3-後期）：Wells 透過 Discord 問問題，AI 把答案輸出到 terminal，Wells 在 Discord 看不到
+- 根因：context 壓縮銜接後忘記 Discord 的 MCP 工具存在
+- 規則：`<channel source="plugin:discord:discord" ...>` 的訊息，**一律用 `mcp__plugin_discord_discord__reply` 回覆**，terminal 輸出對使用者不可見
+
+**坑 #14：命名先決策後被更正**
+- 現象（S3-後期）：provider mode 先命名為 `oauth/token/api`，Wells 更正為 `token/api/password`
+- 根因：沒有先調查既有系統（openclaw）的慣例就自己命名
+- 規則：新增欄位/命名前，先查同一 codebase 中已有的類似概念，保持一致性
+
 ---
 
 ## 11. 防失控機制
@@ -1098,6 +1108,24 @@ Sprint 3 採用「先批量找目標，再安排實作」的改進模式（vs Sp
 | `17d4375` | spawn-subagent namespace 同步修正 | ★★★ |
 | `cb206c6` | B1+B2：session:end 接線 + consolidate 排程 | ★★★ |
 | `f55c115` | C11+C8+C10：mention 過濾 + config 備份 + web 監控 | ★★ |
+
+**Sprint 3 後期（S3-後期，2026-04-02）**
+
+| Commit | 說明 | 類型 |
+|--------|------|------|
+| `629c769` | Streaming reply（live-edit 串流）+ reply-handler 清理 | UX |
+| `3f57ae5` | streamingReply config + ANTHROPIC_TOKEN 預設 provider | 設定 |
+| `32e3a19` | autoThread + provider type aliases + /use skill | UX/功能 |
+| `11680a4` | /system skill + clientReady fix + per-channel override | 功能 |
+| `8423246` | claude provider mode 欄位 + error placeholder fix | 認證/UX |
+| `8ac6ff4` | MODEL_ALIASES（claude-haiku/sonnet/opus → 完整 pi-ai ID）| Bug fix |
+| `9dd6939` | Provider modelId 公開 + /status 顯示 model | 觀測 |
+| `d3dfcdb` | /use 顯示 model ID | 觀測 |
+| `c09f81e` | CodexOAuthProvider 公開 modelId | 觀測 |
+| `936452c` | FailoverProvider 公開 primary modelId | 觀測 |
+| `df1b805` | 修正 inboundHistory 型別（unknown cast → typed） | 清理 |
+| `b51edad` | mode 命名修正（oauth→token, token→api） | Bug fix |
+| `9d4c853` | openai-compat password mode（Basic Auth）完成 | 認證 |
 
 ---
 
