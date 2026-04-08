@@ -127,5 +127,25 @@
       "weak_keywords": ["錯了", "不對", "壞了", "失敗", "沒用", "沒效", "不行", "bug", "broken", "failed", "still broken", "same error", "為什麼還", "怎麼還", "反覆", "踩坑", "又踩", "沒生效", "白做了"],
       "weak_min_match": 3
     }
+  },
+  "docdrift": {
+    "enabled": true,
+    "path_mappings": {
+      "hooks/wg_*.py": ["Architecture.md"],
+      "hooks/workflow-guardian.py": ["Architecture.md"],
+      "hooks/extract-worker.py": ["Architecture.md"],
+      "hooks/quick-extract.py": ["Architecture.md"],
+      "hooks/wisdom_engine.py": ["Architecture.md"],
+      "commands/*.md": ["DocIndex-System.md"],
+      "rules/*.md": ["DocIndex-System.md"],
+      "tools/*.py": ["DocIndex-System.md"]
+    },
+    "exclude_patterns": [
+      "_aidocs/", "memory/", "_staging/", ".git/",
+      "node_modules/", "__pycache__/", ".claude/workflow/",
+      "backups/", "debug/", "Logs/"
+    ],
+    "keyword_match_threshold": 2,
+    "max_pending_display": 5
   }
 }

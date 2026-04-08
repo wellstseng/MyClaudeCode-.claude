@@ -2,7 +2,7 @@
 
 ## Hooks 系統
 
-7 個 hook 事件（含 async Stop），定義在 `settings.json`。主 dispatcher `workflow-guardian.py`（~1450 行）+ 8 個模組化子檔（合計 ~5966 行）：
+7 個 hook 事件（含 async Stop），定義在 `settings.json`。主 dispatcher `workflow-guardian.py`（~1480 行）+ 9 個模組化子檔：
 
 | Hook | 觸發時機 | 用途 |
 |------|---------|------|
@@ -18,13 +18,14 @@
 
 | 模組 | 行數 | 職責 |
 |------|------|------|
-| `workflow-guardian.py` | ~1447 | 瘦身 dispatcher：7 event handlers 編排 |
+| `workflow-guardian.py` | ~1480 | 瘦身 dispatcher：7 event handlers 編排 |
 | `wg_paths.py` | ~314 | 路徑唯一真相來源：slug/root/staging/registry |
-| `wg_core.py` | ~333 | 共用常數/設定/state IO/output/debug |
+| `wg_core.py` | ~344 | 共用常數/設定/state IO/output/debug |
 | `wg_atoms.py` | ~559 | 索引解析/trigger 匹配/ACT-R/載入/budget/section-level 注入 |
 | `wg_intent.py` | ~387 | 意圖分類/session context/MCP/vector service |
 | `wg_extraction.py` | ~295 | per-turn 萃取/worker 管理/failure 偵測 |
 | `wg_hot_cache.py` | ~139 | Hot Cache 讀寫/注入 |
+| `wg_docdrift.py` | ~160 | DocDrift 偵測：src 改動→_AIDocs 映射→advisory 提醒 |
 | `wg_episodic.py` | ~860 | episodic 生成/衝突偵測/品質回饋 |
 | `wg_iteration.py` | ~431 | 自我迭代/震盪/衰減/晉升/覆轍偵測 |
 | `extract-worker.py` | ~806 | SessionEnd/per-turn/failure 子程序：LLM 萃取 + dedup |

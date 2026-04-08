@@ -106,6 +106,13 @@ try:
 except ImportError:
     read_hot_cache = None
 
+# ─── V3.3: DocDrift detection (lazy import, graceful fallback) ────────────
+try:
+    from wg_docdrift import check_source_drift, resolve_doc_update, build_drift_advisory
+    DOCDRIFT_AVAILABLE = True
+except ImportError:
+    DOCDRIFT_AVAILABLE = False
+
 
 # (State I/O moved to wg_core.py)
 
@@ -1044,6 +1051,16 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                 )
                 print(f"[v2.15] AIDocs gate triggered: {fname}", file=sys.stderr)
 
+        # V3.3: DocDrift — track source changes / resolve doc updates
+        if DOCDRIFT_AVAILABLE and config.get("docdrift", {}).get("enabled", True):
+            try:
+                if "/_aidocs/" in normalized.lower():
+                    resolve_doc_update(file_path, state, config)
+                else:
+                    check_source_drift(file_path, state, config)
+            except Exception as e:
+                print(f"[v3.3] DocDrift error: {e}", file=sys.stderr)
+
     elif tool_name == "Read" and file_path:
         # V2.10: Read Tracking — deduplicate, keep first occurrence only
         accessed = state.setdefault("accessed_files", [])
@@ -1059,6 +1076,15 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             vcs.append({"command": command[:200], "at": _now_iso()})
             write_state(session_id, state)
 
+    # V3.3: DocDrift advisory generation
+    if DOCDRIFT_AVAILABLE and config.get("docdrift", {}).get("enabled", True):
+        try:
+            drift_msg = build_drift_advisory(state, config)
+            if drift_msg:
+                state["_docdrift_advisory"] = drift_msg
+        except Exception:
+            pass
+
     # V2.15+V2.16: Output advisory if gate triggered
     advisories = []
     if state:
@@ -1066,6 +1092,7 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             ("_path_enforcement_advisory", "[Guardian:PathEnforce]"),
             ("_aidocs_advisory", "[Guardian:AIDocs]"),
             ("_staging_advisory", "[Guardian:StagingName]"),
+            ("_docdrift_advisory", "[Guardian:DocDrift]"),
         ]:
             val = state.get(key)
             if val:
@@ -1195,6 +1222,16 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
         "Sync: _AIDocs\u2192_CHANGELOG | knowledge\u2192atom | .git\u2192add+commit+push | .svn\u2192add+commit\n"
         "Done \u2192 workflow_signal: sync_completed"
     )
+
+    # V3.3: DocDrift info in stop gate (non-blocking)
+    if DOCDRIFT_AVAILABLE:
+        try:
+            dp = state.get("docdrift_pending", {})
+            if dp:
+                docs = sorted(set(v["doc"] for v in dp.values()))
+                reason += f"\n[DocDrift] {len(dp)} source change(s) \u2192 consider updating: {', '.join(docs[:5])}"
+        except Exception:
+            pass
 
     output_block(reason)
 

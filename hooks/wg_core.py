@@ -59,6 +59,17 @@ DEFAULTS = {
         "max_session_start_entries": 15,
         "max_prompt_matches": 3,
     },
+    # v3.3: DocDrift detection
+    "docdrift": {
+        "enabled": True,
+        "path_mappings": {},
+        "exclude_patterns": [
+            "_aidocs/", "memory/", "_staging/", ".git/",
+            "node_modules/", "__pycache__/", ".claude/workflow/",
+        ],
+        "keyword_match_threshold": 2,
+        "max_pending_display": 5,
+    },
     # v2.2 Sprint 2: Proactive classification
     "proactive": {
         "pattern_threshold": 2,
