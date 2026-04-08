@@ -50,7 +50,7 @@
     },
     "c--projects-tslg-develop": {
       "root": "c:\\Projects\\TSLG\\Develop",
-      "last_seen": "2026-04-02",
+      "last_seen": "2026-04-08",
       "aliases": [
         "TSLG"
       ],
@@ -70,6 +70,10 @@
     "c--projects-orbit": {
       "root": "c:\\Projects\\Orbit",
       "last_seen": "2026-04-01"
+    },
+    "c--projects-sgi": {
+      "root": "c:\\Projects\\SGI",
+      "last_seen": "2026-04-07"
     }
   }
 }
