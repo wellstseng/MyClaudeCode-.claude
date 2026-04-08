@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: harvester, Google Docs, Sheets, 收割, Playwright, cookie, export
-- Last-used: 2026-04-05
-- Confirmations: 25
+- Last-used: 2026-04-08
+- Confirmations: 28
 
 ## 知識
 

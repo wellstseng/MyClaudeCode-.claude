@@ -25,6 +25,7 @@
     ],
     "defaultMode": "bypassPermissions"
   },
+  "model": "opus",
   "hooks": {
     "SessionStart": [
       {
@@ -45,6 +46,11 @@
     "UserPromptSubmit": [
       {
         "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/reset-detect.sh\"",
+            "timeout": 3
+          },
           {
             "type": "command",
             "command": "python3 -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
@@ -99,6 +105,16 @@
     ],
     "PreCompact": [
       {
+        "matcher": "auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/compact-notify.sh\"",
+            "timeout": 3
+          }
+        ]
+      },
+      {
         "hooks": [
           {
             "type": "command",
@@ -119,8 +135,8 @@
           {
             "type": "command",
             "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/quick-extract.py'),run_name='__main__')\"",
-            "async": true,
-            "timeout": 30
+            "timeout": 30,
+            "async": true
           }
         ]
       }
@@ -148,8 +164,6 @@
       }
     }
   },
-  "effortLevel": "max",
   "autoUpdatesChannel": "latest",
-  "skipDangerousModePermissionPrompt": true,
-  "model": "opus"
+  "skipDangerousModePermissionPrompt": true
 }

@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [觀]
 - Trigger: AI自主開發, AI自主, Sprint自主, 協作實驗, harness agent, subagent協作, PM角色, AI當開發, 啟動協作實驗, 協作模式
-- Last-used: 2026-04-05
-- Confirmations: 10
+- Last-used: 2026-04-09
+- Confirmations: 21
 
 ## 知識
 

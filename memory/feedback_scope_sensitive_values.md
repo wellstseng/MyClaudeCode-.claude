@@ -3,7 +3,8 @@
 - Trigger: GUID, 硬編碼, 環境相依, 範圍敏感, hash, fileID, 端口, 絕對路徑
 - Scope: global
 - Confidence: [固]
-- Last-used: 2026-04-02
+- Last-used: 2026-04-07
+- Confirmations: 5
 - Related:
 
 ## 知識

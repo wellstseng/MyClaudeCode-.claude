@@ -93,3 +93,9 @@ Thumbs.db
 *~
 memory/mail-sorting.md
 sessions/
+
+# ─── Runtime / session artifacts ─────────────────────────
+channels/
+history.jsonl
+paste-cache/
+tasks/

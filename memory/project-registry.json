@@ -25,7 +25,7 @@
     },
     "-users-wellstseng-project-catclaw": {
       "root": "/Users/wellstseng/project/catclaw",
-      "last_seen": "2026-04-05"
+      "last_seen": "2026-04-09"
     },
     "-users-wellstseng-project-openclaw": {
       "root": "/Users/wellstseng/project/openclaw",
@@ -37,7 +37,11 @@
     },
     "-users-wellstseng-project-claudecode": {
       "root": "/Users/wellstseng/project/claudecode",
-      "last_seen": "2026-04-05"
+      "last_seen": "2026-04-07"
+    },
+    "-users-wellstseng--catclaw": {
+      "root": "/Users/wellstseng/.catclaw",
+      "last_seen": "2026-04-07"
     }
   }
 }
