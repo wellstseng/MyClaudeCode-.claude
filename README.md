@@ -1,7 +1,7 @@
 # 原子記憶系統 Atomic Memory V3.4
 
 > **Claude Code 跨 Session 知識管理引擎**
-> 三層即時管線 | Hot Cache | SessionStart 風暴修復 | Hybrid RECALL | Dual LLM | Workflow Guardian | Write Quality Gate | Wisdom Engine | Fix Escalation | Failures 自動化 | Token Diet | ACT-R Activation | Read Tracking | Rules 模組化 | 自我迭代自動化 | 覆轍偵測 | Section-Level 注入 | 路徑集中化（wg_paths）| Project Registry | 專案自治層 | DocDrift Detection
+> 三層即時管線 | Hot Cache | SessionStart 風暴修復 | Hybrid RECALL | Dual LLM | Workflow Guardian | Write Quality Gate | Wisdom Engine | Fix Escalation | Failures 自動化 | Token Diet | ACT-R Activation | Read Tracking | Rules 模組化 | 自我迭代自動化 | 覆轍偵測 | Section-Level 注入 | 路徑集中化（wg_paths）| Project Registry | 專案自治層 | DocDrift Detection | Gemma 4 LLM
 
 Claude Code 每次 session 都是白紙一張——上次的決策、踩過的坑、使用者偏好，全部歸零。
 原子記憶系統為 Claude Code 補上 **長期記憶層**，透過 hooks 自動注入歷史知識，讓 AI 不再反覆犯同樣的錯。
@@ -274,7 +274,7 @@ sequenceDiagram
     note over U,F: 沒有 hooks 沒有記憶注入 沒有同步閘門<br>每個 session 都是全新的白紙
 ```
 
-### Claude Code + 原子記憶 V3.1 完整流程
+### Claude Code + 原子記憶 V3.4 完整流程
 
 ```mermaid
 sequenceDiagram
@@ -384,13 +384,13 @@ sequenceDiagram
         G->>O: [S3] Quick Extract (async, qwen3:1.7b 5s)
         O-->>G: knowledge → hot_cache.json
         note right of G: PostToolUse 讀取 hot cache<br/>additionalContext 即時注入
-        G->>O: [S4] Deep Extract (detached, rdchat 30s)
+        G->>O: [S4] Deep Extract (detached, rdchat gemma4:e4b)
         O-->>G: 覆寫 hot cache → 正式 atom
     end
 
     rect rgba(150,100,255,0.1)
         note over G,F: SessionEnd Hook
-        G->>O: [U] Transcript 全文掃描 qwen3 萃取
+        G->>O: [U] Transcript 全文掃描 LLM 萃取 (rdchat: gemma4:e4b)
         O-->>G: knowledge_queue
         G->>V: [V] 跨 Session 鞏固 逐項向量搜尋
         V-->>G: matches
@@ -568,8 +568,8 @@ flowchart TD
         A2 --> A3["[臨] items (≤3)<br/>→ state knowledge_queue"]
     end
 
-    subgraph DE ["Deep Extract (detached, 30s)"]
-        D1["extract-worker.py<br/>(rdchat qwen3.5)"] --> D2["覆寫 hot_cache.json<br/>(source=deep_extract)"]
+    subgraph DE ["Deep Extract (detached, ~14s)"]
+        D1["extract-worker.py<br/>(rdchat gemma4:e4b)"] --> D2["覆寫 hot_cache.json<br/>(source=deep_extract)"]
         D2 --> D3["正式 atom 寫入"]
     end
 
@@ -628,6 +628,9 @@ flowchart TD
 | V2.20 | 2026-03-27 | 路徑統一管理：所有路徑邏輯集中一個地方，修掉多項 ACT-R 和注入 bug | **路徑集中化 + Bug 修復**：`wg_paths.py` 路徑唯一真相來源（slug/root/staging/registry/project-registry）+ activation 路徑修復（專案層 atom ACT-R score 不再 -10.0）+ 多項 bug 修復（C5~C7, W8~W13） |
 | **V2.21** | **2026-03-27** | 每個專案有自己的記憶層，不再全混在全域；舊資料一鍵遷移 | **專案自治層 + Project Registry**：每個專案 `{root}/.claude/memory/` 獨立（MEMORY.md + atoms + hooks/project_hooks.py delegate + failures/ + _staging/）+ Session 自動登錄 registry + `init-project` Step 6 建立自治層骨架 + `migrate-v221.py` 遷移工具 + wg_atoms 指標型重導向（Status: migrated-v2.21）|
 | **V3.0** | **2026-04-02** | 知識不再等下一輪：萃取後同一 turn 內就能用；VS Code 開啟不再重複初始化 | **三層即時管線 + SessionStart 風暴修復**：Stop async quick-extract.py（qwen3:1.7b 5s → hot_cache.json）+ PostToolUse mid-turn injection + UPS hot cache 快速路徑 + deep extract 覆寫 + SessionStart 去重（resume 合併 + startup skip vector）+ 分層孤兒清理（10m/30m/24h）+ vector_ready.flag 非阻塞啟動 + Atom Recovery（compact 後提示壓縮前 atoms） |
+| V3.2 | 2026-04-02 | Token 瘦身：rules 四合一 + MEMORY.md 拆分 + Hook 優化 | **Token Diet Phase 2**：rules/ 四檔合一 core.md + MEMORY.md index-only + _ATOM_INDEX.md 機器專用觸發表 + Hook 精簡 |
+| V3.3 | 2026-04-08 | 改程式碼忘了更新文件？系統會自動提醒 | **DocDrift Detection**：`wg_docdrift.py` 模組 — src Edit/Write 偵測對應 _AIDocs 需更新，Hybrid 映射（config 顯式 + keyword fallback）+ PostToolUse advisory + Stop gate 提示 |
+| **V3.4** | **2026-04-09** | 萃取引擎換新：三輪 A/B 測試後從 qwen3.5 換成 Gemma 4，快 3-15 倍且零幻覺 | **rdchat LLM gemma4:e4b**：三輪 A/B 測試（14 題型 × 5 模型）驗證。extract-worker think 改 "auto" + temp 0.0。num_predict 8192→4096。穩定性 100%、grounded 100%、速度 2.8-14s（原 42-52s）。已知風險：ollama#15260 think=false+format=JSON 衝突 |
 
 ---
 
@@ -644,10 +647,11 @@ flowchart TD
 
 Ollama 呼叫支援多 backend 自動切換，在 `workflow/config.json` 的 `ollama_backends` 區塊設定：
 
-| Backend | 用途 | 設定範例 |
-|---------|------|---------|
-| **primary** (遠端) | GPU 加速推論（如 RTX 3090），優先使用 | `priority: 1`，需設定 `auth` + 密碼檔 |
-| **fallback** (本地) | 本地 CPU/GPU 推論，遠端不可用時自動切換 | `priority: 2`，無需認證 |
+| Backend | 模型 | 用途 | 設定 |
+|---------|------|------|------|
+| **rdchat-direct** (遠端) | gemma4:e4b | GPU 加速推論（RTX 3090），萃取+衝突偵測 | `priority: 1` |
+| **rdchat** (遠端 proxy) | gemma4:e4b | LDAP 認證 fallback | `priority: 2`，需 `auth` + 密碼檔 |
+| **local** (本地) | qwen3:1.7b | 本地 CPU/GPU 推論（GTX 1050 Ti），quick-extract | `priority: 3`，無需認證 |
 
 #### 三階段退避機制
 
