@@ -170,11 +170,11 @@ def _call_ollama_generate(prompt: str, model: str = None,
     """
     try:
         client = get_client()
-        # think="auto" → rdchat: think=True + 8192, local: think=False + 2048
-        # 不用 format="json" — qwen3.5 thinking mode 與 JSON constrained decoding 衝突
+        # think="auto" → rdchat(gemma4:e4b): think=True + 4096, local(qwen3:1.7b): think=False + 2048
+        # 不用 format="json" — gemma4 think=false + format 有 bug (ollama#15260)
         return client.generate(
             prompt, model=model, timeout=timeout,
-            temperature=0.1, think="auto",
+            temperature=0.0, think="auto",
         )
     except Exception as e:
         _atom_debug_error("萃取:_call_ollama_generate", e)

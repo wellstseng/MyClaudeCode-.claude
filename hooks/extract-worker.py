@@ -150,12 +150,12 @@ def _extract_all_assistant_texts(
 def _call_ollama(prompt: str, model: str = None, timeout: int = 120) -> str:
     try:
         client = get_client()
-        # think=True: qwen3.5 需要 reasoning 才能正確處理長 prompt 萃取
-        # qwen3:1.7b 不支援 think，自動忽略
-        # num_predict=8192: 給 thinking tokens 足夠空間（qwen3.5 thinking ~3K + content ~500）
+        # think="auto": rdchat(gemma4:e4b)=True, local(qwen3:1.7b)=False — 由 backend config 控制
+        # temperature=0.0: A/B 測試 Round 2 結論，一致性最佳
+        # num_predict: 由 backend config 的 llm_num_predict 控制（rdchat=4096, local=2048）
         return client.generate(
             prompt, model=model, timeout=timeout,
-            think=True, temperature=0.1, num_predict=8192,
+            think="auto", temperature=0.0,
         )
     except Exception as e:
         _atom_debug_error("萃取:_call_ollama", e)

@@ -3,7 +3,7 @@
 memory-conflict-detector.py — Atomic Memory Conflict Detection (v2.1 Sprint 2)
 
 掃描所有活躍 atom，透過向量相似度找出疑似衝突對，
-再用本地 LLM (qwen3:1.7b) 判定 AGREE/CONTRADICT/EXTEND/UNRELATED。
+再用 LLM (rdchat: gemma4:e4b / local: qwen3:1.7b) 判定 AGREE/CONTRADICT/EXTEND/UNRELATED。
 
 Session-end 離線路徑，不在 hook timeout 內執行。
 

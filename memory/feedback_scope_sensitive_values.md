@@ -4,6 +4,7 @@
 - Scope: global
 - Confidence: [固]
 - Last-used: 2026-04-02
+- Confirmations: 1
 - Related:
 
 ## 知識
