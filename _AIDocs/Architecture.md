@@ -28,8 +28,8 @@
 | `wg_docdrift.py` | ~160 | DocDrift 偵測：src 改動→_AIDocs 映射→advisory 提醒 |
 | `wg_episodic.py` | ~860 | episodic 生成/衝突偵測/品質回饋 |
 | `wg_iteration.py` | ~431 | 自我迭代/震盪/衰減/晉升/覆轍偵測 |
-| `extract-worker.py` | ~806 | SessionEnd/per-turn/failure 子程序：LLM 萃取 + dedup |
-| `quick-extract.py` | ~155 | Stop async 快篩：qwen3:1.7b → hot_cache |
+| `extract-worker.py` | ~806 | SessionEnd/per-turn/failure 子程序：LLM 萃取 + dedup（rdchat: gemma4:e4b, local: qwen3:1.7b） |
+| `quick-extract.py` | ~155 | Stop async 快篩：local qwen3:1.7b → hot_cache |
 | `wisdom_engine.py` | ~177 | 反思引擎：硬規則 + 反思指標 |
 
 ### 輔助 Hook 腳本
@@ -72,7 +72,7 @@
 | `rules/session-management.md` | 對話管理 + 續航 + 自我迭代 + 精確修正升級 |
 | `rules/sync-workflow.md` | 工作結束同步 + Guardian 閘門 |
 
-## 記憶系統（原子記憶 V3.1）
+## 記憶系統（原子記憶 V3.4）
 
 ### 雙 LLM 架構 + Dual-Backend
 
@@ -87,7 +87,7 @@
 
 ```
 config.json → ollama_backends:
-  primary (priority=1, 遠端 GPU) → fallback (priority=2, 本地)
+  rdchat-direct (priority=1, RTX 3090, gemma4:e4b) → rdchat proxy (priority=2) → local (priority=3, GTX 1050 Ti, qwen3:1.7b)
 ```
 
 三階段退避：
@@ -134,11 +134,11 @@ config.json → ollama_backends:
 #### V3 三層即時管線
 
 ```
-Claude 回應結束 → [Stop async] quick-extract.py (qwen3:1.7b, 5s)
+Claude 回應結束 → [Stop async] quick-extract.py (local qwen3:1.7b, 5s)
                     → hot_cache.json (injected=false)
 Claude 使用工具 → [PostToolUse] hot cache check → mid-turn 注入
 使用者下一句   → [UserPromptSubmit] hot cache 快速路徑 + 完整 pipeline
-Deep extract   → [detached] extract-worker.py → 覆寫 hot cache → 正式 atom
+Deep extract   → [detached] extract-worker.py (rdchat: gemma4:e4b) → 覆寫 hot cache → 正式 atom
 ```
 
 ### SessionStart 去重

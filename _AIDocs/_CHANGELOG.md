@@ -13,6 +13,7 @@
 
 | 日期 | 變更 | 涉及檔案 |
 |------|------|---------|
+| 2026-04-09 | **V3.4 rdchat LLM gemma4:e4b**：三輪 A/B 測試（14 題型 × 5 模型）驗證後，rdchat LLM 從 qwen3.5→gemma4:e4b。extract-worker think 改 "auto" + temp 0.0。num_predict 8192→4096。local/embedding 不動。 | `workflow/config.json`, `hooks/extract-worker.py`, `hooks/wg_episodic.py`, `hooks/quick-extract.py`, `tools/memory-conflict-detector.py`, `tools/memory-vector-service/config.py`, `_AIDocs/Architecture.md`, `_AIDocs/DevHistory/ab-test-gemma4.md`(新), `memory/toolchain-ollama.md` |
 | 2026-04-08 | **V3.3 DocDrift Detection**：新建 `wg_docdrift.py` 模組 — src Edit/Write 自動偵測對應 _AIDocs 是否需要更新，Hybrid 映射（config 顯式 + keyword fallback），PostToolUse advisory 提醒 + Stop gate 提示。Inspired by PR #1 (@wellstseng) | `hooks/wg_docdrift.py`(新), `hooks/workflow-guardian.py`, `hooks/wg_core.py`, `workflow/config.json`, `_AIDocs/Architecture.md` |
 | 2026-04-02 | **V3.1 Token Diet**：4 Phase 精簡原子記憶 — 直刪 31 條 + 信號自描述化 5 個 + JIT _reference + MCP atom_write/promote。decisions+arch+memory-system 1,841→631 tok (-65.7%) | `memory/decisions.md`, `memory/decisions-architecture.md`, `rules/memory-system.md`, `hooks/wg_iteration.py`, `hooks/wisdom_engine.py`, `hooks/workflow-guardian.py`, `memory/_reference/internal-pipeline.md`(新), `tools/workflow-guardian-mcp/server.js` |
 | 2026-04-02 | **V3.0 文件全面升級**：README V3.0（標題+三欄Token表+速度效率表+架構+流程圖+Skills 17個+V3子系統+版本歷史）+ Install-forAI V3升級section + Architecture/Project_File_Tree/DocIndex/INDEX 更新 + 7 commands 移除版號標記 | `README.md`, `Install-forAI.md`, `_AIDocs/*.md`, `commands/*.md`, `CLAUDE.md` |
