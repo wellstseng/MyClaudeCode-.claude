@@ -1,6 +1,6 @@
 # 原子記憶系統 — 全檔案索引
 
-> 由 `/read-project` 產出，最近同步：2026-03-30。
+> 由 `/read-project` 產出，最近同步：2026-04-10。
 > 目標：讓 Claude Code AI 能了解自己，以利後續升級、迭代、進化。
 
 ---
@@ -117,10 +117,10 @@ Session Ready
   - Long DIE → workflow-guardian SessionStart 提示使用者確認停用/保持
 
 ### 記憶品質
-- memory-audit.py — 格式驗證 + staleness（支援 `--project-dir`）
+- memory-audit.py — 格式驗證 + staleness（支援 `--project-dir`、Claude-native YAML frontmatter、2 欄 MEMORY.md、wildcard 索引項、orphan memory dir 容忍）
 - memory-write-gate.py — 寫入閘門（6 規則 + 0.80 dedup）
 - memory-conflict-detector.py — 向量衝突 + LLM 分類（支援 `--project-dir`）
-- atom-health-check.py — 參照完整性
+- atom-health-check.py — 參照完整性（`_` 前綴檔案豁免、`decisions`/`decisions-architecture`/`spec` 為 central hub 反向參照豁免）
 
 ### 遷移/測試
 - migrate-v221.py — V2.21 遷移（_AIAtoms + 個人記憶 → .claude/memory/）

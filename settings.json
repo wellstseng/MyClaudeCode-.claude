@@ -24,7 +24,7 @@
       "mcp__playwright__browser_evaluate",
       "mcp__MCPControl__computer"
     ],
-    "defaultMode": "bypassPermissions",
+    "defaultMode": "acceptEdits",
     "additionalDirectories": [
       "C:\\Users\\holylight\\.claude",
       "C:\\Users\\holylight\\.claude\\projects\\c--projects\\memory",
@@ -142,5 +142,7 @@
     ]
   },
   "effortLevel": "high",
-  "autoUpdatesChannel": "latest"
+  "autoUpdatesChannel": "latest",
+  "skipDangerousModePermissionPrompt": true,
+  "skipAutoPermissionPrompt": true
 }

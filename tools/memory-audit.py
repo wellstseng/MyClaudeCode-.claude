@@ -40,10 +40,10 @@ STALENESS_THRESHOLDS: Dict[str, int] = {"[固]": 90, "[觀]": 60, "[臨]": 30}
 # v2.1 Sprint 3: Type-based decay multiplier (procedural ages slower, episodic faster)
 TYPE_DECAY_MULTIPLIER: Dict[str, float] = {"semantic": 1.0, "episodic": 0.8, "procedural": 1.5}
 PROMOTION_THRESHOLDS: Dict[str, int] = {"[臨]": 2, "[觀]": 4}
-INDEX_MAX_LINES = 30
+INDEX_MAX_LINES = 40
 ATOM_MAX_LINES = 200
 TRIGGER_MIN = 3
-TRIGGER_MAX = 8
+TRIGGER_MAX = 12
 MEMORY_INDEX = "MEMORY.md"
 DISTANT_DIR = "_distant"
 SKIP_PREFIXES = ("SPEC_", "_")  # Files to skip during atom scanning
@@ -75,6 +75,7 @@ class AtomMetadata:
     has_evolution_log: bool = False
     evolution_entries: int = 0
     raw_metadata: Dict[str, str] = field(default_factory=dict)
+    is_claude_native: bool = False    # True if --- YAML frontmatter (Claude auto-memory)
     # v2.1 fields (all optional, graceful fallback)
     atom_type: str = "semantic"       # semantic/episodic/procedural
     created: Optional[date] = None
@@ -142,7 +143,12 @@ CONFIDENCE_EXTRACT = re.compile(r"\[(固|觀|臨)\]")
 
 
 def parse_atom_file(path: Path, layer_name: str) -> AtomMetadata:
-    """Parse a .md atom file into AtomMetadata."""
+    """Parse a .md atom file into AtomMetadata.
+
+    Supports two formats:
+    1. Atom-style: `- Key: Value` metadata block (project standard)
+    2. Claude-native: `---\\nname:...\\n---` YAML frontmatter (auto-memory system)
+    """
     atom = AtomMetadata(file_path=path, layer_name=layer_name)
     try:
         text = path.read_text(encoding="utf-8-sig")  # handles BOM
@@ -151,6 +157,19 @@ def parse_atom_file(path: Path, layer_name: str) -> AtomMetadata:
 
     lines = text.splitlines()
     atom.line_count = len(lines)
+
+    # Detect Claude-native YAML frontmatter — skip atom-style validation
+    if lines and lines[0].strip() == "---":
+        atom.is_claude_native = True
+        for i in range(1, len(lines)):
+            if lines[i].strip() == "---":
+                break
+            m = re.match(r"^([\w-]+):\s*(.*)$", lines[i])
+            if m:
+                atom.raw_metadata[m.group(1)] = m.group(2).strip().strip('"').strip("'")
+        # Use 'name' as title, fall back to file stem
+        atom.title = atom.raw_metadata.get("name", path.stem)
+        return atom
 
     # Title (first # heading)
     for line in lines:
@@ -287,11 +306,23 @@ def parse_memory_index(path: Path) -> Tuple[List[IndexEntry], int]:
             cells = [c.strip() for c in stripped.split("|")]
             cells = [c for c in cells if c]  # remove empties from leading/trailing |
             if len(cells) >= 3:
+                # Legacy 3-col format: | Atom | Path | Trigger | [Confidence]
                 entry = IndexEntry(
                     atom_name=cells[0],
                     path=cells[1],
                     trigger=cells[2],
                     confidence=cells[3] if len(cells) >= 4 else "",
+                )
+                entries.append(entry)
+            elif len(cells) == 2:
+                # Compact 2-col format: | Atom | 說明 |
+                # Path is inferred from atom name (supports wildcards like "feedback-*")
+                name = cells[0]
+                entry = IndexEntry(
+                    atom_name=name,
+                    path=f"{name}.md",
+                    trigger="",
+                    confidence="",
                 )
                 entries.append(entry)
 
@@ -305,6 +336,10 @@ def validate_format(atom: AtomMetadata) -> List[Issue]:
     """Validate atom file format compliance."""
     issues: List[Issue] = []
     rel = _rel_path(atom.file_path)
+
+    # Claude-native YAML frontmatter has its own schema — skip atom-style validation
+    if atom.is_claude_native:
+        return issues
 
     # Title
     if not atom.title:
@@ -411,6 +446,22 @@ def validate_index(index_path: Path, memory_dir: Path, index_entries: List[Index
     for entry in index_entries:
         entry_path = Path(entry.path)
         file_name = entry_path.name
+
+        # Wildcard entries (e.g. "feedback-*.md") — expand against actual files
+        if "*" in file_name:
+            prefix = file_name.split("*")[0].rstrip("-_.")
+            matched_any = False
+            for fname in actual_files:
+                stem = fname[:-3] if fname.endswith(".md") else fname  # strip .md
+                if stem == prefix or stem.startswith(f"{prefix}_") or stem.startswith(f"{prefix}-"):
+                    indexed_files.add(fname)
+                    matched_any = True
+            if not matched_any:
+                issues.append(
+                    Issue(rel_index, "warning", "index", f"索引 wildcard '{entry.atom_name}' 無匹配檔案")
+                )
+            continue
+
         indexed_files.add(file_name)
 
         full_path = memory_dir / file_name
@@ -1235,9 +1286,18 @@ def run_audit(args: argparse.Namespace) -> HealthReport:
             # Validate index ↔ files
             report.issues.extend(validate_index(index_path, mem_dir, index_entries))
         else:
-            report.issues.append(
-                Issue(str(mem_dir), "error", "index", "缺少 MEMORY.md 索引檔")
+            # Skip "missing MEMORY.md" error if directory has no atom files at root
+            # (orphan/empty memory dir from deleted project — harmless)
+            has_atoms = any(
+                f.is_file() and f.suffix == ".md"
+                and f.name != MEMORY_INDEX
+                and not any(f.name.startswith(p) for p in SKIP_PREFIXES)
+                for f in mem_dir.iterdir()
             )
+            if has_atoms:
+                report.issues.append(
+                    Issue(str(mem_dir), "error", "index", "缺少 MEMORY.md 索引檔")
+                )
 
         # Parse all atom files
         for md_file in sorted(mem_dir.glob("*.md")):
