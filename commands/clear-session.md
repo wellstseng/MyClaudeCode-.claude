@@ -1,4 +1,4 @@
-# /reset-session — 重置 tmux session
+# /clear-session — 清除 tmux session
 
 > 對指定的 tmux session 送出 `/clear`，清除 Claude Code CLI 的對話。
 > 全域 Skill，適用任何專案。
@@ -8,8 +8,8 @@
 ## 使用方式
 
 ```
-/reset-session              # 預設 reset session "judy"
-/reset-session <name>       # reset 指定 session
+/clear-session              # 預設清 session "judy"
+/clear-session <name>       # 清指定 session
 ```
 
 ---

@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: Claude Code, claudecode, claude code 架構, context 管理, token 控制, session 處理, 安全邊界
-- Last-used: 2026-04-08
-- Confirmations: 56
+- Last-used: 2026-04-11
+- Confirmations: 60
 
 ## 知識
 
