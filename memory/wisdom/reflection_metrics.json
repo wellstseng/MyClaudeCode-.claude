@@ -1,0 +1,32 @@
+{
+  "window_size": 10,
+  "metrics": {
+    "first_approach_accuracy": {
+      "single_file": {
+        "correct": 0,
+        "total": 0
+      },
+      "multi_file": {
+        "correct": 0,
+        "total": 0
+      },
+      "architecture": {
+        "correct": 0,
+        "total": 4
+      }
+    },
+    "over_engineering_rate": {
+      "user_reverted_or_simplified": 0,
+      "total_suggestions": 4
+    },
+    "silence_accuracy": {
+      "held_back_ok": 0,
+      "held_back_missed": 0
+    }
+  },
+  "arch_sensitivity_elevated": true,
+  "blind_spots": [
+    "architecture 首次正確率 0%"
+  ],
+  "last_reflection": "2026-04-12T15:58:11.823013+00:00"
+}

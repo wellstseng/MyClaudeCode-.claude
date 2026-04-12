@@ -1,6 +1,3 @@
-# ─── Memory（統一由 WellsDB 管理）────────────────────────
-memory/
-
 # ─── Credentials & Auth (NEVER commit) ───────────────────
 .credentials.json
 mcp-needs-auth-cache.json
