@@ -1128,6 +1128,8 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                     resolve_doc_update(file_path, state, config)
                 else:
                     check_source_drift(file_path, state, config)
+                # docdrift mutations must persist even when no advisory fires
+                write_state(session_id, state)
             except Exception as e:
                 print(f"[v3.3] DocDrift error: {e}", file=sys.stderr)
 
