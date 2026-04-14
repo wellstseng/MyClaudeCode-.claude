@@ -2,11 +2,12 @@
 
 ## Hooks 系統
 
-7 個 hook 事件（含 async Stop），定義在 `settings.json`。主 dispatcher `workflow-guardian.py`（~1480 行）+ 9 個模組化子檔：
+8 個 hook 事件（含 async Stop），定義在 `settings.json`。主 dispatcher `workflow-guardian.py`（~1530 行）+ 9 個模組化子檔：
 
 | Hook | 觸發時機 | 用途 |
 |------|---------|------|
-| `UserPromptSubmit` | 使用者送出訊息 | RECALL 記憶檢索 + intent 分類 + Context Budget 監控 + Wisdom 情境分類 + Failures 偵測 |
+| `UserPromptSubmit` | 使用者送出訊息 | RECALL 記憶檢索 + intent 分類（含 handoff）+ Context Budget 監控 + Wisdom 情境分類 + Failures 偵測 + Handoff 信號注入 |
+| `PreToolUse` (Write) | Write 工具呼叫前 | Atom Format Gate：阻擋寫入 `{project}/.claude/memory/*.md` 但不符原子格式（Scope/Confidence/Trigger frontmatter）的內容 |
 | `PostToolUse` | Edit/Write 後 | 追蹤修改檔案 + 增量索引 + Read Tracking + over_engineering 追蹤 |
 | `PreCompact` | Context 壓縮前 | 快照 state（壓縮前保護） |
 | `Stop` | 對話結束前 | 閘門：未同步則阻止結束 + Fix Escalation 信號注入 + 逐輪增量萃取 |
@@ -117,6 +118,7 @@ config.json → ollama_backends:
   ├─ Ranked Merge → top atoms
   ├─ Context Budget: 3000 tokens 上限，ACT-R truncate
   ├─ Fix Escalation: retry_count≥2 → 注入 [FixEscalation] 信號
+  ├─ Handoff Protocol: intent=handoff → 注入 [Guardian:Handoff] 提醒走 /handoff
   └─ additionalContext 注入
 ```
 

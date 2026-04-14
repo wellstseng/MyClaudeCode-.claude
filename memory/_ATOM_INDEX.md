@@ -18,3 +18,5 @@
 | feedback-memory-path | memory/feedback_memory_path.md | 寫入記憶, 暫存, _staging, memory path, 寫atom, Write memory, 記憶路徑 |
 | feedback-scope-sensitive | memory/feedback_scope_sensitive_values.md | GUID, 硬編碼, 環境相依, 範圍敏感, hash, fileID, 端口, 絕對路徑 |
 | gdoc-harvester | memory/gdoc-harvester.md | harvester, Google Docs, Sheets, 收割, Playwright, cookie, export |
+| feedback-decision-no-tech-menu | memory/feedback-decision-no-tech-menu.md | 決策, 選項, 選擇, 工具選型, 技術選單, 要不要, 建議優選, 白話, 給使用者選 |
+| feedback-handoff | memory/feedback_handoff_self_sufficient.md | 下 session, 續接, 交接, 下次繼續, next-phase, handoff, 下個 claude, resume prompt |

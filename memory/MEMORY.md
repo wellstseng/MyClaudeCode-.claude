@@ -12,7 +12,7 @@
 | workflow-svn | SVN 操作配方 |
 | toolchain | 環境設定、工具鏈 |
 | toolchain-ollama | Ollama 萃取配置 |
-| feedback-* | 行為校正（6 個） |
+| feedback-* | 行為校正（7 個含 handoff） |
 | gdoc-harvester | Google Docs 收割 |
 
 > **知識庫查閱**：

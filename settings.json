@@ -22,7 +22,15 @@
       "mcp__playwright__browser_fill_form",
       "mcp__playwright__browser_network_requests",
       "mcp__playwright__browser_evaluate",
-      "mcp__MCPControl__computer"
+      "mcp__MCPControl__computer",
+      "Edit(.claude/**)",
+      "Write(.claude/**)",
+      "Edit(C:/tmp/docs-progg/.claude/**)",
+      "Write(C:/tmp/docs-progg/.claude/**)",
+      "Edit(c:\\tmp\\docs-progg\\.claude\\**)",
+      "Write(c:\\tmp\\docs-progg\\.claude\\**)",
+      "Bash(cp \"/c/Projects/.claude/memory/fcgi-api-directory.md\" /tmp/phpujadmin/atom.md)",
+      "Read(//tmp/phpujadmin/**)"
     ],
     "defaultMode": "acceptEdits",
     "additionalDirectories": [
@@ -33,7 +41,9 @@
       "C:\\Users\\holylight\\.claude\\workflow",
       "C:\\Users\\holylight\\.claude\\memory\\_staging",
       "C:\\Users\\holylight\\.claude\\projects\\c--users-holylight--claude\\memory",
-      "C:\\Users\\holylight\\.claude\\projects\\c--users-holylight--claude\\memory\\_staging"
+      "C:\\Users\\holylight\\.claude\\projects\\c--users-holylight--claude\\memory\\_staging",
+      "C:\\tmp\\docs-progg\\.claude\\memory\\_staging",
+      "c:\\tmp\\docs-progg\\.claude\\memory\\_staging"
     ]
   },
   "hooks": {
@@ -87,6 +97,16 @@
             "timeout": 20
           }
         ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -123,8 +143,8 @@
           {
             "type": "command",
             "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/quick-extract.py'),run_name='__main__')\"",
-            "async": true,
-            "timeout": 30
+            "timeout": 30,
+            "async": true
           }
         ]
       }

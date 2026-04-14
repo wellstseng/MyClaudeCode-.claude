@@ -857,6 +857,14 @@ def handle_user_prompt_submit(
             "執行 /fix-escalation 精確修正會議。"
         )
 
+    # ── Handoff Protocol ────────────────────────────────────────────
+    if intent == "handoff":
+        lines.append(
+            "[Guardian:Handoff] 偵測到 handoff 意圖。"
+            "下 session 的 Claude 不會看到本次對話脈絡。"
+            "請執行 /handoff 走 6 區塊強制模板，不要徒手寫 prompt。"
+        )
+
     # ─── Phase 1.5: Failure-triggered extraction (v2.13) ───────────
     _maybe_spawn_failure_extraction(
         session_id, state, config, clean_prompt, lines
@@ -943,6 +951,61 @@ def handle_user_prompt_submit(
         })
     else:
         output_nothing()
+
+
+def _check_memory_atom_format(
+    tool_name: str, tool_input: Dict[str, Any]
+) -> Optional[str]:
+    """Project-layer memory write must follow atom format.
+
+    Returns deny reason string, or None to allow.
+    Only checks Write tool targeting {project}/.claude/memory/*.md outside
+    of _staging/ and _* index files.
+    """
+    if tool_name != "Write":
+        return None
+    file_path = tool_input.get("file_path", "").replace("\\", "/")
+    if "/.claude/memory/" not in file_path or not file_path.endswith(".md"):
+        return None
+    if "/_staging/" in file_path:
+        return None
+    fname = file_path.rsplit("/", 1)[-1]
+    if fname.startswith("_") or fname == "MEMORY.md" or fname.startswith("episodic-"):
+        return None
+    content = tool_input.get("content", "")[:300]
+    required = [
+        "- Scope:", "- Confidence:", "- Trigger:",
+        "- Last-used:", "- Confirmations:",
+    ]
+    hits = sum(1 for r in required if r in content)
+    if hits >= 3:
+        return None
+    return (
+        f"[Guardian:AtomFormat] 偵測到寫入 {file_path}\n"
+        f"但內容不符合原子格式（缺少 Scope/Confidence/Trigger 等 frontmatter，僅 {hits}/5 命中）。\n"
+        "請改用 atom_write MCP（自動產生標準 frontmatter + 索引登記 + 去重檢查）：\n"
+        "  mcp__workflow-guardian__atom_write(scope=\"project\", project_cwd=\"...\", ...)\n"
+        "如為臨時暫存，請寫入 _staging/ 子目錄（自由格式允許）。\n"
+        "如為索引/變更日誌，請以 _ 開頭命名（如 _NOTES.md）。"
+    )
+
+
+def handle_pre_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
+    tool_name = input_data.get("tool_name", "")
+    tool_input = input_data.get("tool_input", {})
+
+    deny_reason = _check_memory_atom_format(tool_name, tool_input)
+    if deny_reason:
+        output_json({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": deny_reason,
+            }
+        })
+        return
+
+    output_nothing()
 
 
 def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
@@ -1479,6 +1542,7 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
 HANDLERS = {
     "SessionStart": handle_session_start,
     "UserPromptSubmit": handle_user_prompt_submit,
+    "PreToolUse": handle_pre_tool_use,
     "PostToolUse": handle_post_tool_use,
     "PreCompact": handle_pre_compact,
     "Stop": handle_stop,

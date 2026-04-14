@@ -89,6 +89,7 @@ Session Ready
 | /continue | 讀 _staging/next-phase.md 續接 | 無 |
 | /extract | 手動知識萃取（不等 SessionEnd） | Ollama |
 | /fix-escalation | 精確修正升級（6 Agent 會議） | 無 |
+| /handoff | 跨 Session Handoff Prompt Builder（6 區塊強制模板） | 無 |
 | /harvest | Playwright 網頁收割→Markdown | Playwright |
 | /init-project | 專案 _AIDocs + 自治層初始化 | 無 |
 | /memory-health | 記憶品質診斷（audit + health-check） | 無 |

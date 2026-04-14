@@ -29,6 +29,8 @@ INTENT_PATTERNS = {
                "新增", "planning", "實作", "implement", "方案"],
     "recall": ["之前", "上次", "記得", "決策", "決定", "為什麼選",
                "remember", "previous", "history"],
+    "handoff": ["下 session", "下次繼續", "交接", "續接", "下一個 session",
+                "resume prompt", "給下次", "next-phase", "handoff", "下個 claude"],
 }
 
 
