@@ -3,11 +3,11 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 偏好, 風格, 習慣, 語言, 回應, 執P, 執驗上P, 上GIT
-- Last-used: 2026-04-14
-- Confirmations: 127
+- Last-used: 2026-04-15
+- Confirmations: 134
 - Type: preference
 
-- Related: feedback-decision-no-tech-menu
+- Related: feedback-decision-no-tech-menu, feedback-no-outsource-rigor
 
 ## 知識
 

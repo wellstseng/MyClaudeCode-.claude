@@ -1,6 +1,6 @@
 # 原子記憶系統 — 全檔案索引
 
-> 由 `/read-project` 產出，最近同步：2026-04-10。
+> 由 `/read-project` 產出，最近同步：2026-04-15（V4 Phase 6 收尾）。
 > 目標：讓 Claude Code AI 能了解自己，以利後續升級、迭代、進化。
 
 ---
@@ -93,6 +93,7 @@ Session Ready
 | /handoff | 跨 Session Handoff Prompt Builder（6 區塊強制模板） | 無 |
 | /harvest | Playwright 網頁收割→Markdown | Playwright |
 | /init-project | 專案 _AIDocs + 自治層初始化 | 無 |
+| /init-roles | V4 多職務模式啟用引導（建 personal/role.md + shared/_roles.md + 可選裝 post-merge hook） | wg_roles + 可選 git |
 | /memory-health | 記憶品質診斷（audit + health-check） | 無 |
 | /memory-review | 自我迭代檢閱（衰減/晉升/震盪/覆轍） | 無 |
 | /read-project | 系統性閱讀→doc-index atom | 無 |
@@ -127,6 +128,8 @@ Session Ready
 
 ### 遷移/測試
 - migrate-v221.py — V2.21 遷移（_AIAtoms + 個人記憶 → .claude/memory/）
+- migrate-v3-to-v4.py — V3 → V4 遷移（補 Scope/Author/Created-at metadata；不搬檔，漸進分層；dry-run 預設）
+- init-roles.py — /init-roles 後端（bootstrap-personal / scaffold-roles / add-member / promote-mgmt / install-hook，全冪等）
 - test-memory-v21.py — E2E 測試
 - eval-ranked-search.py — 50 query benchmark
 - cleanup-old-files.py — 環境清理

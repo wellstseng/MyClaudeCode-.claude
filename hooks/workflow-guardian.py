@@ -1173,8 +1173,15 @@ def _check_memory_atom_format(
         return None
     if "/_staging/" in file_path:
         return None
+    # V4: _pending_review/ 下是 backend 管理的草稿/衝突報告，雖檔名可能非 _ 開頭，
+    # 但人工編輯允許（管理職裁決 resolved 支線）— 整個子目錄豁免。
+    if "/_pending_review/" in file_path:
+        return None
     fname = file_path.rsplit("/", 1)[-1]
     if fname.startswith("_") or fname == "MEMORY.md" or fname.startswith("episodic-"):
+        return None
+    # V4: 角色宣告檔（personal/{user}/role.md、roles/{r}/role.md）非 atom，豁免。
+    if fname == "role.md" and ("/personal/" in file_path or "/roles/" in file_path):
         return None
     content = tool_input.get("content", "")[:300]
     required = [

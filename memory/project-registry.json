@@ -1,12 +1,12 @@
 {
   "projects": {
     "c--users-holylight--claude": {
-      "root": "c:\\Users\\holylight\\.claude",
-      "last_seen": "2026-04-14"
+      "root": "C:\\Users\\holylight\\.claude",
+      "last_seen": "2026-04-15"
     },
     "c--projects": {
       "root": "c:\\Projects",
-      "last_seen": "2026-04-14",
+      "last_seen": "2026-04-15",
       "aliases": [
         "sgi",
         "sgi_server",
@@ -42,7 +42,27 @@
     },
     "c--tmp-docs-progg": {
       "root": "c:\\tmp\\docs-progg",
-      "last_seen": "2026-04-13"
+      "last_seen": "2026-04-15"
+    },
+    "c--tmp-v4-test": {
+      "root": "c:\\tmp\\v4-test",
+      "last_seen": "2026-04-15"
+    },
+    "c--tmp-atomv4-e2e-proj1": {
+      "root": "C:\\tmp\\atomv4-e2e-proj1",
+      "last_seen": "2026-04-15"
+    },
+    "c--tmp-atomv4-e2e-proj2": {
+      "root": "C:\\tmp\\atomv4-e2e-proj2",
+      "last_seen": "2026-04-15"
+    },
+    "c--users-holylight": {
+      "root": "C:\\Users\\holylight",
+      "last_seen": "2026-04-15"
+    },
+    "c--users-holylight--claude--claude-worktrees-nice-visvesvaraya": {
+      "root": "C:\\Users\\holylight\\.claude\\.claude\\worktrees\\nice-visvesvaraya",
+      "last_seen": "2026-04-15"
     }
   }
 }

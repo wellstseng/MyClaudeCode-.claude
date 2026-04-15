@@ -29,6 +29,21 @@ SHARED_DIR="$PROJ_ROOT/.claude/memory/shared"
 LOG_DIR="$PROJ_ROOT/.claude/memory"
 mkdir -p "$LOG_DIR"
 
+# 先觸發向量增量索引，讓新進 atom 可被 audit 查到（避免 race：
+# git merge 剛寫入的檔案還未被 indexer 看到，audit 查不到相似原子）。
+# 若 vector service 未跑則略過（fail-open）。
+if command -v curl >/dev/null 2>&1; then
+  curl -sS -m 3 -X POST http://127.0.0.1:3849/index/incremental \
+    >/dev/null 2>>"$LOG_DIR/_pull_audit.err.log" || true
+  # 等待增量索引收斂（輪詢狀態，最多 12s；平均新檔 ~2s/個）
+  for i in 1 2 3 4 5 6; do
+    sleep 2
+    STATUS="$(curl -sS -m 2 http://127.0.0.1:3849/status 2>/dev/null | \
+              python -c "import json,sys; d=json.load(sys.stdin); print(d.get('indexing',True))" 2>/dev/null)"
+    [ "$STATUS" = "False" ] && break
+  done
+fi
+
 python "$DETECTOR" \
   --mode=pull-audit \
   --project-cwd="$PROJ_ROOT" \

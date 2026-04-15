@@ -3,12 +3,12 @@
   "metrics": {
     "first_approach_accuracy": {
       "single_file": {
-        "correct": 293,
-        "total": 303
+        "correct": 316,
+        "total": 327
       },
       "multi_file": {
         "correct": 3,
-        "total": 10
+        "total": 11
       },
       "architecture": {
         "correct": 0,
@@ -17,17 +17,17 @@
     },
     "over_engineering_rate": {
       "user_reverted_or_simplified": 0,
-      "total_suggestions": 349
+      "total_suggestions": 374
     },
     "silence_accuracy": {
-      "held_back_ok": 296,
-      "held_back_missed": 17
+      "held_back_ok": 319,
+      "held_back_missed": 19
     }
   },
   "blind_spots": [
-    "multi_file 首次正確率 30%",
+    "multi_file 首次正確率 27%",
     "architecture 首次正確率 0%"
   ],
   "arch_sensitivity_elevated": true,
-  "last_reflection": "2026-04-14T13:02:31.822837+00:00"
+  "last_reflection": "2026-04-15T11:09:47.200745+00:00"
 }

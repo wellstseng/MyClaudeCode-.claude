@@ -187,6 +187,80 @@ shared 寫入的事實衝突防線，由 `memory-conflict-detector.py` 承擔 LL
 - **Approve 流程**：搬 `_pending_review/{slug}.md` → `shared/{slug}.md`、移除 `Pending-review-by:` 行、加 `Decided-by:` + 更新 `Last-used`、刪同名 .conflict.md、POST `/index/incremental` 重索引
 - **阻擋寫入但不 isError**：CONTRADICT 回傳 sendToolResult(false)，讓使用者知道 pending 是正常流程
 
+#### 完整衝突偵測流程圖（Phase 6 收尾補）
+
+```
+┌──────────────────────── Write-time (MCP atom_write) ────────────────────────┐
+│                                                                              │
+│  caller → server.js → normalize_scope                                        │
+│    │                                                                         │
+│    ├─ scope=role|personal → 寫 {proj}/memory/{layer}/ ──── END（不檢查衝突） │
+│    │                                                                         │
+│    └─ scope=shared                                                           │
+│        │                                                                     │
+│        ├─ skip_gate=false → memory-write-gate（去重 cosine ≥ 0.80） ──→ dedup │
+│        │                                                                     │
+│        ├─ skip_conflict_check=false → memory-conflict-detector               │
+│        │   --mode=write-check（vector top-3 ≥ 0.60 → gemma4:e4b classify）   │
+│        │     │                                                               │
+│        │     ├─ verdict=CONTRADICT → 寫 shared/_pending_review/              │
+│        │     │     {slug}.conflict.md  + merge_history: pending-create       │
+│        │     │     回傳 BLOCKED ── END                                       │
+│        │     │                                                               │
+│        │     └─ verdict=EXTEND sim ≥ 0.85 → reroute 為                       │
+│        │         shared/_pending_review/{slug}.md                            │
+│        │         +Pending-review-by: management                              │
+│        │                                                                     │
+│        └─ audience ∈ {architecture, decision}                                │
+│            → 強制 reroute 為 shared/_pending_review/{slug}.md                │
+│            +Pending-review-by: management  （與衝突檢查獨立 AND）            │
+│                                                                              │
+│        最終落點：shared/{slug}.md OR shared/_pending_review/{slug}[.conflict].md│
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────── Pull-time (post-merge hook) ────────────────────────┐
+│                                                                              │
+│  git pull/merge → .git/hooks/post-merge (hooks/post-git-pull.sh)             │
+│    │                                                                         │
+│    ├─ curl POST /index/incremental → 等 indexing=False 最多 12s              │
+│    │   （避免 race：新進 atom 還沒被 vector indexer 看到）                   │
+│    │                                                                         │
+│    └─ python memory-conflict-detector --mode=pull-audit                      │
+│        │                                                                     │
+│        ├─ 讀 .last_pull_audit_ts → git log --since 抓 shared/*.md 變動       │
+│        ├─ 對每個新 atom 跑 classify                                          │
+│        │   CONTRADICT → 寫 shared/_pending_review/{slug}.pull-conflict.md    │
+│        │              + merge_history: pull-audit-flag                       │
+│        └─ 更新 .last_pull_audit_ts                                           │
+│                                                                              │
+│  Fail-open：任何步驟掛掉 → warning stderr，不阻擋 pull                       │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────── Review-time (/conflict-review skill) ───────────────────┐
+│                                                                              │
+│  mgmt_user → conflict-review.py --action=approve|reject                      │
+│    │                                                                         │
+│    ├─ is_management(cwd, user) 雙向認證（personal role.md + shared 白名單）  │
+│    │   失敗 → {"error": "not authorized as management"} ── END               │
+│    │                                                                         │
+│    ├─ approve {slug} 或 {slug}.resolved                                      │
+│    │   │                                                                     │
+│    │   ├─ strip Pending-review-by: / append Decided-by: / bump Last-used     │
+│    │   ├─ 搬到 shared/{slug}.md（與 resolved 支線共用 stem）                 │
+│    │   ├─ 刪同名 .conflict.md（若存在）                                      │
+│    │   ├─ 刪 source （_pending_review/{slug}[.resolved].md）                 │
+│    │   └─ merge_history: approve + POST /index/incremental                   │
+│    │                                                                         │
+│    └─ reject {slug}                                                          │
+│        ├─ 刪 _pending_review/{slug}*.{md,.conflict.md,.pull-conflict.md}     │
+│        └─ merge_history: reject                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+JIT 保護：_collect_v4_role_atoms 以 rel_parts[:-1] startswith("_") 過濾
+  → shared/_pending_review/* 不會被注入任何 user 的 additionalContext
+  → 管理職改從 SessionStart [Pending Review] N 件 提示得知有待裁決項
+```
+
 ### 跨 Session 鞏固
 
 - 廢除自動晉升，改為 Confirmations +1 簡單計數
