@@ -3,8 +3,8 @@
   "metrics": {
     "first_approach_accuracy": {
       "single_file": {
-        "correct": 235,
-        "total": 242
+        "correct": 240,
+        "total": 247
       },
       "multi_file": {
         "correct": 3,
@@ -17,10 +17,10 @@
     },
     "over_engineering_rate": {
       "user_reverted_or_simplified": 0,
-      "total_suggestions": 281
+      "total_suggestions": 286
     },
     "silence_accuracy": {
-      "held_back_ok": 238,
+      "held_back_ok": 243,
       "held_back_missed": 13
     }
   },
@@ -28,5 +28,5 @@
     "multi_file 首次正確率 33%"
   ],
   "arch_sensitivity_elevated": false,
-  "last_reflection": "2026-04-07T05:10:40.144118+00:00"
+  "last_reflection": "2026-04-15T07:41:23.047993+00:00"
 }

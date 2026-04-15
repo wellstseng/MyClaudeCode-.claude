@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 團隊, 名冊, 成員, SVN帳號, Discord ID, Redmine ID, 暱稱
-- Last-used: 2026-04-01
-- Confirmations: 22
+- Last-used: 2026-04-13
+- Confirmations: 23
 - Related: redmine-config, discord-channels, hot-topics, project-ecosystem
 
 ## 知識

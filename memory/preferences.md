@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 偏好, 風格, 習慣, 語言, 回應, 執P, 執驗上P, 上GIT
-- Last-used: 2026-04-08
-- Confirmations: 112
+- Last-used: 2026-04-15
+- Confirmations: 114
 - Related: feedback-upload-discord, collaboration-protocol
 - Type: preference
 

@@ -50,7 +50,7 @@
     },
     "c--projects-tslg-develop": {
       "root": "c:\\Projects\\TSLG\\Develop",
-      "last_seen": "2026-04-08",
+      "last_seen": "2026-04-15",
       "aliases": [
         "TSLG"
       ],
@@ -69,11 +69,23 @@
     },
     "c--projects-orbit": {
       "root": "c:\\Projects\\Orbit",
-      "last_seen": "2026-04-01"
+      "last_seen": "2026-04-15"
     },
     "c--projects-sgi": {
       "root": "c:\\Projects\\SGI",
-      "last_seen": "2026-04-07"
+      "last_seen": "2026-04-14"
+    },
+    "c--projects-tslg-tools": {
+      "root": "c:\\Projects\\TSLG\\Tools",
+      "last_seen": "2026-04-14"
+    },
+    "c--projects-tslg-tools-serverlauncher": {
+      "root": "c:\\Projects\\TSLG\\Tools\\ServerLauncher",
+      "last_seen": "2026-04-14"
+    },
+    "c--users-wellstseng": {
+      "root": "C:\\Users\\wellstseng",
+      "last_seen": "2026-04-15"
     }
   }
 }

@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 專案, SGI, TSLG, TCSM, Orbit, Titan, Server, 監控, 專案狀態, 生態
-- Last-used: 2026-04-08
-- Confirmations: 33
+- Last-used: 2026-04-14
+- Confirmations: 39
 - Related: redmine-config, team-roster, hot-topics
 
 ## 知識
@@ -29,13 +29,19 @@
   - 路徑：`C:\OlgCase\MobileAnime`
   - _AIDocs：有
   - Server 核心：Titan（`C:\Projects\Titan`）
-- [固] Orbit（SGI Server Core）：SGI 的後端 Server 核心
+- [固] Orbit（SGI Server Core + TSG 框架）：SGI 後端 Server 核心，並擴展為 Titan-style .NET 框架
   - 路徑：`C:\Projects\Orbit`
-  - _AIDocs：有（`C:\Projects\Orbit\_AIDocs\`）— 含 Architecture, DB, Net, Data, Config, Peripheral
-  - .claude/memory：有（`C:\Projects\Orbit\.claude\memory\`）— 含架構、DB、網路、周邊模組等
-  - 定位：SGI server 的核心框架，TSLG Server 的出發點
-  - [固] TSLG 分支：`tslg_1.0`（含 tsg/rpc + tsg/node 合併，CoreModule 3.0.1）
+  - _AIDocs：有（`C:\Projects\Orbit\_AIDocs\`）— 10 支文件含 Architecture / DB / Net / Data / Config / Peripheral / CommonUtilities / **TsgFamily / Gate**（2026-04-15 新增）
+  - .claude/memory：有（`C:\Projects\Orbit\.claude\memory\`）— 含架構、DB、網路、周邊模組、**orbit-tsg**（2026-04-15 新增）
+  - 定位：SGI server 的核心框架 + TSLG Server 的出發點 + Titan-inspired TSG 家族（分散式遊戲伺服器 .NET 地基）
+  - [固] TSLG 分支：`tslg_1.0`（CoreModule 3.0.2，已整合 NetMQ 4.0.1.13 + Tsg 家族 + GateApp）
   - [固] `Directory.Build.targets` 定義 `USE_NODE_CONNECT` + `_UJ_MODIFY` — 影響所有 CoreModule 編譯
+  - [固] **TSG 家族位置**：`CoreModule/Tsg/{Codec,Net,Stack,Gate,Proto}/`（2026-04-15 整併，原 TsgNet/Titan/Rpc-submodule/Protobuf-submodule 全統一）
+  - [固] **submodule 全脫鉤**（2026-04-15）：Rpc + Protobuf submodule 刪除，`.gitmodules` 清空，source 併入 CoreModule
+  - [固] **GateApp v0 完成**（2026-04-15，commits `746ebff` + `2401737`）：`C:\Projects\Orbit\GateApp\`，TSLG Client 可連 port 21100 完成 LOGIN round-trip
+  - [固] 驗證：protobuf-net (titan.Client proto2) 與 Google.Protobuf (Tsg.TsgClient proto3) wire 100% 相容
+  - [固] Orbit GateApp 取代 TSLG/Develop/Server/GateApp（後者是 POC，已不是主線）
+  - [固] `dotnet build ServerApp.sln -c Release` = 0 errors（2026-04-15）
 - [固] Titan（TCSM Server Core）：TCSM 的後端 Server 核心（C + Lua）
   - 路徑：`C:\Projects\Titan`
   - _AIDocs：有（`C:\Projects\Titan\_AIDocs\`）
