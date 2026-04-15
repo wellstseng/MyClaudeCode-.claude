@@ -12,7 +12,9 @@
 /journal 2026-04-07                   # 指定日期的日報
 /journal week                         # 本週週報
 /journal week 2026-04-07              # 含該日期的那週週報
-/journal range 2026-04-01 2026-04-15  # 任意日期區間
+/journal month                        # 本月月報
+/journal month 2026-04                # 指定月份月報
+/journal range 2026-04-01 2026-04-15  # 任意區間（逐日產日報，跳過無記錄日）
 ```
 
 ---
@@ -27,8 +29,11 @@ python ~/.claude/tools/journal-aggregate.py $ARGUMENTS
 
 - 日報存檔至 `~/.claude/journals/YYYY-MM-DD.md`
 - 週報存檔至 `~/.claude/journals/week-YYYY-WNN.md`
-- 區間日誌存檔至 `~/.claude/journals/range-{start}_{end}.md`
-- 腳本自動清理 >60 天的舊日誌
+- 月報存檔至 `~/.claude/journals/month-YYYY-MM.md`
+- range 模式逐日產生日報（跳過無記錄日）
+- 同步鏡射至 Obsidian：`C:\Users\wellstseng\Obsidian\工作日誌\{日報|週報|月報}\`
+- 腳本自動清理 >60 天的舊日誌（僅 `~/.claude/journals/`，Obsidian 不清理）
+- VCS commits 自動拉取（git/svn）；author 解析：env `CLAUDE_JOURNAL_AUTHOR` > 該 repo `git config user.name` > OS USERNAME
 
 ## Step 2: 檢視產出
 

@@ -6,13 +6,18 @@ Usage:
     python journal-aggregate.py 2026-04-07   # 指定日期
     python journal-aggregate.py week         # 本週週報
     python journal-aggregate.py week 2026-04-07  # 含該日期的那週
-    python journal-aggregate.py range 2026-04-01 2026-04-10  # 任意日期範圍
+    python journal-aggregate.py month        # 本月月報
+    python journal-aggregate.py month 2026-04    # 指定月份月報
+    python journal-aggregate.py range 2026-04-01 2026-04-10  # 任意日期範圍（逐日產）
     python journal-aggregate.py --cleanup    # 僅清理過期日誌
 """
 
 import json
+import os
 import re
+import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -26,6 +31,12 @@ CLAUDE_DIR = Path.home() / ".claude"
 JOURNALS_DIR = CLAUDE_DIR / "journals"
 WORKFLOW_DIR = CLAUDE_DIR / "workflow"
 RETENTION_DAYS = 60
+
+OBSIDIAN_BASE = Path(r"C:\Users\wellstseng\Obsidian\工作日誌")
+OBSIDIAN_SUBDIR = {"daily": "日報", "weekly": "週報", "monthly": "月報"}
+
+VCS_TIMEOUT = 10
+MAX_FILES_LIST = 30  # 修改檔案清單上限
 
 _WEEKDAY_NAMES = ["一", "二", "三", "四", "五", "六", "日"]
 
@@ -149,6 +160,40 @@ def _project_name(cwd: str) -> str:
     return parts[-1] if parts else "unknown"
 
 
+def _mod_paths(mod: list) -> list[str]:
+    """從 modified_files 取出 path 字串清單。"""
+    paths = []
+    for m in mod:
+        if isinstance(m, dict):
+            p = m.get("path", "")
+        else:
+            p = str(m)
+        if p:
+            paths.append(p)
+    return paths
+
+
+def _state_record(data: dict) -> dict:
+    sess = data["session"]
+    started = sess.get("started_at", "")
+    topic = data.get("topic_tracker", {})
+    kq = data.get("knowledge_queue", [])
+    mod_paths = list(dict.fromkeys(_mod_paths(data.get("modified_files", []))))
+    cwd = sess.get("cwd", "")
+    return {
+        "id": sess.get("id", "")[:8],
+        "project": _project_name(cwd),
+        "cwd": cwd,
+        "start": started[11:16],
+        "end": data.get("ended_at", "")[11:16] if data.get("ended_at") else "…",
+        "prompts": topic.get("prompt_count", 0),
+        "intent": topic.get("intent_distribution", {}),
+        "modified_files": mod_paths,
+        "files_modified": len(mod_paths),
+        "knowledge": [k.get("content", "")[:200] for k in kq],
+    }
+
+
 def scan_states(target_date: str) -> list[dict]:
     """掃描當天仍存在的 state files"""
     if not WORKFLOW_DIR.exists():
@@ -160,20 +205,7 @@ def scan_states(target_date: str) -> list[dict]:
             started = data.get("session", {}).get("started_at", "")
             if started[:10] != target_date:
                 continue
-            sess = data["session"]
-            topic = data.get("topic_tracker", {})
-            kq = data.get("knowledge_queue", [])
-            mod = data.get("modified_files", [])
-            results.append({
-                "id": sess.get("id", "")[:8],
-                "project": _project_name(sess.get("cwd", "")),
-                "start": started[11:16],
-                "end": data.get("ended_at", "")[11:16] if data.get("ended_at") else "…",
-                "prompts": topic.get("prompt_count", 0),
-                "intent": topic.get("intent_distribution", {}),
-                "files_modified": len(mod),
-                "knowledge": [k.get("content", "")[:150] for k in kq],
-            })
+            results.append(_state_record(data))
         except (json.JSONDecodeError, KeyError, TypeError):
             pass
     return sorted(results, key=lambda s: s["start"])
@@ -191,20 +223,7 @@ def scan_states_range(start: str, end: str) -> dict[str, list[dict]]:
             sdate = started[:10]
             if not (start <= sdate <= end):
                 continue
-            sess = data["session"]
-            topic = data.get("topic_tracker", {})
-            kq = data.get("knowledge_queue", [])
-            mod = data.get("modified_files", [])
-            by_date[sdate].append({
-                "id": sess.get("id", "")[:8],
-                "project": _project_name(sess.get("cwd", "")),
-                "start": started[11:16],
-                "end": data.get("ended_at", "")[11:16] if data.get("ended_at") else "…",
-                "prompts": topic.get("prompt_count", 0),
-                "intent": topic.get("intent_distribution", {}),
-                "files_modified": len(mod),
-                "knowledge": [k.get("content", "")[:150] for k in kq],
-            })
+            by_date[sdate].append(_state_record(data))
         except (json.JSONDecodeError, KeyError, TypeError):
             pass
     return dict(by_date)
@@ -212,66 +231,167 @@ def scan_states_range(start: str, end: str) -> dict[str, list[dict]]:
 
 # ── Daily Journal Builder ──────────────────────────────────────
 
+def _intent_str(intent: dict) -> str:
+    return " ".join(f"{k}({v})" for k, v in sorted(intent.items(), key=lambda x: -x[1]) if v > 0)
+
+
+def _rel_path(p: str, base: str) -> str:
+    if not base:
+        return p
+    try:
+        return str(Path(p).relative_to(base)).replace("\\", "/")
+    except (ValueError, OSError):
+        return p.replace("\\", "/")
+
+
+def _clean_knowledge(k: str) -> str:
+    s = k.lstrip("- ").removeprefix("[臨] ").removeprefix("[觀] ").removeprefix("[固] ").strip()
+    return s
+
+
+def _build_project_block(project: str, cwd: str, sessions: list[dict],
+                         atoms: list[dict], commits: list[tuple[str, str]],
+                         vcs: str | None) -> list[str]:
+    lines: list[str] = []
+    header_meta = cwd if cwd else ""
+    if vcs:
+        header_meta = f"`{header_meta}` · {vcs}" if header_meta else vcs
+    elif header_meta:
+        header_meta = f"`{header_meta}`"
+
+    lines.append(f"## {project}")
+    if header_meta:
+        lines.append(header_meta)
+    lines.append("")
+
+    # Sessions
+    if sessions:
+        total_prompts = sum(s["prompts"] for s in sessions)
+        total_files = sum(s["files_modified"] for s in sessions)
+        agg_intent: dict = defaultdict(int)
+        for s in sessions:
+            for k, v in s["intent"].items():
+                agg_intent[k] += v
+        intent = _intent_str(agg_intent)
+        lines.append(
+            f"**Sessions ({len(sessions)})** · {total_prompts} prompts · "
+            f"{total_files} 改檔" + (f" · {intent}" if intent else "")
+        )
+        for s in sessions:
+            lines.append(f"- `{s['start']}–{s['end']}`")
+        lines.append("")
+
+    # Commits
+    if commits:
+        lines.append(f"**Commits ({len(commits)})**")
+        for cid, msg in commits:
+            lines.append(f"- `{cid}` {msg}")
+        lines.append("")
+
+    # 修改檔案 (deduped, relative)
+    files_set: list[str] = []
+    seen = set()
+    for s in sessions:
+        for fp in s["modified_files"]:
+            rel = _rel_path(fp, cwd)
+            if rel not in seen:
+                seen.add(rel)
+                files_set.append(rel)
+    if files_set:
+        shown = files_set[:MAX_FILES_LIST]
+        more = len(files_set) - len(shown)
+        lines.append(f"**修改檔案 ({len(files_set)})**")
+        for fp in shown:
+            lines.append(f"- `{fp}`")
+        if more > 0:
+            lines.append(f"- … 還有 {more} 個")
+        lines.append("")
+
+    # Episodic 摘要 (若有)
+    if atoms:
+        for a in atoms:
+            if a.get("summary"):
+                lines.append(f"**摘要**")
+                lines.append(a["summary"])
+                lines.append("")
+                break
+
+    # 知識
+    knowledge: list[str] = []
+    kseen = set()
+    for s in sessions:
+        for k in s["knowledge"]:
+            ck = _clean_knowledge(k)
+            if ck and ck not in kseen:
+                kseen.add(ck)
+                knowledge.append(ck)
+    for a in atoms:
+        for k in a.get("knowledge", []):
+            ck = _clean_knowledge(k)
+            if ck and ck not in kseen:
+                kseen.add(ck)
+                knowledge.append(ck)
+    if knowledge:
+        lines.append(f"**知識 ({len(knowledge)})**")
+        for k in knowledge[:15]:
+            lines.append(f"- {k}")
+        lines.append("")
+
+    return lines
+
+
 def build_journal(target_date: str) -> str:
     atoms = scan_episodic(target_date)
     states = scan_states(target_date)
 
     if not atoms and not states:
-        return f"# 工作日誌：{target_date}\n\n> 當天無記錄。\n"
+        return f"# {target_date} 工作日誌\n\n> 當天無記錄。\n"
 
-    lines = [f"# 工作日誌：{target_date}\n"]
-
-    # ── Sessions table (from state files, if available) ──
-    if states:
-        lines.append(f"## Sessions ({len(states)})\n")
-        lines.append("| 時間 | 專案 | Prompts | 改檔 | 主要意圖 |")
-        lines.append("|------|------|---------|------|---------|")
-        for s in states:
-            intent_str = ", ".join(
-                f"{k}({v})" for k, v in
-                sorted(s["intent"].items(), key=lambda x: -x[1]) if v > 0
-            )
-            lines.append(
-                f"| {s['start']}–{s['end']} | {s['project']} "
-                f"| {s['prompts']} | {s['files_modified']} | {intent_str} |"
-            )
-        lines.append("")
-
-    # ── 工作內容 (from episodic atoms, grouped by workspace) ──
-    if atoms:
-        by_ws = defaultdict(list)
-        for a in atoms:
-            by_ws[a["workspace"]].append(a)
-
-        lines.append(f"## 工作內容 ({len(atoms)} sessions)\n")
-        for ws, ws_atoms in by_ws.items():
-            lines.append(f"### {ws}\n")
-            for a in ws_atoms:
-                if a["work_areas"]:
-                    lines.append(a["work_areas"])
-                if a["files_mod"]:
-                    lines.append(a["files_mod"])
-                for k in a["knowledge"]:
-                    lines.append(k)
-                if a["intent"]:
-                    lines.append(f"- {a['intent']}")
-            lines.append("")
-
-    # ── 知識摘要 (from state knowledge_queue, deduplicated) ──
-    seen = set()
-    all_k = []
+    # 以 cwd（或 workspace fallback）分組
+    by_proj: dict[str, dict] = defaultdict(lambda: {
+        "project": "", "cwd": "", "sessions": [], "atoms": [],
+    })
     for s in states:
-        for k in s.get("knowledge", []):
-            if k and k not in seen:
-                seen.add(k)
-                all_k.append(k)
-    if all_k:
-        lines.append("## 知識摘要\n")
-        for k in all_k[:15]:
-            lines.append(f"- {k}")
-        lines.append("")
+        key = s["cwd"] or s["project"]
+        g = by_proj[key]
+        g["project"] = s["project"]
+        g["cwd"] = s["cwd"]
+        g["sessions"].append(s)
+    for a in atoms:
+        key = a["workspace"]
+        g = by_proj[key]
+        if not g["project"]:
+            g["project"] = a["workspace"]
+        g["atoms"].append(a)
 
-    return "\n".join(lines)
+    # Commits + 統計
+    proj_data = []
+    total_commits = 0
+    for key, g in by_proj.items():
+        commits, vcs = commits_for(g["cwd"], target_date) if g["cwd"] else ([], None)
+        total_commits += len(commits)
+        proj_data.append((key, g, commits, vcs))
+
+    total_sessions = sum(len(g["sessions"]) for _, g, _, _ in proj_data)
+    total_prompts = sum(s["prompts"] for _, g, _, _ in proj_data for s in g["sessions"])
+    total_files = sum(s["files_modified"] for _, g, _, _ in proj_data for s in g["sessions"])
+
+    lines = [f"# {target_date} 工作日誌", ""]
+    lines.append("| Sessions | Prompts | 改檔 | Commits |")
+    lines.append("|:--:|:--:|:--:|:--:|")
+    lines.append(f"| {total_sessions} | {total_prompts} | {total_files} | {total_commits} |")
+    lines.append("")
+
+    # 排序：有 commit 的優先，然後依 prompts 數
+    proj_data.sort(key=lambda x: (-len(x[2]), -sum(s["prompts"] for s in x[1]["sessions"])))
+
+    for _key, g, commits, vcs in proj_data:
+        lines.append("---")
+        lines.append("")
+        lines.extend(_build_project_block(g["project"], g["cwd"], g["sessions"],
+                                          g["atoms"], commits, vcs))
+
+    return "\n".join(lines).rstrip() + "\n"
 
 
 # ── Weekly Summary Builder ─────────────────────────────────────
@@ -294,128 +414,249 @@ def _build_period_lines(start: str, end: str) -> tuple[list[str], bool]:
     if not all_dates:
         return [], False
 
-    lines: list[str] = []
+    return _render_period(all_dates, ep_by_date, st_by_date), True
 
-    # ── 按專案統計 ──
-    proj_stats = defaultdict(lambda: {"sessions": 0, "files": 0, "prompts": 0,
-                                       "intents": defaultdict(int), "knowledge": []})
 
+def _render_period(all_dates: list[str], ep_by_date: dict, st_by_date: dict) -> list[str]:
+    # 以 cwd（fallback workspace）分組，跨整個區間
+    by_proj: dict[str, dict] = defaultdict(lambda: {
+        "project": "", "cwd": "", "sessions": [], "atoms": [],
+        "dates": set(),
+    })
     for d in all_dates:
         for s in st_by_date.get(d, []):
-            p = proj_stats[s["project"]]
-            p["sessions"] += 1
-            p["files"] += s["files_modified"]
-            p["prompts"] += s["prompts"]
-            for intent, cnt in s["intent"].items():
-                p["intents"][intent] += cnt
-            for k in s["knowledge"]:
-                if k and k not in p["knowledge"]:
-                    p["knowledge"].append(k)
-
+            key = s["cwd"] or s["project"]
+            g = by_proj[key]
+            g["project"] = s["project"]
+            g["cwd"] = s["cwd"]
+            g["sessions"].append(s)
+            g["dates"].add(d)
         for a in ep_by_date.get(d, []):
-            ws = a["workspace"]
-            p = proj_stats[ws]
-            p["sessions"] += 1
-            p["files"] += a["files_mod_n"]
-            for k in a["knowledge"]:
-                if k not in p["knowledge"]:
-                    p["knowledge"].append(k)
+            key = a["workspace"]
+            g = by_proj[key]
+            if not g["project"]:
+                g["project"] = a["workspace"]
+            g["atoms"].append(a)
+            g["dates"].add(d)
 
-    if proj_stats:
-        total_sessions = sum(p["sessions"] for p in proj_stats.values())
-        total_files = sum(p["files"] for p in proj_stats.values())
-        lines.append("## 工作總覽\n")
-        lines.append(f"- 總 sessions: {total_sessions}")
-        lines.append(f"- 總修改檔案: {total_files}")
+    # 各專案彙整 commits（區間內每天 commits 的聯集）
+    proj_data = []
+    grand_commits = 0
+    for key, g in by_proj.items():
+        commits: list[tuple[str, str]] = []
+        vcs = None
+        if g["cwd"]:
+            seen_ids = set()
+            for d in sorted(g["dates"]):
+                day_commits, vcs_d = commits_for(g["cwd"], d)
+                if vcs_d:
+                    vcs = vcs_d
+                for cid, msg in day_commits:
+                    if cid not in seen_ids:
+                        seen_ids.add(cid)
+                        commits.append((cid, msg))
+        grand_commits += len(commits)
+        proj_data.append((key, g, commits, vcs))
+
+    grand_sessions = sum(len(g["sessions"]) for _, g, _, _ in proj_data)
+    grand_prompts = sum(s["prompts"] for _, g, _, _ in proj_data for s in g["sessions"])
+
+    # 改檔（去重至專案內）
+    grand_files = 0
+    for _, g, _, _ in proj_data:
+        seen = set()
+        for s in g["sessions"]:
+            seen.update(s["modified_files"])
+        grand_files += len(seen)
+
+    # ── 總覽表 ──
+    lines: list[str] = []
+    lines.append("| Sessions | Prompts | 改檔 | Commits | 活躍天數 |")
+    lines.append("|:--:|:--:|:--:|:--:|:--:|")
+    lines.append(f"| {grand_sessions} | {grand_prompts} | {grand_files} | {grand_commits} | {len(all_dates)} |")
+    lines.append("")
+
+    # ── 各專案 ──
+    proj_data.sort(key=lambda x: (-len(x[2]), -sum(s["prompts"] for s in x[1]["sessions"])))
+    for _key, g, commits, vcs in proj_data:
+        lines.append("---")
         lines.append("")
+        lines.extend(_build_project_block(g["project"], g["cwd"], g["sessions"],
+                                          g["atoms"], commits, vcs))
 
-        lines.append("| 專案 | Sessions | 改檔 | Prompts | 主要意圖 |")
-        lines.append("|------|----------|------|---------|---------|")
-        for proj, p in sorted(proj_stats.items(), key=lambda x: -x[1]["sessions"]):
-            top_intents = ", ".join(
-                f"{k}({v})" for k, v in
-                sorted(p["intents"].items(), key=lambda x: -x[1])[:3]
-            ) if p["intents"] else "-"
-            lines.append(
-                f"| {proj} | {p['sessions']} | {p['files']} "
-                f"| {p['prompts']} | {top_intents} |"
-            )
-        lines.append("")
-
-    # ── 按日摘要 ──
-    lines.append("## 每日摘要\n")
+    # ── 每日簡述 ──
+    lines.append("---")
+    lines.append("")
+    lines.append("## 每日簡述")
+    lines.append("")
     for d in all_dates:
         dt = datetime.strptime(d, "%Y-%m-%d")
         wd = _WEEKDAY_NAMES[dt.weekday()]
-        lines.append(f"### {d} ({wd})\n")
-
-        # State-based info
         day_states = st_by_date.get(d, [])
         if day_states:
+            parts = []
             for s in sorted(day_states, key=lambda x: x["start"]):
-                intent_str = ", ".join(
-                    f"{k}({v})" for k, v in
-                    sorted(s["intent"].items(), key=lambda x: -x[1]) if v > 0
-                )
-                lines.append(
-                    f"- {s['start']}–{s['end']} **{s['project']}** "
-                    f"— {s['prompts']}p, 改 {s['files_modified']} 檔 — {intent_str}"
-                )
+                parts.append(f"{s['project']} {s['prompts']}p")
+            lines.append(f"- **{d} ({wd})** · " + " | ".join(parts))
+        else:
+            day_atoms = ep_by_date.get(d, [])
+            if day_atoms:
+                parts = [f"{a['workspace']} {a['files_mod_n']}f" for a in day_atoms]
+                lines.append(f"- **{d} ({wd})** · " + " | ".join(parts))
+    lines.append("")
 
-        # Episodic-based info
-        day_atoms = ep_by_date.get(d, [])
-        if day_atoms and not day_states:
-            for a in day_atoms:
-                lines.append(f"- **{a['workspace']}** — 改 {a['files_mod_n']} 檔")
-
-        # Knowledge items for the day
-        day_knowledge = []
-        for s in day_states:
-            for k in s.get("knowledge", []):
-                if k and k not in day_knowledge:
-                    day_knowledge.append(k)
-        for a in day_atoms:
-            for k in a["knowledge"]:
-                clean = k.lstrip("- ").removeprefix("[臨] ").removeprefix("[觀] ").removeprefix("[固] ")
-                if clean and clean not in day_knowledge:
-                    day_knowledge.append(clean)
-        if day_knowledge:
-            for k in day_knowledge[:5]:
-                lines.append(f"  - {k}")
-
-        lines.append("")
-
-    # ── 本週知識彙總 ──
-    all_knowledge = []
-    for p in proj_stats.values():
-        for k in p["knowledge"]:
-            clean = k.lstrip("- ").removeprefix("[臨] ").removeprefix("[觀] ").removeprefix("[固] ")
-            if clean and clean not in all_knowledge:
-                all_knowledge.append(clean)
-    if all_knowledge:
-        lines.append("## 知識彙總\n")
-        for k in all_knowledge[:20]:
-            lines.append(f"- {k}")
-        lines.append("")
-
-    return lines, True
+    return lines
 
 
 def build_weekly(ref_date: str) -> str:
     mon, sun, iso_y, iso_w = _week_range(ref_date)
-    title = f"# 週報摘要：{iso_y}-W{iso_w:02d} ({mon} ~ {sun})\n"
+    title = f"# {iso_y}-W{iso_w:02d} 週報 ({mon} ~ {sun})\n"
     body, has_data = _build_period_lines(mon, sun)
     if not has_data:
         return f"{title}\n> 該週無記錄。\n"
-    return title + "\n" + "\n".join(body)
+    return title + "\n" + "\n".join(body).rstrip() + "\n"
 
 
-def build_range(start: str, end: str) -> str:
-    title = f"# 區間日誌：{start} ~ {end}\n"
+def _month_range(month_arg: str | None) -> tuple[str, str, str]:
+    """月份引數 'YYYY-MM' 或 None（=本月），回傳 (start, end, label)。"""
+    if month_arg:
+        y, m = (int(x) for x in month_arg.split("-"))
+    else:
+        now = datetime.now()
+        y, m = now.year, now.month
+    start = datetime(y, m, 1)
+    end = (datetime(y + 1, 1, 1) if m == 12 else datetime(y, m + 1, 1)) - timedelta(days=1)
+    return start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"), f"{y:04d}-{m:02d}"
+
+
+def build_monthly(month_arg: str | None) -> tuple[str, str]:
+    start, end, label = _month_range(month_arg)
+    title = f"# {label} 月報 ({start} ~ {end})\n"
     body, has_data = _build_period_lines(start, end)
     if not has_data:
-        return f"{title}\n> 該區間無記錄。\n"
-    return title + "\n" + "\n".join(body)
+        return f"{title}\n> 該月無記錄。\n", label
+    return title + "\n" + "\n".join(body).rstrip() + "\n", label
+
+
+def _iter_dates(start: str, end: str):
+    s = datetime.strptime(start, "%Y-%m-%d")
+    e = datetime.strptime(end, "%Y-%m-%d")
+    cur = s
+    while cur <= e:
+        yield cur.strftime("%Y-%m-%d")
+        cur += timedelta(days=1)
+
+
+def has_records(target_date: str) -> bool:
+    return bool(scan_episodic(target_date)) or bool(scan_states(target_date))
+
+
+# ── Obsidian Mirror ─────────────────────────────────────────────
+
+def mirror_to_obsidian(content: str, filename: str, kind: str) -> Path | None:
+    sub = OBSIDIAN_SUBDIR.get(kind)
+    if sub is None or not OBSIDIAN_BASE.parent.exists():
+        return None
+    target_dir = OBSIDIAN_BASE / sub
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / filename
+        target.write_text(content, encoding="utf-8")
+        return target
+    except OSError as e:
+        print(f"[WARN] Obsidian 鏡射失敗: {e}", file=sys.stderr)
+        return None
+
+
+# ── VCS Commits ─────────────────────────────────────────────────
+
+def _find_repo_root(cwd_str: str) -> tuple[Path, str] | None:
+    """從 cwd 往上找 .git/.svn，回傳 (repo_root, vcs_kind)。"""
+    if not cwd_str:
+        return None
+    p = Path(cwd_str)
+    if not p.exists():
+        return None
+    for cur in [p, *p.parents]:
+        if (cur / ".git").exists():
+            return cur, "git"
+        if (cur / ".svn").exists():
+            return cur, "svn"
+    return None
+
+
+def _resolve_author(repo_root: Path, vcs: str) -> str:
+    env_override = os.environ.get("CLAUDE_JOURNAL_AUTHOR")
+    if env_override:
+        return env_override
+    if vcs == "git":
+        try:
+            r = subprocess.run(
+                ["git", "-C", str(repo_root), "config", "user.name"],
+                capture_output=True, text=True, timeout=VCS_TIMEOUT,
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                return r.stdout.strip()
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            pass
+    return os.environ.get("USERNAME") or os.environ.get("USER") or ""
+
+
+def _git_commits(repo_root: Path, date: str, author: str) -> list[tuple[str, str]]:
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(repo_root), "log",
+             f"--since={date} 00:00:00", f"--until={date} 23:59:59",
+             f"--author={author}", "--pretty=format:%h|%s"],
+            capture_output=True, text=True, timeout=VCS_TIMEOUT,
+        )
+        if r.returncode != 0:
+            return []
+        return [tuple(line.split("|", 1)) for line in r.stdout.splitlines() if "|" in line]
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return []
+
+
+def _svn_commits(repo_root: Path, date: str, author: str) -> list[tuple[str, str]]:
+    next_day = (datetime.strptime(date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+    try:
+        r = subprocess.run(
+            ["svn", "log", "--xml", "--non-interactive",
+             "-r", f"{{{date}}}:{{{next_day}}}"],
+            capture_output=True, text=True, timeout=VCS_TIMEOUT, cwd=str(repo_root),
+        )
+        if r.returncode != 0:
+            return []
+        tree = ET.fromstring(r.stdout)
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError, ET.ParseError):
+        return []
+
+    out: list[tuple[str, str]] = []
+    for entry in tree.findall("logentry"):
+        a = entry.find("author")
+        if a is None or (a.text or "").strip() != author:
+            continue
+        rev = entry.get("revision", "?")
+        msg_node = entry.find("msg")
+        msg = ""
+        if msg_node is not None and msg_node.text:
+            msg = msg_node.text.strip().splitlines()[0] if msg_node.text.strip() else ""
+        out.append((f"r{rev}", msg))
+    return out
+
+
+def commits_for(cwd_str: str, date: str) -> tuple[list[tuple[str, str]], str | None]:
+    """回傳 (commits, vcs_kind)。失敗或無 VCS 回傳 ([], None)。"""
+    info = _find_repo_root(cwd_str)
+    if info is None:
+        return [], None
+    repo_root, vcs = info
+    author = _resolve_author(repo_root, vcs)
+    if not author:
+        return [], vcs
+    if vcs == "git":
+        return _git_commits(repo_root, date, author), "git"
+    return _svn_commits(repo_root, date, author), "svn"
 
 
 # ── Cleanup ─────────────────────────────────────────────────────
@@ -452,6 +693,7 @@ def main():
     mode = "daily"
     only_cleanup = False
     range_dates: list[str] = []
+    month_arg: str | None = None
 
     args = sys.argv[1:]
     for arg in args:
@@ -459,8 +701,12 @@ def main():
             only_cleanup = True
         elif arg == "week":
             mode = "weekly"
+        elif arg == "month":
+            mode = "monthly"
         elif arg == "range":
             mode = "range"
+        elif mode == "monthly" and re.match(r"\d{4}-\d{2}$", arg):
+            month_arg = arg
         else:
             d = _norm_date(arg)
             if d is None:
@@ -480,21 +726,54 @@ def main():
     if mode == "weekly":
         journal = build_weekly(target)
         _, _, iso_y, iso_w = _week_range(target)
-        out = JOURNALS_DIR / f"week-{iso_y}-W{iso_w:02d}.md"
+        fname = f"week-{iso_y}-W{iso_w:02d}.md"
+        out = JOURNALS_DIR / fname
+        out.write_text(journal, encoding="utf-8")
+        print(journal)
+        print(f"\n---\n[OK] 已存檔: {out}")
+        mirrored = mirror_to_obsidian(journal, fname, "weekly")
+        if mirrored:
+            print(f"[OK] Obsidian: {mirrored}")
+    elif mode == "monthly":
+        journal, label = build_monthly(month_arg)
+        fname = f"month-{label}.md"
+        out = JOURNALS_DIR / fname
+        out.write_text(journal, encoding="utf-8")
+        print(journal)
+        print(f"\n---\n[OK] 已存檔: {out}")
+        mirrored = mirror_to_obsidian(journal, fname, "monthly")
+        if mirrored:
+            print(f"[OK] Obsidian: {mirrored}")
     elif mode == "range":
         if len(range_dates) != 2:
             print("用法：range YYYY-MM-DD YYYY-MM-DD", file=sys.stderr)
             sys.exit(2)
         start, end = sorted(range_dates)
-        journal = build_range(start, end)
-        out = JOURNALS_DIR / f"range-{start}_{end}.md"
+        produced = 0
+        skipped = 0
+        for d in _iter_dates(start, end):
+            if not has_records(d):
+                skipped += 1
+                continue
+            journal = build_journal(d)
+            fname = f"{d}.md"
+            out = JOURNALS_DIR / fname
+            out.write_text(journal, encoding="utf-8")
+            mirrored = mirror_to_obsidian(journal, fname, "daily")
+            mirror_str = f" → {mirrored}" if mirrored else ""
+            print(f"[OK] {d}: {out}{mirror_str}")
+            produced += 1
+        print(f"\n[OK] 區間 {start} ~ {end}：產生 {produced} 份日報，跳過 {skipped} 個無記錄日")
     else:
         journal = build_journal(target)
-        out = JOURNALS_DIR / f"{target}.md"
-
-    out.write_text(journal, encoding="utf-8")
-    print(journal)
-    print(f"\n---\n[OK] 已存檔: {out}")
+        fname = f"{target}.md"
+        out = JOURNALS_DIR / fname
+        out.write_text(journal, encoding="utf-8")
+        print(journal)
+        print(f"\n---\n[OK] 已存檔: {out}")
+        mirrored = mirror_to_obsidian(journal, fname, "daily")
+        if mirrored:
+            print(f"[OK] Obsidian: {mirrored}")
 
     n = cleanup()
     if n:
