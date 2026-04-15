@@ -33,6 +33,10 @@ from wg_paths import (
     cwd_to_project_slug, get_project_memory_dir, find_project_root,
     resolve_episodic_dir, resolve_failures_dir, resolve_staging_dir,
     resolve_access_json, discover_all_project_memory_dirs, register_project,
+    discover_v4_sublayers, discover_memory_layers,
+)
+from wg_roles import (
+    get_current_user, load_user_role, is_management, bootstrap_personal_dir,
 )
 # ─── wg_core: config, state I/O, output, debug ──────────────────────────────
 from wg_core import (
@@ -152,6 +156,133 @@ def _call_project_hook(project_root: Path, action: str, context: Dict[str, Any])
     return None
 
 
+# ─── V4 Role-aware Helpers ───────────────────────────────────────────────────
+
+_V4_TRIGGER_LINE_RE = re.compile(r"^-\s+Trigger:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+
+_MEMORY_MD_AUTO_HEADER = "<!-- AUTO-GENERATED: V4 role filter -->"
+
+
+def _collect_v4_role_atoms(
+    project_mem_dir: Optional[Path], user: str, roles: List[str],
+) -> List[Tuple[str, str, List[str]]]:
+    """列出使用者可見的 V4 sub-layer atoms（供 state["atom_index"]["project"] 合併）。
+
+    回傳 list[(atom_name, rel_path_from_project_root, triggers[])]。
+    rel_path 格式：`.claude/memory/{shared|roles/{r}|personal/{u}}/atom.md`
+    （UPS 注入端 base_dir = project_root 時可直接拼出檔案路徑）
+
+    SPEC §8.1：只收 shared + roles/{我的 role} + personal/{我}；
+    不 include _pending_review（給管理職的另一個管道）。
+    """
+    if not project_mem_dir or not project_mem_dir.is_dir():
+        return []
+
+    out: List[Tuple[str, str, List[str]]] = []
+    mem_dir_name = project_mem_dir.name  # "memory"
+
+    scan_targets: List[Path] = []
+    shared = project_mem_dir / "shared"
+    if shared.is_dir():
+        scan_targets.append(shared)
+    roles_root = project_mem_dir / "roles"
+    for r in roles:
+        rd = roles_root / r
+        if rd.is_dir():
+            scan_targets.append(rd)
+    personal_dir = project_mem_dir / "personal" / user
+    if personal_dir.is_dir():
+        scan_targets.append(personal_dir)
+
+    for base in scan_targets:
+        for md in sorted(base.glob("**/*.md")):
+            rel_parts = md.relative_to(base).parts
+            # skip _-prefixed subdirs (含 _pending_review)
+            if any(p.startswith("_") for p in rel_parts[:-1]):
+                continue
+            if md.name in (MEMORY_INDEX, "_ATOM_INDEX.md"):
+                continue
+            if md.name.startswith("_") or md.name.startswith("SPEC_"):
+                continue
+            try:
+                text = md.read_text(encoding="utf-8-sig")
+            except (OSError, UnicodeDecodeError):
+                continue
+            tm = _V4_TRIGGER_LINE_RE.search(text)
+            triggers: List[str] = []
+            if tm:
+                triggers = [t.strip().lower() for t in tm.group(1).split(",") if t.strip()]
+            # UPS injection 用 base_dir = {proj_root}/.claude，所以 rel_path = memory/...
+            layer_rel = md.relative_to(project_mem_dir)
+            rel_path = f"{mem_dir_name}/{layer_rel.as_posix()}"
+            out.append((md.stem, rel_path, triggers))
+    return out
+
+
+def _regenerate_role_filtered_memory_index(
+    project_mem_dir: Path, user: str, roles: List[str], management: bool,
+    v4_entries: List[Tuple[str, str, List[str]]],
+) -> None:
+    """V4：依角色動態寫 {proj}/.claude/memory/MEMORY.md（SPEC §3）。
+
+    保護規則：檔案存在且首行不是 AUTO-GENERATED header → **跳過**
+    （避免覆寫人手維護的 V3 MEMORY.md）。
+    """
+    target = project_mem_dir / MEMORY_INDEX
+    if target.exists():
+        try:
+            first = target.read_text(encoding="utf-8-sig").split("\n", 1)[0].strip()
+        except (OSError, UnicodeDecodeError):
+            first = ""
+        if first != _MEMORY_MD_AUTO_HEADER:
+            return
+
+    lines = [
+        _MEMORY_MD_AUTO_HEADER,
+        f"# MEMORY Index — {user} ({', '.join(roles) or 'programmer'})",
+        "",
+        f"> 由 workflow-guardian SessionStart 生成。依角色 filter。",
+        f"> User: {user} | Roles: {', '.join(roles) or 'programmer'} | Management: {management}",
+        "",
+        "| Atom | Path | Trigger | Scope |",
+        "|------|------|---------|-------|",
+    ]
+    for name, rel, triggers in sorted(v4_entries, key=lambda e: e[0]):
+        # rel 如 "memory/shared/foo.md"
+        parts = Path(rel).parts
+        scope = ""
+        try:
+            # parts: ('memory','shared'|'roles','{r}'|...,'file.md')
+            subscope = parts[1]
+            if subscope == "shared":
+                scope = "shared"
+            elif subscope == "roles" and len(parts) >= 4:
+                scope = f"role:{parts[2]}"
+            elif subscope == "personal" and len(parts) >= 4:
+                scope = f"personal:{parts[2]}"
+        except IndexError:
+            pass
+        trig_str = ", ".join(triggers) if triggers else ""
+        lines.append(f"| {name} | {rel} | {trig_str} | {scope} |")
+    try:
+        target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError as e:
+        _atom_debug_error("V4:regenerate_memory_md", e)
+
+
+def _count_pending_review(project_mem_dir: Optional[Path]) -> int:
+    """Management 模式用：列 shared/_pending_review/*.md 數量。"""
+    if not project_mem_dir:
+        return 0
+    pr = project_mem_dir / "shared" / "_pending_review"
+    if not pr.is_dir():
+        return 0
+    try:
+        return sum(1 for p in pr.glob("*.md"))
+    except OSError:
+        return 0
+
+
 # ─── Event Handlers ──────────────────────────────────────────────────────────
 
 
@@ -221,14 +352,60 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         # V2.21: Register project in registry (update last_seen)
         register_project(cwd)
 
+        # ── V4: user / role / management bootstrap ───────────────────────
+        v4_user = ""
+        v4_roles: List[str] = []
+        v4_mgmt = False
+        v4_entries: List[Tuple[str, str, List[str]]] = []
+        try:
+            v4_user = get_current_user()
+            bootstrap_personal_dir(cwd, v4_user)  # 冪等
+            role_info = load_user_role(cwd, v4_user)
+            v4_roles = role_info.get("roles") or ["programmer"]
+            v4_mgmt = is_management(cwd, v4_user)
+            if project_mem_dir:
+                v4_entries = _collect_v4_role_atoms(project_mem_dir, v4_user, v4_roles)
+        except Exception as e:
+            _atom_debug_error("V4:role_bootstrap", e)
+
+        state["user_identity"] = {
+            "user": v4_user,
+            "roles": v4_roles,
+            "management": v4_mgmt,
+        }
+
+        # V4 layout 偵測（決定要不要用 V3 MEMORY.md fallback）
+        v4_layout_active = bool(project_mem_dir) and any(
+            (project_mem_dir / d).is_dir() for d in ("shared", "roles", "personal")
+        )
+
+        if v4_layout_active:
+            # MEMORY.md 由 SessionStart 自動生成，避免循環污染：直接用 v4_entries
+            project_atoms_merged = list(v4_entries)
+        else:
+            # V3 路徑：保留 MEMORY.md/_ATOM_INDEX.md 解出的清單
+            project_atoms_merged = list(project_atoms)
+            existing_names = {n for n, _p, _t in project_atoms_merged}
+            for name, rel_path, triggers in v4_entries:
+                if name in existing_names:
+                    continue
+                project_atoms_merged.append((name, rel_path, triggers))
+                existing_names.add(name)
+
         state["atom_index"] = {
             "global": [(n, p, t) for n, p, t in global_atoms],
-            "project": [(n, p, t) for n, p, t in project_atoms],
+            "project": [(n, p, t) for n, p, t in project_atoms_merged],
             "project_memory_dir": str(project_mem_dir) if project_mem_dir else "",
             "project_root": str(project_root) if project_root else "",
         }
         state["injected_atoms"] = []
         state["phase"] = "working"
+
+        # V4 layout → 動態重生 MEMORY.md（只在 auto-gen 標頭檔上寫）
+        if v4_layout_active and v4_user:
+            _regenerate_role_filtered_memory_index(
+                project_mem_dir, v4_user, v4_roles, v4_mgmt, v4_entries,
+            )
 
         # ── v2.10: _AIDocs Bridge — scan project _AIDocs index ──────────
         aidocs_entries = parse_aidocs_index(project_root) if project_root else []
@@ -240,11 +417,20 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         }
 
         g_names = [n for n, _, _ in global_atoms]
-        p_names = [n for n, _, _ in project_atoms]
+        p_names = [n for n, _, _ in project_atoms_merged]
         lines = [
             "[Workflow Guardian] Active.",
             f"Global: {len(g_names)} atoms. Project: {len(p_names)}.",
         ]
+        # V4: role context
+        if v4_user:
+            lines.append(
+                f"[Role] user={v4_user} roles={','.join(v4_roles) or 'programmer'} mgmt={v4_mgmt}"
+            )
+            if v4_mgmt:
+                pending = _count_pending_review(project_mem_dir)
+                if pending > 0:
+                    lines.append(f"[Pending Review] {pending} 件待裁決（shared/_pending_review/）")
 
         # Inject compact _AIDocs index (v2.10, v2.18 trimmed)
         max_entries = config.get("aidocs", {}).get("max_session_start_entries", 15)
@@ -647,7 +833,18 @@ def handle_user_prompt_submit(
 
     # ── Semantic search (supplement, ranked by intent v2.1) ──────
     kw_matched_names = {e[0][0] for e in matched_with_dir}
-    sem_atoms = _semantic_search(prompt, config, intent=intent)
+    # V4: 帶 user/roles → vector service 端做 SPEC §8.1 role filter
+    _v4_id = state.get("user_identity", {})
+    _v4_user = _v4_id.get("user") or None
+    _v4_roles = _v4_id.get("roles") or None
+    # Management 模式 → 不 filter（讓裁決流程能跨組看到全貌）
+    if _v4_id.get("management"):
+        _v4_user = None
+        _v4_roles = None
+    sem_atoms = _semantic_search(
+        prompt, config, intent=intent,
+        user=_v4_user, roles=_v4_roles,
+    )
     # v2.18: Build section hints map from semantic search results
     section_hints: Dict[str, List[Dict]] = {}
     for sem_entry in sem_atoms:

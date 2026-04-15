@@ -306,13 +306,17 @@ def _ensure_vector_service(config: Dict[str, Any]) -> None:
 
 
 def _semantic_search(
-    prompt: str, config: Dict[str, Any], intent: str = "general"
+    prompt: str, config: Dict[str, Any], intent: str = "general",
+    user: Optional[str] = None,
+    roles: Optional[List[str]] = None,
 ) -> List[Tuple[str, str, List[str], List[Dict]]]:
     """Query Memory Vector Service with intent-aware ranked search (v2.18).
 
     Returns: [(atom_name, file_path, triggers[], sections[])]
     sections is list of {section, text, score, line_number} from ranked-sections endpoint.
     Empty sections list when falling back to ranked search.
+
+    V4: 若傳 user/roles → 走 SPEC §8.1 role filter；管理職模式請傳 None/None。
     """
     vs_config = config.get("vector_search", {})
     if not vs_config.get("enabled", True):
@@ -328,14 +332,22 @@ def _semantic_search(
     try:
         import urllib.parse
 
+        def _add_identity(p: Dict[str, Any]) -> Dict[str, Any]:
+            if user:
+                p["user"] = user
+            if roles:
+                p["roles"] = ",".join(roles)
+            return p
+
         # Try ranked-sections first (v2.18)
         use_sections = True
-        params = urllib.parse.urlencode({
+        params_dict = _add_identity({
             "q": prompt, "top_k": top_k,
             "min_score": min(min_score, 0.50),
             "intent": intent,
             "max_sections": 3,
         })
+        params = urllib.parse.urlencode(params_dict)
         url = f"http://127.0.0.1:{port}/search/ranked-sections?{params}"
         req = urllib.request.Request(url, headers={"Accept": "application/json"})
         try:
@@ -345,11 +357,12 @@ def _semantic_search(
             if e.code == 404:
                 # Fallback: ranked search (no sections)
                 use_sections = False
-                params = urllib.parse.urlencode({
+                params_dict = _add_identity({
                     "q": prompt, "top_k": top_k,
                     "min_score": min(min_score, 0.50),
                     "intent": intent,
                 })
+                params = urllib.parse.urlencode(params_dict)
                 url = f"http://127.0.0.1:{port}/search/ranked?{params}"
                 req = urllib.request.Request(url, headers={"Accept": "application/json"})
                 with urllib.request.urlopen(req, timeout=timeout_s) as resp:

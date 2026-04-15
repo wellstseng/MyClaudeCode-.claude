@@ -20,11 +20,11 @@
 | 模組 | 行數 | 職責 |
 |------|------|------|
 | `workflow-guardian.py` | ~1540 | 瘦身 dispatcher：8 event handlers 編排（含 PreToolUse Format Gate + Handoff + Promotion Audit hint） |
-| `wg_paths.py` | ~370 | 路徑唯一真相來源：slug/root/staging/registry；V4 新增 `get_scope_dir(scope, cwd, user, role)` 與 `discover_memory_layers(user, role)` 子層擴展 |
-| `wg_roles.py` | ~180 | V4 角色機制：`get_current_user`、`load_user_role`、`load_management_roster`、`is_management`（雙向認證）、`bootstrap_personal_dir`（冪等寫 .gitignore） |
+| `wg_paths.py` | ~445 | 路徑唯一真相來源：slug/root/staging/registry；V4 新增 `get_scope_dir`、`discover_v4_sublayers(slug, mem_dir)`、`discover_memory_layers(user, role)`（user-aware filter mode + 預設 enumerate-all-sub-layer 給 indexer 用）；`get_project_memory_dir` V4 fallback（純 V4 layout 也視為合法 mem dir） |
+| `wg_roles.py` | ~210 | V4 角色機制：`get_current_user`、`load_user_role`、`load_management_roster`、`is_management`（雙向認證）、`bootstrap_personal_dir`（冪等寫 .gitignore） |
 | `wg_core.py` | ~370 | 共用常數/設定/state IO/output/debug（含 `log_promotion_audit`） |
-| `wg_atoms.py` | ~559 | 索引解析/trigger 匹配/ACT-R/載入/budget/section-level 注入 |
-| `wg_intent.py` | ~387 | 意圖分類/session context/MCP/vector service |
+| `wg_atoms.py` | ~559 | 索引解析/trigger 匹配/ACT-R/載入/budget/section-level 注入；`_parse_trigger_table` 容忍 4 欄（V4 Scope） |
+| `wg_intent.py` | ~400 | 意圖分類/session context/MCP/vector service；`_semantic_search` 支援 user/roles 參數轉發到 vector service 端做 SPEC §8.1 role filter |
 | `wg_extraction.py` | ~295 | per-turn 萃取/worker 管理/failure 偵測 |
 | `wg_hot_cache.py` | ~139 | Hot Cache 讀寫/注入 |
 | `wg_docdrift.py` | ~160 | DocDrift 偵測：src 改動→_AIDocs 映射→advisory 提醒 |
@@ -156,6 +156,16 @@ Deep extract   → [detached] extract-worker.py (rdchat: gemma4:e4b) → 覆寫 
 - **路徑切換**：`get_project_memory_dir()` 新路徑 `{project_root}/.claude/memory/` 優先，舊路徑 fallback
 - **專案 Delegate**：`{project_root}/.claude/hooks/project_hooks.py`（inject/extract/on_session_start），subprocess 隔離呼叫（5s timeout）
 - **遷移工具**：`tools/migrate-v221.py`（_AIAtoms + 個人 memory → .claude/memory/）
+
+### V4 三層 Scope + Role-filtered JIT 注入
+
+- **三層 scope**（per project）：`shared/` / `roles/{r}/` / `personal/{user}/`，加上 `global`（`~/.claude/memory/`）共四層
+- **SessionStart 流程**：`get_current_user()` → `bootstrap_personal_dir()`（冪等建 `personal/{user}/role.md` + `.gitignore`）→ `load_user_role()`（多角色逗號分隔）→ `is_management()`（雙向認證：personal `role.md` 宣告 + shared `_roles.md` 白名單）→ 寫入 `state["user_identity"]`
+- **atom_index 載入**：V4 layout 偵測（shared/roles/personal 任一存在）→ 直接用 `_collect_v4_role_atoms` 結果（避免 V3 MEMORY.md 自我循環）；非 V4 → V3 MEMORY.md/_ATOM_INDEX.md fallback + V4 entries union
+- **動態 MEMORY.md**：`_regenerate_role_filtered_memory_index` 寫 `<!-- AUTO-GENERATED: V4 role filter -->` header；護寫保護：檔案存在且首行不是 header → 跳過（不覆寫 V3 人手版本）
+- **JIT vector filter**（SPEC §8.1）：UPS 從 `state["user_identity"]` 取 user/roles，呼叫 `_semantic_search(user, roles)`；vector service 端 `_build_v4_layer_clause` 組 `(layer = 'global' OR layer LIKE 'shared:%' OR layer LIKE 'role:%:r1' OR ... OR layer LIKE 'personal:%:user')`，sanitize `[\w-]+` 防注入；管理職 → 不傳 user/roles → 全量
+- **Vector layer schema**：indexer 把 project 拆 `shared:{slug}` / `role:{slug}:{r}` / `personal:{slug}:{user}` 三類；`flat-legacy` kind 處理 mem_dir 直下舊 atom（視為 shared）；chunk metadata 新增 `Scope`/`Audience`/`Author` 三欄
+- **管理職額外**：`_count_pending_review` 計 `shared/_pending_review/*.md` → context line `[Pending Review] N 件`
 
 ### 跨 Session 鞏固
 
