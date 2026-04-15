@@ -31,9 +31,27 @@ python ~/.claude/tools/journal-aggregate.py $ARGUMENTS
 - 週報存檔至 `~/.claude/journals/week-YYYY-WNN.md`
 - 月報存檔至 `~/.claude/journals/month-YYYY-MM.md`
 - range 模式逐日產生日報（跳過無記錄日）
-- 同步鏡射至 Obsidian：`C:\Users\wellstseng\Obsidian\工作日誌\{日報|週報|月報}\`
-- 腳本自動清理 >60 天的舊日誌（僅 `~/.claude/journals/`，Obsidian 不清理）
-- VCS commits 自動拉取（git/svn）；author 解析：env `CLAUDE_JOURNAL_AUTHOR` > 該 repo `git config user.name` > OS USERNAME
+- VCS commits 自動拉取（git / svn），用於「做了什麼」結構列
+- LLM 速覽：若本機 Ollama 可達（`127.0.0.1:11434`），自動產 2-4 句段落總結；不可達則跳過
+- 腳本自動清理 >60 天的舊日誌（僅 `~/.claude/journals/`）
+
+## 環境變數（選填）
+
+| Env var | 用途 | 預設 |
+|---------|------|------|
+| `CLAUDE_JOURNAL_OBSIDIAN_DIR` | 鏡射目的地（例：`~/Obsidian/工作日誌`）；未設則不鏡射 | 不鏡射 |
+| `CLAUDE_JOURNAL_AUTHOR` | VCS commits 過濾的作者名 | 該 repo `git config user.name` → OS USERNAME |
+| `CLAUDE_JOURNAL_LLM_MODEL` | Ollama 模型名 | `qwen3:1.7b` |
+
+個人設定放 `~/.claude/settings.local.json`（gitignore）：
+
+```json
+{
+  "env": {
+    "CLAUDE_JOURNAL_OBSIDIAN_DIR": "C:\\Users\\YOUR_NAME\\Obsidian\\工作日誌"
+  }
+}
+```
 
 ## Step 2: 檢視產出
 

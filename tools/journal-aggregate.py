@@ -32,7 +32,8 @@ JOURNALS_DIR = CLAUDE_DIR / "journals"
 WORKFLOW_DIR = CLAUDE_DIR / "workflow"
 RETENTION_DAYS = 60
 
-OBSIDIAN_BASE = Path(r"C:\Users\wellstseng\Obsidian\工作日誌")
+_obsidian_env = os.environ.get("CLAUDE_JOURNAL_OBSIDIAN_DIR")
+OBSIDIAN_BASE = Path(_obsidian_env) if _obsidian_env else None
 OBSIDIAN_SUBDIR = {"daily": "日報", "weekly": "週報", "monthly": "月報"}
 
 VCS_TIMEOUT = 10
@@ -231,6 +232,156 @@ def scan_states_range(start: str, end: str) -> dict[str, list[dict]]:
 
 # ── Daily Journal Builder ──────────────────────────────────────
 
+def _truncate(s: str, n: int = 60) -> str:
+    s = s.strip()
+    return s if len(s) <= n else s[:n - 1] + "…"
+
+
+def _project_summary_line(project: str, sessions: list[dict],
+                         commits: list[tuple[str, str]],
+                         unique_files: int) -> str:
+    if commits:
+        msgs = "；".join(_truncate(m) for _, m in commits[:4])
+        suffix = f"…等 {len(commits)} 個" if len(commits) > 4 else ""
+        return f"- **{project}** ({len(commits)} commits): {msgs}{suffix}"
+    if unique_files > 0:
+        return f"- **{project}**: 改 {unique_files} 檔（未 commit）"
+    prompts = sum(s["prompts"] for s in sessions)
+    if prompts > 0:
+        return f"- **{project}**: {prompts} prompts（純討論）"
+    return f"- **{project}**: 閒置"
+
+
+def _llm_summary(proj_data: list, active_days: int | None = None) -> str:
+    """呼叫本地 Ollama 產生 2-4 句話速覽。失敗回 ""。"""
+    try:
+        sys.path.insert(0, str(Path.home() / ".claude" / "tools"))
+        from ollama_client import OllamaClient, OllamaBackend  # type: ignore
+    except ImportError:
+        return ""
+
+    # 直接用本地 backend，不試遠端（避免 timeout 拖長 journal 產出）
+    model = os.environ.get("CLAUDE_JOURNAL_LLM_MODEL", "qwen3:1.7b")
+    local_backend = OllamaBackend(
+        name="local", base_url="http://127.0.0.1:11434", auth=None,
+        llm_model=model, embedding_model=None, priority=1,
+        enabled=True, think=False, llm_num_predict=512,
+    )
+    client = OllamaClient([local_backend])
+
+    # 組裝精簡 context
+    blocks: list[str] = []
+    for item in proj_data:
+        if len(item) != 4:
+            continue
+        _key, g, commits, _vcs = item
+        parts = [f"[{g['project']}]"]
+        if commits:
+            for cid, msg in commits[:6]:
+                parts.append(f"  commit: {msg}")
+        else:
+            files = {f for s in g["sessions"] for f in s["modified_files"]}
+            if files:
+                parts.append(f"  改檔(未commit): {len(files)} 檔")
+                for fp in list(files)[:5]:
+                    parts.append(f"    - {Path(fp).name}")
+        # top knowledge
+        kq = []
+        for s in g["sessions"]:
+            kq.extend(s["knowledge"][:3])
+        for a in g["atoms"]:
+            kq.extend(a.get("knowledge", [])[:2])
+        seen: set = set()
+        kq_unique = []
+        for k in kq:
+            ck = _clean_knowledge(k)
+            if ck and ck not in seen:
+                seen.add(ck)
+                kq_unique.append(ck)
+        for k in kq_unique[:3]:
+            parts.append(f"  知識: {_truncate(k, 100)}")
+        blocks.append("\n".join(parts))
+
+    context_text = "\n\n".join(blocks)
+    period_hint = f"這是一份 {active_days} 天的區間彙總。" if active_days else "這是今日的工作記錄。"
+    prompt = f"""{period_hint}請用繁體中文寫一段 2-4 句的「做了什麼」速覽。
+
+資料：
+{context_text}
+
+嚴格規則（違反者視為錯誤輸出）：
+1. 直接輸出純文字段落，禁止條列、禁止 markdown、禁止項目符號 -
+2. 禁止任何前言（如「以下」「總結」「工程主管」「請注意」）
+3. 禁止任何時間詞開頭（如「今天」「本次」「這次」）
+4. 全部寫在同一段，句子之間用句號分隔
+5. 每個專案一句話，不超過 4 句總長
+6. 只寫做了什麼、產出什麼，不寫統計數字
+"""
+    try:
+        result = client.generate(prompt, timeout=20, think=False)
+        return _strip_preamble((result or "").strip())
+    except Exception:
+        return ""
+
+
+def _strip_preamble(text: str) -> str:
+    """移除 LLM 常見前言 + 條列前綴。"""
+    text = re.sub(r"^<think>.*?</think>\s*", "", text, flags=re.DOTALL)
+    # 開頭前言只刪第一次
+    for pattern in [
+        r"^工程主管.*?[:：]\s*\n?",
+        r"^以下是?.*?[:：]\s*\n?",
+        r"^(總結|速覽|摘要).*?[:：]\s*\n?",
+    ]:
+        text = re.sub(pattern, "", text, count=1)
+    # 「做了什麼：」可能出現多次，全刪
+    text = re.sub(r"做了什麼[:：]\s*", "", text)
+    # 把條列轉成段落（移除每行開頭的 - / *）
+    cleaned_lines = []
+    for line in text.splitlines():
+        stripped = re.sub(r"^\s*[-*•]\s*", "", line).strip()
+        if stripped:
+            cleaned_lines.append(stripped)
+    # 用空格而非換行接，避免 LLM 把句子拆行
+    return " ".join(cleaned_lines).strip()
+
+
+def _build_summary(proj_data: list, grand_sessions: int, grand_prompts: int,
+                   grand_files: int, grand_commits: int,
+                   active_days: int | None = None) -> list[str]:
+    lines = ["## 總結", ""]
+
+    # LLM 速覽（Ollama 不在則跳過）
+    llm_text = _llm_summary(proj_data, active_days)
+    if llm_text:
+        lines.append(llm_text)
+        lines.append("")
+
+    # 統計數字
+    stats = [
+        f"{len(proj_data)} 專案",
+        f"{grand_sessions} sessions",
+        f"{grand_prompts} prompts",
+        f"{grand_files} 檔",
+        f"{grand_commits} commits",
+    ]
+    if active_days is not None:
+        stats.insert(0, f"活躍 {active_days} 天")
+    lines.append(" · ".join(stats))
+    lines.append("")
+
+    # 結構事實列
+    for item in proj_data:
+        if len(item) == 4:
+            _key, g, commits, _vcs = item
+        else:
+            continue
+        unique_files = len({f for s in g["sessions"] for f in s["modified_files"]})
+        lines.append(_project_summary_line(g["project"], g["sessions"], commits, unique_files))
+    lines.append("")
+    return lines
+
+
 def _intent_str(intent: dict) -> str:
     return " ".join(f"{k}({v})" for k, v in sorted(intent.items(), key=lambda x: -x[1]) if v > 0)
 
@@ -376,14 +527,16 @@ def build_journal(target_date: str) -> str:
     total_prompts = sum(s["prompts"] for _, g, _, _ in proj_data for s in g["sessions"])
     total_files = sum(s["files_modified"] for _, g, _, _ in proj_data for s in g["sessions"])
 
+    # 排序：有 commit 的優先，然後依 prompts 數
+    proj_data.sort(key=lambda x: (-len(x[2]), -sum(s["prompts"] for s in x[1]["sessions"])))
+
     lines = [f"# {target_date} 工作日誌", ""]
+    lines.extend(_build_summary(proj_data, total_sessions, total_prompts,
+                                total_files, total_commits))
     lines.append("| Sessions | Prompts | 改檔 | Commits |")
     lines.append("|:--:|:--:|:--:|:--:|")
     lines.append(f"| {total_sessions} | {total_prompts} | {total_files} | {total_commits} |")
     lines.append("")
-
-    # 排序：有 commit 的優先，然後依 prompts 數
-    proj_data.sort(key=lambda x: (-len(x[2]), -sum(s["prompts"] for s in x[1]["sessions"])))
 
     for _key, g, commits, vcs in proj_data:
         lines.append("---")
@@ -469,15 +622,21 @@ def _render_period(all_dates: list[str], ep_by_date: dict, st_by_date: dict) -> 
             seen.update(s["modified_files"])
         grand_files += len(seen)
 
-    # ── 總覽表 ──
+    # 排序：有 commit 的優先
+    proj_data.sort(key=lambda x: (-len(x[2]), -sum(s["prompts"] for s in x[1]["sessions"])))
+
+    # ── 總結 ──
     lines: list[str] = []
+    lines.extend(_build_summary(proj_data, grand_sessions, grand_prompts,
+                                grand_files, grand_commits, active_days=len(all_dates)))
+
+    # ── 總覽表 ──
     lines.append("| Sessions | Prompts | 改檔 | Commits | 活躍天數 |")
     lines.append("|:--:|:--:|:--:|:--:|:--:|")
     lines.append(f"| {grand_sessions} | {grand_prompts} | {grand_files} | {grand_commits} | {len(all_dates)} |")
     lines.append("")
 
     # ── 各專案 ──
-    proj_data.sort(key=lambda x: (-len(x[2]), -sum(s["prompts"] for s in x[1]["sessions"])))
     for _key, g, commits, vcs in proj_data:
         lines.append("---")
         lines.append("")
@@ -554,6 +713,8 @@ def has_records(target_date: str) -> bool:
 # ── Obsidian Mirror ─────────────────────────────────────────────
 
 def mirror_to_obsidian(content: str, filename: str, kind: str) -> Path | None:
+    if OBSIDIAN_BASE is None:
+        return None
     sub = OBSIDIAN_SUBDIR.get(kind)
     if sub is None or not OBSIDIAN_BASE.parent.exists():
         return None
