@@ -6,6 +6,7 @@ wg_paths.py — 原子記憶系統路徑集中管理 (V2.20)
 
 V2.20: 行為等價重構（路徑仍走 ~/.claude/projects/{slug}/memory/）
 V2.21: 切換到 {project_root}/.claude/memory/（僅改此檔）
+V4.0:  三層 scope（shared / role:{name} / personal:{user}）與 JIT layer 擴展
 """
 
 import json
@@ -92,6 +93,63 @@ def get_project_memory_dir(cwd: str) -> Optional[Path]:
     if old_mem.exists():
         return old_mem
     return None
+
+
+def get_scope_dir(
+    scope: str,
+    cwd: str,
+    user: Optional[str] = None,
+    role: Optional[str] = None,
+) -> Optional[Path]:
+    """V4: 回傳指定 scope 的目錄，必要時自動建立。
+
+    scope:
+      - "global"   → ~/.claude/memory/
+      - "shared"   → {proj}/.claude/memory/shared/
+      - "role"     → {proj}/.claude/memory/roles/{role}/  （role 必填）
+      - "personal" → {proj}/.claude/memory/personal/{user}/  （user 必填）
+
+    專案類 scope 需要 find_project_root 找到真實標記（.git/.svn/_AIDocs/
+    .claude/memory/MEMORY.md）才建立，避免在亂目錄污染。找不到 → None。
+    """
+    if scope == "global":
+        MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+        return MEMORY_DIR
+
+    if scope == "role" and not role:
+        return None
+    if scope == "personal" and not user:
+        return None
+    if scope not in ("shared", "role", "personal"):
+        return None
+
+    root = find_project_root(cwd)
+    if not root:
+        return None
+    # ~/.claude 自身就是全域 .claude，其 memory == global，不再切 V4 三層
+    try:
+        if root.resolve() == CLAUDE_DIR.resolve():
+            return None
+    except OSError:
+        pass
+    has_marker = (
+        (root / ".claude" / "memory" / MEMORY_INDEX).exists()
+        or (root / "_AIDocs").is_dir()
+        or (root / ".git").exists()
+        or (root / ".svn").exists()
+    )
+    if not has_marker:
+        return None
+
+    base = root / ".claude" / "memory"
+    if scope == "shared":
+        target = base / "shared"
+    elif scope == "role":
+        target = base / "roles" / role
+    else:  # personal
+        target = base / "personal" / user
+    target.mkdir(parents=True, exist_ok=True)
+    return target
 
 
 def get_project_claude_dir(cwd: str) -> Optional[Path]:
@@ -289,10 +347,17 @@ def discover_all_project_memory_dirs() -> List[Tuple[str, Path]]:
 
 def discover_memory_layers(
     layer_filter: Optional[str] = None,
+    user: Optional[str] = None,
+    role: Optional[str] = None,
 ) -> List[Tuple[str, Path]]:
-    """Discover all memory layers for vector service indexing.
+    """Discover all memory layers for vector service indexing / JIT injection.
 
-    Returns [("global", path), ("project:{slug}", path), ...]
+    V3 回傳 [("global", path), ("project:{slug}", path), ...]  — 沿用。
+    V4 若傳 user/role，額外擴回 [("shared", p), ("role:{r}", p),
+    ("personal:{user}", p)]，對應 SPEC 8.1：別組 role 與別人 personal 不回傳。
+
+    user/role 皆為「當前使用者自己」的身份；不傳則退回 V3 行為。
+    role 支援多值（逗號分隔 str 或傳入時已分好的單一值）。
     """
     layers: List[Tuple[str, Path]] = [("global", MEMORY_DIR)]
     for slug, mem_dir in discover_all_project_memory_dirs():
@@ -304,6 +369,32 @@ def discover_memory_layers(
         ):
             continue
         layers.append((label, mem_dir))
+
+        # V4: 專案內再暴露 shared / role:{r} / personal:{user} 子層
+        shared_dir = mem_dir / "shared"
+        if shared_dir.is_dir() and (
+            not layer_filter or layer_filter in ("all", "shared")
+        ):
+            layers.append(("shared", shared_dir))
+
+        if role:
+            roles = [r.strip() for r in role.split(",") if r.strip()]
+            for r in roles:
+                role_dir = mem_dir / "roles" / r
+                if role_dir.is_dir() and (
+                    not layer_filter
+                    or layer_filter in ("all", "role", f"role:{r}")
+                ):
+                    layers.append((f"role:{r}", role_dir))
+
+        if user:
+            personal_dir = mem_dir / "personal" / user
+            if personal_dir.is_dir() and (
+                not layer_filter
+                or layer_filter in ("all", "personal", f"personal:{user}")
+            ):
+                layers.append((f"personal:{user}", personal_dir))
+
     return layers
 
 

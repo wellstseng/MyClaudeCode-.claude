@@ -20,7 +20,8 @@
 | 模組 | 行數 | 職責 |
 |------|------|------|
 | `workflow-guardian.py` | ~1540 | 瘦身 dispatcher：8 event handlers 編排（含 PreToolUse Format Gate + Handoff + Promotion Audit hint） |
-| `wg_paths.py` | ~314 | 路徑唯一真相來源：slug/root/staging/registry |
+| `wg_paths.py` | ~370 | 路徑唯一真相來源：slug/root/staging/registry；V4 新增 `get_scope_dir(scope, cwd, user, role)` 與 `discover_memory_layers(user, role)` 子層擴展 |
+| `wg_roles.py` | ~180 | V4 角色機制：`get_current_user`、`load_user_role`、`load_management_roster`、`is_management`（雙向認證）、`bootstrap_personal_dir`（冪等寫 .gitignore） |
 | `wg_core.py` | ~370 | 共用常數/設定/state IO/output/debug（含 `log_promotion_audit`） |
 | `wg_atoms.py` | ~559 | 索引解析/trigger 匹配/ACT-R/載入/budget/section-level 注入 |
 | `wg_intent.py` | ~387 | 意圖分類/session context/MCP/vector service |
