@@ -8,10 +8,11 @@
 ## 使用方式
 
 ```
-/journal                    # 今天的日報
-/journal 2026-04-07         # 指定日期的日報
-/journal week               # 本週週報
-/journal week 2026-04-07    # 含該日期的那週週報
+/journal                              # 今天的日報
+/journal 2026-04-07                   # 指定日期的日報
+/journal week                         # 本週週報
+/journal week 2026-04-07              # 含該日期的那週週報
+/journal range 2026-04-01 2026-04-15  # 任意日期區間
 ```
 
 ---
@@ -26,6 +27,7 @@ python ~/.claude/tools/journal-aggregate.py $ARGUMENTS
 
 - 日報存檔至 `~/.claude/journals/YYYY-MM-DD.md`
 - 週報存檔至 `~/.claude/journals/week-YYYY-WNN.md`
+- 區間日誌存檔至 `~/.claude/journals/range-{start}_{end}.md`
 - 腳本自動清理 >60 天的舊日誌
 
 ## Step 2: 檢視產出

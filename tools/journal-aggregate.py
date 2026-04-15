@@ -6,6 +6,7 @@ Usage:
     python journal-aggregate.py 2026-04-07   # 指定日期
     python journal-aggregate.py week         # 本週週報
     python journal-aggregate.py week 2026-04-07  # 含該日期的那週
+    python journal-aggregate.py range 2026-04-01 2026-04-10  # 任意日期範圍
     python journal-aggregate.py --cleanup    # 僅清理過期日誌
 """
 
@@ -284,16 +285,16 @@ def _week_range(ref_date: str) -> tuple[str, str, int, int]:
     return monday.strftime("%Y-%m-%d"), sunday.strftime("%Y-%m-%d"), iso_year, iso_week
 
 
-def build_weekly(ref_date: str) -> str:
-    mon, sun, iso_y, iso_w = _week_range(ref_date)
-    ep_by_date = scan_episodic_range(mon, sun)
-    st_by_date = scan_states_range(mon, sun)
+def _build_period_lines(start: str, end: str) -> tuple[list[str], bool]:
+    """彙整 [start, end] 區間的內容（不含標題）。回傳 (lines, has_data)。"""
+    ep_by_date = scan_episodic_range(start, end)
+    st_by_date = scan_states_range(start, end)
 
     all_dates = sorted(set(list(ep_by_date.keys()) + list(st_by_date.keys())))
     if not all_dates:
-        return f"# 週報摘要：{iso_y}-W{iso_w:02d} ({mon} ~ {sun})\n\n> 該週無記錄。\n"
+        return [], False
 
-    lines = [f"# 週報摘要：{iso_y}-W{iso_w:02d} ({mon} ~ {sun})\n"]
+    lines: list[str] = []
 
     # ── 按專案統計 ──
     proj_stats = defaultdict(lambda: {"sessions": 0, "files": 0, "prompts": 0,
@@ -392,12 +393,29 @@ def build_weekly(ref_date: str) -> str:
             if clean and clean not in all_knowledge:
                 all_knowledge.append(clean)
     if all_knowledge:
-        lines.append("## 本週知識\n")
+        lines.append("## 知識彙總\n")
         for k in all_knowledge[:20]:
             lines.append(f"- {k}")
         lines.append("")
 
-    return "\n".join(lines)
+    return lines, True
+
+
+def build_weekly(ref_date: str) -> str:
+    mon, sun, iso_y, iso_w = _week_range(ref_date)
+    title = f"# 週報摘要：{iso_y}-W{iso_w:02d} ({mon} ~ {sun})\n"
+    body, has_data = _build_period_lines(mon, sun)
+    if not has_data:
+        return f"{title}\n> 該週無記錄。\n"
+    return title + "\n" + "\n".join(body)
+
+
+def build_range(start: str, end: str) -> str:
+    title = f"# 區間日誌：{start} ~ {end}\n"
+    body, has_data = _build_period_lines(start, end)
+    if not has_data:
+        return f"{title}\n> 該區間無記錄。\n"
+    return title + "\n" + "\n".join(body)
 
 
 # ── Cleanup ─────────────────────────────────────────────────────
@@ -421,10 +439,19 @@ def cleanup() -> int:
 
 # ── Main ────────────────────────────────────────────────────────
 
+def _norm_date(arg: str) -> str | None:
+    if re.match(r"\d{4}-\d{2}-\d{2}$", arg):
+        return arg
+    if re.match(r"\d{8}$", arg):
+        return f"{arg[:4]}-{arg[4:6]}-{arg[6:8]}"
+    return None
+
+
 def main():
     target = datetime.now().strftime("%Y-%m-%d")
     mode = "daily"
     only_cleanup = False
+    range_dates: list[str] = []
 
     args = sys.argv[1:]
     for arg in args:
@@ -432,10 +459,16 @@ def main():
             only_cleanup = True
         elif arg == "week":
             mode = "weekly"
-        elif re.match(r"\d{4}-\d{2}-\d{2}$", arg):
-            target = arg
-        elif re.match(r"\d{8}$", arg):
-            target = f"{arg[:4]}-{arg[4:6]}-{arg[6:8]}"
+        elif arg == "range":
+            mode = "range"
+        else:
+            d = _norm_date(arg)
+            if d is None:
+                continue
+            if mode == "range":
+                range_dates.append(d)
+            else:
+                target = d
 
     if only_cleanup:
         n = cleanup()
@@ -448,6 +481,13 @@ def main():
         journal = build_weekly(target)
         _, _, iso_y, iso_w = _week_range(target)
         out = JOURNALS_DIR / f"week-{iso_y}-W{iso_w:02d}.md"
+    elif mode == "range":
+        if len(range_dates) != 2:
+            print("用法：range YYYY-MM-DD YYYY-MM-DD", file=sys.stderr)
+            sys.exit(2)
+        start, end = sorted(range_dates)
+        journal = build_range(start, end)
+        out = JOURNALS_DIR / f"range-{start}_{end}.md"
     else:
         journal = build_journal(target)
         out = JOURNALS_DIR / f"{target}.md"
