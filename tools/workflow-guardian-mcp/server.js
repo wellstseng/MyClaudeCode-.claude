@@ -383,12 +383,38 @@ const TOOL_DEFINITIONS = [
     description:
       "Write or update an atom file with validated format. " +
       "Ensures correct metadata structure, runs write-gate dedup, " +
-      "updates MEMORY.md index, and triggers vector indexing.",
+      "updates MEMORY.md index, and triggers vector indexing. " +
+      "V4: supports shared/role/personal scopes; sensitive audience " +
+      "(architecture/decision) on shared auto-routes to _pending_review/.",
     inputSchema: {
       type: "object",
       properties: {
         title: { type: "string", description: "Atom title (becomes # heading and filename slug)" },
-        scope: { type: "string", enum: ["global", "project"], description: "global or project scope" },
+        scope: {
+          type: "string",
+          enum: ["global", "shared", "role", "personal", "project"],
+          description: "V4 scope. shared=project-wide, role=role-shared (requires `role`), personal=per-user (requires `user` or defaults to current). global=cross-project. project (legacy)=transparently mapped to shared. Defaults to shared.",
+        },
+        role: {
+          type: "string",
+          description: "Role subdir name (e.g. art, programmer, planner). Required when scope=role.",
+        },
+        user: {
+          type: "string",
+          description: "Personal subdir owner. Required when scope=personal; falls back to current OS user.",
+        },
+        audience: {
+          type: "array", items: { type: "string" },
+          description: "Audience tags (multi-role). On scope=shared, presence of 'architecture' or 'decision' auto-routes atom to _pending_review/ with Pending-review-by: management.",
+        },
+        pending_review_by: {
+          type: "string",
+          description: "Optional Pending-review-by metadata (e.g. 'management'). Auto-set for sensitive audience on shared.",
+        },
+        merge_strategy: {
+          type: "string", enum: ["ai-assist", "git-only"],
+          description: "Optional Merge-strategy metadata. Default ai-assist (omitted from file).",
+        },
         confidence: { type: "string", enum: ["[固]", "[觀]", "[臨]"], description: "Confidence level" },
         triggers: {
           type: "array", items: { type: "string" },
@@ -412,14 +438,14 @@ const TOOL_DEFINITIONS = [
         },
         project_cwd: {
           type: "string",
-          description: "Project root path (required when scope=project)",
+          description: "Project root path (required for scope=shared/role/personal)",
         },
         skip_gate: {
           type: "boolean",
           description: "Skip write-gate quality check (for [固] or explicit user request)",
         },
       },
-      required: ["title", "scope", "confidence", "triggers", "knowledge", "mode"],
+      required: ["title", "confidence", "triggers", "knowledge", "mode"],
     },
   },
   {
@@ -603,14 +629,44 @@ function slugify(title) {
     || "untitled";
 }
 
-/** Build atom file content from structured parameters */
-function buildAtomContent({ title, scope, confidence, triggers, knowledge, actions, related }) {
+/** Build atom file content from structured parameters.
+ *  V4: scopeLabel may be plain "shared"/"global" or composite "role:art"/"personal:alice".
+ *  Optional metadata (audience/author/pending_review_by/merge_strategy/created_at)
+ *  written only when present, in SPEC §4 order. */
+function buildAtomContent({
+  title,
+  scope,
+  confidence,
+  triggers,
+  knowledge,
+  actions,
+  related,
+  audience,
+  author,
+  pendingReviewBy,
+  mergeStrategy,
+  createdAt,
+}) {
+  const today = new Date().toISOString().slice(0, 10);
   const lines = [`# ${title}`, ""];
   lines.push(`- Scope: ${scope}`);
+  if (audience && audience.length > 0) {
+    lines.push(`- Audience: ${audience.join(", ")}`);
+  }
+  if (author) {
+    lines.push(`- Author: ${author}`);
+  }
   lines.push(`- Confidence: ${confidence}`);
   lines.push(`- Trigger: ${triggers.join(", ")}`);
-  lines.push(`- Last-used: ${new Date().toISOString().slice(0, 10)}`);
+  lines.push(`- Last-used: ${today}`);
   lines.push("- Confirmations: 0");
+  if (pendingReviewBy) {
+    lines.push(`- Pending-review-by: ${pendingReviewBy}`);
+  }
+  if (mergeStrategy && mergeStrategy !== "ai-assist") {
+    lines.push(`- Merge-strategy: ${mergeStrategy}`);
+  }
+  lines.push(`- Created-at: ${createdAt || today}`);
   if (related && related.length > 0) {
     lines.push(`- Related: ${related.join(", ")}`);
   }
@@ -651,19 +707,86 @@ function validateAtomContent(content) {
   return null;
 }
 
-/** Resolve the memory directory for a given scope */
-function resolveMemDir(scope, projectCwd) {
+// V4: project root marker walk (mirrors hooks/wg_paths.find_project_root)
+function findProjectRoot(cwd) {
+  if (!cwd) return null;
+  let p = path.resolve(cwd);
+  for (let i = 0; i < 4; i++) {
+    if (fs.existsSync(path.join(p, ".claude", "memory", "MEMORY.md"))) return p;
+    if (fs.existsSync(path.join(p, "_AIDocs"))) return p;
+    if (fs.existsSync(path.join(p, ".git")) || fs.existsSync(path.join(p, ".svn"))) return p;
+    const parent = path.dirname(p);
+    if (parent === p) break;
+    p = parent;
+  }
+  return null;
+}
+
+// Mirrors wg_roles.get_current_user (env override + os user).
+function getCurrentUser() {
+  if (process.env.CLAUDE_USER) return process.env.CLAUDE_USER;
+  try { return require("os").userInfo().username; } catch { return "unknown"; }
+}
+
+// SPEC 7.4 first-version sensitive audience set.
+const SENSITIVE_AUDIENCE = new Set(["architecture", "decision"]);
+function isSensitiveAudience(audience) {
+  if (!Array.isArray(audience)) return false;
+  return audience.some(a => SENSITIVE_AUDIENCE.has(String(a).trim().toLowerCase()));
+}
+
+/** Resolve the memory directory for a given scope.
+ *  V4: shared / role / personal land in project subdirs;
+ *  legacy "project" maps to "shared"; "global" unchanged.
+ *  Returns { dir, error } — caller checks error.
+ */
+function resolveMemDir(scope, projectCwd, opts = {}) {
+  scope = scope || "shared";
+
+  if (scope === "global") {
+    fs.mkdirSync(MEMORY_DIR, { recursive: true });
+    return { dir: MEMORY_DIR, base: MEMORY_DIR };
+  }
+
+  // Legacy: scope=project returns root memory dir (no V4 subdir).
+  // atom_write should pre-map project→shared via callers; here we keep legacy
+  // root-dir behavior for atom_promote / readers that still pass "project".
   if (scope === "project" && projectCwd) {
     const projMem = path.join(projectCwd, ".claude", "memory");
-    if (fs.existsSync(projMem)) return projMem;
-    // Also check Claude projects dir
+    if (fs.existsSync(projMem)) return { dir: projMem, base: projMem };
     const norm = projectCwd.replace(/\\/g, "/").replace(/\/+$/, "");
     const slug = norm.replace(/[^a-zA-Z0-9]/g, "-").replace(/-+/g, "-");
     const projDir = path.join(CLAUDE_DIR, "projects", slug, "memory");
-    if (fs.existsSync(projDir)) return projDir;
-    return projMem; // default: create under project root
+    if (fs.existsSync(projDir)) return { dir: projDir, base: projDir };
+    return { dir: projMem, base: projMem };
   }
-  return MEMORY_DIR;
+
+  if (scope === "role" && !opts.role) {
+    return { error: "scope=role requires 'role' parameter (e.g., 'art', 'programmer')" };
+  }
+  if (scope !== "shared" && scope !== "role" && scope !== "personal") {
+    return { error: `Unknown scope: ${scope}` };
+  }
+
+  const root = findProjectRoot(projectCwd || "");
+  if (!root) {
+    return { error: `No project root found for scope=${scope} (need .git/.svn/_AIDocs/.claude/memory/MEMORY.md marker under ${projectCwd || "(no cwd)"})` };
+  }
+  // ~/.claude itself is global memory; reject V4 sub-scopes there
+  try {
+    if (path.resolve(root) === path.resolve(CLAUDE_DIR)) {
+      return { error: `cwd is ~/.claude itself; use scope=global for cross-project knowledge` };
+    }
+  } catch {}
+
+  const base = path.join(root, ".claude", "memory");
+  let dir;
+  if (scope === "shared") dir = path.join(base, "shared");
+  else if (scope === "role") dir = path.join(base, "roles", opts.role);
+  else dir = path.join(base, "personal", opts.user);
+
+  fs.mkdirSync(dir, { recursive: true });
+  return { dir, base };
 }
 
 /** Find atom index path for a given scope (V3.2: prefer _ATOM_INDEX.md) */
@@ -796,17 +919,56 @@ function parseAtomMeta(content) {
 // ─── Atom Write Handler ────────────────────────────────────────────────────
 
 async function toolAtomWrite(id, args) {
-  const { title, scope, confidence, triggers, knowledge, actions, related, mode, project_cwd, skip_gate } = args;
+  let {
+    title, scope, confidence, triggers, knowledge, actions, related, mode,
+    project_cwd, skip_gate,
+    role, user, audience, pending_review_by, merge_strategy,
+  } = args;
 
-  // Validate required fields
-  if (!title || !scope || !confidence || !triggers || !knowledge || !mode) {
-    return sendToolResult(id, "Missing required parameters (title, scope, confidence, triggers, knowledge, mode)", true);
+  // Validate core required fields (scope now optional, defaults to shared)
+  if (!title || !confidence || !triggers || !knowledge || !mode) {
+    return sendToolResult(id, "Missing required parameters (title, confidence, triggers, knowledge, mode)", true);
   }
 
-  const memDir = resolveMemDir(scope, project_cwd);
+  // V4: default scope, transparent legacy mapping
+  if (!scope) scope = "shared";
+  if (scope === "project") {
+    try { process.stderr.write(`[atom_write] scope=project is deprecated; mapped to shared\n`); } catch {}
+    scope = "shared";
+  }
+
+  // V4 personal default user
+  if (scope === "personal" && !user) user = getCurrentUser();
+
+  // Resolve target memory dir (write target + base for index)
+  const resolved = resolveMemDir(scope, project_cwd, { role, user });
+  if (resolved.error) {
+    return sendToolResult(id, `atom_write: ${resolved.error}`, true);
+  }
+  let memDir = resolved.dir;
+  const baseDir = resolved.base;
+
+  // SPEC 7.4: sensitive audience on shared → auto-pending
+  let pendingReviewBy = pending_review_by || null;
+  if (scope === "shared" && isSensitiveAudience(audience)) {
+    memDir = path.join(baseDir, "shared", "_pending_review");
+    fs.mkdirSync(memDir, { recursive: true });
+    if (!pendingReviewBy) pendingReviewBy = "management";
+  }
+
+  // V4 metadata: scope label (composite for role/personal)
+  let scopeLabel = scope;
+  if (scope === "role") scopeLabel = `role:${role}`;
+  else if (scope === "personal") scopeLabel = `personal:${user}`;
+
   const slug = slugify(title);
   const filePath = path.join(memDir, slug + ".md");
-  const relPath = "memory/" + slug + ".md";
+  // relPath = "memory/" + (path from base to file)
+  const relFromBase = path.relative(baseDir, filePath).replace(/\\/g, "/");
+  const relPath = "memory/" + relFromBase;
+
+  const author = getCurrentUser();
+  const today = new Date().toISOString().slice(0, 10);
 
   // ── Mode: create ──
   if (mode === "create") {
@@ -815,8 +977,6 @@ async function toolAtomWrite(id, args) {
     }
 
     // 原子記憶語意契約：新 atom 必須 [臨]
-    // [觀]/[固] 反映跨 session 穩定性，初次寫入無資格主張
-    // 路徑：trigger 命中累積 Confirmations → ≥20 升 [觀] → ≥40 使用者同意升 [固]
     if (confidence !== "[臨]") {
       return sendToolResult(id,
         `New atom must start at [臨] (confidence=${confidence} rejected).\n` +
@@ -826,7 +986,6 @@ async function toolAtomWrite(id, args) {
         true);
     }
 
-    // Write-gate check (unless skipped)
     if (!skip_gate) {
       const gateResult = await execWriteGate(knowledge.join("\n"), confidence);
       if (gateResult.action === "skip") {
@@ -839,29 +998,28 @@ async function toolAtomWrite(id, args) {
       }
     }
 
-    const content = buildAtomContent({ title, scope, confidence, triggers, knowledge, actions, related });
+    const content = buildAtomContent({
+      title, scope: scopeLabel, confidence, triggers, knowledge, actions, related,
+      audience, author, pendingReviewBy, mergeStrategy: merge_strategy, createdAt: today,
+    });
     const err = validateAtomContent(content);
     if (err) {
       return sendToolResult(id, `Validation failed: ${err}`, true);
     }
 
-    // Ensure directory exists
     fs.mkdirSync(memDir, { recursive: true });
-
-    // Write atom file (atomic)
     const tmp = filePath + ".tmp";
     fs.writeFileSync(tmp, content, "utf-8");
     fs.renameSync(tmp, filePath);
 
-    // Update MEMORY.md index
-    appendToIndex(memDir, slug, relPath, triggers);
-
-    // Trigger vector reindex
+    appendToIndex(baseDir, slug, relPath, triggers);
     triggerVectorReindex();
 
     return sendToolResult(id,
-      `Created atom: ${slug}.md (${confidence})\n` +
+      `Created atom: ${slug}.md (${confidence}, scope=${scopeLabel})\n` +
       `Path: ${filePath}\n` +
+      `Author: ${author}\n` +
+      (pendingReviewBy ? `Pending-review-by: ${pendingReviewBy} (sensitive audience auto-routed)\n` : "") +
       `Triggers: ${triggers.join(", ")}\n` +
       `MEMORY.md index updated.`
     );
@@ -874,10 +1032,8 @@ async function toolAtomWrite(id, args) {
     }
 
     let existing = fs.readFileSync(filePath, "utf-8");
-    // Strip UTF-8 BOM if present
     if (existing.charCodeAt(0) === 0xFEFF) existing = existing.slice(1);
 
-    // Insert new knowledge lines before ## 行動
     const actionIdx = existing.indexOf("## 行動");
     if (actionIdx < 0) {
       return sendToolResult(id, `Atom ${slug}.md has no ## 行動 section — cannot append`, true);
@@ -888,10 +1044,10 @@ async function toolAtomWrite(id, args) {
     const after = existing.slice(actionIdx);
     const updated = before + "\n" + newLines + "\n\n" + after;
 
-    // Update Last-used
+    // Append only updates Last-used; Author/Created-at preserved (initial writer's identity)
     const finalContent = updated.replace(
       /^- Last-used:\s*.+$/m,
-      `- Last-used: ${new Date().toISOString().slice(0, 10)}`
+      `- Last-used: ${today}`
     );
 
     const err = validateAtomContent(finalContent);
@@ -913,20 +1069,29 @@ async function toolAtomWrite(id, args) {
 
   // ── Mode: replace ──
   if (mode === "replace") {
-    const content = buildAtomContent({ title, scope, confidence, triggers, knowledge, actions, related });
-    const err = validateAtomContent(content);
-    if (err) {
-      return sendToolResult(id, `Validation failed: ${err}`, true);
-    }
-
-    // Preserve Confirmations from existing file
+    // Preserve Confirmations + initial Author/Created-at if file exists
     let confirmations = 0;
+    let prevAuthor = author;
+    let prevCreatedAt = today;
     if (fs.existsSync(filePath)) {
       try {
         const old = fs.readFileSync(filePath, "utf-8");
         const meta = parseAtomMeta(old);
         confirmations = meta.confirmations || 0;
+        const am = old.match(/^- Author:\s*(.+)$/m);
+        if (am) prevAuthor = am[1].trim();
+        const cm = old.match(/^- Created-at:\s*(.+)$/m);
+        if (cm) prevCreatedAt = cm[1].trim();
       } catch {}
+    }
+
+    const content = buildAtomContent({
+      title, scope: scopeLabel, confidence, triggers, knowledge, actions, related,
+      audience, author: prevAuthor, pendingReviewBy, mergeStrategy: merge_strategy, createdAt: prevCreatedAt,
+    });
+    const err = validateAtomContent(content);
+    if (err) {
+      return sendToolResult(id, `Validation failed: ${err}`, true);
     }
 
     const finalContent = content.replace(
@@ -939,11 +1104,11 @@ async function toolAtomWrite(id, args) {
     fs.writeFileSync(tmp, finalContent, "utf-8");
     fs.renameSync(tmp, filePath);
 
-    appendToIndex(memDir, slug, relPath, triggers);
+    appendToIndex(baseDir, slug, relPath, triggers);
     triggerVectorReindex();
 
     return sendToolResult(id,
-      `Replaced atom: ${slug}.md (${confidence}, preserved confirmations=${confirmations})\n` +
+      `Replaced atom: ${slug}.md (${confidence}, preserved confirmations=${confirmations}, author=${prevAuthor})\n` +
       `MEMORY.md index updated.`
     );
   }
@@ -954,9 +1119,13 @@ async function toolAtomWrite(id, args) {
 // ─── Atom Promote Handler ──────────────────────────────────────────────────
 
 function toolAtomPromote(id, args) {
-  const { atom_name, scope, project_cwd, execute } = args;
+  const { atom_name, scope, project_cwd, execute, role, user } = args;
 
-  const memDir = resolveMemDir(scope, project_cwd);
+  const resolved = resolveMemDir(scope, project_cwd, { role, user });
+  if (resolved.error) {
+    return sendToolResult(id, `atom_promote: ${resolved.error}`, true);
+  }
+  const memDir = resolved.dir;
   const filePath = path.join(memDir, atom_name + ".md");
 
   if (!fs.existsSync(filePath)) {

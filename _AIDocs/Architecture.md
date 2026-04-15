@@ -195,6 +195,23 @@ Deep extract   → [detached] extract-worker.py (rdchat: gemma4:e4b) → 覆寫 
 |--------|------|------|
 | workflow-guardian | stdio (Node.js) | session 管理 + Dashboard (port 3848) |
 
+### atom_write 工具（V4 三層 scope，2026-04-15+）
+
+| 參數 | 行為 |
+|------|------|
+| `scope=global` | 寫 `~/.claude/memory/`（不變） |
+| `scope=shared`（預設） | 寫 `{proj}/.claude/memory/shared/` |
+| `scope=role` + `role=art\|programmer\|...` | 寫 `roles/{role}/`，metadata `Scope: role:{role}` |
+| `scope=personal` + `user=...`（缺則當前使用者） | 寫 `personal/{user}/`，metadata `Scope: personal:{user}` |
+| `scope=project`（legacy） | 透明轉 `shared` + stderr deprecation hint |
+| 不傳 scope | 預設 `shared`（舊 caller 相容） |
+
+新 metadata 自動帶入：`Author`（server 端 env/OS user，不接受 caller 傳）、`Created-at`（今日）、`Audience`/`Pending-review-by`/`Merge-strategy`（caller optional）。
+
+**SPEC 7.4 敏感類別自動 pending**：`scope=shared` 且 `audience` 含 `architecture` 或 `decision` → 改寫到 `shared/_pending_review/`，自動補 `Pending-review-by: management`。
+
+詳見 [SPEC_ATOM_V4.md](SPEC_ATOM_V4.md) §4 / §7.4 / §10。
+
 ## 權限設定
 
 `settings.json` 的 `permissions.allow` 列表：
