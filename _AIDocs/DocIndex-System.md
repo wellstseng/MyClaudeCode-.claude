@@ -97,6 +97,7 @@ Session Ready
 | /memory-health | 記憶品質診斷（audit + health-check） | 無 |
 | /memory-peek | V4.1 列最近 24h 自動萃取 atom + pending + trigger 原因 [F7] | 無 |
 | /memory-review | 自我迭代檢閱（衰減/晉升/震盪/覆轍） | 無 |
+| /memory-session-score | V4.1 P4 Session 5 維度加權評分（density/precision/novelty/cost/trust）`--last\|--since\|--top-n` | 無 |
 | /memory-undo | V4.1 撤銷自動萃取（_rejected/ + reason 分類 + reflection_metrics）[F20][F23] | 無 |
 | /read-project | 系統性閱讀→doc-index atom | 無 |
 | /resume | 續接 prompt + 自動開新 session | MCPControl |
@@ -133,6 +134,7 @@ Session Ready
 - migrate-v3-to-v4.py — V3 → V4 遷移（補 Scope/Author/Created-at metadata；不搬檔，漸進分層；dry-run 預設）
 - init-roles.py — /init-roles 後端（bootstrap-personal / scaffold-roles / add-member / promote-mgmt / install-hook / privacy-check [F21]，全冪等）
 - memory-peek.py — V4.1 /memory-peek 後端：掃 personal/auto/{user}/ 列最近 atom + _pending.candidates
+- memory-session-score.py — V4.1 P4 /memory-session-score 後端：讀 reflection_metrics.v41_extraction.session_scores[]，`--last/--since/--top-n` 三種過濾 + JSON 輸出
 - memory-undo.py — V4.1 /memory-undo 後端：撤銷到 _rejected/ + reason 分類 + 寫 reflection_metrics
 - test-memory-v21.py — E2E 測試
 - eval-ranked-search.py — 50 query benchmark

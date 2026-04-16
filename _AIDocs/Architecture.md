@@ -162,6 +162,24 @@ UserPromptSubmit 下一輪
 
 Feature flag: `config.userExtraction.enabled` (預設 false)。Atom 落點: `personal/auto/{user}/`。
 
+#### V4.1 P4 Session 評價機制（wg_session_evaluator.py）
+
+每 session 結束後用 5 維度加權算出 `session_score ∈ [0, 1]`，寫入 `reflection_metrics.json` 的 `v41_extraction.session_scores[]`（FIFO cap 100）。Pure Python，<100ms，無外部 I/O 除 reflection_metrics 原子寫入。
+
+| 維度 | 權重 | 公式 |
+|---|---|---|
+| density | 0.15 | `tanh(extract_triggered / max(prompt_count, 1))` |
+| precision_proxy | 0.35 | `avg_l2_conf`（L2 跑過）否則 1.0 |
+| novelty | 0.20 | `confirmed / max(confirmed + dedup_hit, 1)` |
+| cost_efficiency | 0.15 | `max(0, 1 - token_used / 240)` |
+| trust | 0.15 | `1 - (rejected_24h / max(total_written_24h, 1))` |
+
+兩條呼叫路徑避免 worker race：
+- **Path A**（有 pending）：`user-extract-worker` 跑完 `run_user_extraction()` 時 inline 呼叫 evaluator（帶 worker_stats）→ 寫 reflection_metrics
+- **Path B**（無 pending）：`workflow-guardian.handle_session_end()` 末端 inline fallback（worker_stats=None 仍算出 baseline）
+
+查閱：`/memory-session-score [--last|--since=24h|--top-n=10]`（backend `tools/memory-session-score.py`）。未來 V4.2 歷史回填可用 `session_score ≥ threshold` 篩選；V5 Wisdom Engine 接入做 meta-learning。
+
 #### V3 三層即時管線
 
 ```
