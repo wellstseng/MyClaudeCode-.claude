@@ -48,6 +48,7 @@ from lib.ollama_extract_core import (
     ack_then_clear,
     SessionBudgetTracker,
 )
+from wg_session_evaluator import evaluate_session
 
 sys.path.insert(0, str(CLAUDE_DIR / "tools"))
 from ollama_client import get_client
@@ -312,10 +313,10 @@ def _slug_from_statement(statement: str) -> str:
 def _write_atom_via_mcp(
     l2_result: Dict, candidate: Dict, session_id: str, user: str,
     config: Dict,
-) -> bool:
+) -> str:
     """Write atom via MCP atom_write tool (subprocess call to server).
 
-    Falls back to direct file write if MCP unavailable.
+    Returns 'wrote' | 'deduped' | 'failed'. Falls back to direct file write.
     """
     statement = l2_result.get("statement", "")
     scope = l2_result.get("scope", "personal")
@@ -373,7 +374,7 @@ def _write_atom_via_mcp(
         try:
             existing = atom_path.read_text(encoding="utf-8")
             if statement in existing:
-                return True  # Already written
+                return "deduped"
         except (OSError, UnicodeDecodeError):
             pass
         # Append counter
@@ -385,10 +386,10 @@ def _write_atom_via_mcp(
 
     try:
         atom_path.write_text(content, encoding="utf-8")
-        return True
+        return "wrote"
     except OSError as e:
         _atom_debug_error("user-extract:_write_atom", e)
-        return False
+        return "failed"
 
 
 def _write_pending_candidate(
@@ -463,6 +464,9 @@ def run_user_extraction(ctx: Dict[str, Any]) -> Dict[str, Any]:
     confirmed_extractions = []
     processed_indices = []
     stats = {"processed": 0, "confirmed": 0, "skipped": 0, "l1_yes": 0, "l1_no": 0}
+    l2_confs: List[float] = []  # for avg_l2_conf in session evaluator
+    dedup_hit = 0
+    l2_ran = False
 
     for idx, candidate in enumerate(pending):
         prompt_text = candidate.get("prompt", "")
@@ -567,12 +571,18 @@ def run_user_extraction(ctx: Dict[str, Any]) -> Dict[str, Any]:
             stats["skipped"] += 1
             continue
 
+        l2_ran = True
+
         # Check L2 decision
         if not l2_result.get("decision", False):
             processed_indices.append(idx)
             continue
 
         conf = l2_result.get("conf", 0.0)
+        try:
+            l2_confs.append(float(conf))
+        except (TypeError, ValueError):
+            pass
 
         # ── Conf-based routing ────────────────────────────────────────
         if conf < 0.70:
@@ -629,7 +639,9 @@ def run_user_extraction(ctx: Dict[str, Any]) -> Dict[str, Any]:
 
     # ── Direct atom write for confirmed (pre-write, pending user veto) ──
     for ext in confirmed_extractions:
-        _write_atom_via_mcp(ext, ext, session_id, user, config)
+        result = _write_atom_via_mcp(ext, ext, session_id, user, config)
+        if result == "deduped":
+            dedup_hit += 1
 
     # ── Merge history log ─────────────────────────────────────────────
     _append_merge_history(
@@ -639,11 +651,31 @@ def run_user_extraction(ctx: Dict[str, Any]) -> Dict[str, Any]:
         f"l1_yes={stats['l1_yes']} l1_no={stats['l1_no']} skipped={stats['skipped']}",
     )
 
+    # ── Augment stats for session evaluator ──
+    avg_l2_conf = (sum(l2_confs) / len(l2_confs)) if l2_confs else 0.0
+    token_used = max(0, budget._budget - budget.remaining())
+    stats["avg_l2_conf"] = round(avg_l2_conf, 4)
+    stats["dedup_hit"] = dedup_hit
+    stats["token_used"] = token_used
+    stats["l2_ran"] = l2_ran
+
     _atom_debug_log(
         "user-extract:summary",
         f"session={session_id} | {json.dumps(stats, ensure_ascii=False)}",
         config,
     )
+
+    # ── V4.1 P4: Session evaluator — run on latest state snapshot ──
+    try:
+        fresh_state = _read_state(session_id) or state
+        score_entry = evaluate_session(session_id, fresh_state, config, stats)
+        _atom_debug_log(
+            "user-extract:score",
+            f"session={session_id} weighted={score_entry['scores']['weighted_total']}",
+            config,
+        )
+    except Exception as e:
+        _atom_debug_error("user-extract:evaluate_session", e)
 
     return stats
 

@@ -1534,23 +1534,27 @@ def handle_pre_compact(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
 
 def _maybe_spawn_user_extract_worker(
     session_id: str, state: Dict[str, Any], config: Dict[str, Any],
-) -> None:
-    """Spawn user-extract-worker.py as detached subprocess if conditions met."""
+) -> bool:
+    """Spawn user-extract-worker.py as detached subprocess if conditions met.
+
+    Returns True if spawned (worker will call session evaluator itself),
+    False if skipped (caller should run fallback evaluator).
+    """
     ue_config = config.get("userExtraction", {})
     if not ue_config.get("enabled", False):
-        return
+        return False
 
     pending = state.get("pending_user_extract", [])
     if not pending:
-        return
+        return False
 
     # Concurrency guard
     if _is_lease_valid(state, "user_extract_worker_pid"):
-        return
+        return False
 
     worker_path = CLAUDE_DIR / "hooks" / "user-extract-worker.py"
     if not worker_path.exists():
-        return
+        return False
 
     cwd = state.get("session", {}).get("cwd", "")
     user_id = state.get("user_identity", {})
@@ -1593,8 +1597,10 @@ def _maybe_spawn_user_extract_worker(
             f"pending={len(pending)})",
             file=sys.stderr,
         )
+        return True
     except Exception as e:
         _atom_debug_error("V4.1:spawn_user_extract_worker", e)
+        return False
 
 
 # ─── Stop Hook ────────────────────────────────────────────────────────────
@@ -1779,7 +1785,17 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
         state["extract_worker_pid"] = 0  # SessionEnd: don't track PID (session ending)
 
     # ─── V4.1: Spawn user-extract-worker if pending ───────────────────
-    _maybe_spawn_user_extract_worker(session_id, state, config)
+    worker_spawned = _maybe_spawn_user_extract_worker(session_id, state, config)
+
+    # ─── V4.1 P4: Session evaluator fallback (no worker spawned) ──────
+    # When worker runs, it calls evaluate_session() itself at the end (with live stats).
+    # When it doesn't (pending empty), do an inline baseline evaluation here.
+    if not worker_spawned and ue_config.get("enabled", False):
+        try:
+            from wg_session_evaluator import evaluate_session as _eval_session
+            _eval_session(session_id, state, config, worker_stats=None)
+        except Exception as e:
+            _atom_debug_error("V4.1:session_evaluator_fallback", e)
 
     mod_count = len(state.get("modified_files", []))
     kq_count = len(state.get("knowledge_queue", []))
