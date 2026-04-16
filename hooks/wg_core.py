@@ -285,6 +285,18 @@ def _ensure_state(
             target = read_state(merged_into)
             if target:
                 return target
+            # Self-heal: merge target 已被 cleanup 或從未建立 → 當前 session 升為活躍，
+            # 避免寫入落到 phase=merged 的死水 state（會導致 V4.1 pending_user_extract
+            # 等後續 hook 寫入被 worker 忽略）
+            state.pop("merged_into", None)
+            state["phase"] = "working"
+            write_state(session_id, state)
+            _atom_debug_log(
+                "MergeSelfHeal",
+                f"{session_id[:12]}… merged_into={merged_into[:12]}… target missing "
+                f"→ self-heal to active",
+                config,
+            )
         return state
 
     cwd = input_data.get("cwd", "")

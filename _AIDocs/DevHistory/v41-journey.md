@@ -179,13 +179,29 @@ Session F 報 GA blocker：整合測 `TestPrecisionRecall` aggregate `P=1.00 R=0
 
 修復後整合測 **P=1.000 / R=0.480** 過紅線（target P≥0.92, R≥0.30）。
 
-### 5.4 教訓
+### 5.4 GA 後發現的第四層問題（session merge self-heal）
 
-這個 blocker 暴露三個系統性問題：
+宣告「全面完工」**當下**，使用者 reload window + 重開 VS Code 後跑 `/memory-peek` 仍回 0。診斷全系統後發現：
+
+- V4.1 邏輯完全正確（手測 UserPromptSubmit 成功寫入 pending_user_extract）
+- **壞的是 V4 既有的 session merge 機制**：`state-A.merged_into=B` 但 `state-B.json` 已被分層孤兒清理（或從未建立）
+- `_ensure_state` 遇 target 缺失時退回那個 `phase=merged` 的死水 state
+- V4.1 gate 寫入這個死水 state → Stop/SessionEnd worker 不會從 merged state 撿 pending → 萃取永不發生
+
+這是 V4 層的舊 bug，但 V4.1 pipeline 靠 state 持久化，**連帶失效**。使用者明確指出：「這一輪的 bug 當然是這一輪就要修正 — 基本信任原則」— 不能甩給下一版。
+
+**修法**（最小侵入）：`_ensure_state` 加 self-heal — target 不存在時，當前 session 清 `merged_into` + `phase=working` 直接升為活躍。不動 `_find_active_sibling_state`，不動孤兒清理邏輯，純在讀取側自癒。
+
+修復後手測 `state-08b557ff` 自動從 `phase=merged` 復活為 `phase=working`，**立刻抓到使用者之前發的「請記住這是基本信任原則」prompt**（L0 matched「記住」）寫入 `pending_user_extract[]` — 實證 V4.1 整條 pipeline 運作無誤。
+
+### 5.5 教訓
+
+這個 blocker 暴露四個系統性問題：
 
 1. **Session 間 handoff 的診斷精度**：Session F 沒做 smoke test 就下結論「rdchat down」— 主 Claude 花 5 分鐘排除就知道是 pipeline 內部問題。**handoff 應該要求下游先做 minimal reproducer 而不是跳到結論**。
 2. **Silent fail + early return 是最難 debug 的 pattern**：`_call_l1/_call_l2` 吞 exception 回 None 是「fail-open」哲學，但配合 test 框架跑 = `P=1 R=0` 看起來像 feature 而非 bug。**fail-open 必須配合 telemetry（log 吞掉的 exception），否則是 silent death**。
 3. **Integration test 不能只看 aggregate**：若每個 case 都看得到 pipeline 各層結果（L0 signal / L1 result / L2 conf），`tp=0` 就會立刻暴露「L1 全 None」而不是卡在 aggregate 層。
+4. **「新版 pipeline 踩到舊版機制缺陷」需要主版負責修**：V4 session merge 的孤兒 state 問題在 V4 時期不會暴露（因為 V4 沒有靠 state 跨 hook 持久化的新功能），V4.1 加了 UserPromptSubmit→Stop 的 state-based pipeline 後才把舊缺陷浮上來。使用者明確要求：「這一輪的 bug 當然是這一輪就要修正」— 任何使用 AI 的使用者不會、也無法預設 Claude 會主動進行「下一版才修」那種「以為都做完但其實還有殘留」的發展。**基本信任原則**。
 
 ---
 

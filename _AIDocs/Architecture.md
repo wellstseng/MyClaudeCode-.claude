@@ -195,6 +195,7 @@ Deep extract   → [detached] extract-worker.py (rdchat: gemma4:e4b) → 覆寫 
 - 同 cwd 60s 內 active state → 複用（resume 合併，startup 跳過 vector init）
 - 分層孤兒清理：prompt_count=0 working→10m, prompt_count>0 working→30m, done→24h
 - Vector service 非阻塞：fire-and-forget subprocess + `vector_ready.flag`
+- **Merge self-heal**（V4.1 GA 後補）：`_ensure_state` 遇到 `merged_into` 指向的 target state 已被孤兒清理（或從未建立）時，**當前 session 自癒為活躍**（清 `merged_into` + `phase=working` + 重寫檔），避免後續 hook 寫入（如 V4.1 `pending_user_extract[]`）落入 phase=merged 死水 state 被 worker 忽略
 
 ### 專案自治層
 
