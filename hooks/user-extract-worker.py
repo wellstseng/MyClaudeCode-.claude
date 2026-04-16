@@ -95,17 +95,22 @@ def _is_emotional_commitment(prompt: str) -> bool:
 _PROMPTS_DIR = CLAUDE_DIR / "prompts"
 
 
+def _extract_prompt_block(raw: str) -> str:
+    """Extract the LAST fenced code block (the actual prompt).
+
+    L2 prompt file contains an Output Schema ```json block before the real
+    prompt block — taking the last match guarantees we get the prompt.
+    """
+    matches = re.findall(r"```(?:\w+)?\n(.*?)```", raw, re.DOTALL)
+    return matches[-1] if matches else raw
+
+
 def _load_l1_prompt(user_prompt: str) -> str:
     """Load L1 prompt template and fill {{user_prompt}}."""
     template_path = _PROMPTS_DIR / "user-decision-l1.md"
     try:
         raw = template_path.read_text(encoding="utf-8")
-        # Extract the prompt between ``` fences
-        match = re.search(r"```\n(.*?)```", raw, re.DOTALL)
-        if match:
-            template = match.group(1)
-        else:
-            template = raw
+        template = _extract_prompt_block(raw)
         return template.replace("{{user_prompt}}", user_prompt)
     except (OSError, UnicodeDecodeError) as e:
         _atom_debug_error("user-extract:load_l1_prompt", e)
@@ -117,11 +122,7 @@ def _load_l2_prompt(user_prompt: str, assistant_last: str) -> str:
     template_path = _PROMPTS_DIR / "user-decision-l2.md"
     try:
         raw = template_path.read_text(encoding="utf-8")
-        match = re.search(r"```\n(.*?)```", raw, re.DOTALL)
-        if match:
-            template = match.group(1)
-        else:
-            template = raw
+        template = _extract_prompt_block(raw)
         template = template.replace("{{user_prompt}}", user_prompt)
         template = template.replace("{{assistant_last_600_chars}}", assistant_last or "（無）")
         return template
@@ -198,13 +199,26 @@ def _parse_l1_response(raw: str) -> Optional[bool]:
 
 
 def _call_l1(prompt_text: str) -> Optional[bool]:
-    """L1: qwen3:1.7b binary yes/no. Returns True/False/None(error)."""
+    """L1: binary yes/no. Prefer qwen3:1.7b for speed, fall back to backend default."""
     try:
         client = get_client()
+        # Preferred fast path: qwen3:1.7b (local backend).
         raw = client.generate(
             prompt_text,
             model="qwen3:1.7b",
             timeout=10,
+            think=False,
+            temperature=0,
+            num_predict=30,
+        )
+        result = _parse_l1_response(raw)
+        if result is not None:
+            return result
+        # Fallback: backend default model (gemma4:e4b on rdchat backends).
+        # Robust when qwen3:1.7b is unreachable (local ollama down / absent).
+        raw = client.generate(
+            prompt_text,
+            timeout=15,
             think=False,
             temperature=0,
             num_predict=30,

@@ -129,8 +129,8 @@
     }
   },
   "userExtraction": {
-    "enabled": false,
-    "mode": "shadow",
+    "enabled": true,
+    "mode": "production",
     "tokenBudget": 240
   },
   "docdrift": {

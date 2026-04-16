@@ -8,7 +8,7 @@
       },
       "multi_file": {
         "correct": 3,
-        "total": 11
+        "total": 12
       },
       "architecture": {
         "correct": 0,
@@ -17,19 +17,19 @@
     },
     "over_engineering_rate": {
       "user_reverted_or_simplified": 0,
-      "total_suggestions": 383
+      "total_suggestions": 384
     },
     "silence_accuracy": {
       "held_back_ok": 323,
-      "held_back_missed": 22
+      "held_back_missed": 23
     }
   },
   "blind_spots": [
-    "multi_file 首次正確率 27%",
+    "multi_file 首次正確率 25%",
     "architecture 首次正確率 0%"
   ],
   "arch_sensitivity_elevated": true,
-  "last_reflection": "2026-04-16T05:45:11.852252+00:00",
+  "last_reflection": "2026-04-16T08:40:27.935920+00:00",
   "v41_extraction": {
     "total_written": 0,
     "total_rejected": 0,

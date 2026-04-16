@@ -121,6 +121,7 @@ Session Ready
   - local: qwen3:1.7b + qwen3-embedding（GTX 1050 Ti，pri=2）
   - 三階段退避：normal → short_die(60s) → long_die(6h boundary)
   - Long DIE → workflow-guardian SessionStart 提示使用者確認停用/保持
+  - `_request_with_failover` 在 `explicit_model` 與 backend `llm_model` 不符時直接 skip（不計 failure，避免毒化 health_cache 60s 使後續呼叫 silent return）
 
 ### 記憶品質
 - memory-audit.py — 格式驗證 + staleness（支援 `--project-dir`、Claude-native YAML frontmatter、2 欄 MEMORY.md、wildcard 索引項、orphan memory dir 容忍）

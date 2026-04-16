@@ -7,7 +7,7 @@
 - Confirmations: 139
 - Type: preference
 
-- Related: feedback-decision-no-tech-menu, feedback-no-outsource-rigor
+- Related: feedback-decision-no-tech-menu, feedback-no-outsource-rigor, feedback-git-log-chinese
 
 ## 知識
 
