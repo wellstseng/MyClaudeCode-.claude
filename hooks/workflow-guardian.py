@@ -661,6 +661,30 @@ def handle_user_prompt_submit(
         except Exception as e:
             _atom_debug_error("V4.1:user_extract_gate", e)
 
+    # ─── V4.1 [F5]: Confirmed extractions — explicit prompt + default accept ──
+    confirmed = state.get("confirmed_extractions", [])
+    if confirmed:
+        # Check if user said "否" to veto
+        veto = any(kw in prompt_lower for kw in ("否", "不要記", "別記", "取消記憶"))
+        if veto:
+            # Pop all confirmed, write to _rejected/ + reflection_metrics
+            for ext in confirmed:
+                _atom_debug_log(
+                    "user-extract:rejected",
+                    f"User vetoed: {ext.get('statement', '')[:80]}",
+                    config,
+                )
+            state["confirmed_extractions"] = []
+        else:
+            # Default accept — show what was confirmed
+            for ext in confirmed:
+                stmt = ext.get("statement", "")
+                lines.append(
+                    f"[V4.1] 偵測到決策語句：「{stmt}」— 將記為 atom。回覆「否」可攔截。"
+                )
+            # Clear after showing (user's next turn without veto = accepted)
+            state["confirmed_extractions"] = []
+
     # ─── Dual-Backend: long_die user response ─────────────────────────
     try:
         long_die = check_long_die_status()
@@ -1450,6 +1474,74 @@ def handle_pre_compact(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
 # (Per-turn extraction, failure detection moved to wg_extraction.py)
 
 
+# ─── V4.1: User Extract Worker Spawning ──────────────────────────────────
+
+
+def _maybe_spawn_user_extract_worker(
+    session_id: str, state: Dict[str, Any], config: Dict[str, Any],
+) -> None:
+    """Spawn user-extract-worker.py as detached subprocess if conditions met."""
+    ue_config = config.get("userExtraction", {})
+    if not ue_config.get("enabled", False):
+        return
+
+    pending = state.get("pending_user_extract", [])
+    if not pending:
+        return
+
+    # Concurrency guard
+    if _is_lease_valid(state, "user_extract_worker_pid"):
+        return
+
+    worker_path = CLAUDE_DIR / "hooks" / "user-extract-worker.py"
+    if not worker_path.exists():
+        return
+
+    cwd = state.get("session", {}).get("cwd", "")
+    user_id = state.get("user_identity", {})
+    user = user_id.get("user", "holylight")
+
+    worker_ctx = {
+        "session_id": session_id,
+        "cwd": cwd,
+        "config": config,
+        "user": user,
+    }
+
+    try:
+        import subprocess as _sp
+        kwargs = {}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = _sp.CREATE_NO_WINDOW | _sp.DETACHED_PROCESS
+        else:
+            kwargs["start_new_session"] = True
+
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+
+        json_ctx = json.dumps(worker_ctx, ensure_ascii=False)
+        proc = _sp.Popen(
+            [sys.executable, str(worker_path)],
+            stdin=_sp.PIPE,
+            stdout=_sp.DEVNULL,
+            stderr=_sp.DEVNULL,
+            env=env,
+            **kwargs,
+        )
+        proc.stdin.write(json_ctx.encode("utf-8"))
+        proc.stdin.close()
+
+        _set_lease(state, "user_extract_worker_pid", proc.pid)
+        write_state(session_id, state)
+        print(
+            f"[v4.1] user-extract-worker spawned (pid={proc.pid}, "
+            f"pending={len(pending)})",
+            file=sys.stderr,
+        )
+    except Exception as e:
+        _atom_debug_error("V4.1:spawn_user_extract_worker", e)
+
+
 # ─── Stop Hook ────────────────────────────────────────────────────────────
 
 
@@ -1469,12 +1561,14 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
         state["phase"] = "done"
         write_state(session_id, state)
         _maybe_spawn_per_turn_extraction(session_id, state, config)
+        _maybe_spawn_user_extract_worker(session_id, state, config)
         output_nothing()
         return
 
     # Already synced or marked done
     if phase in ("done", "syncing"):
         _maybe_spawn_per_turn_extraction(session_id, state, config)
+        _maybe_spawn_user_extract_worker(session_id, state, config)
         output_nothing()
         return
 
@@ -1487,6 +1581,7 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
     # Muted session — always allow
     if state.get("muted"):
         _maybe_spawn_per_turn_extraction(session_id, state, config)
+        _maybe_spawn_user_extract_worker(session_id, state, config)
         output_nothing()
         return
 
@@ -1495,6 +1590,7 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
         state["phase"] = "done"
         write_state(session_id, state)
         _maybe_spawn_per_turn_extraction(session_id, state, config)
+        _maybe_spawn_user_extract_worker(session_id, state, config)
         output_nothing()
         return
 
@@ -1503,6 +1599,7 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
         state["phase"] = "done"
         write_state(session_id, state)
         _maybe_spawn_per_turn_extraction(session_id, state, config)
+        _maybe_spawn_user_extract_worker(session_id, state, config)
         output_nothing()
         return
 
@@ -1510,6 +1607,7 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
     state["stop_blocked_count"] = stop_count + 1
     write_state(session_id, state)
     _maybe_spawn_per_turn_extraction(session_id, state, config)
+    _maybe_spawn_user_extract_worker(session_id, state, config)
 
     file_names = ", ".join(f.rsplit("/", 1)[-1] for f in unique_files[:8])
 
@@ -1624,6 +1722,9 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
         if pid:
             print(f"[v2.12] extract-worker spawned (pid={pid}, intent={intent})", file=sys.stderr)
         state["extract_worker_pid"] = 0  # SessionEnd: don't track PID (session ending)
+
+    # ─── V4.1: Spawn user-extract-worker if pending ───────────────────
+    _maybe_spawn_user_extract_worker(session_id, state, config)
 
     mod_count = len(state.get("modified_files", []))
     kq_count = len(state.get("knowledge_queue", []))

@@ -136,6 +136,32 @@ config.json → ollama_backends:
 
 情境感知萃取（依 intent 調整 prompt）。萃取結果一律 `[臨]`。注入前 Token Diet strip 9 種 metadata + 行動/演化日誌。
 
+#### V4.1 使用者決策萃取（user-extract-worker.py）
+
+三層 gating：L0 規則（≤5ms）→ L1 qwen3:1.7b 二元 yes/no → L2 gemma4:e4b 結構化萃取。
+
+```
+UserPromptSubmit (sync, ≤5ms)
+  └─ wg_user_extract.py L0: 信號詞 + 句法 pattern → score ≥ 0.4
+       → append state/pending_user_extract[] (GC cap 10)
+
+Stop/SessionEnd (async detached)
+  └─ user-extract-worker.py spawn (lib/ollama_extract_core.py 共用)
+       ├─ 混合句偵測 [F10]: 情緒+決策 → systemMessage skip
+       ├─ 情緒承諾 [F24]: 24h 冷卻 queue
+       ├─ SessionBudgetTracker (≤240 tok): >220 L1-only, >240 break
+       ├─ L1: qwen3:1.7b think=false T=0 num_predict=30 → is_decision
+       ├─ L2: gemma4:e4b think=auto T=0 num_predict=200 → {conf,scope,trigger,statement}
+       ├─ conf ≥ 0.92 → confirmed_extractions[] + 顯式提示預設同意 [F5]
+       ├─ 0.70-0.92 → personal/auto/{user}/_pending.candidates.md
+       └─ < 0.70 → discard
+
+UserPromptSubmit 下一輪
+  └─ confirmed_extractions[] → systemMessage 顯示, 使用者回「否」可攔截
+```
+
+Feature flag: `config.userExtraction.enabled` (預設 false)。Atom 落點: `personal/auto/{user}/`。
+
 #### V3 三層即時管線
 
 ```
