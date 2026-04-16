@@ -639,6 +639,28 @@ def handle_user_prompt_submit(
     prompt_lower = clean_prompt.lower()
     lines: List[str] = []
 
+    # ─── V4.1: User Decision Detector gate ────────────────────────────
+    ue_config = config.get("userExtraction", {})
+    if ue_config.get("enabled", False):
+        try:
+            from wg_user_extract import detect_signal
+            det = detect_signal(clean_prompt)
+            if det.get("signal"):
+                turn_n = state.get("topic_tracker", {}).get("prompt_count", 0)
+                pending = state.setdefault("pending_user_extract", [])
+                pending.append({
+                    "turn_id": f"{session_id}-{turn_n}",
+                    "prompt": clean_prompt,
+                    "score": det["score"],
+                    "matched": det["matched"],
+                    "ts": _now_iso(),
+                })
+                # [F11] GC sliding window cap 10
+                if len(pending) > 10:
+                    state["pending_user_extract"] = pending[-10:]
+        except Exception as e:
+            _atom_debug_error("V4.1:user_extract_gate", e)
+
     # ─── Dual-Backend: long_die user response ─────────────────────────
     try:
         long_die = check_long_die_status()
@@ -1570,6 +1592,11 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
 
     state["ended_at"] = _now_iso()
     state["phase"] = "done"
+
+    # ─── V4.1 [F26]: Drain pending_user_extract when flag is off ──────
+    ue_config = config.get("userExtraction", {})
+    if not ue_config.get("enabled", False) and state.get("pending_user_extract"):
+        state["pending_user_extract"] = []
 
     # W10/V3-2.2A: Clean up stale state files (tiered TTL)
     try:

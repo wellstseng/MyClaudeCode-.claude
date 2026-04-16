@@ -128,6 +128,11 @@
       "weak_min_match": 3
     }
   },
+  "userExtraction": {
+    "enabled": false,
+    "mode": "shadow",
+    "tokenBudget": 240
+  },
   "docdrift": {
     "enabled": true,
     "path_mappings": {
