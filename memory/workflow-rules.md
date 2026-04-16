@@ -8,7 +8,7 @@
 - Created: 2026-03-06
 - Confirmations: 137
 - Tags: workflow, vcs
-- Related: decisions, workflow-svn, workflow-icld, feedback_handoff_self_sufficient, feedback-git-log-chinese
+- Related: decisions, workflow-svn, workflow-icld, feedback_handoff_self_sufficient, feedback-git-log-chinese, feedback-fix-on-discovery
 
 ## 知識
 

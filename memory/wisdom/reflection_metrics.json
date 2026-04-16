@@ -3,8 +3,8 @@
   "metrics": {
     "first_approach_accuracy": {
       "single_file": {
-        "correct": 325,
-        "total": 339
+        "correct": 326,
+        "total": 340
       },
       "multi_file": {
         "correct": 3,
@@ -12,15 +12,15 @@
       },
       "architecture": {
         "correct": 0,
-        "total": 9
+        "total": 10
       }
     },
     "over_engineering_rate": {
       "user_reverted_or_simplified": 0,
-      "total_suggestions": 389
+      "total_suggestions": 391
     },
     "silence_accuracy": {
-      "held_back_ok": 328,
+      "held_back_ok": 329,
       "held_back_missed": 23
     }
   },
@@ -29,7 +29,7 @@
     "architecture 首次正確率 0%"
   ],
   "arch_sensitivity_elevated": true,
-  "last_reflection": "2026-04-16T09:53:45.420161+00:00",
+  "last_reflection": "2026-04-16T11:39:07.680528+00:00",
   "v41_extraction": {
     "total_written": 0,
     "total_rejected": 0,
@@ -230,6 +230,44 @@
           "cost_efficiency": 0.5958,
           "trust": 1.0,
           "weighted_total": 0.8261
+        }
+      },
+      {
+        "session_id": "5a349797-9114-4252-b4fa-7c40400f0627",
+        "ts": "2026-04-16T11:37:40.415844+00:00",
+        "prompt_count": 5,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "08b557ff-95b3-4cb7-b806-375293ddfdda",
+        "ts": "2026-04-16T11:39:07.668817+00:00",
+        "prompt_count": 1,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
         }
       }
     ]
