@@ -157,6 +157,28 @@ def test_evasion_flags_preexisting():
     assert r is not None
 
 
+@pytest.mark.parametrize("text", [
+    "這個小問題下次再處理吧",
+    "下回再修一下",
+    "下一次再看",
+    "之後再處理這個 drift",
+    "晚點再補",
+    "稍後再修",
+    "有空再弄",
+    "有時間再看",
+    "未來處理這個",
+    "未來再處理",
+    "留給使用者自己處理",
+    "待後續追蹤",
+    "另行處理",
+    "另外處理即可",
+])
+def test_evasion_flags_deferral_keywords(text):
+    """2026-04-17 使用者指出關鍵字不夠，補完時間性延後語。"""
+    r = detect_evasion(text, [])
+    assert r is not None, f"未抓到退避語：{text!r}"
+
+
 def test_evasion_escape_hatch_dismiss_recent():
     # 使用者近期說過「先這樣」→ 不再標記
     t = "既有的問題，非本次範圍。"
