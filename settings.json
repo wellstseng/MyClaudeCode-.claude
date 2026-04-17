@@ -38,7 +38,9 @@
       "Bash(mv memory/_staging/handoff-session-d-v41-p2-integration.md _AIDocs/DevHistory/v41-handoffs/)",
       "Bash(cp tools/workflow-guardian-mcp/server.js /tmp/dashboard-test.js)",
       "Bash(sed -i 's|loadConfig\\(\\).dashboard_port || 3848|loadConfig\\(\\).dashboard_port || 13848|' /tmp/dashboard-test.js)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(mkdir -p feedback)",
+      "Bash(git mv *)"
     ],
     "defaultMode": "acceptEdits",
     "additionalDirectories": [

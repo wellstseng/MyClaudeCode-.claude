@@ -26,7 +26,7 @@
 | `wg_atoms.py` | ~559 | 索引解析/trigger 匹配/ACT-R/載入/budget/section-level 注入；`_parse_trigger_table` 容忍 4 欄（V4 Scope） |
 | `wg_intent.py` | ~400 | 意圖分類/session context/MCP/vector service；`_semantic_search` 支援 user/roles 參數轉發到 vector service 端做 SPEC §8.1 role filter |
 | `wg_extraction.py` | ~295 | per-turn 萃取/worker 管理/failure 偵測 |
-| `wg_hot_cache.py` | ~139 | Hot Cache 讀寫/注入 |
+| `wg_hot_cache.py` | ~160 | Hot Cache 讀寫/注入；`format_injection_line()` 統一在注入時加 `⚠AUTO-DRAFT·[臨]` tag + 禁止引用為事實的硬規則尾綴 |
 | `wg_docdrift.py` | ~160 | DocDrift 偵測：src 改動→_AIDocs 映射→advisory 提醒 |
 | `wg_episodic.py` | ~860 | episodic 生成/衝突偵測/品質回饋 |
 | `wg_iteration.py` | ~450 | 自我迭代/震盪/衰減/晉升/覆轍偵測（含 atom header 與內部條目一致性對齊） |
@@ -372,6 +372,20 @@ JIT 保護：_collect_v4_role_atoms 以 rel_parts[:-1] startswith("_") 過濾
 新 metadata 自動帶入：`Author`（server 端 env/OS user，不接受 caller 傳）、`Created-at`（今日）、`Audience`/`Pending-review-by`/`Merge-strategy`（caller optional）。
 
 **SPEC 7.4 敏感類別自動 pending**：`scope=shared` 且 `audience` 含 `architecture` 或 `decision` → 改寫到 `shared/_pending_review/`，自動補 `Pending-review-by: management`。
+
+### atom_promote 工具
+
+| 行為 | 說明 |
+|------|------|
+| 門檻檢查 | [臨]≥20 confirmations → [觀]，[觀]≥40 → [固] |
+| `execute=false` | dry-run，只報告是否合格 |
+| `execute=true` | 改寫 Confidence 欄 + 所有知識行前綴 + Last-used + audit log append |
+| `merge_to_preferences=true` | （scope=global 限定）[觀]→[固] 時自動把「## 知識」區塊追加到 `preferences.md` 的「歸檔合併」段 + 把原 atom 搬到 `memory/_archived/{date}-{name}.md`，並提示 Claude 後續手動移除 `_ATOM_INDEX.md` 的索引列 |
+| 晉升至 [固] 時（未帶 flag） | 自動在回覆附「若此知識本質為偏好，可用 merge_to_preferences=true 重新呼叫」提示 |
+
+### UserPromptSubmit Atom-Write Guard
+
+workflow-guardian.py 在 UserPromptSubmit 分支偵測「記住 / 存起來 / 值得存 / 寫 atom / 存成 [固]」等關鍵字 → 注入一次性硬規則：新 atom 一律 [臨]、單次成功 ≠ 穩定模式、晉升走 `atom_promote` 不手動改 frontmatter、更新既有 atom 用 `mode=append`。用於在 Claude 提出「建議存成 [固]」之前先把規則釘進 context，降低「建議錯 → MCP 退回 → 重講」的來回成本。
 
 詳見 [SPEC_ATOM_V4.md](SPEC_ATOM_V4.md) §4 / §7.4 / §10。
 

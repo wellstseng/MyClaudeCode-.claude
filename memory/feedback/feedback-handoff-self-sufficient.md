@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 下 session, 續接, 交接, 下次繼續, next-phase, handoff, 下個 claude, resume prompt
-- Last-used: 2026-04-16
-- Confirmations: 2
+- Last-used: 2026-04-17
+- Confirmations: 3
 - Related: workflow-rules, feedback-fix-on-discovery
 
 ## 知識

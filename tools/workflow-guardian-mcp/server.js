@@ -457,7 +457,9 @@ const TOOL_DEFINITIONS = [
     description:
       "Promote an atom's confidence level. " +
       "Checks promotion thresholds: [臨]≥20 confirmations→[觀], [觀]≥40→[固]. " +
-      "Use execute=false for dry-run.",
+      "Use execute=false for dry-run. " +
+      "When promoting to [固], pass merge_to_preferences=true to append knowledge " +
+      "into preferences.md and archive the source atom (global scope only).",
     inputSchema: {
       type: "object",
       properties: {
@@ -465,6 +467,10 @@ const TOOL_DEFINITIONS = [
         scope: { type: "string", enum: ["global", "project"], description: "Scope to search in" },
         project_cwd: { type: "string", description: "Project root (required for project scope)" },
         execute: { type: "boolean", description: "true=execute promotion, false=dry-run check only" },
+        merge_to_preferences: {
+          type: "boolean",
+          description: "On [觀]→[固] promotion, auto-merge knowledge into preferences.md and archive this atom. global scope only. Default false.",
+        },
       },
       required: ["atom_name", "scope", "execute"],
     },
@@ -1254,7 +1260,7 @@ async function toolAtomWrite(id, args) {
 // ─── Atom Promote Handler ──────────────────────────────────────────────────
 
 function toolAtomPromote(id, args) {
-  const { atom_name, scope, project_cwd, execute, role, user } = args;
+  const { atom_name, scope, project_cwd, execute, role, user, merge_to_preferences } = args;
 
   const resolved = resolveMemDir(scope, project_cwd, { role, user });
   if (resolved.error) {
@@ -1343,11 +1349,70 @@ function toolAtomPromote(id, args) {
     fs.appendFileSync(auditPath, JSON.stringify(entry) + "\n");
   } catch {}
 
+  // ─── 方案 c: [觀]→[固] 合併流程 ────────────────────────────────
+  // 方案 a（自動提示）：只要晉升為 [固]，一律在回覆裡附上「是否合進 preferences.md」提示，
+  // 讓 Claude 引導使用者裁決。
+  // 方案 b（自動執行）：當 merge_to_preferences=true，立即把 knowledge 追加到 preferences.md、
+  // 歸檔本 atom 到 _archived/，再請 Claude 後續手動移除 _ATOM_INDEX.md 的該行。
+  const promotedToStable = next === "[固]";
+  let mergeReport = "";
+  if (promotedToStable && merge_to_preferences) {
+    if (scope !== "global") {
+      mergeReport = "\n\n[merge_to_preferences] 已略過：僅支援 global scope。";
+    } else {
+      try {
+        const knowledgeLines = extractKnowledgeLines(finalContent);
+        const prefPath = path.join(MEMORY_DIR, "preferences.md");
+        const archiveDir = path.join(MEMORY_DIR, "_archived");
+        if (!fs.existsSync(archiveDir)) fs.mkdirSync(archiveDir, { recursive: true });
+        const today = new Date().toISOString().slice(0, 10);
+        const archivePath = path.join(archiveDir, `${today}-${atom_name}.md`);
+
+        let prefText = fs.existsSync(prefPath) ? fs.readFileSync(prefPath, "utf-8") : "";
+        if (prefText.charCodeAt(0) === 0xFEFF) prefText = prefText.slice(1);
+        const mergeSection =
+          `\n\n### 歸檔合併 · ${atom_name} (${today})\n` +
+          `> 自 [觀]→[固] 晉升時合併自 \`${path.basename(filePath)}\`\n\n` +
+          knowledgeLines.map(l => `- ${l}`).join("\n") + "\n";
+        fs.writeFileSync(prefPath, prefText.trimEnd() + mergeSection, "utf-8");
+
+        fs.renameSync(filePath, archivePath);
+
+        mergeReport =
+          `\n\n[merge_to_preferences] 已執行：\n` +
+          `  - Appended ${knowledgeLines.length} 行到 preferences.md\n` +
+          `  - Archived → ${path.relative(MEMORY_DIR, archivePath)}\n` +
+          `  - ⚠ 請手動移除 _ATOM_INDEX.md 中 ${atom_name} 的索引列。`;
+      } catch (e) {
+        mergeReport = `\n\n[merge_to_preferences] 失敗：${e.message}`;
+      }
+    }
+  }
+
+  const mergeHint = (promotedToStable && !merge_to_preferences)
+    ? `\n\n💡 建議：${atom_name} 已達 [固]，若此知識本質為「個人偏好/操作規範」，` +
+      `可用 merge_to_preferences=true 重新呼叫，將 knowledge 併入 preferences.md 並歸檔此 atom。`
+    : "";
+
   return sendToolResult(id,
     `Promoted ${atom_name}: ${meta.confidence} → ${next}\n` +
     `Confirmations: ${confirmations}\n` +
-    `Knowledge lines updated to ${next}.`
+    `Knowledge lines updated to ${next}.` +
+    mergeReport +
+    mergeHint
   );
+}
+
+function extractKnowledgeLines(content) {
+  // 從 atom 檔抓「## 知識」到下個 `## ` 或 EOF 之間，保留以 `- ` 開頭的行（去掉 `- ` 前綴）
+  const m = content.match(/^##\s*知識\s*$([\s\S]*?)(?=^##\s|\Z)/m);
+  if (!m) return [];
+  return m[1]
+    .split("\n")
+    .map(l => l.trim())
+    .filter(l => l.startsWith("- "))
+    .map(l => l.slice(2).trim())
+    .filter(Boolean);
 }
 
 function sendToolResult(id, text, isError = false) {

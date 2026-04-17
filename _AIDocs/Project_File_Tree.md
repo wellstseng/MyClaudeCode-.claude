@@ -81,10 +81,18 @@
 │   ├── doc-index-system.md      ← [固] 全檔索引
 │   ├── gdoc-harvester.md        ← [固] Google Docs 收割
 │   ├── mail-sorting.md          ← [固] 信箱整理
-│   ├── feedback_fix_escalation.md ← [固] 修正升級回饋
-│   ├── feedback_research_first.md ← [固] 研究優先回饋
-│   ├── feedback_global_install.md ← [固] 全域安裝回饋
-│   ├── feedback_no_test_to_svn.md ← [固] 禁止測試碼上 SVN
+│   ├── feedback/                 ← 行為校正回饋 atoms（11 個）
+│   │   ├── feedback-fix-escalation.md
+│   │   ├── feedback-research-first.md
+│   │   ├── feedback-global-install.md
+│   │   ├── feedback-no-test-to-svn.md
+│   │   ├── feedback-memory-path.md
+│   │   ├── feedback-handoff-self-sufficient.md
+│   │   ├── feedback-scope-sensitive-values.md
+│   │   ├── feedback-decision-no-tech-menu.md
+│   │   ├── feedback-no-outsource-rigor.md
+│   │   ├── feedback-git-log-chinese.md
+│   │   └── feedback-fix-on-discovery.md
 │   ├── failures/                ← 失敗/陷阱知識
 │   │   ├── _INDEX.md
 │   │   ├── env-traps.md         ← Win 環境陷阱

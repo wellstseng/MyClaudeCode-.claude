@@ -108,7 +108,7 @@ except ImportError:
 
 # ─── V3: Hot Cache (lazy import, graceful fallback) ─────────────────────────
 try:
-    from wg_hot_cache import read_hot_cache, mark_injected, HOT_CACHE_PATH
+    from wg_hot_cache import read_hot_cache, mark_injected, HOT_CACHE_PATH, format_injection_line
 except ImportError:
     read_hot_cache = None
 
@@ -767,11 +767,31 @@ def handle_user_prompt_submit(
         try:
             hot_data = read_hot_cache(session_id)
             if hot_data:
-                lines.append(f"[HotCache:{hot_data.get('source', '?')}] {hot_data.get('summary', '')}")
+                lines.append(format_injection_line(hot_data))
                 hot_cache_tokens = hot_data.get("token_estimate", 50)
                 mark_injected(session_id)
         except Exception:
             pass
+
+    # ─── Atom-Write Guard: confidence gate reminder ─────────────────────
+    # 使用者發話出現「要存起來 / 記住 / 寫成 atom / 存成 [固]」類關鍵字時，
+    # 注入一次性硬規則，避免 Claude 在建議階段就把單次經驗講成 [固]/[觀]。
+    # 規則本身已由 MCP atom_write 硬擋（server.js:1078-1085），此處只是把
+    # 規則提前曝光到 Claude 的 context，降低「建議錯、被 MCP 退回、再重講」
+    # 的來回成本。
+    atom_write_triggers = (
+        "記住", "記下來", "存起來", "存下來", "值得存", "值得記",
+        "寫成 atom", "寫 atom", "存成 atom", "存atom", "存成[固]", "存成 [固]",
+        "存成[觀]", "存成 [觀]", "記為[固]", "記為 [固]",
+    )
+    if any(kw in clean_prompt for kw in atom_write_triggers):
+        lines.append(
+            "[Atom-Write Guard] 偵測到記憶寫入意圖。硬規則："
+            "(1) 新 atom 一律 [臨]，MCP atom_write 會 reject [固]/[觀]；"
+            "(2) 單次成功 ≠ 穩定模式，需 4+ session 命中才建議晉升；"
+            "(3) 晉升走 atom_promote（[臨]≥20→[觀]、[觀]≥40→[固]），不手動改 frontmatter；"
+            "(4) 若是更新既有 atom，用 mode=append 並保留原 confidence。"
+        )
 
     # ─── Phase 0: Session Context Injection (first prompt only) ────────
     budget = compute_token_budget(prompt)
@@ -1482,7 +1502,7 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         try:
             hot_data = read_hot_cache(session_id)
             if hot_data:
-                advisories.append(f"[HotCache] {hot_data.get('summary', '')}")
+                advisories.append(format_injection_line(hot_data, context="mid-turn"))
                 mark_injected(session_id)
         except Exception:
             pass

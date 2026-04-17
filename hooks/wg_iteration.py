@@ -217,11 +217,14 @@ def _self_iterate_atoms(
     results = {"promoted": [], "archive_candidates": [], "scanned": 0}
     today = datetime.now()
 
-    # Collect atom dirs (global + failures/)
+    # Collect atom dirs (global + failures/ + feedback/)
     scan_dirs = [MEMORY_DIR]
     failure_dir = MEMORY_DIR / "failures"
     if failure_dir.exists():
         scan_dirs.append(failure_dir)
+    feedback_dir = MEMORY_DIR / "feedback"
+    if feedback_dir.exists():
+        scan_dirs.append(feedback_dir)
 
     for atom_dir in scan_dirs:
         for md_file in atom_dir.glob("*.md"):
