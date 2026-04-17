@@ -133,6 +133,10 @@
     "mode": "production",
     "tokenBudget": 240
   },
+  "changelog_auto_roll": {
+    "enabled": true,
+    "threshold": 8
+  },
   "docdrift": {
     "enabled": true,
     "path_mappings": {

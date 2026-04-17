@@ -292,3 +292,58 @@ Session F Sub-task B + Session G 修復過程累積的 V4.2 候選項在 `memory
 5. **handoff prompt 是 session 間協作的關鍵介面** — 寫不好 = 下游重新發明輪子；寫得好 = 下游 1 hour 清掉 blocker（Session G 是活例子）
 
 這個方法論本身值得單獨留檔供後續專案參考。
+
+---
+
+## 10. Runtime 架構參考（2026-04-17 自 Architecture.md 索引化遷入）
+
+> 從原 Architecture.md「V4.1 使用者決策萃取 + P4 Session 評價」兩節合併遷入。
+> keywords: user-extract, L0, L1, L2, gemma4, qwen3, session_score, evaluator, pending_user_extract
+
+### 10.1 使用者決策萃取 Pipeline
+
+三層 gating：**L0 規則 detector**（`wg_user_extract.detect_signal` ≤5ms）→ **L1 qwen3:1.7b 二元 yes/no**（think=false T=0 num_predict=30）→ **L2 gemma4:e4b 結構化萃取**（`{decision, conf, scope, audience, trigger, statement}`，think=auto T=0 num_predict=200）。
+
+```
+UserPromptSubmit (sync, ≤5ms)
+  └─ wg_user_extract.py L0: 信號詞 + 句法 pattern → score ≥ 0.4
+       → append state["pending_user_extract"][] (GC cap 10 [F11])
+
+Stop/SessionEnd (async detached)
+  └─ user-extract-worker.py spawn (lib/ollama_extract_core.py 共用)
+       ├─ 混合句偵測 [F10]: 情緒+決策 → systemMessage skip
+       ├─ 情緒承諾 [F24]: 24h 冷卻 queue
+       ├─ SessionBudgetTracker (≤240 tok): >220 L1-only, >240 break
+       ├─ L1: is_decision yes/no
+       ├─ L2: {conf, scope, trigger, statement}
+       ├─ conf ≥ 0.92 → state["confirmed_extractions"][] + 顯式提示預設同意 [F5]
+       ├─ 0.70-0.92 → personal/auto/{user}/_pending.candidates.md
+       └─ < 0.70 → discard
+
+UserPromptSubmit 下一輪
+  └─ confirmed_extractions[] → systemMessage 顯示，使用者回「否」可攔截
+     → `_ack_then_clear` + MCP atom_write → `personal/auto/{user}/{slug}.md`
+       （footer `<!-- src: {sid}-{turn_n} -->` F1）
+```
+
+- **Feature flag**：`config.userExtraction.enabled`（預設 true since GA）
+- **Budget tracker [F22]**：計 user-delta tok（prompt + context + response，不含 few-shot），超 220→L1-only，超 240→break 留下輪
+- **Merge self-heal**（GA 後補）：`_ensure_state` 遇 `merged_into` target 已被孤兒清理時，清 merged_into + phase→working，避免寫入落入死水 state
+
+### 10.2 P4 Session 評價機制（`wg_session_evaluator.py`）
+
+每 session 結束後用 5 維度加權算出 `session_score ∈ [0, 1]`，寫入 `reflection_metrics.json` 的 `v41_extraction.session_scores[]`（FIFO cap 100）。Pure Python，<100ms，原子寫入（tmp→rename）。
+
+| 維度 | 權重 | 公式 |
+|---|---|---|
+| density | 0.15 | `tanh(extract_triggered / max(prompt_count, 1))` |
+| precision_proxy | 0.35 | `avg_l2_conf`（L2 跑過）否則 1.0 |
+| novelty | 0.20 | `confirmed / max(confirmed + dedup_hit, 1)` |
+| cost_efficiency | 0.15 | `max(0, 1 - token_used / 240)` |
+| trust | 0.15 | `1 - (rejected_24h / max(total_written_24h, 1))` |
+
+兩條呼叫路徑避免 worker race：
+- **Path A**（有 pending）：`user-extract-worker` 跑完 `run_user_extraction()` inline 呼叫 evaluator（帶 worker_stats）→ 寫 reflection_metrics
+- **Path B**（無 pending）：`workflow-guardian.handle_session_end()` 末端 inline fallback（worker_stats=None 算 baseline）
+
+查閱：`/memory-session-score [--last|--since=24h|--top-n=10]`（backend `tools/memory-session-score.py`）。未來 V4.2 歷史回填可用 `session_score ≥ threshold` 篩選；V5 Wisdom Engine 接入做 meta-learning。

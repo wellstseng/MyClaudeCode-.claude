@@ -23,3 +23,4 @@
 | feedback-no-outsource-rigor | memory/feedback/feedback-no-outsource-rigor.md | 縝密, 漏掉, 沒看到, max thinking, high thinking, 外包思考, 角色縝密, 我有沒有漏, rigor | global |
 | feedback-git-log-chinese | memory/feedback/feedback-git-log-chinese.md | commit message, commit msg, 上GIT, git commit, git log, git push |
 | feedback-fix-on-discovery | memory/feedback/feedback-fix-on-discovery.md | 不在範圍, 範圍外, 未來處理, 另開 session, out of scope, 順手發現, 不在本次範圍 |
+| feedback-humanist-decision-framing | memory/feedback-humanist-decision-framing.md | 裁決, 決策呈現, 選項, 多選題, 技術細節, 使用者認知負擔 |

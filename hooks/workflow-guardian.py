@@ -90,6 +90,11 @@ from wg_episodic import (
     _resolve_episodic_dir, _generate_episodic_atom,
     _check_output_quality,
 )
+from wg_evasion import (
+    is_test_command, detect_test_failure,
+    claims_completion, detect_evasion, is_dismiss_prompt,
+    get_last_assistant_text,
+)
 
 sys.path.insert(0, str(Path.home() / ".claude" / "tools"))
 from ollama_client import get_client, check_long_die_status, disable_backend, OllamaClient
@@ -695,6 +700,16 @@ def handle_user_prompt_submit(
     prompt_lower = clean_prompt.lower()
     lines: List[str] = []
 
+    # ── Evasion Guard: 追蹤近 5 則 user prompt（for escape hatch）─────
+    rup = state.setdefault("recent_user_prompts", [])
+    rup.append(clean_prompt[:500])
+    if len(rup) > 5:
+        state["recent_user_prompts"] = rup[-5:]
+
+    # ── Evasion Guard: 使用者明確放行 → 清 failing_tests ─────────────
+    if state.get("failing_tests") and is_dismiss_prompt(clean_prompt):
+        state["failing_tests"] = []
+
     # ─── V4.1: User Decision Detector gate ────────────────────────────
     ue_config = config.get("userExtraction", {})
     if ue_config.get("enabled", False):
@@ -1183,6 +1198,18 @@ def handle_user_prompt_submit(
             "執行 /fix-escalation 精確修正會議。"
         )
 
+    # ── Evasion Guard: 上輪退避詞彙命中 → 注入舉證要求（注入後清旗標）──
+    ev = state.get("evasion_flag")
+    if ev:
+        lines.append(
+            f"[Guardian:Evasion] 你上輪用了退避語『{ev.get('phrase', '')}』。\n"
+            f"  context: …{ev.get('context_excerpt', '')[:200]}…\n"
+            "feedback-fix-on-discovery 規則：1-3 行能修就當場修。請說明：\n"
+            "  (a) 實際修補成本（列出要改的檔/行數）\n"
+            "  (b) 若仍選擇不修，為何這不是 feedback atom 所禁的退避說法？"
+        )
+        state["evasion_flag"] = None
+
     # ── Handoff Protocol ────────────────────────────────────────────
     if intent == "handoff":
         lines.append(
@@ -1323,6 +1350,53 @@ def _check_memory_atom_format(
     )
 
 
+_CHANGELOG_TABLE_DATA_RE = re.compile(r"^\|\s*\d{4}-\d{2}-\d{2}\s*\|")
+
+
+def _maybe_auto_roll_changelog(file_path: str, config: Dict[str, Any]) -> None:
+    """Detached roll when _CHANGELOG.md rows exceed threshold. Fail-open."""
+    try:
+        normalized = file_path.replace("\\", "/")
+        if not normalized.endswith("/_CHANGELOG.md") and not normalized.endswith("_CHANGELOG.md"):
+            return
+        # Exclude archive file itself
+        if normalized.endswith("_CHANGELOG_ARCHIVE.md"):
+            return
+        cfg = (config or {}).get("changelog_auto_roll", {}) or {}
+        if not cfg.get("enabled", True):
+            return
+        threshold = int(cfg.get("threshold", 8))
+        cl_path = Path(file_path)
+        if not cl_path.exists():
+            return
+        rows = 0
+        for line in cl_path.read_text(encoding="utf-8").splitlines():
+            if _CHANGELOG_TABLE_DATA_RE.match(line):
+                rows += 1
+        if rows <= threshold:
+            return
+        tool_path = Path(__file__).resolve().parent.parent / "tools" / "changelog-roll.py"
+        if not tool_path.exists():
+            return
+        bg_kwargs: dict = {
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+        }
+        if sys.platform == "win32":
+            bg_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        else:
+            bg_kwargs["start_new_session"] = True
+        subprocess.Popen(
+            [sys.executable, str(tool_path),
+             "--changelog", str(cl_path),
+             f"--keep={threshold}", "--quiet"],
+            **bg_kwargs,
+        )
+    except Exception:
+        pass  # fail-open
+
+
 def handle_pre_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
@@ -1359,6 +1433,9 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             "at": _now_iso(),
         })
         state["sync_pending"] = True
+
+        # Auto-roll _CHANGELOG.md when row count > threshold (fail-open, detached)
+        _maybe_auto_roll_changelog(file_path, config)
 
         # V2.11: Track per-file edit counts for over-engineering detection
         edit_counts = state.setdefault("edit_counts", {})
@@ -1473,6 +1550,34 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             vcs = state.setdefault("vcs_queries", [])
             vcs.append({"command": command[:200], "at": _now_iso()})
             write_state(session_id, state)
+
+        # Evasion Guard: Test-Fail detection
+        if is_test_command(command):
+            tr = input_data.get("tool_response", {}) or {}
+            if isinstance(tr, dict):
+                stdout = tr.get("stdout", "") or ""
+                stderr = tr.get("stderr", "") or ""
+                interrupted = bool(tr.get("interrupted", False))
+            else:
+                stdout, stderr, interrupted = str(tr), "", False
+            failure = detect_test_failure(stdout, stderr, interrupted)
+            if failure:
+                ft = state.setdefault("failing_tests", [])
+                ft.append({
+                    "tool": "Bash",
+                    "cmd": command[:200],
+                    "summary": failure,
+                    "at": _now_iso(),
+                })
+                write_state(session_id, state)
+            elif state.get("failing_tests"):
+                # 同 cmd 重跑成功 → 清掉舊紀錄（前綴比對，容忍尾參數變動）
+                cmd_prefix = command[:80].strip()
+                before = state["failing_tests"]
+                after = [f for f in before if not f.get("cmd", "").startswith(cmd_prefix[:40])]
+                if len(after) != len(before):
+                    state["failing_tests"] = after
+                    write_state(session_id, state)
 
     # V3.3: DocDrift advisory generation
     if DOCDRIFT_AVAILABLE and config.get("docdrift", {}).get("enabled", True):
@@ -1637,6 +1742,41 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
     max_blocks = config.get("stop_gate_max_blocks", 2)
     stop_count = state.get("stop_blocked_count", 0)
     phase = state.get("phase", "working")
+
+    # ── Evasion Guard: Test-Fail Gate + Evasion Detection ───────────
+    failing = state.get("failing_tests") or []
+    last_text = ""
+    cwd = state.get("session", {}).get("cwd", "") or input_data.get("cwd", "")
+    transcript = _find_session_transcript(session_id, cwd) if cwd else None
+    if failing:
+        last_text = get_last_assistant_text(transcript)
+        if claims_completion(last_text):
+            state["stop_blocked_count"] = stop_count + 1
+            write_state(session_id, state)
+            reason = (
+                f"[Guardian:TestFailGate] 測試未綠（{len(failing)} 項失敗），"
+                "不得宣告完成。\n"
+                + "\n".join(
+                    f"  - {f.get('cmd', '')[:60]}: "
+                    f"{(f.get('summary', '').splitlines() or [''])[0][:100]}"
+                    for f in failing[-3:]
+                )
+                + "\n選 (a) 修復 (b) 明確說明為何不修並標記為已知 regression "
+                "(c) 降級任務定義。不得籠統帶過。"
+            )
+            output_block(reason)
+            return
+
+    # Evasion 偵測（軟糾正，不阻擋；已有旗標就跳過，避免疊加）
+    if not state.get("evasion_flag"):
+        if not last_text:
+            last_text = get_last_assistant_text(transcript)
+        recent_prompts = state.get("recent_user_prompts", []) or []
+        ev = detect_evasion(last_text, recent_prompts)
+        if ev:
+            ev["at"] = _now_iso()
+            state["evasion_flag"] = ev
+            write_state(session_id, state)
 
     # Anti-loop guard
     if stop_count >= max_blocks:

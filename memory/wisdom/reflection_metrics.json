@@ -12,12 +12,12 @@
       },
       "architecture": {
         "correct": 1,
-        "total": 11
+        "total": 12
       }
     },
     "over_engineering_rate": {
       "user_reverted_or_simplified": 0,
-      "total_suggestions": 408
+      "total_suggestions": 409
     },
     "silence_accuracy": {
       "held_back_ok": 345,
@@ -26,10 +26,10 @@
   },
   "blind_spots": [
     "multi_file 首次正確率 25%",
-    "architecture 首次正確率 9%"
+    "architecture 首次正確率 8%"
   ],
   "arch_sensitivity_elevated": true,
-  "last_reflection": "2026-04-17T11:14:38.890518+00:00",
+  "last_reflection": "2026-04-17T11:28:18.831609+00:00",
   "v41_extraction": {
     "total_written": 0,
     "total_rejected": 0,
@@ -610,6 +610,63 @@
           "cost_efficiency": 1.0,
           "trust": 1.0,
           "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "1528649a-04dc-4adb-80bc-8835c9c236ba",
+        "ts": "2026-04-17T11:28:18.817245+00:00",
+        "prompt_count": 8,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "d87e4cd4-d32d-42b2-aee9-2170afc6165c",
+        "ts": "2026-04-17T11:51:38.209870+00:00",
+        "prompt_count": 3,
+        "extract_triggered": 1,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 207,
+        "scores": {
+          "density": 0.3215,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 0.1375,
+          "trust": 1.0,
+          "weighted_total": 0.7689
+        }
+      },
+      {
+        "session_id": "c2ff2ee2-db65-45d6-b187-7868501691b4",
+        "ts": "2026-04-17T12:07:04.914540+00:00",
+        "prompt_count": 2,
+        "extract_triggered": 1,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 144,
+        "scores": {
+          "density": 0.4621,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 0.4,
+          "trust": 1.0,
+          "weighted_total": 0.8293
         }
       }
     ]

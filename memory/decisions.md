@@ -4,7 +4,7 @@
 - Confidence: [固]
 - Trigger: 決策, 記憶系統, 原子記憶, MCP, context budget, 晉升, 品質機制, fix escalation
 - Last-used: 2026-04-17
-- Confirmations: 160
+- Confirmations: 161
 - Related: decisions-architecture, toolchain, toolchain-ollama
 
 ## 知識

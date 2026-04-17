@@ -79,11 +79,12 @@ Session Ready
 
 合計：~5308 行
 
-## 5. Skills（commands/，18 個）
+## 5. Skills（commands/，19 個）
 
 | 指令 | 用途 | 依賴 |
 |------|------|------|
 | /atom-debug | Debug log 開關 | 無 |
+| /changelog-roll | 手動滾動 _CHANGELOG.md（PostToolUse 自動掛，通常不用手跑）`--keep N\|--dry-run` | 無 |
 | /conflict | 記憶衝突偵測（向量比對 + LLM 判定） | Vector Service + Ollama |
 | /conflict-review | V4 管理職裁決 Pending Queue（雙向認證） | wg_roles + Vector Service |
 | /consciousness-stream | 高風險跨系統（唯識八識） | 無 |
@@ -137,6 +138,7 @@ Session Ready
 - memory-peek.py — V4.1 /memory-peek 後端：掃 personal/auto/{user}/ 列最近 atom + _pending.candidates
 - memory-session-score.py — V4.1 P4 /memory-session-score 後端：讀 reflection_metrics.v41_extraction.session_scores[]，`--last/--since/--top-n` 三種過濾 + JSON 輸出
 - memory-undo.py — V4.1 /memory-undo 後端：撤銷到 _rejected/ + reason 分類 + 寫 reflection_metrics
+- changelog-roll.py — _CHANGELOG.md 自動滾動（保留最新 N 條，超額搬 _CHANGELOG_ARCHIVE.md）；由 PostToolUse hook 偵測 _CHANGELOG 寫入後自動觸發 detached subprocess
 - test-memory-v21.py — E2E 測試
 - eval-ranked-search.py — 50 query benchmark
 - cleanup-old-files.py — 環境清理
