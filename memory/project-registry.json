@@ -41,8 +41,8 @@
       "last_seen": "2026-03-31"
     },
     "c--workspace-catclaw": {
-      "root": "c:\\WorkSpace\\catclaw",
-      "last_seen": "2026-03-30"
+      "root": "C:\\WorkSpace\\catclaw",
+      "last_seen": "2026-04-19"
     },
     "c--olgcase-mobileanime": {
       "root": "c:\\OlgCase\\MobileAnime",
@@ -50,7 +50,7 @@
     },
     "c--projects-tslg-develop": {
       "root": "c:\\Projects\\TSLG\\Develop",
-      "last_seen": "2026-04-15",
+      "last_seen": "2026-04-21",
       "aliases": [
         "TSLG"
       ],
@@ -69,7 +69,7 @@
     },
     "c--projects-orbit": {
       "root": "c:\\Projects\\Orbit",
-      "last_seen": "2026-04-15"
+      "last_seen": "2026-04-17"
     },
     "c--projects-sgi": {
       "root": "c:\\Projects\\SGI",
@@ -85,7 +85,7 @@
     },
     "c--users-wellstseng": {
       "root": "C:\\Users\\wellstseng",
-      "last_seen": "2026-04-15"
+      "last_seen": "2026-04-19"
     }
   }
 }

@@ -58,6 +58,7 @@ USER.md
 USER-*.md
 IDENTITY.md
 IDENTITY-*.md
+settings.local.json
 
 # ─── User-specific atoms (hardware, local env) ────────────
 memory/hardware.md

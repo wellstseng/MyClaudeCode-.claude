@@ -23,6 +23,8 @@
 | team-roster | memory/team-roster.md | 團隊, 名冊, 成員, SVN帳號, Discord ID, Redmine ID |
 | hot-topics | memory/hot-topics.md | 監控, hot-topics, 警報, titan-rd, Key Man |
 | collaboration-protocol | memory/collaboration-protocol.md | 協作, 協作原則, 副駕, 收斂, 跑偏, 發散, 焦慮, 經驗汲取, 避危, 工作流拆解, session回顧 |
+| hotfix-ilruntime-traps | memory/hotfix-ilruntime-traps.md | hotfix, ILRuntime, 熱修, UNITY_EDITOR, DefineConstants, #if, 編譯常數, Application.isEditor, hotfix DLL |
+| unity-mcp-自動化工具鏈 | memory/unity-mcp-自動化工具鏈.md | unity-mcp, Unity重編, Unity recompile, refresh_unity, AssetDatabase.Refresh, Unity自動化, batchmode, Unity MCP |
 
 > **知識庫查閱**：遇到以下主題，先 Read 對應的 `_INDEX.md` 取得細節知識。
 

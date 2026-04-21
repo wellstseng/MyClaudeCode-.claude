@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 上傳, 傳附件, 壓縮傳, upload, MEDIA, Discord 附件
-- Last-used: 2026-04-14
-- Confirmations: 20
+- Last-used: 2026-04-20
+- Confirmations: 25
 - Related: preferences
 
 ## 知識
