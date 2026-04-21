@@ -3,8 +3,8 @@
   "metrics": {
     "first_approach_accuracy": {
       "single_file": {
-        "correct": 0,
-        "total": 0
+        "correct": 1,
+        "total": 1
       },
       "multi_file": {
         "correct": 0,
@@ -17,10 +17,10 @@
     },
     "over_engineering_rate": {
       "user_reverted_or_simplified": 0,
-      "total_suggestions": 4
+      "total_suggestions": 5
     },
     "silence_accuracy": {
-      "held_back_ok": 0,
+      "held_back_ok": 1,
       "held_back_missed": 0
     }
   },
@@ -28,5 +28,38 @@
   "blind_spots": [
     "architecture 首次正確率 0%"
   ],
-  "last_reflection": "2026-04-12T15:58:11.823013+00:00"
+  "last_reflection": "2026-04-21T09:22:47.998771+00:00",
+  "v41_extraction": {
+    "total_written": 0,
+    "total_rejected": 0,
+    "reject_reasons": {
+      "emotion": 0,
+      "ambiguous": 0,
+      "privacy": 0,
+      "scope": 0,
+      "other": 0
+    },
+    "precision_observed": 1.0,
+    "session_scores": [
+      {
+        "session_id": "c9600dc3-71b4-4735-a4fb-1b706d714413",
+        "ts": "2026-04-21T09:22:47.993191+00:00",
+        "prompt_count": 3,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      }
+    ]
+  }
 }

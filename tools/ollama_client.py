@@ -240,11 +240,17 @@ class OllamaClient:
             if not backend:
                 return None
             tried.add(backend.name)
+            # Skip backend when explicit_model doesn't match its configured model
+            # (don't count as failure — avoids poisoning health_cache for subsequent calls).
+            model_attr = "embedding_model" if need == "embedding" else "llm_model"
+            if explicit_model:
+                backend_model = getattr(backend, model_attr, None)
+                if backend_model and backend_model != explicit_model:
+                    continue
             actual_payload = payload
             needs_copy = False
             # Adjust model for this backend (unless caller specified explicit model)
             if not explicit_model and "model" in payload:
-                model_attr = "embedding_model" if need == "embedding" else "llm_model"
                 backend_model = getattr(backend, model_attr, None)
                 if backend_model and payload["model"] != backend_model:
                     if not needs_copy:

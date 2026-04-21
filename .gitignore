@@ -42,7 +42,9 @@ memory/_vectordb/service.log
 
 # ─── ACT-R access logs (runtime, auto-generated) ──────────
 memory/*.access.json
+memory/**/*.access.json
 **/memory/*.access.json
+**/memory/**/*.access.json
 
 # ─── Staging area (temp files, session prompts) ──────────
 memory/_staging/
@@ -56,6 +58,7 @@ memory/_distant/
 # ─── User-specific config (per-user, auto-generated) ──────
 USER.md
 USER-*.md
+!prompts/user-decision-*.md
 IDENTITY.md
 IDENTITY-*.md
 

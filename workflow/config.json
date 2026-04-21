@@ -34,12 +34,12 @@
     "ollama_backends": {
       "rdchat-direct": {
         "base_url": "http://192.168.199.130:11434",
-        "llm_model": "qwen3.5:latest",
+        "llm_model": "gemma4:e4b",
         "embedding_model": "qwen3-embedding:latest",
         "priority": 1,
         "enabled": true,
         "think": true,
-        "llm_num_predict": 8192
+        "llm_num_predict": 4096
       },
       "rdchat": {
         "base_url": "https://rdchat.uj.com.tw/ollama",
@@ -48,12 +48,12 @@
           "login_url": "https://rdchat.uj.com.tw/api/v1/auths/ldap",
           "password_file": "~/.claude/workflow/.rdchat_password"
         },
-        "llm_model": "qwen3.5:latest",
+        "llm_model": "gemma4:e4b",
         "embedding_model": "qwen3-embedding:latest",
         "priority": 2,
         "enabled": true,
         "think": true,
-        "llm_num_predict": 8192
+        "llm_num_predict": 4096
       },
       "local": {
         "base_url": "http://127.0.0.1:11434",
@@ -133,5 +133,34 @@
       "weak_keywords": ["錯了", "不對", "壞了", "失敗", "沒用", "沒效", "不行", "bug", "broken", "failed", "still broken", "same error", "為什麼還", "怎麼還", "反覆", "踩坑", "又踩", "沒生效", "白做了"],
       "weak_min_match": 3
     }
+  },
+  "userExtraction": {
+    "enabled": true,
+    "mode": "production",
+    "tokenBudget": 240
+  },
+  "changelog_auto_roll": {
+    "enabled": true,
+    "threshold": 8
+  },
+  "docdrift": {
+    "enabled": true,
+    "path_mappings": {
+      "hooks/wg_*.py": ["Architecture.md"],
+      "hooks/workflow-guardian.py": ["Architecture.md"],
+      "hooks/extract-worker.py": ["Architecture.md"],
+      "hooks/quick-extract.py": ["Architecture.md"],
+      "hooks/wisdom_engine.py": ["Architecture.md"],
+      "commands/*.md": ["DocIndex-System.md"],
+      "rules/*.md": ["DocIndex-System.md"],
+      "tools/*.py": ["DocIndex-System.md"]
+    },
+    "exclude_patterns": [
+      "_aidocs/", "memory/", "_staging/", ".git/",
+      "node_modules/", "__pycache__/", ".claude/workflow/",
+      "backups/", "debug/", "Logs/"
+    ],
+    "keyword_match_threshold": 2,
+    "max_pending_display": 5
   }
 }

@@ -1,35 +1,43 @@
-# Claude Code 全域設定 — 核心架構
+# Claude Code 全域設定 — 核心架構（Index）
+
+> 本檔為**索引型**。穩定子系統細節放 `DevHistory/` 子檔；本檔只留現役、演化中 feature + 關鍵索引。
+> 詳盡規範：`SPEC_ATOM_V4.md`（V4 原子記憶）、`rules/core.md`（行為規則）、`Project_File_Tree.md`（完整檔樹）。
 
 ## Hooks 系統
 
-7 個 hook 事件（含 async Stop），定義在 `settings.json`。主 dispatcher `workflow-guardian.py`（~1450 行）+ 8 個模組化子檔（合計 ~5966 行）：
+8 個 hook 事件（含 async Stop），定義在 `settings.json`。主 dispatcher `workflow-guardian.py`（~1570 行）+ 模組化子檔：
 
 | Hook | 觸發時機 | 用途 |
 |------|---------|------|
-| `UserPromptSubmit` | 使用者送出訊息 | RECALL 記憶檢索 + intent 分類 + Context Budget 監控 + Wisdom 情境分類 + Failures 偵測 |
-| `PostToolUse` | Edit/Write 後 | 追蹤修改檔案 + 增量索引 + Read Tracking + over_engineering 追蹤 |
-| `PreCompact` | Context 壓縮前 | 快照 state（壓縮前保護） |
-| `Stop` | 對話結束前 | 閘門：未同步則阻止結束 + Fix Escalation 信號注入 + 逐輪增量萃取 |
-| `Stop (async)` | 對話結束後 | V3 quick-extract.py：qwen3:1.7b 5s 快篩 → hot_cache.json |
-| `SessionStart` | Session 開始 | 初始化 session state + 去重（V3）+ Wisdom 盲點提醒 + 定期檢閱提醒 + 專案自治層 delegate |
-| `SessionEnd` | Session 結束 | Episodic atom 生成 + 回應萃取（全量）+ 鞏固（簡化計數）+ 衝突偵測 + Wisdom 反思 |
+| `UserPromptSubmit` | 使用者送出訊息 | RECALL 記憶檢索 + intent 分類（含 handoff）+ Context Budget 監控 + Wisdom 情境分類 + Failures 偵測 + Evasion 注入 |
+| `PreToolUse` (Write) | Write 工具呼叫前 | Atom Format Gate：阻擋 `{project}/.claude/memory/*.md` 但不符原子格式的寫入 |
+| `PostToolUse` (Edit/Write/Bash) | 工具呼叫後 | 追蹤修改檔案 + 增量索引 + Read Tracking + Test-Fail 偵測（Bash）+ _CHANGELOG auto-roll |
+| `PreCompact` | Context 壓縮前 | 快照 state |
+| `Stop` | 對話結束前 | Sync 閘門 + Fix Escalation + TestFailGate（阻擋完成宣告）+ Evasion Detection |
+| `Stop (async)` | 對話結束後 | V3 quick-extract：qwen3:1.7b 5s 快篩 → hot_cache.json |
+| `SessionStart` | Session 開始 | 初始化 state + 去重 + Wisdom 盲點 + 定期檢閱 + 專案自治層 delegate |
+| `SessionEnd` | Session 結束 | Episodic 生成 + 回應萃取 + 鞏固 + 衝突偵測 + Wisdom 反思 |
 
 ### Hook 模組拆分
 
 | 模組 | 行數 | 職責 |
 |------|------|------|
-| `workflow-guardian.py` | ~1447 | 瘦身 dispatcher：7 event handlers 編排 |
-| `wg_paths.py` | ~314 | 路徑唯一真相來源：slug/root/staging/registry |
-| `wg_core.py` | ~333 | 共用常數/設定/state IO/output/debug |
-| `wg_atoms.py` | ~559 | 索引解析/trigger 匹配/ACT-R/載入/budget/section-level 注入 |
-| `wg_intent.py` | ~387 | 意圖分類/session context/MCP/vector service |
-| `wg_extraction.py` | ~295 | per-turn 萃取/worker 管理/failure 偵測 |
-| `wg_hot_cache.py` | ~139 | Hot Cache 讀寫/注入 |
-| `wg_episodic.py` | ~860 | episodic 生成/衝突偵測/品質回饋 |
-| `wg_iteration.py` | ~431 | 自我迭代/震盪/衰減/晉升/覆轍偵測 |
-| `extract-worker.py` | ~806 | SessionEnd/per-turn/failure 子程序：LLM 萃取 + dedup |
-| `quick-extract.py` | ~155 | Stop async 快篩：qwen3:1.7b → hot_cache |
-| `wisdom_engine.py` | ~177 | 反思引擎：硬規則 + 反思指標 |
+| `workflow-guardian.py` | ~1570 | 瘦身 dispatcher：8 event handlers 編排 |
+| `wg_paths.py` | ~445 | 路徑唯一真相來源（V4 sublayer 發現） |
+| `wg_roles.py` | ~210 | V4 角色機制（雙向認證、personal dir bootstrap） |
+| `wg_core.py` | ~370 | config / state IO / output / debug / promotion audit |
+| `wg_atoms.py` | ~559 | 索引解析 / trigger 匹配 / ACT-R / section 注入 |
+| `wg_intent.py` | ~400 | intent 分類 / session context / MCP / vector |
+| `wg_extraction.py` | ~295 | per-turn 萃取 / worker 管理 / failure 偵測 |
+| `wg_hot_cache.py` | ~160 | Hot Cache 讀寫 / 注入（含 AUTO-DRAFT tag 硬規則） |
+| `wg_docdrift.py` | ~160 | src → _AIDocs 映射 drift 偵測 |
+| `wg_episodic.py` | ~860 | episodic 生成 / 衝突偵測 / 品質回饋 |
+| `wg_iteration.py` | ~450 | 自我迭代 / 震盪 / 衰減 / 晉升 / 覆轍 |
+| `wg_evasion.py` | ~115 | Evasion Guard + Test-Fail Gate（2026-04-17+） |
+| `extract-worker.py` | ~690 | SessionEnd 萃取子程序（共用 `lib/ollama_extract_core.py`） |
+| `lib/ollama_extract_core.py` | ~190 | 萃取共用核心（budget tracker / ack_then_clear） |
+| `quick-extract.py` | ~155 | Stop async 快篩 |
+| `wisdom_engine.py` | ~177 | 反思引擎 + Fix Escalation |
 
 ### 輔助 Hook 腳本
 
@@ -43,147 +51,74 @@
 
 | Skill | 檔案 | 用途 |
 |-------|------|------|
-| `/init-project` | `commands/init-project.md` | 專案知識庫（_AIDocs）+ 專案自治層初始化 |
-| `/resume` | `commands/resume.md` | 自動續接 Session（MCP 桌面自動化） |
-| `/continue` | `commands/continue.md` | 讀取 _staging/next-phase.md 續接任務 |
-| `/consciousness-stream` | `commands/consciousness-stream.md` | 識流處理（高風險跨系統任務） |
-| `/svn-update` | `commands/svn-update.md` | SVN 更新工作目錄 |
-| `/unity-yaml` | `commands/unity-yaml.md` | Unity YAML Asset 操作 |
-| `/upgrade` | `commands/upgrade.md` | 環境升級比對工具 |
-| `/fix-escalation` | `commands/fix-escalation.md` | 精確修正升級（6 Agent 會議：蒐集→辯論 2 輪→決策→驗證） |
-| `/extract` | `commands/extract.md` | 手動知識萃取（不等 SessionEnd） |
-| `/conflict` | `commands/conflict.md` | 記憶衝突偵測（向量比對 + LLM 判定） |
-| `/memory-health` | `commands/memory-health.md` | 記憶品質診斷（audit + health-check） |
-| `/memory-review` | `commands/memory-review.md` | 自我迭代檢閱（衰減/晉升/震盪/覆轍） |
+| `/init-project` | `commands/init-project.md` | 專案知識庫 + 自治層初始化 |
+| `/init-roles` | `commands/init-roles.md` | V4 多職務模式啟用引導 |
+| `/resume` | `commands/resume.md` | 自動續接 Session |
+| `/continue` | `commands/continue.md` | 讀 _staging/next-phase.md 續接 |
+| `/consciousness-stream` | `commands/consciousness-stream.md` | 識流處理 |
+| `/handoff` | `commands/handoff.md` | 跨 Session Handoff Prompt Builder |
+| `/journal` | `commands/journal.md` | 工作日誌產出 |
+| `/svn-update` | `commands/svn-update.md` | SVN 更新 |
+| `/unity-yaml` | `commands/unity-yaml.md` | Unity YAML 操作 |
+| `/upgrade` | `commands/upgrade.md` | 環境升級 |
+| `/fix-escalation` | `commands/fix-escalation.md` | 精確修正升級（6 Agent 會議） |
+| `/extract` | `commands/extract.md` | 手動知識萃取 |
+| `/generate-episodic` | `commands/generate-episodic.md` | 手動生成 episodic atom |
+| `/conflict` | `commands/conflict.md` | 記憶衝突偵測 |
+| `/conflict-review` | `commands/conflict-review.md` | V4 管理職裁決 Pending Queue |
+| `/memory-health` | `commands/memory-health.md` | 記憶品質診斷 |
+| `/memory-review` | `commands/memory-review.md` | 自我迭代檢閱 |
+| `/memory-peek` | `commands/memory-peek.md` | V4.1 自動萃取檢視 |
+| `/memory-undo` | `commands/memory-undo.md` | V4.1 撤銷自動萃取 |
+| `/memory-session-score` | `commands/memory-session-score.md` | V4.1 P4 Session 評分檢視 |
 | `/atom-debug` | `commands/atom-debug.md` | Debug log 開關 |
-| `/harvest` | `commands/harvest.md` | 網頁收割→Markdown（Playwright） |
+| `/harvest` | `commands/harvest.md` | 網頁收割→Markdown |
 | `/read-project` | `commands/read-project.md` | 系統性閱讀→doc-index atom |
-| `/vector` | `commands/vector.md` | 向量服務管理（啟停/索引/搜尋） |
+| `/vector` | `commands/vector.md` | 向量服務管理 |
+| `/changelog-roll` | `commands/changelog-roll.md` | 手動滾動 _CHANGELOG（自動掛 PostToolUse） |
+| `/browse-sprites` | `commands/browse-sprites.md` | 批次圖片預覽 |
+
+## 演化中 feature（保留細節於主檔）
+
+### Evasion Guard / Test-Fail Gate（`wg_evasion.py`，2026-04-17+）
+
+程式碼強固 LLM「錯誤的迴避」行為——不依賴模型自律，兩層擋住。
+
+| 觸發點 | 偵測 | 動作 |
+|---|---|---|
+| PostToolUse (Bash) | 測試指令（pytest/tsc/node --check/jest/go test/cargo test）→ 解析 stdout+stderr | 失敗最後 20 行寫 `state["failing_tests"][]`；同 cmd 重跑成功 → 清舊紀錄 |
+| Stop | `failing_tests` 非空 + last assistant text 命中完成宣告 regex | `output_block` 硬阻擋，要求 (a)修復 (b)標為 regression (c)降級任務 |
+| Stop | last assistant text 命中退避 regex（不在本範圍/既有 drift/pre-existing/留給未來/非本次；**時間性延後**：下次/下回/之後/晚點/稍後/有空/有時間 + 再 + 處理/修/補/做/看/弄；未來處理/待後續/另行處理/留給使用者） | 寫 `state["evasion_flag"]` |
+| UserPromptSubmit | `evasion_flag` 非空 | 注入 `[Guardian:Evasion]` 舉證要求，注入後清旗 |
+| UserPromptSubmit | prompt 命中放行詞（「先這樣/跳過/known regression」） | 清 `failing_tests`；近 3 則 user prompt 有放行詞 → skip evasion flag |
+
+state 以 `setdefault` 增量，不升 schema_version。相關 atom：`memory/feedback/feedback-fix-on-discovery.md`。
+
+### _CHANGELOG Auto-Roll（`tools/changelog-roll.py`，2026-04-17+）
+
+PostToolUse hook 偵測 `_CHANGELOG.md` 寫入 → 行數 >`config.changelog_auto_roll.threshold`（預設 8）→ detached subprocess 跑 roll 工具 → 超額條目搬到 `_CHANGELOG_ARCHIVE.md`。Fail-open。手動入口 `/changelog-roll`。
 
 ## 規則模組
 
-`.claude/rules/` 下的 `.md` 檔案由 Claude Code 自動載入，CLAUDE.md 瘦身至 ~50 行：
+`.claude/rules/core.md`（合併版）由 Claude Code 自動載入；CLAUDE.md 瘦身至 ~50 行。Hook 自動執行可程式碼化的部分（同步、品質函數、震盪偵測）。
 
-| 模組 | 說明 |
-|------|------|
-| `rules/memory-system.md` | 原子記憶系統規則 |
-| `rules/aidocs.md` | _AIDocs 知識庫維護 |
-| `rules/session-management.md` | 對話管理 + 續航 + 自我迭代 + 精確修正升級 |
-| `rules/sync-workflow.md` | 工作結束同步 + Guardian 閘門 |
+## 記憶系統（原子記憶 V4.1）— 子系統索引
 
-## 記憶系統（原子記憶 V3.1）
+雙 LLM 架構：Claude Code（雲端）= 決策/分類；Ollama Dual-Backend（本地）= embedding/萃取/re-ranking。
 
-### 雙 LLM 架構 + Dual-Backend
+| 主題 | 詳情文件 | keywords |
+|---|---|---|
+| Dual-Backend Ollama 退避 | [DevHistory/ollama-backend.md](DevHistory/ollama-backend.md) | 退避, DIE, rdchat, failover |
+| 記憶檢索管線 + 回應知識捕獲 | [DevHistory/memory-pipeline.md](DevHistory/memory-pipeline.md) | pipeline, JIT, vector, hot_cache |
+| V3 三層即時管線 | [DevHistory/memory-pipeline.md](DevHistory/memory-pipeline.md) | V3, quick-extract, deep extract |
+| V4.1 使用者決策萃取 + P4 Session 評價 | [DevHistory/v41-journey.md](DevHistory/v41-journey.md) §10 | user-extract, L0, L1, L2, gemma4, session_score |
+| SessionStart 去重 + Merge self-heal | [DevHistory/session-mgmt.md](DevHistory/session-mgmt.md) | dedup, merge_into, orphan cleanup |
+| 專案自治層 + V4 三層 Scope + JIT | [DevHistory/v4-layers.md](DevHistory/v4-layers.md) | scope, personal, shared, role, vector layer |
+| V4 三時段衝突偵測（Phase 5+6） | [DevHistory/v4-conflict.md](DevHistory/v4-conflict.md) | conflict, pending_review, CONTRADICT, EXTEND |
+| Wisdom Engine + Fix Escalation + 跨 Session 鞏固 | [DevHistory/wisdom-engine.md](DevHistory/wisdom-engine.md) | wisdom, reflection, fix_escalation |
+| settings.json 權限 + 工具鏈 | [DevHistory/settings-config.md](DevHistory/settings-config.md) | permissions, 權限, tools |
 
-| 角色 | 引擎 | 職責 |
-|------|------|------|
-| 雲端 LLM | Claude Code | 記憶演進決策、分類判斷、晉升/淘汰 |
-| 本地 LLM | Ollama (Dual-Backend) | embedding、query rewrite、re-ranking、intent 分類、回應知識萃取 |
-
-#### Dual-Backend Ollama
-
-統一 Ollama 呼叫入口 `tools/ollama_client.py`，支援多 backend 自動切換：
-
-```
-config.json → ollama_backends:
-  primary (priority=1, 遠端 GPU) → fallback (priority=2, 本地)
-```
-
-三階段退避：
-- **正常** → 連續 2 次失敗 → **短DIE**（60s 冷卻，跳過此 backend）
-- 10 分鐘內 2 次短DIE → **長DIE**（等到下個 6h 時段: 00/06/12/18 點）
-- 長DIE 觸發 → SessionStart hook 詢問使用者「停用」或「保持」
-- **靜態停用旗標**：`enabled: false` 永久跳過，不做 health check
-- 認證：LDAP bearer token，帳號自動 `os.getlogin()`，密碼檔 `workflow/.rdchat_password`
-
-### 資料層
-
-1. **MEMORY.md**（always-loaded）: Atom 索引（全域 25 atoms + 專案層各自索引）
-2. **Atom 檔案**（按需載入）: 由 Trigger 欄位 + 向量搜尋發現
-3. **Vector DB**: LanceDB（`memory/_vectordb/`）
-4. **Episodic atoms**: 自動生成 session 摘要（`memory/episodic/`，TTL 24d，不進 git）
-5. **Wisdom Engine**: 反思統計（`memory/wisdom/`）
-6. **專案自治層**: `{project_root}/.claude/memory/` — 每專案獨立 atoms + episodic + failures
-
-### 記憶檢索管線
-
-```
-使用者訊息 → UserPromptSubmit hook (workflow-guardian.py)
-  ├─ [V3] Hot Cache 快速路徑 (injected=false? → 注入)
-  ├─ Intent 分類 (rule-based ~1ms)
-  ├─ MEMORY.md Trigger 匹配 (keyword ~10ms)
-  ├─ Vector Search (LanceDB + qwen3-embedding ~200-500ms)
-  ├─ Ranked Merge → top atoms
-  ├─ Context Budget: 3000 tokens 上限，ACT-R truncate
-  ├─ Fix Escalation: retry_count≥2 → 注入 [FixEscalation] 信號
-  └─ additionalContext 注入
-```
-
-降級: primary 不可用 → fallback (Dual-Backend) | 全 Ollama 不可用 → 純 keyword | Vector Service 掛 → graceful fallback
-
-### 回應知識捕獲
-
-| 時機 | 輸入 | 上限 |
-|------|------|------|
-| Stop hook（逐輪增量） | byte_offset 增量讀取 | 4000 chars, 3 items |
-| SessionEnd（全量） | 全 transcript | 20000 chars, 5 items |
-
-情境感知萃取（依 intent 調整 prompt）。萃取結果一律 `[臨]`。注入前 Token Diet strip 9 種 metadata + 行動/演化日誌。
-
-#### V3 三層即時管線
-
-```
-Claude 回應結束 → [Stop async] quick-extract.py (qwen3:1.7b, 5s)
-                    → hot_cache.json (injected=false)
-Claude 使用工具 → [PostToolUse] hot cache check → mid-turn 注入
-使用者下一句   → [UserPromptSubmit] hot cache 快速路徑 + 完整 pipeline
-Deep extract   → [detached] extract-worker.py → 覆寫 hot cache → 正式 atom
-```
-
-### SessionStart 去重
-
-- 同 cwd 60s 內 active state → 複用（resume 合併，startup 跳過 vector init）
-- 分層孤兒清理：prompt_count=0 working→10m, prompt_count>0 working→30m, done→24h
-- Vector service 非阻塞：fire-and-forget subprocess + `vector_ready.flag`
-
-### 專案自治層
-
-- **Project Registry**（`memory/project-registry.json`）：SessionStart 自動 `register_project(cwd)`，跨專案發現
-- **路徑切換**：`get_project_memory_dir()` 新路徑 `{project_root}/.claude/memory/` 優先，舊路徑 fallback
-- **專案 Delegate**：`{project_root}/.claude/hooks/project_hooks.py`（inject/extract/on_session_start），subprocess 隔離呼叫（5s timeout）
-- **遷移工具**：`tools/migrate-v221.py`（_AIAtoms + 個人 memory → .claude/memory/）
-
-### 跨 Session 鞏固
-
-- 廢除自動晉升，改為 Confirmations +1 簡單計數
-- 4+ sessions → 建議晉升（不自動執行）
-- 統一 dedup 閾值 0.80
-- SessionEnd 衝突偵測：向量搜尋 score 0.60-0.95 → 寫入 episodic 衝突警告
-
-### Wisdom Engine
-
-- **情境分類器**：2 條硬規則（file_count/is_feature → confirm; touches_arch → plan）
-- **反思引擎**：first_approach_accuracy + over_engineering_rate + silence_accuracy + Bayesian 校準
-- **Fix Escalation Protocol**：同一問題修正第 2 次起強制 6 Agent 精確修正會議，Guardian 自動偵測 + /fix-escalation skill
-
-### 工具鏈
-
-| 工具 | 路徑 | 用途 |
-|------|------|------|
-| ollama_client.py | `tools/ollama_client.py` | Dual-Backend Ollama Client（三階段退避+auth+failover） |
-| rag-engine.py | `tools/rag-engine.py` | CLI: search/index/status/health |
-| memory-write-gate.py | `tools/memory-write-gate.py` | 寫入品質閘門 + 去重 |
-| memory-audit.py | `tools/memory-audit.py` | 格式驗證、過期、晉升建議（支援 `--project-dir`） |
-| memory-conflict-detector.py | `tools/memory-conflict-detector.py` | 矛盾偵測（支援 `--project-dir`） |
-| atom-health-check.py | `tools/atom-health-check.py` | Atom 健康度（Related 完整性） |
-| migrate-v221.py | `tools/migrate-v221.py` | V2.21 遷移（_AIAtoms + 個人記憶 → .claude/memory/） |
-| cleanup-old-files.py | `tools/cleanup-old-files.py` | 環境清理 |
-| read-excel.py | `tools/read-excel.py` | Excel 讀取工具 |
-| unity-yaml-tool.py | `tools/unity-yaml-tool.py` | Unity YAML 解析/生成 |
-| memory-vector-service/ | `tools/memory-vector-service/` | HTTP 服務 (port 3849) |
-| gdoc-harvester/ | `tools/gdoc-harvester/` | Google Docs/Sheets 收割 + dashboard |
-| workflow-guardian-mcp/ | `tools/workflow-guardian-mcp/` | MCP server + Dashboard (port 3848) |
-| wisdom_engine.py | `hooks/wisdom_engine.py` | Wisdom Engine（情境分類+反思） |
+資料層：`MEMORY.md` 索引（always-loaded）+ atom 檔（按需）+ LanceDB vector + episodic + wisdom + 專案自治層。
 
 ## MCP Servers
 
@@ -191,9 +126,25 @@ Deep extract   → [detached] extract-worker.py → 覆寫 hot cache → 正式 
 |--------|------|------|
 | workflow-guardian | stdio (Node.js) | session 管理 + Dashboard (port 3848) |
 
-## 權限設定
+### atom_write 工具（V4 三層 scope，2026-04-15+）
 
-`settings.json` 的 `permissions.allow` 列表：
-- Bash: powershell, python, ls, wc, du, git, gh, ollama, curl, echo, grep, find
-- Read: C:\Users\**, C:\OpenClawWorkspace\**
-- MCP: workflow-guardian (workflow_signal, workflow_status)
+| 參數 | 行為 |
+|------|------|
+| `scope=global` | 寫 `~/.claude/memory/` |
+| `scope=shared`（預設） | 寫 `{proj}/.claude/memory/shared/` |
+| `scope=role` + `role=...` | 寫 `roles/{role}/`，metadata `Scope: role:{role}` |
+| `scope=personal` + `user=...` | 寫 `personal/{user}/`，metadata `Scope: personal:{user}` |
+| `scope=project`（legacy） | 透明轉 `shared` + stderr deprecation hint |
+
+新 metadata 自動帶入：`Author`（server 端 env/OS user）、`Created-at`（今日）、`Audience`/`Pending-review-by`/`Merge-strategy`（optional）。
+**SPEC 7.4 敏感類別自動 pending**：`scope=shared` 且 `audience ∈ {architecture, decision}` → `shared/_pending_review/` + `Pending-review-by: management`。
+
+### atom_promote
+
+門檻：`[臨]≥20 confirmations → [觀]`，`[觀]≥40 → [固]`。`merge_to_preferences=true`（global only，[觀]→[固] 時）把「## 知識」合併到 `preferences.md` 並搬原 atom 到 `memory/_archived/`。
+
+### UserPromptSubmit Atom-Write Guard
+
+偵測「記住/存起來/寫 atom/存成 [固]」關鍵字 → 注入硬規則（新 atom 一律 [臨]、晉升走 `atom_promote`、更新既有走 `mode=append`），降低 Claude 建議錯誤的 retry 成本。
+
+詳見 [SPEC_ATOM_V4.md](SPEC_ATOM_V4.md)。

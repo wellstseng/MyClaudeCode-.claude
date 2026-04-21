@@ -44,69 +44,116 @@ def discover_layers(
     layer_filter: Optional[str] = None,
     include_distant: bool = False,
     additional_dirs: Optional[List[Dict[str, Any]]] = None,
-) -> List[Tuple[str, Path]]:
-    """Discover all memory layers. Returns [(layer_name, memory_dir), ...].
+) -> List[Tuple[str, Path, str]]:
+    """Discover all memory layers. Returns [(layer_name, memory_dir, kind), ...].
 
-    V2.20: Delegates to wg_paths.discover_memory_layers() for global + project layers.
-    Additional dirs handled locally (config-driven, not path-logic).
+    V4: 用 wg_paths.discover_v4_sublayers / discover_memory_layers，產生
+    global + shared:{slug} / role:{slug}:{r} / personal:{slug}:{u} 子層。
+    kind ∈ {"recursive","flat-legacy","extra"}：indexer 用來決定是否遞迴。
     """
-    # Global + project layers via wg_paths (single source of truth)
-    layers = discover_memory_layers(layer_filter)
+    from wg_paths import discover_all_project_memory_dirs, discover_v4_sublayers
 
-    # Additional atom directories (from config, local logic)
+    layers: List[Tuple[str, Path, str]] = []
+
+    def _accept(label: str) -> bool:
+        if not layer_filter or layer_filter == "all":
+            return True
+        if layer_filter == label:
+            return True
+        if layer_filter == "global":
+            return label == "global"
+        if layer_filter == "shared":
+            return label.startswith("shared:")
+        if layer_filter == "role":
+            return label.startswith("role:")
+        if layer_filter == "personal":
+            return label.startswith("personal:")
+        return False
+
+    if _accept("global"):
+        layers.append(("global", MEMORY_DIR, "recursive"))
+
+    for slug, mem_dir in discover_all_project_memory_dirs():
+        for label, path, kind in discover_v4_sublayers(slug, mem_dir):
+            if _accept(label):
+                layers.append((label, path, kind))
+
+    # Additional atom directories (config-driven)
     if additional_dirs:
         for entry in additional_dirs:
             name = entry.get("name", "extra")
             dir_path = Path(entry.get("path", ""))
             if dir_path.is_dir():
-                if not layer_filter or layer_filter in ("all", name):
-                    layers.append((f"extra:{name}", dir_path))
+                label = f"extra:{name}"
+                if not layer_filter or layer_filter in ("all", name, label):
+                    layers.append((label, dir_path, "extra"))
 
     return layers
 
 
 def discover_atoms(
-    layers: List[Tuple[str, Path]],
+    layers: List[Tuple[str, Path, str]],
     include_distant: bool = False,
     additional_dirs: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Tuple[str, Path, str]]:
-    """Find all atom .md files. Returns [(layer_name, file_path, rel_path), ...]."""
+    """Find all atom .md files. Returns [(layer_name, file_path, rel_path), ...].
+
+    Layer 三元組 kind 控制掃描行為：
+      - "flat-legacy"：只掃 mem_dir 直下 .md，不進子目錄
+      - "recursive" / "extra"：遞迴 **/*.md（仍跳 _-prefixed 目錄）
+    """
     atoms: List[Tuple[str, Path, str]] = []
 
-    # Build per-layer skip_files from additional_dirs config
     extra_skip: Dict[str, set] = {}
     if additional_dirs:
         for entry in additional_dirs:
             name = f"extra:{entry.get('name', 'extra')}"
             extra_skip[name] = set(entry.get("skip_files", []))
 
-    for layer_name, mem_dir in layers:
+    # Backward compat：若呼叫者傳的是 2-tuple list，補上 "recursive" kind
+    norm_layers: List[Tuple[str, Path, str]] = []
+    for item in layers:
+        if len(item) == 2:
+            norm_layers.append((item[0], item[1], "recursive"))
+        else:
+            norm_layers.append(item)
+
+    for layer_name, mem_dir, kind in norm_layers:
         layer_skip_files = extra_skip.get(layer_name, set())
         is_extra = layer_name.startswith("extra:")
 
-        # Recursive scanning for all layers; skip files in _-prefixed directories
-        glob_patterns = ["**/*.md"]
-        seen_paths: set = set()
-        for glob_pattern in glob_patterns:
-            for md_file in sorted(mem_dir.glob(glob_pattern)):
-                if md_file in seen_paths:
-                    continue
-                seen_paths.add(md_file)
-                # Skip files inside any _-prefixed directory (e.g. _distant, _vectordb)
-                rel_parts = md_file.relative_to(mem_dir).parts
-                if any(part.startswith("_") for part in rel_parts[:-1]):
-                    continue
+        if kind == "flat-legacy":
+            # 只掃直下 .md，避免重複索引 shared/roles/personal 子目錄
+            iter_files = sorted(p for p in mem_dir.iterdir() if p.is_file() and p.suffix == ".md")
+            for md_file in iter_files:
                 if md_file.name in SKIP_FILENAMES:
                     continue
                 if any(md_file.name.startswith(p) for p in SKIP_PREFIXES):
                     continue
-                # Per-source skip_files (match stem)
                 if md_file.stem in layer_skip_files:
                     continue
                 rel = str(md_file.relative_to(mem_dir))
                 atoms.append((layer_name, md_file, rel))
+            continue
 
-        # _distant/ 遙遠記憶 (standard layers only)
+        # recursive / extra
+        seen_paths: set = set()
+        for md_file in sorted(mem_dir.glob("**/*.md")):
+            if md_file in seen_paths:
+                continue
+            seen_paths.add(md_file)
+            rel_parts = md_file.relative_to(mem_dir).parts
+            if any(part.startswith("_") for part in rel_parts[:-1]):
+                continue
+            if md_file.name in SKIP_FILENAMES:
+                continue
+            if any(md_file.name.startswith(p) for p in SKIP_PREFIXES):
+                continue
+            if md_file.stem in layer_skip_files:
+                continue
+            rel = str(md_file.relative_to(mem_dir))
+            atoms.append((layer_name, md_file, rel))
+
         if include_distant and not is_extra:
             distant_dir = mem_dir / "_distant"
             if distant_dir.is_dir():
@@ -120,6 +167,28 @@ def discover_atoms(
 
 
 # ─── Atom Parsing & Chunking ────────────────────────────────────────────────
+
+
+def _default_scope_from_layer(layer: str) -> str:
+    """舊 atom 無 Scope metadata 時，依所在 layer 推回預設 scope（SPEC §10）。
+
+    - global      → "global"
+    - shared:*    → "shared"
+    - role:*:{r}  → "role:{r}"
+    - personal:*:{u} → "personal:{u}"
+    其他（extra:* 等）→ ""
+    """
+    if layer == "global":
+        return "global"
+    if layer.startswith("shared:"):
+        return "shared"
+    if layer.startswith("role:"):
+        parts = layer.split(":")
+        return f"role:{parts[-1]}" if len(parts) >= 3 else "shared"
+    if layer.startswith("personal:"):
+        parts = layer.split(":")
+        return f"personal:{parts[-1]}" if len(parts) >= 3 else ""
+    return ""
 
 
 def file_hash(path: Path) -> str:
@@ -158,6 +227,9 @@ def parse_and_chunk(
     confirmations = 0
     atom_type = "semantic"
     tags_str = ""
+    scope_meta = ""      # V4: "shared" | "role:{r}" | "personal:{u}" | "global"
+    audience_meta = ""   # V4: 逗號分隔 role 列表
+    author_meta = ""     # V4: 寫入者 user
     for line in lines:
         if line.startswith("# ") and not line.startswith("## "):
             title = line[2:].strip()
@@ -178,6 +250,12 @@ def parse_and_chunk(
                     atom_type = val
             elif key == "Tags":
                 tags_str = val
+            elif key == "Scope":
+                scope_meta = val
+            elif key == "Audience":
+                audience_meta = val
+            elif key == "Author":
+                author_meta = val
 
     fhash = file_hash(file_path)
     chunks: List[Dict[str, Any]] = []
@@ -214,6 +292,9 @@ def parse_and_chunk(
                     "confirmations": confirmations,
                     "atom_type": atom_type,
                     "tags": tags_str,
+                    "scope": scope_meta,
+                    "audience": audience_meta,
+                    "author": author_meta,
                 })
             current_bullet_lines = []
 
@@ -477,6 +558,8 @@ def build_index(
             print(f"  {atom_key}: {len(chunks)} chunks")
 
         for ci, chunk in enumerate(chunks):
+            # V4: 舊 atom 缺 Scope → 依所在 layer 推預設（SPEC §10）
+            chunk_scope = chunk.get("scope", "") or _default_scope_from_layer(chunk["layer"])
             records.append({
                 "chunk_id": f"{layer_name}:{atom_name}:chunk_{ci}",
                 "text": chunk["text"],
@@ -492,6 +575,9 @@ def build_index(
                 "confirmations": chunk.get("confirmations", 0),
                 "atom_type": chunk.get("atom_type", "semantic"),
                 "tags": chunk.get("tags", ""),
+                "scope": chunk_scope,
+                "audience": chunk.get("audience", ""),
+                "author": chunk.get("author", "") or "unknown",
             })
             total_chunks += 1
 
@@ -593,18 +679,34 @@ def search_vectors(
     query_vec: List[float],
     top_k: int = 10,
     layer_filter: Optional[str] = None,
+    layer_clause: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Search LanceDB table by vector. Returns list of dicts with _distance."""
+    """Search LanceDB table by vector. Returns list of dicts with _distance.
+
+    `layer_clause`（V4）優先於 `layer_filter`：呼叫者已組好 SQL 字串（例如
+    role filter combo）就直接傳，搜尋端不再二次解析。
+    """
     try:
         db = _get_db()
         table = db.open_table(TABLE_NAME)
         q = table.search(query_vec).limit(top_k).metric("cosine")
-        if layer_filter and layer_filter not in ("all", None):
-            # Sanitize: escape single quotes to prevent query breakage
+
+        if layer_clause:
+            q = q.where(layer_clause)
+        elif layer_filter and layer_filter not in ("all", None):
             safe_filter = layer_filter.replace("'", "''")
             if layer_filter == "global":
                 q = q.where("layer = 'global'")
             elif layer_filter.startswith("project:"):
+                # Legacy V3 label；V4 已淘汰但保留讀相容（index 中若仍有殘餘）
+                q = q.where(f"layer = '{safe_filter}'")
+            elif layer_filter == "shared":
+                q = q.where("layer LIKE 'shared:%'")
+            elif layer_filter == "role":
+                q = q.where("layer LIKE 'role:%'")
+            elif layer_filter == "personal":
+                q = q.where("layer LIKE 'personal:%'")
+            elif layer_filter.startswith("shared:") or layer_filter.startswith("role:") or layer_filter.startswith("personal:"):
                 q = q.where(f"layer = '{safe_filter}'")
         results = q.to_list()
         return results

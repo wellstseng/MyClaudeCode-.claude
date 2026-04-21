@@ -383,12 +383,38 @@ const TOOL_DEFINITIONS = [
     description:
       "Write or update an atom file with validated format. " +
       "Ensures correct metadata structure, runs write-gate dedup, " +
-      "updates MEMORY.md index, and triggers vector indexing.",
+      "updates MEMORY.md index, and triggers vector indexing. " +
+      "V4: supports shared/role/personal scopes; sensitive audience " +
+      "(architecture/decision) on shared auto-routes to _pending_review/.",
     inputSchema: {
       type: "object",
       properties: {
         title: { type: "string", description: "Atom title (becomes # heading and filename slug)" },
-        scope: { type: "string", enum: ["global", "project"], description: "global or project scope" },
+        scope: {
+          type: "string",
+          enum: ["global", "shared", "role", "personal", "project"],
+          description: "V4 scope. shared=project-wide, role=role-shared (requires `role`), personal=per-user (requires `user` or defaults to current). global=cross-project. project (legacy)=transparently mapped to shared. Defaults to shared.",
+        },
+        role: {
+          type: "string",
+          description: "Role subdir name (e.g. art, programmer, planner). Required when scope=role.",
+        },
+        user: {
+          type: "string",
+          description: "Personal subdir owner. Required when scope=personal; falls back to current OS user.",
+        },
+        audience: {
+          type: "array", items: { type: "string" },
+          description: "Audience tags (multi-role). On scope=shared, presence of 'architecture' or 'decision' auto-routes atom to _pending_review/ with Pending-review-by: management.",
+        },
+        pending_review_by: {
+          type: "string",
+          description: "Optional Pending-review-by metadata (e.g. 'management'). Auto-set for sensitive audience on shared.",
+        },
+        merge_strategy: {
+          type: "string", enum: ["ai-assist", "git-only"],
+          description: "Optional Merge-strategy metadata. Default ai-assist (omitted from file).",
+        },
         confidence: { type: "string", enum: ["[固]", "[觀]", "[臨]"], description: "Confidence level" },
         triggers: {
           type: "array", items: { type: "string" },
@@ -412,14 +438,18 @@ const TOOL_DEFINITIONS = [
         },
         project_cwd: {
           type: "string",
-          description: "Project root path (required when scope=project)",
+          description: "Project root path (required for scope=shared/role/personal)",
         },
         skip_gate: {
           type: "boolean",
           description: "Skip write-gate quality check (for [固] or explicit user request)",
         },
+        skip_conflict_check: {
+          type: "boolean",
+          description: "Skip V4 Phase 5 write-time conflict detection (shared scope only). Use only for controlled migrations / tests.",
+        },
       },
-      required: ["title", "scope", "confidence", "triggers", "knowledge", "mode"],
+      required: ["title", "confidence", "triggers", "knowledge", "mode"],
     },
   },
   {
@@ -427,7 +457,9 @@ const TOOL_DEFINITIONS = [
     description:
       "Promote an atom's confidence level. " +
       "Checks promotion thresholds: [臨]≥20 confirmations→[觀], [觀]≥40→[固]. " +
-      "Use execute=false for dry-run.",
+      "Use execute=false for dry-run. " +
+      "When promoting to [固], pass merge_to_preferences=true to append knowledge " +
+      "into preferences.md and archive the source atom (global scope only).",
     inputSchema: {
       type: "object",
       properties: {
@@ -435,6 +467,10 @@ const TOOL_DEFINITIONS = [
         scope: { type: "string", enum: ["global", "project"], description: "Scope to search in" },
         project_cwd: { type: "string", description: "Project root (required for project scope)" },
         execute: { type: "boolean", description: "true=execute promotion, false=dry-run check only" },
+        merge_to_preferences: {
+          type: "boolean",
+          description: "On [觀]→[固] promotion, auto-merge knowledge into preferences.md and archive this atom. global scope only. Default false.",
+        },
       },
       required: ["atom_name", "scope", "execute"],
     },
@@ -603,14 +639,44 @@ function slugify(title) {
     || "untitled";
 }
 
-/** Build atom file content from structured parameters */
-function buildAtomContent({ title, scope, confidence, triggers, knowledge, actions, related }) {
+/** Build atom file content from structured parameters.
+ *  V4: scopeLabel may be plain "shared"/"global" or composite "role:art"/"personal:alice".
+ *  Optional metadata (audience/author/pending_review_by/merge_strategy/created_at)
+ *  written only when present, in SPEC §4 order. */
+function buildAtomContent({
+  title,
+  scope,
+  confidence,
+  triggers,
+  knowledge,
+  actions,
+  related,
+  audience,
+  author,
+  pendingReviewBy,
+  mergeStrategy,
+  createdAt,
+}) {
+  const today = new Date().toISOString().slice(0, 10);
   const lines = [`# ${title}`, ""];
   lines.push(`- Scope: ${scope}`);
+  if (audience && audience.length > 0) {
+    lines.push(`- Audience: ${audience.join(", ")}`);
+  }
+  if (author) {
+    lines.push(`- Author: ${author}`);
+  }
   lines.push(`- Confidence: ${confidence}`);
   lines.push(`- Trigger: ${triggers.join(", ")}`);
-  lines.push(`- Last-used: ${new Date().toISOString().slice(0, 10)}`);
+  lines.push(`- Last-used: ${today}`);
   lines.push("- Confirmations: 0");
+  if (pendingReviewBy) {
+    lines.push(`- Pending-review-by: ${pendingReviewBy}`);
+  }
+  if (mergeStrategy && mergeStrategy !== "ai-assist") {
+    lines.push(`- Merge-strategy: ${mergeStrategy}`);
+  }
+  lines.push(`- Created-at: ${createdAt || today}`);
   if (related && related.length > 0) {
     lines.push(`- Related: ${related.join(", ")}`);
   }
@@ -651,25 +717,188 @@ function validateAtomContent(content) {
   return null;
 }
 
-/** Resolve the memory directory for a given scope */
-function resolveMemDir(scope, projectCwd) {
+// V4: project root marker walk (mirrors hooks/wg_paths.find_project_root)
+function findProjectRoot(cwd) {
+  if (!cwd) return null;
+  let p = path.resolve(cwd);
+  for (let i = 0; i < 4; i++) {
+    if (fs.existsSync(path.join(p, ".claude", "memory", "MEMORY.md"))) return p;
+    if (fs.existsSync(path.join(p, "_AIDocs"))) return p;
+    if (fs.existsSync(path.join(p, ".git")) || fs.existsSync(path.join(p, ".svn"))) return p;
+    const parent = path.dirname(p);
+    if (parent === p) break;
+    p = parent;
+  }
+  return null;
+}
+
+// Mirrors wg_roles.get_current_user (env override + os user).
+function getCurrentUser() {
+  if (process.env.CLAUDE_USER) return process.env.CLAUDE_USER;
+  try { return require("os").userInfo().username; } catch { return "unknown"; }
+}
+
+// SPEC 7.4 first-version sensitive audience set.
+const SENSITIVE_AUDIENCE = new Set(["architecture", "decision"]);
+function isSensitiveAudience(audience) {
+  if (!Array.isArray(audience)) return false;
+  return audience.some(a => SENSITIVE_AUDIENCE.has(String(a).trim().toLowerCase()));
+}
+
+/** Resolve the memory directory for a given scope.
+ *  V4: shared / role / personal land in project subdirs;
+ *  legacy "project" maps to "shared"; "global" unchanged.
+ *  Returns { dir, error } — caller checks error.
+ */
+function resolveMemDir(scope, projectCwd, opts = {}) {
+  scope = scope || "shared";
+
+  if (scope === "global") {
+    fs.mkdirSync(MEMORY_DIR, { recursive: true });
+    return { dir: MEMORY_DIR, base: MEMORY_DIR };
+  }
+
+  // Legacy: scope=project returns root memory dir (no V4 subdir).
+  // atom_write should pre-map project→shared via callers; here we keep legacy
+  // root-dir behavior for atom_promote / readers that still pass "project".
   if (scope === "project" && projectCwd) {
     const projMem = path.join(projectCwd, ".claude", "memory");
-    if (fs.existsSync(projMem)) return projMem;
-    // Also check Claude projects dir
+    if (fs.existsSync(projMem)) return { dir: projMem, base: projMem };
     const norm = projectCwd.replace(/\\/g, "/").replace(/\/+$/, "");
     const slug = norm.replace(/[^a-zA-Z0-9]/g, "-").replace(/-+/g, "-");
     const projDir = path.join(CLAUDE_DIR, "projects", slug, "memory");
-    if (fs.existsSync(projDir)) return projDir;
-    return projMem; // default: create under project root
+    if (fs.existsSync(projDir)) return { dir: projDir, base: projDir };
+    return { dir: projMem, base: projMem };
   }
-  return MEMORY_DIR;
+
+  if (scope === "role" && !opts.role) {
+    return { error: "scope=role requires 'role' parameter (e.g., 'art', 'programmer')" };
+  }
+  if (scope !== "shared" && scope !== "role" && scope !== "personal") {
+    return { error: `Unknown scope: ${scope}` };
+  }
+
+  const root = findProjectRoot(projectCwd || "");
+  if (!root) {
+    return { error: `No project root found for scope=${scope} (need .git/.svn/_AIDocs/.claude/memory/MEMORY.md marker under ${projectCwd || "(no cwd)"})` };
+  }
+  // ~/.claude itself is global memory; reject V4 sub-scopes there
+  try {
+    if (path.resolve(root) === path.resolve(CLAUDE_DIR)) {
+      return { error: `cwd is ~/.claude itself; use scope=global for cross-project knowledge` };
+    }
+  } catch {}
+
+  const base = path.join(root, ".claude", "memory");
+  let dir;
+  if (scope === "shared") dir = path.join(base, "shared");
+  else if (scope === "role") dir = path.join(base, "roles", opts.role);
+  else dir = path.join(base, "personal", opts.user);
+
+  fs.mkdirSync(dir, { recursive: true });
+  return { dir, base };
 }
 
-/** Find MEMORY.md path for a given scope */
+/** Find atom index path for a given scope (V3.2: prefer _ATOM_INDEX.md) */
 function resolveMemoryIndex(memDir) {
-  const indexPath = path.join(memDir, "MEMORY.md");
-  return indexPath;
+  const atomIdx = path.join(memDir, "_ATOM_INDEX.md");
+  if (fs.existsSync(atomIdx)) return atomIdx;
+  return path.join(memDir, "MEMORY.md");  // fallback
+}
+
+/** V4 Phase 5: Run conflict-detector --mode=write-check.
+ *  Returns Promise<{verdict, matches, detector_model, skipped, skip_reason, scope}>.
+ *  Fail-open: on script error resolves to verdict=ok+skipped=true (do not block writes
+ *  when detector infra is down). Longer timeout than write-gate (LLM is slower). */
+function execConflictDetector(content, scope, projectCwd) {
+  return new Promise((resolve) => {
+    const scriptPath = path.join(TOOLS_DIR, "memory-conflict-detector.py");
+    if (!fs.existsSync(scriptPath)) {
+      return resolve({ verdict: "ok", matches: [], detector_model: "n/a",
+                       skipped: true, skip_reason: "detector script missing", scope });
+    }
+    const args = ["--mode=write-check",
+                  "--scope", scope,
+                  "--content", content];
+    if (projectCwd) {
+      args.push("--project-cwd", projectCwd);
+    }
+    const cp = require("child_process").spawn("python", [scriptPath, ...args], {
+      windowsHide: true,
+    });
+    let out = "", err = "";
+    const timer = setTimeout(() => {
+      try { cp.kill(); } catch {}
+    }, 60000);  // 60s — vector + 3 LLM calls
+    cp.stdout.on("data", d => { out += d.toString(); });
+    cp.stderr.on("data", d => { err += d.toString(); });
+    cp.on("close", () => {
+      clearTimeout(timer);
+      try {
+        const parsed = JSON.parse(out.trim().split("\n").pop());
+        resolve(parsed);
+      } catch (e) {
+        try { process.stderr.write(`[conflict-detector] parse error: ${e.message} stderr=${err.slice(0, 200)}\n`); } catch {}
+        resolve({ verdict: "ok", matches: [], detector_model: "n/a",
+                  skipped: true, skip_reason: "detector parse/exec error", scope });
+      }
+    });
+    cp.on("error", (e) => {
+      clearTimeout(timer);
+      try { process.stderr.write(`[conflict-detector] spawn error: ${e.message}\n`); } catch {}
+      resolve({ verdict: "ok", matches: [], detector_model: "n/a",
+                skipped: true, skip_reason: "detector spawn error", scope });
+    });
+  });
+}
+
+/** V4 Phase 5: TSV append to {baseDir}/_merge_history.log. SPEC §10.
+ *  baseDir is {proj}/.claude/memory/ (so log sits alongside shared/ roles/ personal/). */
+function appendMergeHistory(baseDir, action, atom, scope, by, detail) {
+  try {
+    const safe = s => String(s || "-").replace(/[\t\n\r]/g, " ").trim() || "-";
+    const line = [new Date().toISOString(), action, atom, scope, by, detail]
+      .map(safe).join("\t") + "\n";
+    fs.appendFileSync(path.join(baseDir, "_merge_history.log"), line, "utf-8");
+  } catch (e) {
+    try { process.stderr.write(`[merge_history] ${e.message}\n`); } catch {}
+  }
+}
+
+/** V4 Phase 5: render CONTRADICT report (non-atom) for _pending_review/{slug}.conflict.md. */
+function buildConflictReport({ slug, incomingTitle, incomingContent, matches, detectorModel, author }) {
+  const lines = [
+    `# Write-time conflict: ${incomingTitle || slug}`,
+    "",
+    `- Detected-at: ${new Date().toISOString()}`,
+    `- Incoming-author: ${author || "-"}`,
+    `- Detector: ${detectorModel || "n/a"}`,
+    `- Pending-review-by: management`,
+    "",
+    "## Incoming knowledge",
+    "",
+    "```",
+    (incomingContent || "").slice(0, 4000),
+    "```",
+    "",
+    "## Conflicting existing atoms",
+    "",
+  ];
+  for (const m of matches || []) {
+    lines.push(`- **${m.atom_name}** (layer=\`${m.layer}\`, similarity=${(m.similarity || 0).toFixed(3)}, class=${m.classification})`);
+    if (m.fact_preview) lines.push(`  preview: ${m.fact_preview.replace(/\n/g, " ")}`);
+  }
+  lines.push(
+    "",
+    "## Resolution",
+    "",
+    "管理職 `/conflict-review`：",
+    "1. 編輯既有 atom 或 incoming — 以消解事實衝突",
+    "2. 若 incoming 有獨立價值 → approve（搬草稿到 `shared/`）",
+    "3. 若 incoming 錯誤 → reject（僅刪本報告，既有 atom 不動）",
+    "",
+  );
+  return lines.join("\n");
 }
 
 /** Run write-gate Python script for dedup check. Returns Promise<{action, reason}> */
@@ -795,17 +1024,56 @@ function parseAtomMeta(content) {
 // ─── Atom Write Handler ────────────────────────────────────────────────────
 
 async function toolAtomWrite(id, args) {
-  const { title, scope, confidence, triggers, knowledge, actions, related, mode, project_cwd, skip_gate } = args;
+  let {
+    title, scope, confidence, triggers, knowledge, actions, related, mode,
+    project_cwd, skip_gate, skip_conflict_check,
+    role, user, audience, pending_review_by, merge_strategy,
+  } = args;
 
-  // Validate required fields
-  if (!title || !scope || !confidence || !triggers || !knowledge || !mode) {
-    return sendToolResult(id, "Missing required parameters (title, scope, confidence, triggers, knowledge, mode)", true);
+  // Validate core required fields (scope now optional, defaults to shared)
+  if (!title || !confidence || !triggers || !knowledge || !mode) {
+    return sendToolResult(id, "Missing required parameters (title, confidence, triggers, knowledge, mode)", true);
   }
 
-  const memDir = resolveMemDir(scope, project_cwd);
+  // V4: default scope, transparent legacy mapping
+  if (!scope) scope = "shared";
+  if (scope === "project") {
+    try { process.stderr.write(`[atom_write] scope=project is deprecated; mapped to shared\n`); } catch {}
+    scope = "shared";
+  }
+
+  // V4 personal default user
+  if (scope === "personal" && !user) user = getCurrentUser();
+
+  // Resolve target memory dir (write target + base for index)
+  const resolved = resolveMemDir(scope, project_cwd, { role, user });
+  if (resolved.error) {
+    return sendToolResult(id, `atom_write: ${resolved.error}`, true);
+  }
+  let memDir = resolved.dir;
+  const baseDir = resolved.base;
+
+  // SPEC 7.4: sensitive audience on shared → auto-pending
+  let pendingReviewBy = pending_review_by || null;
+  if (scope === "shared" && isSensitiveAudience(audience)) {
+    memDir = path.join(baseDir, "shared", "_pending_review");
+    fs.mkdirSync(memDir, { recursive: true });
+    if (!pendingReviewBy) pendingReviewBy = "management";
+  }
+
+  // V4 metadata: scope label (composite for role/personal)
+  let scopeLabel = scope;
+  if (scope === "role") scopeLabel = `role:${role}`;
+  else if (scope === "personal") scopeLabel = `personal:${user}`;
+
   const slug = slugify(title);
-  const filePath = path.join(memDir, slug + ".md");
-  const relPath = "memory/" + slug + ".md";
+  // V4 Phase 5: filePath/relPath may be recomputed after conflict-detector reroute
+  let filePath = path.join(memDir, slug + ".md");
+  let relFromBase = path.relative(baseDir, filePath).replace(/\\/g, "/");
+  let relPath = "memory/" + relFromBase;
+
+  const author = getCurrentUser();
+  const today = new Date().toISOString().slice(0, 10);
 
   // ── Mode: create ──
   if (mode === "create") {
@@ -813,8 +1081,17 @@ async function toolAtomWrite(id, args) {
       return sendToolResult(id, `Atom already exists: ${slug}.md — use mode=append or mode=replace`, true);
     }
 
-    // Write-gate check (unless skipped)
-    if (!skip_gate && confidence !== "[固]") {
+    // 原子記憶語意契約：新 atom 必須 [臨]
+    if (confidence !== "[臨]") {
+      return sendToolResult(id,
+        `New atom must start at [臨] (confidence=${confidence} rejected).\n` +
+        `Reason: [觀]/[固] reflect cross-session stability; first-write cannot assert that.\n` +
+        `Knowledge items inside should also use [臨] prefix.\n` +
+        `Promotion: trigger hits auto-accumulate Confirmations → ≥20 auto-promote to [觀] → ≥40 user-approve [固]`,
+        true);
+    }
+
+    if (!skip_gate) {
       const gateResult = await execWriteGate(knowledge.join("\n"), confidence);
       if (gateResult.action === "skip") {
         return sendToolResult(id, `Write-gate rejected: ${gateResult.reason}`, true);
@@ -826,29 +1103,64 @@ async function toolAtomWrite(id, args) {
       }
     }
 
-    const content = buildAtomContent({ title, scope, confidence, triggers, knowledge, actions, related });
+    // ─── V4 Phase 5: write-time conflict detection (SPEC §7.1) ───
+    // Only shared scope. skip_conflict_check honored for migrations/tests.
+    if (scope === "shared" && !skip_conflict_check) {
+      const cr = await execConflictDetector(knowledge.join("\n"), "shared", project_cwd);
+      if (cr.verdict === "contradict") {
+        const pendingDir = path.join(baseDir, "shared", "_pending_review");
+        fs.mkdirSync(pendingDir, { recursive: true });
+        const reportPath = path.join(pendingDir, slug + ".conflict.md");
+        const report = buildConflictReport({
+          slug, incomingTitle: title, incomingContent: knowledge.join("\n"),
+          matches: cr.matches, detectorModel: cr.detector_model, author,
+        });
+        fs.writeFileSync(reportPath + ".tmp", report, "utf-8");
+        fs.renameSync(reportPath + ".tmp", reportPath);
+        appendMergeHistory(baseDir, "pending-create", slug, scopeLabel, author,
+          `contradict vs ${(cr.matches[0] || {}).atom_name || "?"} sim=${((cr.matches[0] || {}).similarity || 0).toFixed(3)}`);
+        return sendToolResult(id,
+          `BLOCKED by conflict detector — CONTRADICT vs "${(cr.matches[0] || {}).atom_name || "?"}".\n` +
+          `Report written: ${reportPath}\n` +
+          `Atom NOT written to shared/. Awaiting management review (/conflict-review).`,
+          false  // not isError — pending is normal flow
+        );
+      }
+      if (cr.verdict === "extend_overlap") {
+        // Reroute to _pending_review/ as atom draft (still full atom format)
+        memDir = path.join(baseDir, "shared", "_pending_review");
+        fs.mkdirSync(memDir, { recursive: true });
+        if (!pendingReviewBy) pendingReviewBy = "management";
+        filePath = path.join(memDir, slug + ".md");
+        relFromBase = path.relative(baseDir, filePath).replace(/\\/g, "/");
+        relPath = "memory/" + relFromBase;
+        appendMergeHistory(baseDir, "pending-create", slug, scopeLabel, author,
+          `extend_overlap vs ${(cr.matches[0] || {}).atom_name || "?"} sim=${((cr.matches[0] || {}).similarity || 0).toFixed(3)}`);
+      }
+    }
+
+    const content = buildAtomContent({
+      title, scope: scopeLabel, confidence, triggers, knowledge, actions, related,
+      audience, author, pendingReviewBy, mergeStrategy: merge_strategy, createdAt: today,
+    });
     const err = validateAtomContent(content);
     if (err) {
       return sendToolResult(id, `Validation failed: ${err}`, true);
     }
 
-    // Ensure directory exists
     fs.mkdirSync(memDir, { recursive: true });
-
-    // Write atom file (atomic)
     const tmp = filePath + ".tmp";
     fs.writeFileSync(tmp, content, "utf-8");
     fs.renameSync(tmp, filePath);
 
-    // Update MEMORY.md index
-    appendToIndex(memDir, slug, relPath, triggers);
-
-    // Trigger vector reindex
+    appendToIndex(baseDir, slug, relPath, triggers);
     triggerVectorReindex();
 
     return sendToolResult(id,
-      `Created atom: ${slug}.md (${confidence})\n` +
+      `Created atom: ${slug}.md (${confidence}, scope=${scopeLabel})\n` +
       `Path: ${filePath}\n` +
+      `Author: ${author}\n` +
+      (pendingReviewBy ? `Pending-review-by: ${pendingReviewBy} (sensitive audience auto-routed)\n` : "") +
       `Triggers: ${triggers.join(", ")}\n` +
       `MEMORY.md index updated.`
     );
@@ -861,10 +1173,8 @@ async function toolAtomWrite(id, args) {
     }
 
     let existing = fs.readFileSync(filePath, "utf-8");
-    // Strip UTF-8 BOM if present
     if (existing.charCodeAt(0) === 0xFEFF) existing = existing.slice(1);
 
-    // Insert new knowledge lines before ## 行動
     const actionIdx = existing.indexOf("## 行動");
     if (actionIdx < 0) {
       return sendToolResult(id, `Atom ${slug}.md has no ## 行動 section — cannot append`, true);
@@ -875,10 +1185,10 @@ async function toolAtomWrite(id, args) {
     const after = existing.slice(actionIdx);
     const updated = before + "\n" + newLines + "\n\n" + after;
 
-    // Update Last-used
+    // Append only updates Last-used; Author/Created-at preserved (initial writer's identity)
     const finalContent = updated.replace(
       /^- Last-used:\s*.+$/m,
-      `- Last-used: ${new Date().toISOString().slice(0, 10)}`
+      `- Last-used: ${today}`
     );
 
     const err = validateAtomContent(finalContent);
@@ -900,20 +1210,29 @@ async function toolAtomWrite(id, args) {
 
   // ── Mode: replace ──
   if (mode === "replace") {
-    const content = buildAtomContent({ title, scope, confidence, triggers, knowledge, actions, related });
-    const err = validateAtomContent(content);
-    if (err) {
-      return sendToolResult(id, `Validation failed: ${err}`, true);
-    }
-
-    // Preserve Confirmations from existing file
+    // Preserve Confirmations + initial Author/Created-at if file exists
     let confirmations = 0;
+    let prevAuthor = author;
+    let prevCreatedAt = today;
     if (fs.existsSync(filePath)) {
       try {
         const old = fs.readFileSync(filePath, "utf-8");
         const meta = parseAtomMeta(old);
         confirmations = meta.confirmations || 0;
+        const am = old.match(/^- Author:\s*(.+)$/m);
+        if (am) prevAuthor = am[1].trim();
+        const cm = old.match(/^- Created-at:\s*(.+)$/m);
+        if (cm) prevCreatedAt = cm[1].trim();
       } catch {}
+    }
+
+    const content = buildAtomContent({
+      title, scope: scopeLabel, confidence, triggers, knowledge, actions, related,
+      audience, author: prevAuthor, pendingReviewBy, mergeStrategy: merge_strategy, createdAt: prevCreatedAt,
+    });
+    const err = validateAtomContent(content);
+    if (err) {
+      return sendToolResult(id, `Validation failed: ${err}`, true);
     }
 
     const finalContent = content.replace(
@@ -926,11 +1245,11 @@ async function toolAtomWrite(id, args) {
     fs.writeFileSync(tmp, finalContent, "utf-8");
     fs.renameSync(tmp, filePath);
 
-    appendToIndex(memDir, slug, relPath, triggers);
+    appendToIndex(baseDir, slug, relPath, triggers);
     triggerVectorReindex();
 
     return sendToolResult(id,
-      `Replaced atom: ${slug}.md (${confidence}, preserved confirmations=${confirmations})\n` +
+      `Replaced atom: ${slug}.md (${confidence}, preserved confirmations=${confirmations}, author=${prevAuthor})\n` +
       `MEMORY.md index updated.`
     );
   }
@@ -941,9 +1260,13 @@ async function toolAtomWrite(id, args) {
 // ─── Atom Promote Handler ──────────────────────────────────────────────────
 
 function toolAtomPromote(id, args) {
-  const { atom_name, scope, project_cwd, execute } = args;
+  const { atom_name, scope, project_cwd, execute, role, user, merge_to_preferences } = args;
 
-  const memDir = resolveMemDir(scope, project_cwd);
+  const resolved = resolveMemDir(scope, project_cwd, { role, user });
+  if (resolved.error) {
+    return sendToolResult(id, `atom_promote: ${resolved.error}`, true);
+  }
+  const memDir = resolved.dir;
   const filePath = path.join(memDir, atom_name + ".md");
 
   if (!fs.existsSync(filePath)) {
@@ -1011,11 +1334,85 @@ function toolAtomPromote(id, args) {
 
   triggerVectorReindex();
 
+  // Promotion audit log
+  try {
+    const auditPath = path.join(MEMORY_DIR, "_promotion_audit.jsonl");
+    const entry = {
+      ts: new Date().toISOString().slice(0, 19),
+      action: "manual_promote",
+      atom: atom_name,
+      from: meta.confidence,
+      to: next,
+      confirmations,
+      scope,
+    };
+    fs.appendFileSync(auditPath, JSON.stringify(entry) + "\n");
+  } catch {}
+
+  // ─── 方案 c: [觀]→[固] 合併流程 ────────────────────────────────
+  // 方案 a（自動提示）：只要晉升為 [固]，一律在回覆裡附上「是否合進 preferences.md」提示，
+  // 讓 Claude 引導使用者裁決。
+  // 方案 b（自動執行）：當 merge_to_preferences=true，立即把 knowledge 追加到 preferences.md、
+  // 歸檔本 atom 到 _archived/，再請 Claude 後續手動移除 _ATOM_INDEX.md 的該行。
+  const promotedToStable = next === "[固]";
+  let mergeReport = "";
+  if (promotedToStable && merge_to_preferences) {
+    if (scope !== "global") {
+      mergeReport = "\n\n[merge_to_preferences] 已略過：僅支援 global scope。";
+    } else {
+      try {
+        const knowledgeLines = extractKnowledgeLines(finalContent);
+        const prefPath = path.join(MEMORY_DIR, "preferences.md");
+        const archiveDir = path.join(MEMORY_DIR, "_archived");
+        if (!fs.existsSync(archiveDir)) fs.mkdirSync(archiveDir, { recursive: true });
+        const today = new Date().toISOString().slice(0, 10);
+        const archivePath = path.join(archiveDir, `${today}-${atom_name}.md`);
+
+        let prefText = fs.existsSync(prefPath) ? fs.readFileSync(prefPath, "utf-8") : "";
+        if (prefText.charCodeAt(0) === 0xFEFF) prefText = prefText.slice(1);
+        const mergeSection =
+          `\n\n### 歸檔合併 · ${atom_name} (${today})\n` +
+          `> 自 [觀]→[固] 晉升時合併自 \`${path.basename(filePath)}\`\n\n` +
+          knowledgeLines.map(l => `- ${l}`).join("\n") + "\n";
+        fs.writeFileSync(prefPath, prefText.trimEnd() + mergeSection, "utf-8");
+
+        fs.renameSync(filePath, archivePath);
+
+        mergeReport =
+          `\n\n[merge_to_preferences] 已執行：\n` +
+          `  - Appended ${knowledgeLines.length} 行到 preferences.md\n` +
+          `  - Archived → ${path.relative(MEMORY_DIR, archivePath)}\n` +
+          `  - ⚠ 請手動移除 _ATOM_INDEX.md 中 ${atom_name} 的索引列。`;
+      } catch (e) {
+        mergeReport = `\n\n[merge_to_preferences] 失敗：${e.message}`;
+      }
+    }
+  }
+
+  const mergeHint = (promotedToStable && !merge_to_preferences)
+    ? `\n\n💡 建議：${atom_name} 已達 [固]，若此知識本質為「個人偏好/操作規範」，` +
+      `可用 merge_to_preferences=true 重新呼叫，將 knowledge 併入 preferences.md 並歸檔此 atom。`
+    : "";
+
   return sendToolResult(id,
     `Promoted ${atom_name}: ${meta.confidence} → ${next}\n` +
     `Confirmations: ${confirmations}\n` +
-    `Knowledge lines updated to ${next}.`
+    `Knowledge lines updated to ${next}.` +
+    mergeReport +
+    mergeHint
   );
+}
+
+function extractKnowledgeLines(content) {
+  // 從 atom 檔抓「## 知識」到下個 `## ` 或 EOF 之間，保留以 `- ` 開頭的行（去掉 `- ` 前綴）
+  const m = content.match(/^##\s*知識\s*$([\s\S]*?)(?=^##\s|\Z)/m);
+  if (!m) return [];
+  return m[1]
+    .split("\n")
+    .map(l => l.trim())
+    .filter(l => l.startsWith("- "))
+    .map(l => l.slice(2).trim())
+    .filter(Boolean);
 }
 
 function sendToolResult(id, text, isError = false) {
@@ -1389,22 +1786,26 @@ function apiProjects(req, res) {
 
 function apiAtoms(req, res) {
   const atoms = [];
+  const seenAtomFiles = new Set();
   const scanDirs = [
-    { dir: MEMORY_DIR, layer: "global" },
-    { dir: path.join(MEMORY_DIR, "failures"), layer: "failures" },
-    { dir: path.join(MEMORY_DIR, "unity"), layer: "unity" },
+    { dir: MEMORY_DIR, layer: "global", scope: "global" },
+    { dir: path.join(MEMORY_DIR, "failures"), layer: "failures", scope: "global" },
+    { dir: path.join(MEMORY_DIR, "unity"), layer: "unity", scope: "global" },
   ];
 
-  for (const { dir, layer } of scanDirs) {
+  for (const { dir, layer, scope } of scanDirs) {
     if (!fs.existsSync(dir)) continue;
     for (const f of fs.readdirSync(dir)) {
       if (!f.endsWith(".md")) continue;
       if (f === "MEMORY.md" || f.startsWith("SPEC_") || f.startsWith("_")) continue;
 
       const filePath = path.join(dir, f);
+      const fileKey = path.resolve(filePath).toLowerCase();
+      if (seenAtomFiles.has(fileKey)) continue;
+      seenAtomFiles.add(fileKey);
       try {
         const content = fs.readFileSync(filePath, "utf-8");
-        const atom = { name: f.replace(".md", ""), layer, file: f };
+        const atom = { name: f.replace(".md", ""), layer, scope, file: f };
 
         // Parse metadata
         const metaRe = /^-\s+([\w-]+):\s*(.+)$/gm;
@@ -1420,6 +1821,9 @@ function apiAtoms(req, res) {
             case "created": atom.created = val; break;
             case "type": atom.type = val; break;
             case "tags": atom.tags = val.split(",").map(t => t.trim()); break;
+            case "scope": atom.scope = val; break;
+            case "audience": atom.audience = val.split(",").map(t => t.trim()); break;
+            case "author": atom.author = val; break;
           }
         }
 
@@ -1450,38 +1854,89 @@ function apiAtoms(req, res) {
     }
   }
 
-  // Helper: scan a project memory dir and push atoms
-  function scanProjMemDir(projMemDir, layerLabel) {
-    if (!fs.existsSync(projMemDir)) return;
-    for (const f of fs.readdirSync(projMemDir)) {
+  // Helper: scan a single .md as an atom (used by project + V4 shared/role scans)
+  function pushAtomFromFile(filePath, fileName, layerLabel, defaultScope) {
+    const fileKey = path.resolve(filePath).toLowerCase();
+    if (seenAtomFiles.has(fileKey)) return;
+    seenAtomFiles.add(fileKey);
+    try {
+      const content = fs.readFileSync(filePath, "utf-8");
+      if (content.includes("Status: migrated-v2.21")) return;
+      const atom = {
+        name: fileName.replace(".md", ""),
+        layer: layerLabel,
+        scope: defaultScope,
+        file: fileName,
+        content,
+      };
+      const metaRe = /^-\s+([\w-]+):\s*(.+)$/gm;
+      let m2;
+      while ((m2 = metaRe.exec(content)) !== null) {
+        const key = m2[1].toLowerCase(), val = m2[2].trim();
+        switch (key) {
+          case "confidence": atom.confidence = val; break;
+          case "last-used": atom.last_used = val; break;
+          case "confirmations": atom.confirmations = parseInt(val) || 0; break;
+          case "related": atom.related = val.split(",").map(t => t.trim()); break;
+          case "trigger": atom.triggers = val.split(",").map(t => t.trim()); break;
+          case "scope": atom.scope = val; break;
+          case "audience": atom.audience = val.split(",").map(t => t.trim()); break;
+          case "author": atom.author = val; break;
+        }
+      }
+      atom.line_count = content.split("\n").length;
+      atoms.push(atom);
+    } catch {}
+  }
+
+  // Helper: scan a flat memory dir, skip excluded dirs, optionally exclude personal/episodic/_*
+  function scanFlatDir(dir, layerLabel, defaultScope) {
+    if (!fs.existsSync(dir)) return;
+    for (const f of fs.readdirSync(dir)) {
       if (!f.endsWith(".md")) continue;
       if (f === "MEMORY.md" || f.startsWith("_")) continue;
+      pushAtomFromFile(path.join(dir, f), f, layerLabel, defaultScope);
+    }
+  }
+
+  // Helper: V4 shared/ + roles/{r}/ scan for any memory root
+  function scanV4ScopeDirs(memRoot, layerPrefix, scopePrefix) {
+    const sharedDir = path.join(memRoot, "shared");
+    if (fs.existsSync(sharedDir)) {
+      scanFlatDir(sharedDir, layerPrefix + "shared", scopePrefix + "shared");
+    }
+    const rolesDir = path.join(memRoot, "roles");
+    if (fs.existsSync(rolesDir)) {
       try {
-        const content = fs.readFileSync(path.join(projMemDir, f), "utf-8");
-        // Skip pointer-type MEMORY.md redirects
-        if (content.includes("Status: migrated-v2.21")) continue;
-        const atom = { name: f.replace(".md", ""), layer: layerLabel, file: f, content };
-        const metaRe = /^-\s+([\w-]+):\s*(.+)$/gm;
-        let m2;
-        while ((m2 = metaRe.exec(content)) !== null) {
-          const key = m2[1].toLowerCase(), val = m2[2].trim();
-          switch (key) {
-            case "confidence": atom.confidence = val; break;
-            case "last-used": atom.last_used = val; break;
-            case "confirmations": atom.confirmations = parseInt(val) || 0; break;
-            case "related": atom.related = val.split(",").map(t => t.trim()); break;
-          }
+        for (const role of fs.readdirSync(rolesDir)) {
+          const roleDir = path.join(rolesDir, role);
+          try {
+            if (!fs.statSync(roleDir).isDirectory()) continue;
+          } catch { continue; }
+          scanFlatDir(roleDir, layerPrefix + "role:" + role, scopePrefix + "role:" + role);
         }
-        atom.line_count = content.split("\n").length;
-        atoms.push(atom);
       } catch {}
     }
   }
 
+  // Helper: scan a project memory dir (legacy flat layout) and push atoms
+  function scanProjMemDir(projMemDir, slug) {
+    const before = atoms.length;
+    scanFlatDir(projMemDir, "project:" + slug, "project:" + slug);
+    // 若 atom frontmatter 寫 `Scope: project`（V4 SPEC 允許值），把 slug 補回去，避免畫面只看到 "project"
+    for (let i = before; i < atoms.length; i++) {
+      if (atoms[i].scope === "project") atoms[i].scope = "project:" + slug;
+    }
+    scanV4ScopeDirs(projMemDir, "project:" + slug + ":", "project:" + slug + ":");
+  }
+
+  // V4: global shared/ + roles/{r}/ scan (本專案目前無此目錄，預留給未來)
+  scanV4ScopeDirs(MEMORY_DIR, "", "");
+
   // V2.21: scan registry project dirs (new path)
   const seenProjDirs = new Set();
   for (const { slug, memDir } of getRegistryMemDirs()) {
-    scanProjMemDir(memDir, "project:" + slug);
+    scanProjMemDir(memDir, slug);
     seenProjDirs.add(memDir);
   }
 
@@ -1491,12 +1946,168 @@ function apiAtoms(req, res) {
     for (const proj of fs.readdirSync(projectsDir)) {
       const projMemDir = path.join(projectsDir, proj, "memory");
       if (seenProjDirs.has(projMemDir)) continue;
-      scanProjMemDir(projMemDir, "project:" + proj);
+      scanProjMemDir(projMemDir, proj);
     }
   }
 
   atoms.sort((a, b) => (b.last_used || "").localeCompare(a.last_used || ""));
   jsonRes(res, 200, atoms);
+}
+
+// ─── Skills (commands/*.md) ──────────────────────────────────────────────────
+// 純檔案掃描；提供「全域 + 各 registered project」的 slash command 清單。
+const SKILL_CATEGORY_MAP = {
+  // V4 / V4.1 共用核心
+  "memory-peek": "V4.1", "memory-undo": "V4.1", "memory-session-score": "V4.1",
+  "generate-episodic": "V4.1",
+  // 記憶維運
+  "extract": "記憶維運", "memory-health": "記憶維運", "memory-review": "記憶維運",
+  "conflict": "記憶維運", "conflict-review": "記憶維運", "atom-debug": "記憶維運",
+  "fix-escalation": "記憶維運",
+  // 開發協作
+  "handoff": "開發協作", "continue": "開發協作", "resume": "開發協作",
+  "init-project": "開發協作", "init-roles": "開發協作", "read-project": "開發協作",
+  "upgrade": "開發協作", "consciousness-stream": "開發協作",
+  // 工具
+  "harvest": "工具", "browse-sprites": "工具", "unity-yaml": "工具",
+  "svn-update": "工具", "vector": "工具",
+};
+
+function extractSkillDescription(content) {
+  const lines = content.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    // 跳過 H1 與空行；找第一個 `> ...` 引言行（這是現行 commands/*.md 的描述慣例）
+    if (line.startsWith("> ")) return line.slice(2).trim();
+  }
+  // fallback：第一個非 H1 / 非空 / 非分隔線的段落
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line || line.startsWith("#") || line.startsWith("---")) continue;
+    return line.slice(0, 200);
+  }
+  return "";
+}
+
+function scanCommandsDir(dir, source) {
+  const skills = [];
+  if (!fs.existsSync(dir)) return skills;
+  for (const f of fs.readdirSync(dir)) {
+    if (!f.endsWith(".md")) continue;
+    const filePath = path.join(dir, f);
+    try {
+      const stat = fs.statSync(filePath);
+      if (!stat.isFile()) continue;
+      const content = fs.readFileSync(filePath, "utf-8");
+      const name = f.replace(".md", "");
+      skills.push({
+        name,
+        command: "/" + name,
+        description: extractSkillDescription(content),
+        category: SKILL_CATEGORY_MAP[name] || "其他",
+        source,
+        file: filePath,
+        content,
+      });
+    } catch {}
+  }
+  return skills;
+}
+
+function apiSkills(req, res) {
+  const skills = [];
+  const seenFiles = new Set();
+  function pushUnique(list) {
+    for (const s of list) {
+      const key = path.resolve(s.file).toLowerCase();
+      if (seenFiles.has(key)) continue;
+      seenFiles.add(key);
+      skills.push(s);
+    }
+  }
+  // 全域（優先，避免被 registered project 重複撈走）
+  pushUnique(scanCommandsDir(path.join(CLAUDE_DIR, "commands"), "global"));
+  // 各 registered project
+  const reg = loadRegistry();
+  for (const [slug, info] of Object.entries(reg.projects || {})) {
+    if (!info.root) continue;
+    const rootNorm = path.resolve(info.root);
+    const projCmdDir = path.join(rootNorm, ".claude", "commands");
+    // 若 project root 的 .claude/commands 與 CLAUDE_DIR/commands 是同一目錄（例：root=user home），跳過
+    const projCmdNorm = path.resolve(projCmdDir).toLowerCase();
+    const globalCmdNorm = path.resolve(path.join(CLAUDE_DIR, "commands")).toLowerCase();
+    if (projCmdNorm === globalCmdNorm) continue;
+    pushUnique(scanCommandsDir(projCmdDir, "project:" + slug));
+  }
+  // 排序：分類 → 名稱
+  skills.sort((a, b) =>
+    a.category.localeCompare(b.category, "zh-Hant") ||
+    a.name.localeCompare(b.name)
+  );
+  jsonRes(res, 200, skills);
+}
+
+// ─── MCP Servers ─────────────────────────────────────────────────────────────
+// 來源：~/.claude/.mcp.json + 各 registered project .mcp.json + settings.json
+function readMcpJson(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+  } catch { return null; }
+}
+
+function apiMcpServers(req, res) {
+  const servers = [];
+
+  // 全域 .mcp.json
+  const globalMcp = readMcpJson(path.join(CLAUDE_DIR, ".mcp.json"));
+  if (globalMcp && globalMcp.mcpServers) {
+    for (const [name, cfg] of Object.entries(globalMcp.mcpServers)) {
+      servers.push(buildMcpEntry(name, cfg, "global", path.join(CLAUDE_DIR, ".mcp.json")));
+    }
+  }
+
+  // settings.json 的 enabled 狀態
+  const settings = readMcpJson(path.join(CLAUDE_DIR, "settings.json")) || {};
+  const enabledList = settings.enabledMcpjsonServers || [];
+  const enableAll = settings.enableAllProjectMcpServers === true;
+
+  // 各 registered project .mcp.json
+  const reg = loadRegistry();
+  for (const [slug, info] of Object.entries(reg.projects || {})) {
+    if (!info.root) continue;
+    const rootNorm = path.resolve(info.root);
+    const isClaudeDir = rootNorm.toLowerCase() === path.resolve(CLAUDE_DIR).toLowerCase();
+    if (isClaudeDir) continue;
+    const projMcpPath = path.join(rootNorm, ".mcp.json");
+    const projMcp = readMcpJson(projMcpPath);
+    if (!projMcp || !projMcp.mcpServers) continue;
+    for (const [name, cfg] of Object.entries(projMcp.mcpServers)) {
+      const entry = buildMcpEntry(name, cfg, "project:" + slug, projMcpPath);
+      // 專案 MCP 的啟用判斷：enableAllProjectMcpServers 或 enabledMcpjsonServers 含名稱
+      entry.enabled = enableAll || enabledList.includes(name);
+      servers.push(entry);
+    }
+  }
+
+  servers.sort((a, b) =>
+    a.source.localeCompare(b.source) || a.name.localeCompare(b.name)
+  );
+  jsonRes(res, 200, servers);
+}
+
+function buildMcpEntry(name, cfg, source, filePath) {
+  return {
+    name,
+    type: cfg.type || "stdio",
+    command: cfg.command || "",
+    args: Array.isArray(cfg.args) ? cfg.args : [],
+    url: cfg.url || "",
+    env_keys: cfg.env ? Object.keys(cfg.env) : [],
+    source,
+    config_file: filePath,
+    enabled: true, // 全域預設啟用；專案的會在 caller 覆寫
+  };
 }
 
 // ─── HTTP Dashboard ─────────────────────────────────────────────────────────
@@ -1678,6 +2289,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   <button class="tab-btn" data-tab="projects">已知專案</button>
   <button class="tab-btn" data-tab="tests">測試</button>
   <button class="tab-btn" data-tab="vector">向量服務</button>
+  <button class="tab-btn" data-tab="env">環境</button>
 </nav>
 
 <div id="panelSessions" class="tab-panel active">
@@ -1711,6 +2323,10 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
 <div id="panelVector" class="tab-panel">
   <div id="vectorContent"><div class="empty">載入向量服務狀態中...</div></div>
+</div>
+
+<div id="panelEnv" class="tab-panel">
+  <div id="envContent"><div class="empty">載入環境資訊中...</div></div>
 </div>
 
 <script>
@@ -1749,6 +2365,7 @@ async function refreshCurrentTab() {
     case "projects": await renderProjects(); break;
     case "tests": break;
     case "vector": await renderVector(); break;
+    case "env": await renderEnv(); break;
   }
   window.scrollTo(0, prevScroll);
 }
@@ -2344,11 +2961,25 @@ function renderAtomsTable(atoms) {
   if (confCounts["[臨]"]) html += '<div class="stat"><div class="stat-value" style="color:#f0883e">' + confCounts["[臨]"] + '</div><div class="stat-label">[臨] 臨時</div></div>';
   html += '</div>';
 
-  html += '<input id="atomFilter" class="atom-filter" type="text" placeholder="搜尋原子名稱、觸發詞..." oninput="filterAtoms(this.value)">';
+  // 收集所有 scope 給下拉選單
+  const scopeSet = new Set();
+  for (const a of atoms) { if (a.scope) scopeSet.add(a.scope); }
+  const scopes = [...scopeSet].sort();
+
+  html += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">';
+  html += '<input id="atomFilter" class="atom-filter" type="text" placeholder="搜尋原子名稱、觸發詞..." oninput="applyAtomFilters()" style="margin-bottom:0">';
+  html += '<select id="atomScopeFilter" class="atom-filter" style="width:auto;margin-bottom:0" onchange="applyAtomFilters()">';
+  html += '<option value="">所有 scope</option>';
+  for (const s of scopes) {
+    html += '<option value="' + esc(s) + '">' + esc(s) + '</option>';
+  }
+  html += '</select>';
+  html += '</div>';
 
   html += '<table class="atom-table" id="atomTable">';
   html += '<thead><tr>' +
     '<th onclick="sortAtoms(\\'name\\')">名稱 &#8597;</th>' +
+    '<th onclick="sortAtoms(\\'scope\\')">Scope &#8597;</th>' +
     '<th onclick="sortAtoms(\\'layer\\')">層級 &#8597;</th>' +
     '<th onclick="sortAtoms(\\'confidence\\')">信心 &#8597;</th>' +
     '<th onclick="sortAtoms(\\'confirmations\\')">確認數 &#8597;</th>' +
@@ -2367,8 +2998,11 @@ function buildAtomRows(atoms) {
   for (const a of atoms) {
     const confClass = a.confidence === "[固]" ? "conf-fixed" : a.confidence === "[觀]" ? "conf-observe" : "conf-temp";
     const daysAgo = a.days_since_used != null ? a.days_since_used + ' 天前' : '-';
+    const audienceTitle = (a.audience||[]).join(", ");
+    const authorBadge = a.author ? ' <span style="color:#8b949e;font-size:0.78em">@' + esc(a.author) + '</span>' : '';
     html += '<tr data-name="' + esc(a.name) + '">' +
-      '<td><span class="atom-name" onclick="toggleAtomDetail(\\'' + esc(a.name) + '\\')">' + esc(a.name) + '</span></td>' +
+      '<td><span class="atom-name" onclick="toggleAtomDetail(\\'' + esc(a.name) + '\\')">' + esc(a.name) + '</span>' + authorBadge + '</td>' +
+      '<td><span class="atom-layer" title="audience: ' + esc(audienceTitle||"-") + '">' + esc(a.scope||"-") + '</span></td>' +
       '<td><span class="atom-layer">' + esc(a.layer) + '</span></td>' +
       '<td><span class="atom-conf ' + confClass + '">' + esc(a.confidence||"-") + '</span></td>' +
       '<td>' + (a.confirmations||0) + '</td>' +
@@ -2377,7 +3011,7 @@ function buildAtomRows(atoms) {
       '<td>' + (a.line_count||'-') + '</td>' +
     '</tr>';
     const detailVis = expandedAtoms.has(a.name) ? '' : 'none';
-    html += '<tr id="detail-' + esc(a.name) + '" style="display:' + detailVis + '"><td colspan="7"><div class="atom-detail">' + esc(a.content||"") + '</div></td></tr>';
+    html += '<tr id="detail-' + esc(a.name) + '" style="display:' + detailVis + '"><td colspan="8"><div class="atom-detail">' + esc(a.content||"") + '</div></td></tr>';
   }
   return html;
 }
@@ -2416,15 +3050,120 @@ function sortAtoms(key) {
 }
 
 function filterAtoms(query) {
-  const q = query.toLowerCase();
+  // 為了向後相容（既有呼叫點用 filterAtoms(saved)），轉呼叫 applyAtomFilters
+  const fi = document.getElementById("atomFilter");
+  if (fi && typeof query === "string") fi.value = query;
+  applyAtomFilters();
+}
+
+function applyAtomFilters() {
+  const fi = document.getElementById("atomFilter");
+  const sf = document.getElementById("atomScopeFilter");
+  const q = (fi ? fi.value : "").toLowerCase();
+  const scope = sf ? sf.value : "";
   const filtered = atomsData.filter(a => {
+    if (scope && (a.scope||"") !== scope) return false;
+    if (!q) return true;
     if (a.name.toLowerCase().includes(q)) return true;
     if ((a.triggers||[]).some(t => t.toLowerCase().includes(q))) return true;
     if ((a.related||[]).some(r => r.toLowerCase().includes(q))) return true;
     if ((a.layer||"").toLowerCase().includes(q)) return true;
+    if ((a.scope||"").toLowerCase().includes(q)) return true;
+    if ((a.author||"").toLowerCase().includes(q)) return true;
     return false;
   });
   applySortToBody(filtered);
+}
+
+// ─── Env Tab (Skills + MCP Servers) ───
+
+async function renderEnv() {
+  const el = document.getElementById("envContent");
+  try {
+    const [skills, mcps] = await Promise.all([
+      fetch("/api/skills").then(r => r.json()),
+      fetch("/api/mcp-servers").then(r => r.json()),
+    ]);
+    el.innerHTML = renderSkillsSection(skills) + renderMcpSection(mcps);
+  } catch (e) {
+    el.innerHTML = '<div class="empty">載入環境資訊失敗：' + esc(e.message) + '</div>';
+  }
+}
+
+function renderSkillsSection(skills) {
+  let html = '<div class="section-title">Slash Commands / Skills（' + skills.length + '）</div>';
+  if (!skills.length) return html + '<div class="empty">無 commands。</div>';
+
+  // 依分類分組
+  const byCat = {};
+  for (const s of skills) {
+    const cat = s.category || "其他";
+    if (!byCat[cat]) byCat[cat] = [];
+    byCat[cat].push(s);
+  }
+  const cats = Object.keys(byCat).sort();
+
+  for (const cat of cats) {
+    html += '<details open style="margin-bottom:12px"><summary style="color:#58a6ff;cursor:pointer;padding:6px 0">' + esc(cat) + ' （' + byCat[cat].length + '）</summary>';
+    html += '<table class="atom-table">';
+    html += '<thead><tr><th>指令</th><th>說明</th><th>來源</th></tr></thead><tbody>';
+    for (const s of byCat[cat]) {
+      const sourceLabel = s.source === "global" ?
+        '<span class="atom-layer">global</span>' :
+        '<span class="atom-layer" style="background:#1f6feb33;color:#58a6ff">' + esc(s.source) + '</span>';
+      html += '<tr>' +
+        '<td><span class="atom-name" onclick="toggleSkillDetail(\\'' + esc(s.name) + '\\')">' + esc(s.command) + '</span></td>' +
+        '<td style="color:#c9d1d9">' + esc(s.description||"-") + '</td>' +
+        '<td>' + sourceLabel + '</td>' +
+      '</tr>';
+      html += '<tr id="skill-detail-' + esc(s.name) + '" style="display:none"><td colspan="3"><div class="atom-detail">' + esc(s.content||"") + '</div></td></tr>';
+    }
+    html += '</tbody></table></details>';
+  }
+  return html;
+}
+
+function toggleSkillDetail(name) {
+  const row = document.getElementById("skill-detail-" + name);
+  if (!row) return;
+  row.style.display = row.style.display === "none" ? "" : "none";
+}
+
+function renderMcpSection(mcps) {
+  let html = '<div class="section-title" style="margin-top:24px">MCP Servers（' + mcps.length + '）</div>';
+  if (!mcps.length) return html + '<div class="empty">無 MCP servers。</div>';
+
+  // 依來源分組
+  const bySource = {};
+  for (const m of mcps) {
+    if (!bySource[m.source]) bySource[m.source] = [];
+    bySource[m.source].push(m);
+  }
+  const sources = Object.keys(bySource).sort();
+
+  for (const src of sources) {
+    html += '<details open style="margin-bottom:12px"><summary style="color:#58a6ff;cursor:pointer;padding:6px 0">' + esc(src) + ' （' + bySource[src].length + '）</summary>';
+    html += '<table class="atom-table">';
+    html += '<thead><tr><th>名稱</th><th>類型</th><th>狀態</th><th>command / url</th><th>env keys</th></tr></thead><tbody>';
+    for (const m of bySource[src]) {
+      const statusBadge = m.enabled ?
+        '<span class="status-dot status-online"></span>啟用' :
+        '<span class="status-dot status-disabled"></span>停用';
+      const cmdDisplay = m.url ? esc(m.url) :
+        (esc(m.command || "-") + (m.args.length ? ' ' + esc(m.args.slice(-1)[0]) : ''));
+      html += '<tr>' +
+        '<td><strong style="color:#e6edf3">' + esc(m.name) + '</strong></td>' +
+        '<td><span class="atom-layer">' + esc(m.type) + '</span></td>' +
+        '<td>' + statusBadge + '</td>' +
+        '<td style="font-family:monospace;font-size:0.78em;color:#8b949e;word-break:break-all">' + cmdDisplay + '</td>' +
+        '<td style="font-size:0.78em;color:#8b949e">' + (m.env_keys.length ? esc(m.env_keys.join(", ")) : '-') + '</td>' +
+      '</tr>';
+    }
+    html += '</tbody></table>';
+    html += '<div style="font-size:0.75em;color:#484f58;margin-top:4px">config: ' + esc(bySource[src][0].config_file) + '</div>';
+    html += '</details>';
+  }
+  return html;
 }
 
 // ─── Auto Refresh ───
@@ -2565,6 +3304,12 @@ const httpServer = http.createServer((req, res) => {
   }
   if (pathname === "/api/projects" && req.method === "GET") {
     return apiProjects(req, res);
+  }
+  if (pathname === "/api/skills" && req.method === "GET") {
+    return apiSkills(req, res);
+  }
+  if (pathname === "/api/mcp-servers" && req.method === "GET") {
+    return apiMcpServers(req, res);
   }
 
   // ── V3: Hot Cache status ──

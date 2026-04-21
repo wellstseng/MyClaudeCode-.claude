@@ -59,6 +59,17 @@ DEFAULTS = {
         "max_session_start_entries": 15,
         "max_prompt_matches": 3,
     },
+    # v3.3: DocDrift detection
+    "docdrift": {
+        "enabled": True,
+        "path_mappings": {},
+        "exclude_patterns": [
+            "_aidocs/", "memory/", "_staging/", ".git/",
+            "node_modules/", "__pycache__/", ".claude/workflow/",
+        ],
+        "keyword_match_threshold": 2,
+        "max_pending_display": 5,
+    },
     # v2.2 Sprint 2: Proactive classification
     "proactive": {
         "pattern_threshold": 2,
@@ -274,6 +285,18 @@ def _ensure_state(
             target = read_state(merged_into)
             if target:
                 return target
+            # Self-heal: merge target 已被 cleanup 或從未建立 → 當前 session 升為活躍，
+            # 避免寫入落到 phase=merged 的死水 state（會導致 V4.1 pending_user_extract
+            # 等後續 hook 寫入被 worker 忽略）
+            state.pop("merged_into", None)
+            state["phase"] = "working"
+            write_state(session_id, state)
+            _atom_debug_log(
+                "MergeSelfHeal",
+                f"{session_id[:12]}… merged_into={merged_into[:12]}… target missing "
+                f"→ self-heal to active",
+                config,
+            )
         return state
 
     cwd = input_data.get("cwd", "")
@@ -319,6 +342,29 @@ def output_nothing() -> None:
 def output_block(reason: str) -> None:
     """Output a block decision (for Stop hook)."""
     output_json({"decision": "block", "reason": reason})
+
+
+# ─── Promotion Audit Log ─────────────────────────────────────────────────────
+
+def log_promotion_audit(action: str, atom: str, **fields: Any) -> None:
+    """Append one JSONL entry to memory/_promotion_audit.jsonl.
+
+    action ∈ {"hint", "auto_observe", "manual_promote"}
+      - hint: UserPromptSubmit 晉升提示注入
+      - auto_observe: wg_iteration [臨]→[觀] 自動晉升（內部條目或 header）
+      - manual_promote: atom_promote MCP 執行
+    fields 依 action 帶不同欄位（from/to/confirmations/session_id 等）。
+    失敗不 raise — audit 不該影響主流程。
+    """
+    try:
+        entry = {"ts": datetime.now().isoformat(timespec="seconds"),
+                 "action": action, "atom": atom}
+        entry.update(fields)
+        audit_path = MEMORY_DIR / "_promotion_audit.jsonl"
+        with open(audit_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
 
 # ─── Atom Debug Log ──────────────────────────────────────────────────────────

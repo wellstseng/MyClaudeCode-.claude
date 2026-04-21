@@ -33,6 +33,10 @@ from wg_paths import (
     cwd_to_project_slug, get_project_memory_dir, find_project_root,
     resolve_episodic_dir, resolve_failures_dir, resolve_staging_dir,
     resolve_access_json, discover_all_project_memory_dirs, register_project,
+    discover_v4_sublayers, discover_memory_layers,
+)
+from wg_roles import (
+    get_current_user, load_user_role, is_management, bootstrap_personal_dir,
 )
 # ─── wg_core: config, state I/O, output, debug ──────────────────────────────
 from wg_core import (
@@ -43,6 +47,7 @@ from wg_core import (
     _find_active_sibling_state,  # V3/1.5A: SessionStart dedup
     output_json, output_nothing, output_block,
     _atom_debug_log, _atom_debug_error,
+    log_promotion_audit,
 )
 from wg_iteration import (
     _collect_iteration_metrics, _detect_oscillation,
@@ -72,6 +77,7 @@ from wg_extraction import (
     _is_pid_alive, _find_transcript, _count_new_assistant_chars,
     _spawn_extract_worker, _maybe_spawn_per_turn_extraction,
     _detect_failure_keywords, _maybe_spawn_failure_extraction,
+    _is_lease_valid, _set_lease,
 )
 from wg_episodic import (
     _should_generate_episodic, _extract_area,
@@ -83,6 +89,11 @@ from wg_episodic import (
     _build_read_tracking_section, _build_cross_session_section, _build_conflict_section,
     _resolve_episodic_dir, _generate_episodic_atom,
     _check_output_quality,
+)
+from wg_evasion import (
+    is_test_command, detect_test_failure,
+    claims_completion, detect_evasion, is_dismiss_prompt,
+    get_last_assistant_text,
 )
 
 sys.path.insert(0, str(Path.home() / ".claude" / "tools"))
@@ -102,9 +113,16 @@ except ImportError:
 
 # ─── V3: Hot Cache (lazy import, graceful fallback) ─────────────────────────
 try:
-    from wg_hot_cache import read_hot_cache, mark_injected, HOT_CACHE_PATH
+    from wg_hot_cache import read_hot_cache, mark_injected, HOT_CACHE_PATH, format_injection_line
 except ImportError:
     read_hot_cache = None
+
+# ─── V3.3: DocDrift detection (lazy import, graceful fallback) ────────────
+try:
+    from wg_docdrift import check_source_drift, resolve_doc_update, build_drift_advisory
+    DOCDRIFT_AVAILABLE = True
+except ImportError:
+    DOCDRIFT_AVAILABLE = False
 
 
 # (State I/O moved to wg_core.py)
@@ -142,6 +160,177 @@ def _call_project_hook(project_root: Path, action: str, context: Dict[str, Any])
     except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError, Exception) as e:
         _atom_debug_error(f"project_hook:{action}", e)
     return None
+
+
+# ─── V4 Role-aware Helpers ───────────────────────────────────────────────────
+
+_V4_TRIGGER_LINE_RE = re.compile(r"^-\s+Trigger:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+
+_MEMORY_MD_AUTO_HEADER = "<!-- AUTO-GENERATED: V4 role filter -->"
+
+
+def _collect_v4_role_atoms(
+    project_mem_dir: Optional[Path], user: str, roles: List[str],
+) -> List[Tuple[str, str, List[str]]]:
+    """列出使用者可見的 V4 sub-layer atoms（供 state["atom_index"]["project"] 合併）。
+
+    回傳 list[(atom_name, rel_path_from_project_root, triggers[])]。
+    rel_path 格式：`.claude/memory/{shared|roles/{r}|personal/{u}}/atom.md`
+    （UPS 注入端 base_dir = project_root 時可直接拼出檔案路徑）
+
+    SPEC §8.1：只收 shared + roles/{我的 role} + personal/{我}；
+    不 include _pending_review（給管理職的另一個管道）。
+    """
+    if not project_mem_dir or not project_mem_dir.is_dir():
+        return []
+
+    out: List[Tuple[str, str, List[str]]] = []
+    mem_dir_name = project_mem_dir.name  # "memory"
+
+    scan_targets: List[Path] = []
+    shared = project_mem_dir / "shared"
+    if shared.is_dir():
+        scan_targets.append(shared)
+    roles_root = project_mem_dir / "roles"
+    for r in roles:
+        rd = roles_root / r
+        if rd.is_dir():
+            scan_targets.append(rd)
+    personal_dir = project_mem_dir / "personal" / user
+    if personal_dir.is_dir():
+        scan_targets.append(personal_dir)
+
+    for base in scan_targets:
+        for md in sorted(base.glob("**/*.md")):
+            rel_parts = md.relative_to(base).parts
+            # skip _-prefixed subdirs (含 _pending_review)
+            if any(p.startswith("_") for p in rel_parts[:-1]):
+                continue
+            if md.name in (MEMORY_INDEX, "_ATOM_INDEX.md"):
+                continue
+            if md.name.startswith("_") or md.name.startswith("SPEC_"):
+                continue
+            try:
+                text = md.read_text(encoding="utf-8-sig")
+            except (OSError, UnicodeDecodeError):
+                continue
+            tm = _V4_TRIGGER_LINE_RE.search(text)
+            triggers: List[str] = []
+            if tm:
+                triggers = [t.strip().lower() for t in tm.group(1).split(",") if t.strip()]
+            # UPS injection 用 base_dir = {proj_root}/.claude，所以 rel_path = memory/...
+            layer_rel = md.relative_to(project_mem_dir)
+            rel_path = f"{mem_dir_name}/{layer_rel.as_posix()}"
+            out.append((md.stem, rel_path, triggers))
+    return out
+
+
+def _regenerate_role_filtered_memory_index(
+    project_mem_dir: Path, user: str, roles: List[str], management: bool,
+    v4_entries: List[Tuple[str, str, List[str]]],
+) -> None:
+    """V4：依角色動態寫 {proj}/.claude/memory/MEMORY.md（SPEC §3）。
+
+    保護規則：檔案存在且首行不是 AUTO-GENERATED header → **跳過**
+    （避免覆寫人手維護的 V3 MEMORY.md）。
+    """
+    target = project_mem_dir / MEMORY_INDEX
+    if target.exists():
+        try:
+            first = target.read_text(encoding="utf-8-sig").split("\n", 1)[0].strip()
+        except (OSError, UnicodeDecodeError):
+            first = ""
+        if first != _MEMORY_MD_AUTO_HEADER:
+            return
+
+    lines = [
+        _MEMORY_MD_AUTO_HEADER,
+        f"# MEMORY Index — {user} ({', '.join(roles) or 'programmer'})",
+        "",
+        f"> 由 workflow-guardian SessionStart 生成。依角色 filter。",
+        f"> User: {user} | Roles: {', '.join(roles) or 'programmer'} | Management: {management}",
+        "",
+        "| Atom | Path | Trigger | Scope |",
+        "|------|------|---------|-------|",
+    ]
+    for name, rel, triggers in sorted(v4_entries, key=lambda e: e[0]):
+        # rel 如 "memory/shared/foo.md"
+        parts = Path(rel).parts
+        scope = ""
+        try:
+            # parts: ('memory','shared'|'roles','{r}'|...,'file.md')
+            subscope = parts[1]
+            if subscope == "shared":
+                scope = "shared"
+            elif subscope == "roles" and len(parts) >= 4:
+                scope = f"role:{parts[2]}"
+            elif subscope == "personal" and len(parts) >= 4:
+                scope = f"personal:{parts[2]}"
+        except IndexError:
+            pass
+        trig_str = ", ".join(triggers) if triggers else ""
+        lines.append(f"| {name} | {rel} | {trig_str} | {scope} |")
+    try:
+        target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError as e:
+        _atom_debug_error("V4:regenerate_memory_md", e)
+
+
+def _count_pending_review(project_mem_dir: Optional[Path]) -> int:
+    """Management 模式用：列 shared/_pending_review/*.md 數量。"""
+    if not project_mem_dir:
+        return 0
+    pr = project_mem_dir / "shared" / "_pending_review"
+    if not pr.is_dir():
+        return 0
+    try:
+        return sum(1 for p in pr.glob("*.md"))
+    except OSError:
+        return 0
+
+
+def _count_recent_auto_atoms(user: str, cwd: str, hours: int = 24) -> int:
+    """[F18] Count auto-extracted-v4.1 atoms created within last N hours."""
+    from datetime import timedelta as _td
+    import re as _re
+    count = 0
+    cutoff = datetime.now() - _td(hours=hours)
+    cutoff_str = cutoff.strftime("%Y-%m-%d")
+
+    dirs_to_scan: List[Path] = []
+    project_root = find_project_root(cwd)
+    if project_root:
+        d = Path(project_root) / ".claude" / "memory" / "personal" / "auto" / user
+        if d.is_dir():
+            dirs_to_scan.append(d)
+    d = CLAUDE_DIR / "memory" / "personal" / "auto" / user
+    if d.is_dir() and d not in dirs_to_scan:
+        dirs_to_scan.append(d)
+
+    for auto_dir in dirs_to_scan:
+        for md_file in auto_dir.glob("*.md"):
+            if md_file.name.startswith("_"):
+                continue
+            try:
+                text = md_file.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            if "auto-extracted-v4.1" not in text:
+                continue
+            # Check Created date in metadata
+            m = _re.search(r'^-\s*Created:\s*(\S+)', text, _re.MULTILINE)
+            if m:
+                if m.group(1) >= cutoff_str:
+                    count += 1
+            else:
+                # Fallback: file mtime
+                try:
+                    mtime = md_file.stat().st_mtime
+                    if mtime >= cutoff.timestamp():
+                        count += 1
+                except OSError:
+                    pass
+    return count
 
 
 # ─── Event Handlers ──────────────────────────────────────────────────────────
@@ -213,14 +402,60 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         # V2.21: Register project in registry (update last_seen)
         register_project(cwd)
 
+        # ── V4: user / role / management bootstrap ───────────────────────
+        v4_user = ""
+        v4_roles: List[str] = []
+        v4_mgmt = False
+        v4_entries: List[Tuple[str, str, List[str]]] = []
+        try:
+            v4_user = get_current_user()
+            bootstrap_personal_dir(cwd, v4_user)  # 冪等
+            role_info = load_user_role(cwd, v4_user)
+            v4_roles = role_info.get("roles") or ["programmer"]
+            v4_mgmt = is_management(cwd, v4_user)
+            if project_mem_dir:
+                v4_entries = _collect_v4_role_atoms(project_mem_dir, v4_user, v4_roles)
+        except Exception as e:
+            _atom_debug_error("V4:role_bootstrap", e)
+
+        state["user_identity"] = {
+            "user": v4_user,
+            "roles": v4_roles,
+            "management": v4_mgmt,
+        }
+
+        # V4 layout 偵測（決定要不要用 V3 MEMORY.md fallback）
+        v4_layout_active = bool(project_mem_dir) and any(
+            (project_mem_dir / d).is_dir() for d in ("shared", "roles", "personal")
+        )
+
+        if v4_layout_active:
+            # MEMORY.md 由 SessionStart 自動生成，避免循環污染：直接用 v4_entries
+            project_atoms_merged = list(v4_entries)
+        else:
+            # V3 路徑：保留 MEMORY.md/_ATOM_INDEX.md 解出的清單
+            project_atoms_merged = list(project_atoms)
+            existing_names = {n for n, _p, _t in project_atoms_merged}
+            for name, rel_path, triggers in v4_entries:
+                if name in existing_names:
+                    continue
+                project_atoms_merged.append((name, rel_path, triggers))
+                existing_names.add(name)
+
         state["atom_index"] = {
             "global": [(n, p, t) for n, p, t in global_atoms],
-            "project": [(n, p, t) for n, p, t in project_atoms],
+            "project": [(n, p, t) for n, p, t in project_atoms_merged],
             "project_memory_dir": str(project_mem_dir) if project_mem_dir else "",
             "project_root": str(project_root) if project_root else "",
         }
         state["injected_atoms"] = []
         state["phase"] = "working"
+
+        # V4 layout → 動態重生 MEMORY.md（只在 auto-gen 標頭檔上寫）
+        if v4_layout_active and v4_user:
+            _regenerate_role_filtered_memory_index(
+                project_mem_dir, v4_user, v4_roles, v4_mgmt, v4_entries,
+            )
 
         # ── v2.10: _AIDocs Bridge — scan project _AIDocs index ──────────
         aidocs_entries = parse_aidocs_index(project_root) if project_root else []
@@ -232,17 +467,40 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         }
 
         g_names = [n for n, _, _ in global_atoms]
-        p_names = [n for n, _, _ in project_atoms]
+        p_names = [n for n, _, _ in project_atoms_merged]
         lines = [
             "[Workflow Guardian] Active.",
             f"Global: {len(g_names)} atoms. Project: {len(p_names)}.",
         ]
+        # V4: role context
+        if v4_user:
+            lines.append(
+                f"[Role] user={v4_user} roles={','.join(v4_roles) or 'programmer'} mgmt={v4_mgmt}"
+            )
+            if v4_mgmt:
+                pending = _count_pending_review(project_mem_dir)
+                if pending > 0:
+                    lines.append(f"[Pending Review] {pending} 件待裁決（shared/_pending_review/）")
+
+        # ── V4.1: 每日推送 — 列最近 24h 自動萃取 atom 數 [F18] ──────────
+        if v4_user and config.get("userExtraction", {}).get("enabled", False):
+            try:
+                v41_count = _count_recent_auto_atoms(v4_user, cwd, hours=24)
+                if v41_count > 0:
+                    lines.append(
+                        f"[V4.1] 昨日新增 {v41_count} 條自動萃取 atom，/memory-peek 檢視"
+                    )
+            except Exception as e:
+                _atom_debug_error("V4.1:daily_push", e)
 
         # Inject compact _AIDocs index (v2.10, v2.18 trimmed)
         max_entries = config.get("aidocs", {}).get("max_session_start_entries", 15)
         if aidocs_entries:
             fnames = [f for f, _d, _kw in aidocs_entries[:max_entries]]
             lines.append(f"[AIDocs] {len(aidocs_entries)} docs: {', '.join(fnames)}")
+            lines.append("[查閱知識庫] Read _AIDocs/_INDEX.md")
+        elif project_root and not (Path(project_root) / "_AIDocs").is_dir():
+            lines.append("[Guardian] No _AIDocs found. Run /init-project to create.")
 
         # ── V2.21: Project delegate hook — on_session_start ──────────────
         if project_root:
@@ -442,6 +700,62 @@ def handle_user_prompt_submit(
     prompt_lower = clean_prompt.lower()
     lines: List[str] = []
 
+    # ── Evasion Guard: 追蹤近 5 則 user prompt（for escape hatch）─────
+    rup = state.setdefault("recent_user_prompts", [])
+    rup.append(clean_prompt[:500])
+    if len(rup) > 5:
+        state["recent_user_prompts"] = rup[-5:]
+
+    # ── Evasion Guard: 使用者明確放行 → 清 failing_tests ─────────────
+    if state.get("failing_tests") and is_dismiss_prompt(clean_prompt):
+        state["failing_tests"] = []
+
+    # ─── V4.1: User Decision Detector gate ────────────────────────────
+    ue_config = config.get("userExtraction", {})
+    if ue_config.get("enabled", False):
+        try:
+            from wg_user_extract import detect_signal
+            det = detect_signal(clean_prompt)
+            if det.get("signal"):
+                turn_n = state.get("topic_tracker", {}).get("prompt_count", 0)
+                pending = state.setdefault("pending_user_extract", [])
+                pending.append({
+                    "turn_id": f"{session_id}-{turn_n}",
+                    "prompt": clean_prompt,
+                    "score": det["score"],
+                    "matched": det["matched"],
+                    "ts": _now_iso(),
+                })
+                # [F11] GC sliding window cap 10
+                if len(pending) > 10:
+                    state["pending_user_extract"] = pending[-10:]
+        except Exception as e:
+            _atom_debug_error("V4.1:user_extract_gate", e)
+
+    # ─── V4.1 [F5]: Confirmed extractions — explicit prompt + default accept ──
+    confirmed = state.get("confirmed_extractions", [])
+    if confirmed:
+        # Check if user said "否" to veto
+        veto = any(kw in prompt_lower for kw in ("否", "不要記", "別記", "取消記憶"))
+        if veto:
+            # Pop all confirmed, write to _rejected/ + reflection_metrics
+            for ext in confirmed:
+                _atom_debug_log(
+                    "user-extract:rejected",
+                    f"User vetoed: {ext.get('statement', '')[:80]}",
+                    config,
+                )
+            state["confirmed_extractions"] = []
+        else:
+            # Default accept — show what was confirmed
+            for ext in confirmed:
+                stmt = ext.get("statement", "")
+                lines.append(
+                    f"[V4.1] 偵測到決策語句：「{stmt}」— 將記為 atom。回覆「否」可攔截。"
+                )
+            # Clear after showing (user's next turn without veto = accepted)
+            state["confirmed_extractions"] = []
+
     # ─── Dual-Backend: long_die user response ─────────────────────────
     try:
         long_die = check_long_die_status()
@@ -468,11 +782,31 @@ def handle_user_prompt_submit(
         try:
             hot_data = read_hot_cache(session_id)
             if hot_data:
-                lines.append(f"[HotCache:{hot_data.get('source', '?')}] {hot_data.get('summary', '')}")
+                lines.append(format_injection_line(hot_data))
                 hot_cache_tokens = hot_data.get("token_estimate", 50)
                 mark_injected(session_id)
         except Exception:
             pass
+
+    # ─── Atom-Write Guard: confidence gate reminder ─────────────────────
+    # 使用者發話出現「要存起來 / 記住 / 寫成 atom / 存成 [固]」類關鍵字時，
+    # 注入一次性硬規則，避免 Claude 在建議階段就把單次經驗講成 [固]/[觀]。
+    # 規則本身已由 MCP atom_write 硬擋（server.js:1078-1085），此處只是把
+    # 規則提前曝光到 Claude 的 context，降低「建議錯、被 MCP 退回、再重講」
+    # 的來回成本。
+    atom_write_triggers = (
+        "記住", "記下來", "存起來", "存下來", "值得存", "值得記",
+        "寫成 atom", "寫 atom", "存成 atom", "存atom", "存成[固]", "存成 [固]",
+        "存成[觀]", "存成 [觀]", "記為[固]", "記為 [固]",
+    )
+    if any(kw in clean_prompt for kw in atom_write_triggers):
+        lines.append(
+            "[Atom-Write Guard] 偵測到記憶寫入意圖。硬規則："
+            "(1) 新 atom 一律 [臨]，MCP atom_write 會 reject [固]/[觀]；"
+            "(2) 單次成功 ≠ 穩定模式，需 4+ session 命中才建議晉升；"
+            "(3) 晉升走 atom_promote（[臨]≥20→[觀]、[觀]≥40→[固]），不手動改 frontmatter；"
+            "(4) 若是更新既有 atom，用 mode=append 並保留原 confidence。"
+        )
 
     # ─── Phase 0: Session Context Injection (first prompt only) ────────
     budget = compute_token_budget(prompt)
@@ -636,7 +970,18 @@ def handle_user_prompt_submit(
 
     # ── Semantic search (supplement, ranked by intent v2.1) ──────
     kw_matched_names = {e[0][0] for e in matched_with_dir}
-    sem_atoms = _semantic_search(prompt, config, intent=intent)
+    # V4: 帶 user/roles → vector service 端做 SPEC §8.1 role filter
+    _v4_id = state.get("user_identity", {})
+    _v4_user = _v4_id.get("user") or None
+    _v4_roles = _v4_id.get("roles") or None
+    # Management 模式 → 不 filter（讓裁決流程能跨組看到全貌）
+    if _v4_id.get("management"):
+        _v4_user = None
+        _v4_roles = None
+    sem_atoms = _semantic_search(
+        prompt, config, intent=intent,
+        user=_v4_user, roles=_v4_roles,
+    )
     # v2.18: Build section hints map from semantic search results
     section_hints: Dict[str, List[Dict]] = {}
     for sem_entry in sem_atoms:
@@ -821,6 +1166,12 @@ def handle_user_prompt_submit(
                                         f"目前{cur}, 已達{target}門檻，"
                                         f"觸及相關行為時請主動確認是否晉升"
                                     )
+                                    log_promotion_audit(
+                                        "hint", inj_name,
+                                        **{"from": cur, "to": target,
+                                           "confirmations": new_count,
+                                           "session_id": session_id}
+                                    )
                     except (OSError, UnicodeDecodeError):
                         pass
                     break
@@ -845,6 +1196,26 @@ def handle_user_prompt_submit(
             f"(retry={retry_count})。"
             "依據「精確修正升級」規則，必須暫停直接修復，"
             "執行 /fix-escalation 精確修正會議。"
+        )
+
+    # ── Evasion Guard: 上輪退避詞彙命中 → 注入舉證要求（注入後清旗標）──
+    ev = state.get("evasion_flag")
+    if ev:
+        lines.append(
+            f"[Guardian:Evasion] 你上輪用了退避語『{ev.get('phrase', '')}』。\n"
+            f"  context: …{ev.get('context_excerpt', '')[:200]}…\n"
+            "feedback-fix-on-discovery 規則：1-3 行能修就當場修。請說明：\n"
+            "  (a) 實際修補成本（列出要改的檔/行數）\n"
+            "  (b) 若仍選擇不修，為何這不是 feedback atom 所禁的退避說法？"
+        )
+        state["evasion_flag"] = None
+
+    # ── Handoff Protocol ────────────────────────────────────────────
+    if intent == "handoff":
+        lines.append(
+            "[Guardian:Handoff] 偵測到 handoff 意圖。"
+            "下 session 的 Claude 不會看到本次對話脈絡。"
+            "請執行 /handoff 走 6 區塊強制模板，不要徒手寫 prompt。"
         )
 
     # ─── Phase 1.5: Failure-triggered extraction (v2.13) ───────────
@@ -935,40 +1306,113 @@ def handle_user_prompt_submit(
         output_nothing()
 
 
-def handle_pre_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
-    """V2.26: PreToolUse — DocDrift commit gate."""
-    _docdrift_cfg = config.get("docdrift", {})
-    if not _docdrift_cfg.get("gate_commit", True):
-        output_nothing()
-        return
+def _check_memory_atom_format(
+    tool_name: str, tool_input: Dict[str, Any]
+) -> Optional[str]:
+    """Project-layer memory write must follow atom format.
 
-    tool_name = input_data.get("tool_name", "")
-    if tool_name != "Bash":
-        output_nothing()
-        return
-
-    command = input_data.get("tool_input", {}).get("command", "")
-    if not re.search(r"\bgit\s+commit\b", command):
-        output_nothing()
-        return
-
-    session_id = input_data.get("session_id", "")
-    state = _ensure_state(session_id, input_data, config)
-    if not state:
-        output_nothing()
-        return
-
-    pending = state.get("_docdrift_pending", {})
-    if not pending:
-        output_nothing()
-        return
-
-    items = "\n".join(f"  - {src} → _AIDocs/modules/{doc}" for src, doc in pending.items())
-    output_block(
-        f"[Guardian:DocDrift] commit 前有 {len(pending)} 個未解決的 DocDrift：\n"
-        f"{items}\n"
-        f"請先 Read 或更新對應文件，確認不需更新後再 commit。"
+    Returns deny reason string, or None to allow.
+    Only checks Write tool targeting {project}/.claude/memory/*.md outside
+    of _staging/ and _* index files.
+    """
+    if tool_name != "Write":
+        return None
+    file_path = tool_input.get("file_path", "").replace("\\", "/")
+    if "/.claude/memory/" not in file_path or not file_path.endswith(".md"):
+        return None
+    if "/_staging/" in file_path:
+        return None
+    # V4: _pending_review/ 下是 backend 管理的草稿/衝突報告，雖檔名可能非 _ 開頭，
+    # 但人工編輯允許（管理職裁決 resolved 支線）— 整個子目錄豁免。
+    if "/_pending_review/" in file_path:
+        return None
+    fname = file_path.rsplit("/", 1)[-1]
+    if fname.startswith("_") or fname == "MEMORY.md" or fname.startswith("episodic-"):
+        return None
+    # V4: 角色宣告檔（personal/{user}/role.md、roles/{r}/role.md）非 atom，豁免。
+    if fname == "role.md" and ("/personal/" in file_path or "/roles/" in file_path):
+        return None
+    content = tool_input.get("content", "")[:300]
+    required = [
+        "- Scope:", "- Confidence:", "- Trigger:",
+        "- Last-used:", "- Confirmations:",
+    ]
+    hits = sum(1 for r in required if r in content)
+    if hits >= 3:
+        return None
+    return (
+        f"[Guardian:AtomFormat] 偵測到寫入 {file_path}\n"
+        f"但內容不符合原子格式（缺少 Scope/Confidence/Trigger 等 frontmatter，僅 {hits}/5 命中）。\n"
+        "請改用 atom_write MCP（自動產生標準 frontmatter + 索引登記 + 去重檢查）：\n"
+        "  mcp__workflow-guardian__atom_write(scope=\"project\", project_cwd=\"...\", ...)\n"
+        "如為臨時暫存，請寫入 _staging/ 子目錄（自由格式允許）。\n"
+        "如為索引/變更日誌，請以 _ 開頭命名（如 _NOTES.md）。"
     )
+
+
+_CHANGELOG_TABLE_DATA_RE = re.compile(r"^\|\s*\d{4}-\d{2}-\d{2}\s*\|")
+
+
+def _maybe_auto_roll_changelog(file_path: str, config: Dict[str, Any]) -> None:
+    """Detached roll when _CHANGELOG.md rows exceed threshold. Fail-open."""
+    try:
+        normalized = file_path.replace("\\", "/")
+        if not normalized.endswith("/_CHANGELOG.md") and not normalized.endswith("_CHANGELOG.md"):
+            return
+        # Exclude archive file itself
+        if normalized.endswith("_CHANGELOG_ARCHIVE.md"):
+            return
+        cfg = (config or {}).get("changelog_auto_roll", {}) or {}
+        if not cfg.get("enabled", True):
+            return
+        threshold = int(cfg.get("threshold", 8))
+        cl_path = Path(file_path)
+        if not cl_path.exists():
+            return
+        rows = 0
+        for line in cl_path.read_text(encoding="utf-8").splitlines():
+            if _CHANGELOG_TABLE_DATA_RE.match(line):
+                rows += 1
+        if rows <= threshold:
+            return
+        tool_path = Path(__file__).resolve().parent.parent / "tools" / "changelog-roll.py"
+        if not tool_path.exists():
+            return
+        bg_kwargs: dict = {
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+        }
+        if sys.platform == "win32":
+            bg_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        else:
+            bg_kwargs["start_new_session"] = True
+        subprocess.Popen(
+            [sys.executable, str(tool_path),
+             "--changelog", str(cl_path),
+             f"--keep={threshold}", "--quiet"],
+            **bg_kwargs,
+        )
+    except Exception:
+        pass  # fail-open
+
+
+def handle_pre_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
+    tool_name = input_data.get("tool_name", "")
+    tool_input = input_data.get("tool_input", {})
+
+    deny_reason = _check_memory_atom_format(tool_name, tool_input)
+    if deny_reason:
+        output_json({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": deny_reason,
+            }
+        })
+        return
+
+    output_nothing()
 
 
 def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
@@ -989,6 +1433,9 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             "at": _now_iso(),
         })
         state["sync_pending"] = True
+
+        # Auto-roll _CHANGELOG.md when row count > threshold (fail-open, detached)
+        _maybe_auto_roll_changelog(file_path, config)
 
         # V2.11: Track per-file edit counts for over-engineering detection
         edit_counts = state.setdefault("edit_counts", {})
@@ -1018,21 +1465,8 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
 
         write_state(session_id, state)
 
-        # V2.26: DocDrift resolve — clear pending when _AIDocs/modules/*.md is modified
-        normalized = file_path.replace("\\", "/")
-        if "/_AIDocs/modules/" in normalized and normalized.endswith(".md"):
-            _doc_name = normalized.rsplit("/", 1)[-1]
-            _drift_pending = state.get("_docdrift_pending", {})
-            _resolved = [s for s, d in _drift_pending.items() if d == _doc_name]
-            for s in _resolved:
-                del _drift_pending[s]
-            if _resolved:
-                if not _drift_pending:
-                    state.pop("_docdrift_pending", None)
-                write_state(session_id, state)
-                print(f"[v2.26] DocDrift resolved: {_doc_name} ({len(_resolved)} src)", file=sys.stderr)
-
         # Trigger incremental vector index if an atom file was modified
+        normalized = file_path.replace("\\", "/")
         if "/memory/" in normalized and normalized.endswith(".md"):
             _trigger_incremental_index(config)
 
@@ -1090,61 +1524,17 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                 )
                 print(f"[v2.15] AIDocs gate triggered: {fname}", file=sys.stderr)
 
-        # V2.25: _AIDocs Drift Detection — src changed but docs not updated
-        _docdrift_cfg = config.get("docdrift", {})
-        _src_exts = tuple(_docdrift_cfg.get("src_extensions", [".ts", ".tsx", ".js", ".jsx", ".py", ".mjs", ".cjs", ".cs", ".lua", ".php", ".c", ".cpp", ".cc", ".h", ".hpp"]))
-        if _docdrift_cfg.get("enabled", True) and normalized.endswith(_src_exts) and "/src/" in normalized:
-            _drift_warned = state.setdefault("_aidocs_drift_warned", set())
-            # Convert set from JSON (lists) back if needed
-            if isinstance(_drift_warned, list):
-                _drift_warned = set(_drift_warned)
-                state["_aidocs_drift_warned"] = _drift_warned
-
-            if normalized not in _drift_warned:
-                _proj_root_drift = state.get("session", {}).get("cwd", "")
-                if _proj_root_drift:
-                    _aidocs_dir = os.path.join(_proj_root_drift, "_AIDocs", "modules")
-                    if os.path.isdir(_aidocs_dir):
-                        # Derive candidate .md name from src path
-                        _src_rel = normalized.split("/src/", 1)[-1]  # e.g. core/agent-loop.ts
-                        _ts_name = _src_rel.rsplit("/", 1)[-1].replace(".ts", "")  # agent-loop
-
-                        # Directory-level mappings (src/memory/*.ts → memory-engine.md, etc.)
-                        _dir_map = {
-                            "memory": "memory-engine",
-                            "providers": "providers",
-                            "tools": "tool-registry",
-                            "skills": "skills",
-                            "hooks": "hooks",
-                            "accounts": "accounts",
-                            "safety": "safety",
-                            "workflow": "workflow",
-                            "mcp": "mcp-client",
-                            "vector": "vector-service",
-                        }
-                        _src_dir = _src_rel.split("/")[0] if "/" in _src_rel else ""
-                        _candidate_md = _dir_map.get(_src_dir, _ts_name) + ".md"
-                        _md_path = os.path.join(_aidocs_dir, _candidate_md)
-
-                        if os.path.isfile(_md_path):
-                            # Check if this .md was already modified in this session
-                            _mod_paths = {m["path"] for m in state.get("modified_files", [])}
-                            if _md_path not in _mod_paths and _candidate_md not in {
-                                p.rsplit("/", 1)[-1] for p in _mod_paths
-                            }:
-                                state["_aidocs_drift_advisory"] = (
-                                    f"`{_src_rel}` 已修改，"
-                                    f"`_AIDocs/modules/{_candidate_md}` 可能需要同步更新。"
-                                )
-                                # V2.26: DocDrift commit gate — track pending drift
-                                _drift_pending = state.setdefault("_docdrift_pending", {})
-                                _drift_pending[_src_rel] = _candidate_md
-                                print(
-                                    f"[v2.26] DocDrift: {_src_rel} → modules/{_candidate_md}",
-                                    file=sys.stderr,
-                                )
-                        _drift_warned.add(normalized)
-                        state["_aidocs_drift_warned"] = list(_drift_warned)  # JSON serializable
+        # V3.3: DocDrift — track source changes / resolve doc updates
+        if DOCDRIFT_AVAILABLE and config.get("docdrift", {}).get("enabled", True):
+            try:
+                if "/_aidocs/" in normalized.lower():
+                    resolve_doc_update(file_path, state, config)
+                else:
+                    check_source_drift(file_path, state, config)
+                # docdrift mutations must persist even when no advisory fires
+                write_state(session_id, state)
+            except Exception as e:
+                print(f"[v3.3] DocDrift error: {e}", file=sys.stderr)
 
     elif tool_name == "Read" and file_path:
         # V2.10: Read Tracking — deduplicate, keep first occurrence only
@@ -1152,25 +1542,6 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         if not any(a["path"] == file_path for a in accessed):
             accessed.append({"path": file_path, "at": _now_iso()})
             write_state(session_id, state)
-
-        # V2.26: DocDrift resolve on Read — reading the doc counts as "confirmed"
-        _read_norm = file_path.replace("\\", "/")
-        _docdrift_cfg = config.get("docdrift", {})
-        if (
-            _docdrift_cfg.get("resolve_on_read", True)
-            and "/_AIDocs/modules/" in _read_norm
-            and _read_norm.endswith(".md")
-        ):
-            _doc_name = _read_norm.rsplit("/", 1)[-1]
-            _drift_pending = state.get("_docdrift_pending", {})
-            _resolved = [s for s, d in _drift_pending.items() if d == _doc_name]
-            for s in _resolved:
-                del _drift_pending[s]
-            if _resolved:
-                if not _drift_pending:
-                    state.pop("_docdrift_pending", None)
-                write_state(session_id, state)
-                print(f"[v2.26] DocDrift resolved via Read: {_doc_name}", file=sys.stderr)
 
     elif tool_name == "Bash":
         # V2.10: VCS query capture (git log/blame/show/diff, svn log/blame/diff)
@@ -1180,14 +1551,51 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             vcs.append({"command": command[:200], "at": _now_iso()})
             write_state(session_id, state)
 
+        # Evasion Guard: Test-Fail detection
+        if is_test_command(command):
+            tr = input_data.get("tool_response", {}) or {}
+            if isinstance(tr, dict):
+                stdout = tr.get("stdout", "") or ""
+                stderr = tr.get("stderr", "") or ""
+                interrupted = bool(tr.get("interrupted", False))
+            else:
+                stdout, stderr, interrupted = str(tr), "", False
+            failure = detect_test_failure(stdout, stderr, interrupted)
+            if failure:
+                ft = state.setdefault("failing_tests", [])
+                ft.append({
+                    "tool": "Bash",
+                    "cmd": command[:200],
+                    "summary": failure,
+                    "at": _now_iso(),
+                })
+                write_state(session_id, state)
+            elif state.get("failing_tests"):
+                # 同 cmd 重跑成功 → 清掉舊紀錄（前綴比對，容忍尾參數變動）
+                cmd_prefix = command[:80].strip()
+                before = state["failing_tests"]
+                after = [f for f in before if not f.get("cmd", "").startswith(cmd_prefix[:40])]
+                if len(after) != len(before):
+                    state["failing_tests"] = after
+                    write_state(session_id, state)
+
+    # V3.3: DocDrift advisory generation
+    if DOCDRIFT_AVAILABLE and config.get("docdrift", {}).get("enabled", True):
+        try:
+            drift_msg = build_drift_advisory(state, config)
+            if drift_msg:
+                state["_docdrift_advisory"] = drift_msg
+        except Exception:
+            pass
+
     # V2.15+V2.16: Output advisory if gate triggered
     advisories = []
     if state:
         for key, prefix in [
             ("_path_enforcement_advisory", "[Guardian:PathEnforce]"),
             ("_aidocs_advisory", "[Guardian:AIDocs]"),
-            ("_aidocs_drift_advisory", "[Guardian:DocDrift]"),
             ("_staging_advisory", "[Guardian:StagingName]"),
+            ("_docdrift_advisory", "[Guardian:DocDrift]"),
         ]:
             val = state.get(key)
             if val:
@@ -1199,7 +1607,7 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         try:
             hot_data = read_hot_cache(session_id)
             if hot_data:
-                advisories.append(f"[HotCache] {hot_data.get('summary', '')}")
+                advisories.append(format_injection_line(hot_data, context="mid-turn"))
                 mark_injected(session_id)
         except Exception:
             pass
@@ -1247,6 +1655,80 @@ def handle_pre_compact(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
 # (Per-turn extraction, failure detection moved to wg_extraction.py)
 
 
+# ─── V4.1: User Extract Worker Spawning ──────────────────────────────────
+
+
+def _maybe_spawn_user_extract_worker(
+    session_id: str, state: Dict[str, Any], config: Dict[str, Any],
+) -> bool:
+    """Spawn user-extract-worker.py as detached subprocess if conditions met.
+
+    Returns True if spawned (worker will call session evaluator itself),
+    False if skipped (caller should run fallback evaluator).
+    """
+    ue_config = config.get("userExtraction", {})
+    if not ue_config.get("enabled", False):
+        return False
+
+    pending = state.get("pending_user_extract", [])
+    if not pending:
+        return False
+
+    # Concurrency guard
+    if _is_lease_valid(state, "user_extract_worker_pid"):
+        return False
+
+    worker_path = CLAUDE_DIR / "hooks" / "user-extract-worker.py"
+    if not worker_path.exists():
+        return False
+
+    cwd = state.get("session", {}).get("cwd", "")
+    user_id = state.get("user_identity", {})
+    user = user_id.get("user", "holylight")
+
+    worker_ctx = {
+        "session_id": session_id,
+        "cwd": cwd,
+        "config": config,
+        "user": user,
+    }
+
+    try:
+        import subprocess as _sp
+        kwargs = {}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = _sp.CREATE_NO_WINDOW | _sp.DETACHED_PROCESS
+        else:
+            kwargs["start_new_session"] = True
+
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+
+        json_ctx = json.dumps(worker_ctx, ensure_ascii=False)
+        proc = _sp.Popen(
+            [sys.executable, str(worker_path)],
+            stdin=_sp.PIPE,
+            stdout=_sp.DEVNULL,
+            stderr=_sp.DEVNULL,
+            env=env,
+            **kwargs,
+        )
+        proc.stdin.write(json_ctx.encode("utf-8"))
+        proc.stdin.close()
+
+        _set_lease(state, "user_extract_worker_pid", proc.pid)
+        write_state(session_id, state)
+        print(
+            f"[v4.1] user-extract-worker spawned (pid={proc.pid}, "
+            f"pending={len(pending)})",
+            file=sys.stderr,
+        )
+        return True
+    except Exception as e:
+        _atom_debug_error("V4.1:spawn_user_extract_worker", e)
+        return False
+
+
 # ─── Stop Hook ────────────────────────────────────────────────────────────
 
 
@@ -1261,17 +1743,54 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
     stop_count = state.get("stop_blocked_count", 0)
     phase = state.get("phase", "working")
 
+    # ── Evasion Guard: Test-Fail Gate + Evasion Detection ───────────
+    failing = state.get("failing_tests") or []
+    last_text = ""
+    cwd = state.get("session", {}).get("cwd", "") or input_data.get("cwd", "")
+    transcript = _find_session_transcript(session_id, cwd) if cwd else None
+    if failing:
+        last_text = get_last_assistant_text(transcript)
+        if claims_completion(last_text):
+            state["stop_blocked_count"] = stop_count + 1
+            write_state(session_id, state)
+            reason = (
+                f"[Guardian:TestFailGate] 測試未綠（{len(failing)} 項失敗），"
+                "不得宣告完成。\n"
+                + "\n".join(
+                    f"  - {f.get('cmd', '')[:60]}: "
+                    f"{(f.get('summary', '').splitlines() or [''])[0][:100]}"
+                    for f in failing[-3:]
+                )
+                + "\n選 (a) 修復 (b) 明確說明為何不修並標記為已知 regression "
+                "(c) 降級任務定義。不得籠統帶過。"
+            )
+            output_block(reason)
+            return
+
+    # Evasion 偵測（軟糾正，不阻擋；已有旗標就跳過，避免疊加）
+    if not state.get("evasion_flag"):
+        if not last_text:
+            last_text = get_last_assistant_text(transcript)
+        recent_prompts = state.get("recent_user_prompts", []) or []
+        ev = detect_evasion(last_text, recent_prompts)
+        if ev:
+            ev["at"] = _now_iso()
+            state["evasion_flag"] = ev
+            write_state(session_id, state)
+
     # Anti-loop guard
     if stop_count >= max_blocks:
         state["phase"] = "done"
         write_state(session_id, state)
         _maybe_spawn_per_turn_extraction(session_id, state, config)
+        _maybe_spawn_user_extract_worker(session_id, state, config)
         output_nothing()
         return
 
     # Already synced or marked done
     if phase in ("done", "syncing"):
         _maybe_spawn_per_turn_extraction(session_id, state, config)
+        _maybe_spawn_user_extract_worker(session_id, state, config)
         output_nothing()
         return
 
@@ -1284,6 +1803,7 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
     # Muted session — always allow
     if state.get("muted"):
         _maybe_spawn_per_turn_extraction(session_id, state, config)
+        _maybe_spawn_user_extract_worker(session_id, state, config)
         output_nothing()
         return
 
@@ -1292,6 +1812,7 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
         state["phase"] = "done"
         write_state(session_id, state)
         _maybe_spawn_per_turn_extraction(session_id, state, config)
+        _maybe_spawn_user_extract_worker(session_id, state, config)
         output_nothing()
         return
 
@@ -1300,6 +1821,7 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
         state["phase"] = "done"
         write_state(session_id, state)
         _maybe_spawn_per_turn_extraction(session_id, state, config)
+        _maybe_spawn_user_extract_worker(session_id, state, config)
         output_nothing()
         return
 
@@ -1307,15 +1829,27 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
     state["stop_blocked_count"] = stop_count + 1
     write_state(session_id, state)
     _maybe_spawn_per_turn_extraction(session_id, state, config)
+    _maybe_spawn_user_extract_worker(session_id, state, config)
 
     file_names = ", ".join(f.rsplit("/", 1)[-1] for f in unique_files[:8])
 
     reason = (
-        f"[Workflow Guardian] This session modified {len(unique_files)} file(s)"
-        + (f" and has {kq_count} pending knowledge item(s)" if kq_count > 0 else "")
+        f"[Workflow Guardian] {len(unique_files)} file(s) modified"
+        + (f", {kq_count} knowledge pending" if kq_count else "")
         + f". Files: {file_names}.\n"
-        "Please check CLAUDE.md sync rules and ask the user which sync steps apply."
+        "Sync: _AIDocs\u2192_CHANGELOG | knowledge\u2192atom | .git\u2192add+commit+push | .svn\u2192add+commit\n"
+        "Done \u2192 workflow_signal: sync_completed"
     )
+
+    # V3.3: DocDrift info in stop gate (non-blocking)
+    if DOCDRIFT_AVAILABLE:
+        try:
+            dp = state.get("docdrift_pending", {})
+            if dp:
+                docs = sorted(set(v["doc"] for v in dp.values()))
+                reason += f"\n[DocDrift] {len(dp)} source change(s) \u2192 consider updating: {', '.join(docs[:5])}"
+        except Exception:
+            pass
 
     output_block(reason)
 
@@ -1379,6 +1913,11 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
     state["ended_at"] = _now_iso()
     state["phase"] = "done"
 
+    # ─── V4.1 [F26]: Drain pending_user_extract when flag is off ──────
+    ue_config = config.get("userExtraction", {})
+    if not ue_config.get("enabled", False) and state.get("pending_user_extract"):
+        state["pending_user_extract"] = []
+
     # W10/V3-2.2A: Clean up stale state files (tiered TTL)
     try:
         _cleanup_old_states()
@@ -1405,6 +1944,19 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
         if pid:
             print(f"[v2.12] extract-worker spawned (pid={pid}, intent={intent})", file=sys.stderr)
         state["extract_worker_pid"] = 0  # SessionEnd: don't track PID (session ending)
+
+    # ─── V4.1: Spawn user-extract-worker if pending ───────────────────
+    worker_spawned = _maybe_spawn_user_extract_worker(session_id, state, config)
+
+    # ─── V4.1 P4: Session evaluator fallback (no worker spawned) ──────
+    # When worker runs, it calls evaluate_session() itself at the end (with live stats).
+    # When it doesn't (pending empty), do an inline baseline evaluation here.
+    if not worker_spawned and ue_config.get("enabled", False):
+        try:
+            from wg_session_evaluator import evaluate_session as _eval_session
+            _eval_session(session_id, state, config, worker_stats=None)
+        except Exception as e:
+            _atom_debug_error("V4.1:session_evaluator_fallback", e)
 
     mod_count = len(state.get("modified_files", []))
     kq_count = len(state.get("knowledge_queue", []))

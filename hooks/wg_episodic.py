@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from wg_paths import (
-    CLAUDE_DIR, MEMORY_DIR, EPISODIC_DIR, MEMORY_INDEX, WORKFLOW_DIR,
+    CLAUDE_DIR, MEMORY_DIR, EPISODIC_DIR, MEMORY_INDEX, ATOM_INDEX, WORKFLOW_DIR,
     cwd_to_project_slug, get_project_memory_dir,
     resolve_episodic_dir, get_transcript_path,
 )
@@ -170,11 +170,11 @@ def _call_ollama_generate(prompt: str, model: str = None,
     """
     try:
         client = get_client()
-        # think="auto" → rdchat: think=True + 8192, local: think=False + 2048
-        # 不用 format="json" — qwen3.5 thinking mode 與 JSON constrained decoding 衝突
+        # think="auto" → rdchat(gemma4:e4b): think=True + 4096, local(qwen3:1.7b): think=False + 2048
+        # 不用 format="json" — gemma4 think=false + format 有 bug (ollama#15260)
         return client.generate(
             prompt, model=model, timeout=timeout,
-            temperature=0.1, think="auto",
+            temperature=0.0, think="auto",
         )
     except Exception as e:
         _atom_debug_error("萃取:_call_ollama_generate", e)
@@ -556,8 +556,10 @@ def _generate_triggers(state: Dict[str, Any], work_areas: list) -> list:
 
 
 def _update_memory_index(memory_dir: Path, atom_name: str, triggers: list) -> None:
-    """Append a row to MEMORY.md atom index table."""
-    index_path = memory_dir / MEMORY_INDEX
+    """Append a row to _ATOM_INDEX.md (V3.2) or MEMORY.md atom index table."""
+    # V3.2: prefer _ATOM_INDEX.md
+    atom_idx = memory_dir / ATOM_INDEX
+    index_path = atom_idx if atom_idx.exists() else memory_dir / MEMORY_INDEX
     if not index_path.exists():
         return
 

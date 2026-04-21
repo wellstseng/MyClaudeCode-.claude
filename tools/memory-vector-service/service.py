@@ -171,6 +171,9 @@ class VectorServiceHandler(BaseHTTPRequestHandler):
         top_k = int(params.get("top_k", [str(_config.get("search_top_k", 5))])[0])
         min_score = float(params.get("min_score", [str(_config.get("search_min_score", 0.65))])[0])
         layer = params.get("layer", ["all"])[0]
+        user = params.get("user", [""])[0] or None
+        roles_raw = params.get("roles", [""])[0]
+        roles = [r.strip() for r in roles_raw.split(",") if r.strip()] or None
 
         results = search(
             query=q,
@@ -179,11 +182,13 @@ class VectorServiceHandler(BaseHTTPRequestHandler):
             min_score=min_score,
             layer_filter=layer if layer != "all" else None,
             embedder=_embedder,
+            user=user,
+            roles=roles,
         )
         self._send_json(results)
 
     def _handle_search_ranked(self, params: Dict):
-        """GET /search/ranked?q=...&intent=general&top_k=5&min_score=0.50"""
+        """GET /search/ranked?q=...&intent=general&top_k=5&min_score=0.50&user=&roles="""
         q = params.get("q", [""])[0]
         if not q:
             self._send_error(400, "Missing query parameter 'q'")
@@ -193,6 +198,9 @@ class VectorServiceHandler(BaseHTTPRequestHandler):
         top_k = int(params.get("top_k", [str(_config.get("search_top_k", 5))])[0])
         min_score = float(params.get("min_score", ["0.50"])[0])
         layer = params.get("layer", ["all"])[0]
+        user = params.get("user", [""])[0] or None
+        roles_raw = params.get("roles", [""])[0]
+        roles = [r.strip() for r in roles_raw.split(",") if r.strip()] or None
 
         results = ranked_search(
             query=q,
@@ -202,11 +210,13 @@ class VectorServiceHandler(BaseHTTPRequestHandler):
             min_score=min_score,
             layer_filter=layer if layer != "all" else None,
             embedder=_embedder,
+            user=user,
+            roles=roles,
         )
         self._send_json(results)
 
     def _handle_search_ranked_sections(self, params: Dict):
-        """GET /search/ranked-sections?q=...&intent=general&top_k=5&max_sections=3"""
+        """GET /search/ranked-sections?q=...&intent=general&top_k=5&max_sections=3&user=&roles="""
         q = params.get("q", [""])[0]
         if not q:
             self._send_error(400, "Missing query parameter 'q'")
@@ -217,6 +227,9 @@ class VectorServiceHandler(BaseHTTPRequestHandler):
         max_sections = int(params.get("max_sections", ["3"])[0])
         min_score = float(params.get("min_score", ["0.50"])[0])
         layer = params.get("layer", ["all"])[0]
+        user = params.get("user", [""])[0] or None
+        roles_raw = params.get("roles", [""])[0]
+        roles = [r.strip() for r in roles_raw.split(",") if r.strip()] or None
 
         results = ranked_search_sections(
             query=q,
@@ -227,6 +240,8 @@ class VectorServiceHandler(BaseHTTPRequestHandler):
             min_score=min_score,
             layer_filter=layer if layer != "all" else None,
             embedder=_embedder,
+            user=user,
+            roles=roles,
         )
         self._send_json(results)
 
