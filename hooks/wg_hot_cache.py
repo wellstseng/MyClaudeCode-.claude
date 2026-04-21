@@ -115,6 +115,25 @@ def read_hot_cache(session_id: str) -> Optional[dict]:
     return data
 
 
+def format_injection_line(data: dict, context: str = "") -> str:
+    """Format hot cache for UserPromptSubmit/PostToolUse injection.
+
+    Auto-extracted content is DRAFT — prefix with ⚠ tag so Claude treats it as
+    unverified hypothesis, not fact. Claude must never promote these to [固] or
+    cite them as established knowledge without re-verification.
+
+    context: optional suffix appended to source tag (e.g. "mid-turn").
+    """
+    source = data.get("source", "?")
+    summary = data.get("summary", "")
+    tag = f"[HotCache:{source}"
+    if context:
+        tag += f"·{context}"
+    tag += " ⚠AUTO-DRAFT·[臨]]"
+    rule = " | 規則：auto-extract 僅供參考，未經 4+ session 驗證，禁止引用為事實、禁止以 [固]/[觀] 存入"
+    return f"{tag} {summary}{rule}"
+
+
 def mark_injected(session_id: str) -> bool:
     """Atomically mark hot cache as injected. Returns True on success."""
     lock_fh, lock_mod = _acquire_lock(LOCK_PATH)

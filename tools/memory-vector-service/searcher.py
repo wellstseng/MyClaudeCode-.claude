@@ -3,13 +3,51 @@ searcher.py — 語意搜尋引擎
 
 使用 LanceDB 進行向量搜尋。
 v2.1: ranked_search() 加入 intent-aware 多因子排序。
+V4: user/roles 參數 → 組 layer SQL clause 過濾可見性（SPEC §8.1）。
 """
 
 import json
+import re
 from datetime import date
 from typing import Any, Dict, List, Optional
 
 from indexer import create_embedder, search_vectors
+
+
+# ─── V4 Layer Filter ─────────────────────────────────────────────────────────
+
+_SANE_ID = re.compile(r"^[\w\-]+$")
+
+
+def _build_v4_layer_clause(
+    user: Optional[str],
+    roles: Optional[List[str]],
+) -> Optional[str]:
+    """V4: 依 user + roles 組 LanceDB WHERE clause（SPEC §8.1）。
+
+    回傳：
+      - None：user/roles 皆空 → 不過濾（保留給管理職 / indexer 等全量場景）
+      - SQL 字串：限定 global + shared:* + role:*:{r}... + personal:*:{user}
+
+    安全：user/roles 只允許 [\\w-]+，不合就丟（防 SQL 注入）。
+    """
+    user_clean = user if user and _SANE_ID.match(user) else None
+    role_clean: List[str] = []
+    if roles:
+        for r in roles:
+            r = (r or "").strip()
+            if r and _SANE_ID.match(r):
+                role_clean.append(r)
+
+    if not user_clean and not role_clean:
+        return None
+
+    clauses = ["layer = 'global'", "layer LIKE 'shared:%'"]
+    for r in role_clean:
+        clauses.append(f"layer LIKE 'role:%:{r}'")
+    if user_clean:
+        clauses.append(f"layer LIKE 'personal:%:{user_clean}'")
+    return "(" + " OR ".join(clauses) + ")"
 
 
 # ─── v2.1 Ranking Constants ──────────────────────────────────────────────────
@@ -118,11 +156,15 @@ def search(
     layer_filter: Optional[str] = None,
     include_distant: bool = False,
     embedder=None,
+    user: Optional[str] = None,
+    roles: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """Semantic search across indexed atoms.
 
     Returns list of results sorted by score (descending):
     [{"atom_name", "title", "section", "text", "score", "confidence", "file_path", "layer", "line_number"}, ...]
+
+    V4: 若傳 user/roles → 組 role-filter clause 過濾可見性。
     """
     if not query.strip():
         return []
@@ -135,12 +177,16 @@ def search(
     if not query_vec or not query_vec[0]:
         return []
 
+    # V4: role-based layer clause（優先於 layer_filter）
+    layer_clause = _build_v4_layer_clause(user, roles)
+
     # Search LanceDB
     # LanceDB cosine metric: _distance = 1 - cosine_similarity
     raw_results = search_vectors(
         query_vec[0],
         top_k=top_k * 3,  # Fetch more for dedup
         layer_filter=layer_filter,
+        layer_clause=layer_clause,
     )
 
     if not raw_results:
@@ -194,11 +240,15 @@ def ranked_search(
     min_score: float = 0.50,
     layer_filter: Optional[str] = None,
     embedder=None,
+    user: Optional[str] = None,
+    roles: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """Intent-aware ranked search (v2.1).
 
     Uses multi-factor scoring: 0.45*Semantic + 0.15*Recency + 0.20*IntentBoost
     + 0.10*Confidence + 0.10*Confirmation.
+
+    V4: 若傳 user/roles → 組 role-filter clause 過濾可見性（SPEC §8.1）。
     """
     if not query.strip():
         return []
@@ -210,10 +260,13 @@ def ranked_search(
     if not query_vec or not query_vec[0]:
         return []
 
+    layer_clause = _build_v4_layer_clause(user, roles)
+
     raw_results = search_vectors(
         query_vec[0],
         top_k=top_k * 4,  # Fetch extra for dedup + re-ranking
         layer_filter=layer_filter,
+        layer_clause=layer_clause,
     )
     if not raw_results:
         return []
@@ -275,6 +328,8 @@ def ranked_search_sections(
     min_score: float = 0.50,
     layer_filter: Optional[str] = None,
     embedder=None,
+    user: Optional[str] = None,
+    roles: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """Intent-aware ranked search preserving section-level detail (v2.18).
 
@@ -283,6 +338,8 @@ def ranked_search_sections(
 
     Returns: [{atom_name, file_path, final_score, layer,
                sections: [{section, text, score, line_number}]}]
+
+    V4: 若傳 user/roles → 組 role-filter clause 過濾可見性（SPEC §8.1）。
     """
     if not query.strip():
         return []
@@ -294,10 +351,13 @@ def ranked_search_sections(
     if not query_vec or not query_vec[0]:
         return []
 
+    layer_clause = _build_v4_layer_clause(user, roles)
+
     raw_results = search_vectors(
         query_vec[0],
         top_k=top_k * 4,
         layer_filter=layer_filter,
+        layer_clause=layer_clause,
     )
     if not raw_results:
         return []

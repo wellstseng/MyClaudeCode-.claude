@@ -26,14 +26,14 @@
     ],
     "defaultMode": "bypassPermissions",
     "additionalDirectories": [
-      "C:\\Users\\holylight\\.claude",
-      "C:\\Users\\holylight\\.claude\\projects\\c--projects\\memory",
-      "C:\\Users\\holylight",
+      "C:\\Users\\wellstseng\\.claude",
+      "C:\\Users\\wellstseng\\.claude\\projects\\c--projects\\memory",
+      "C:\\Users\\wellstseng",
       "c:\\tmp",
-      "C:\\Users\\holylight\\.claude\\workflow",
-      "C:\\Users\\holylight\\.claude\\memory\\_staging",
-      "C:\\Users\\holylight\\.claude\\projects\\c--users-holylight--claude\\memory",
-      "C:\\Users\\holylight\\.claude\\projects\\c--users-holylight--claude\\memory\\_staging"
+      "C:\\Users\\wellstseng\\.claude\\workflow",
+      "C:\\Users\\wellstseng\\.claude\\memory\\_staging",
+      "C:\\Users\\wellstseng\\.claude\\tests",
+      "C:\\Users\\wellstseng\\.claude\\journals"
     ]
   },
   "hooks": {
@@ -71,14 +71,6 @@
     ],
     "PreToolUse": [
       {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node C:/Users/holylight/.claude/scripts/inbox-check.js"
-          }
-        ]
-      },
-      {
         "matcher": "WebFetch",
         "hooks": [
           {
@@ -87,11 +79,21 @@
             "timeout": 20
           }
         ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|Read|Bash",
+        "matcher": "Edit|Write|Bash",
         "hooks": [
           {
             "type": "command",
@@ -123,8 +125,8 @@
           {
             "type": "command",
             "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/quick-extract.py'),run_name='__main__')\"",
-            "async": true,
-            "timeout": 30
+            "timeout": 30,
+            "async": true
           }
         ]
       }
@@ -142,5 +144,7 @@
     ]
   },
   "effortLevel": "max",
-  "autoUpdatesChannel": "latest"
+  "autoUpdatesChannel": "latest",
+  "skipDangerousModePermissionPrompt": true,
+  "skipAutoPermissionPrompt": true
 }

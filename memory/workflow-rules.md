@@ -4,11 +4,11 @@
 - Confidence: [固]
 - Type: procedural
 - Trigger: 工作流程, 大型任務, 分階段, SOP, 任務拆分, 上版, GIT, Phase
-- Last-used: 2026-04-14
+- Last-used: 2026-04-16
 - Created: 2026-03-06
-- Confirmations: 107
+- Confirmations: 139
 - Tags: workflow, vcs
-- Related: decisions, workflow-svn, workflow-icld, collaboration-protocol
+- Related: decisions, workflow-svn, workflow-icld, feedback-handoff-self-sufficient, feedback-git-log-chinese, feedback-fix-on-discovery
 
 ## 知識
 
@@ -34,3 +34,4 @@
 - 功能需求 / 拆解請求 → 先評估規模 → 滿足 ICLD 條件見 `workflow-icld.md`
 - 批量修改先確認 1-2 個模式正確，再批量執行
 - Token 節省：有 _AIDocs 文件的不重新掃描原始碼，直接引用文件
+

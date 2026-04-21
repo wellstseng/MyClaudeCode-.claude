@@ -3,10 +3,10 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 偏好, 風格, 習慣, 語言, 回應, 執P, 執驗上P, 上GIT
-- Last-used: 2026-04-19
-- Confirmations: 116
-- Related: feedback-upload-discord, collaboration-protocol, hotfix-ilruntime-traps
+- Last-used: 2026-04-21
+- Confirmations: 145
 - Type: preference
+- Related: feedback-upload-discord, collaboration-protocol, hotfix-ilruntime-traps, feedback-decision-no-tech-menu, feedback-no-outsource-rigor, feedback-git-log-chinese, feedback-fix-on-discovery
 
 ## 知識
 

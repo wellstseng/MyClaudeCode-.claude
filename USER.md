@@ -13,6 +13,13 @@
 - **職業**：資深 C#/.NET 遊戲開發課長
 - **平台**：Windows 11 Pro
 
+## V4 多職務模式（團隊共享記憶）
+
+* **當前職務**：programmer + management（雙重宣告：personal `role.md` + shared `_roles.md` 白名單）
+* **記憶分層**：`global`（個人）/ `shared`（團隊全員可見）/ `role`（同職務可見）/ `personal/{user}`（只自己）
+* **帳號切換**：`CLAUDE_USER` 環境變數（team collaborator 在同機測試用）
+* **管理職特權**：裁決 `shared/_pending_review/` 的敏感原子（architecture/decision）與 pull-audit 衝突報告，其他 user 只能提交草稿
+
 ## 重視的事情
 
 - 效率
@@ -42,4 +49,3 @@
 Wells 是遊戲公司的技術主管，需要同時管理舊案維護和新案開發。
 他重視效率，不喜歡被無意義的訊息打擾。
 公私分明，家庭事務只在私訊處理。
-

@@ -21,7 +21,7 @@ DEFAULTS: Dict[str, Any] = {
     "fallback_backend": "none",
     "fallback_model": "none",
     "ollama_base_url": "http://127.0.0.1:11434",
-    "ollama_llm_model": "qwen3:4b",
+    "ollama_llm_model": "qwen3:1.7b",
     "search_top_k": 5,
     "search_min_score": 0.65,
     "search_timeout_ms": 2000,

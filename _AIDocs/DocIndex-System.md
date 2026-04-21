@@ -1,6 +1,6 @@
 # 原子記憶系統 — 全檔案索引
 
-> 由 `/read-project` 產出，最近同步：2026-03-30。
+> 由 `/read-project` 產出，最近同步：2026-04-15（V4 Phase 6 收尾）。
 > 目標：讓 Claude Code AI 能了解自己，以利後續升級、迭代、進化。
 
 ---
@@ -79,20 +79,27 @@ Session Ready
 
 合計：~5308 行
 
-## 5. Skills（commands/，16 個）
+## 5. Skills（commands/，19 個）
 
 | 指令 | 用途 | 依賴 |
 |------|------|------|
 | /atom-debug | Debug log 開關 | 無 |
+| /changelog-roll | 手動滾動 _CHANGELOG.md（PostToolUse 自動掛，通常不用手跑）`--keep N\|--dry-run` | 無 |
 | /conflict | 記憶衝突偵測（向量比對 + LLM 判定） | Vector Service + Ollama |
+| /conflict-review | V4 管理職裁決 Pending Queue（雙向認證） | wg_roles + Vector Service |
 | /consciousness-stream | 高風險跨系統（唯識八識） | 無 |
 | /continue | 讀 _staging/next-phase.md 續接 | 無 |
 | /extract | 手動知識萃取（不等 SessionEnd） | Ollama |
 | /fix-escalation | 精確修正升級（6 Agent 會議） | 無 |
+| /handoff | 跨 Session Handoff Prompt Builder（6 區塊強制模板） | 無 |
 | /harvest | Playwright 網頁收割→Markdown | Playwright |
 | /init-project | 專案 _AIDocs + 自治層初始化 | 無 |
+| /init-roles | V4 多職務模式啟用引導（建 personal/role.md + shared/_roles.md + 可選裝 post-merge hook + V4.1 隱私體檢 [F21]） | wg_roles + 可選 git |
 | /memory-health | 記憶品質診斷（audit + health-check） | 無 |
+| /memory-peek | V4.1 列最近 24h 自動萃取 atom + pending + trigger 原因 [F7] | 無 |
 | /memory-review | 自我迭代檢閱（衰減/晉升/震盪/覆轍） | 無 |
+| /memory-session-score | V4.1 P4 Session 5 維度加權評分（density/precision/novelty/cost/trust）`--last\|--since\|--top-n` | 無 |
+| /memory-undo | V4.1 撤銷自動萃取（_rejected/ + reason 分類 + reflection_metrics）[F20][F23] | 無 |
 | /read-project | 系統性閱讀→doc-index atom | 無 |
 | /resume | 續接 prompt + 自動開新 session | MCPControl |
 | /svn-update | SVN 更新 + 衝突處理 | TortoiseSVN |
@@ -115,15 +122,23 @@ Session Ready
   - local: qwen3:1.7b + qwen3-embedding（GTX 1050 Ti，pri=2）
   - 三階段退避：normal → short_die(60s) → long_die(6h boundary)
   - Long DIE → workflow-guardian SessionStart 提示使用者確認停用/保持
+  - `_request_with_failover` 在 `explicit_model` 與 backend `llm_model` 不符時直接 skip（不計 failure，避免毒化 health_cache 60s 使後續呼叫 silent return）
 
 ### 記憶品質
-- memory-audit.py — 格式驗證 + staleness（支援 `--project-dir`）
-- memory-write-gate.py — 寫入閘門（6 規則 + 0.80 dedup）
-- memory-conflict-detector.py — 向量衝突 + LLM 分類（支援 `--project-dir`）
-- atom-health-check.py — 參照完整性
+- memory-audit.py — 格式驗證 + staleness（支援 `--project-dir`、Claude-native YAML frontmatter、2 欄 MEMORY.md、wildcard 索引項、orphan memory dir 容忍）
+- memory-write-gate.py — 寫入閘門（6 規則 + 0.80 dedup；[固] 不再 fast-path，一律過品質檢查）
+- memory-conflict-detector.py — 向量衝突 + LLM 分類；mode ∈ {full-scan / write-check / pull-audit}（V4 Phase 5 三時段衝突偵測核心）
+- conflict-review.py — V4 Pending Queue 後端：list/approve/reject 三動作，is_management 雙向認證 guard，approve 寫 Decided-by + merge_history + 觸發 `/index/incremental`
+- atom-health-check.py — 參照完整性（`_` 前綴檔案豁免、`decisions`/`decisions-architecture`/`spec` 為 central hub 反向參照豁免）
 
 ### 遷移/測試
 - migrate-v221.py — V2.21 遷移（_AIAtoms + 個人記憶 → .claude/memory/）
+- migrate-v3-to-v4.py — V3 → V4 遷移（補 Scope/Author/Created-at metadata；不搬檔，漸進分層；dry-run 預設）
+- init-roles.py — /init-roles 後端（bootstrap-personal / scaffold-roles / add-member / promote-mgmt / install-hook / privacy-check [F21]，全冪等）
+- memory-peek.py — V4.1 /memory-peek 後端：掃 personal/auto/{user}/ 列最近 atom + _pending.candidates
+- memory-session-score.py — V4.1 P4 /memory-session-score 後端：讀 reflection_metrics.v41_extraction.session_scores[]，`--last/--since/--top-n` 三種過濾 + JSON 輸出
+- memory-undo.py — V4.1 /memory-undo 後端：撤銷到 _rejected/ + reason 分類 + 寫 reflection_metrics
+- changelog-roll.py — _CHANGELOG.md 自動滾動（保留最新 N 條，超額搬 _CHANGELOG_ARCHIVE.md）；由 PostToolUse hook 偵測 _CHANGELOG 寫入後自動觸發 detached subprocess
 - test-memory-v21.py — E2E 測試
 - eval-ranked-search.py — 50 query benchmark
 - cleanup-old-files.py — 環境清理

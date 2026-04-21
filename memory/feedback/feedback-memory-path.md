@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 寫入記憶, 暫存, _staging, memory path, 寫atom, 寫檔案, Write memory
-- Last-used: 2026-04-14
-- Confirmations: 17
+- Last-used: 2026-04-16
+- Confirmations: 33
 - Related: decisions
 
 ## 知識

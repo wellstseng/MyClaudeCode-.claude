@@ -25,18 +25,24 @@
 │   ├── wg_hot_cache.py         ← Hot Cache 讀寫/注入
 │   ├── wg_episodic.py          ← episodic 生成/衝突偵測/品質回饋
 │   ├── wg_iteration.py         ← 自我迭代/震盪/衰減/晉升/覆轍偵測
+│   ├── wg_roles.py             ← V4 角色載入/is_management 雙向認證
+│   ├── wg_docdrift.py          ← 文件偏移偵測
+│   ├── wg_user_extract.py      ← 使用者萃取擴充
 │   ├── extract-worker.py       ← LLM 萃取子程序（SessionEnd/per-turn/failure）
 │   ├── quick-extract.py        ← Stop async 快篩（qwen3:1.7b → hot_cache）
 │   ├── wg_content_classify.py  ← 內容分類
 │   ├── wisdom_engine.py        ← Wisdom Engine（情境分類+反思指標）
 │   ├── user-init.sh            ← 多人 USER.md 初始化
 │   ├── ensure-mcp.py           ← MCP server 可用性確認
-│   └── webfetch-guard.sh       ← WebFetch 安全護欄
+│   ├── webfetch-guard.sh       ← WebFetch 安全護欄
+│   └── post-git-pull.sh        ← V4 post-merge hook source（pull-audit 觸發）
 │
-├── commands/                    ← 自訂 Skills（/slash commands，17 個）
+├── commands/                    ← 自訂 Skills（/slash commands，21 個）
 │   ├── init-project.md          ← /init-project 知識庫 + 自治層初始化
+│   ├── init-roles.md            ← /init-roles V4 多職務模式啟用引導
 │   ├── resume.md                ← /resume 自動續接 Session
 │   ├── continue.md              ← /continue 讀取 _staging 續接
+│   ├── handoff.md               ← /handoff 跨 Session Handoff Prompt Builder
 │   ├── consciousness-stream.md  ← /consciousness-stream 識流處理
 │   ├── svn-update.md            ← /svn-update SVN 更新
 │   ├── unity-yaml.md            ← /unity-yaml Unity YAML 操作
@@ -44,9 +50,12 @@
 │   ├── fix-escalation.md        ← /fix-escalation 精確修正升級
 │   ├── extract.md               ← /extract 手動知識萃取
 │   ├── conflict.md              ← /conflict 記憶衝突偵測
+│   ├── conflict-review.md       ← /conflict-review 管理職裁決 Pending Queue
 │   ├── memory-health.md         ← /memory-health 記憶品質診斷
 │   ├── memory-review.md         ← /memory-review 自我迭代檢閱
 │   ├── atom-debug.md            ← /atom-debug Debug log 開關
+│   ├── generate-episodic.md     ← /generate-episodic 手動生成 episodic atom
+│   ├── browse-sprites.md        ← /browse-sprites 批次圖片預覽
 │   ├── harvest.md               ← /harvest 網頁收割
 │   ├── read-project.md          ← /read-project 系統性閱讀
 │   └── vector.md                ← /vector 向量服務管理
@@ -72,10 +81,18 @@
 │   ├── doc-index-system.md      ← [固] 全檔索引
 │   ├── gdoc-harvester.md        ← [固] Google Docs 收割
 │   ├── mail-sorting.md          ← [固] 信箱整理
-│   ├── feedback_fix_escalation.md ← [固] 修正升級回饋
-│   ├── feedback_research_first.md ← [固] 研究優先回饋
-│   ├── feedback_global_install.md ← [固] 全域安裝回饋
-│   ├── feedback_no_test_to_svn.md ← [固] 禁止測試碼上 SVN
+│   ├── feedback/                 ← 行為校正回饋 atoms（11 個）
+│   │   ├── feedback-fix-escalation.md
+│   │   ├── feedback-research-first.md
+│   │   ├── feedback-global-install.md
+│   │   ├── feedback-no-test-to-svn.md
+│   │   ├── feedback-memory-path.md
+│   │   ├── feedback-handoff-self-sufficient.md
+│   │   ├── feedback-scope-sensitive-values.md
+│   │   ├── feedback-decision-no-tech-menu.md
+│   │   ├── feedback-no-outsource-rigor.md
+│   │   ├── feedback-git-log-chinese.md
+│   │   └── feedback-fix-on-discovery.md
 │   ├── failures/                ← 失敗/陷阱知識
 │   │   ├── _INDEX.md
 │   │   ├── env-traps.md         ← Win 環境陷阱
@@ -112,9 +129,15 @@
 │   ├── rag-engine.py            ← RAG CLI 入口
 │   ├── memory-audit.py          ← 健檢工具（支援 --project-dir）
 │   ├── memory-write-gate.py     ← 寫入品質閘門
-│   ├── memory-conflict-detector.py ← 衝突偵測（支援 --project-dir）
+│   ├── memory-conflict-detector.py ← 衝突偵測（write-check + pull-audit）
 │   ├── atom-health-check.py     ← 參照完整性
+│   ├── conflict-review.py       ← V4 管理職裁決後端（approve/reject）
+│   ├── init-roles.py            ← V4 多職務 bootstrap（role.md + _roles.md + hook）
+│   ├── migrate-v3-to-v4.py      ← V4 遷移（補 Scope/Author/Created-at metadata）
 │   ├── migrate-v221.py          ← V2.21 遷移工具
+│   ├── generate-episodic-manual.py ← 手動 episodic 生成
+│   ├── snapshot-v4-atoms.py     ← V4 atom 快照
+│   ├── sprite_contact_sheet.py  ← Sprite 批次縮圖
 │   ├── read-excel.py            ← Excel 讀取
 │   ├── unity-yaml-tool.py       ← Unity YAML 解析/生成
 │   ├── eval-ranked-search.py    ← Ranked search 評估
@@ -159,20 +182,31 @@
     └── todos/
 ```
 
-## 專案自治層
+## 專案自治層（V4 三層 scope）
 
 每個已註冊專案的 `.claude/` 目錄結構：
 
 ```
 {project_root}/.claude/
 ├── memory/
-│   ├── MEMORY.md        ← 專案 atom 索引
-│   ├── *.md             ← 專案 atoms
-│   ├── episodic/        ← 自動生成（gitignore）
-│   ├── failures/        ← 踩坑記錄（版控）
-│   └── _staging/        ← 暫存（gitignore）
+│   ├── MEMORY.md              ← 專案 atom 索引
+│   ├── _ATOM_INDEX.md         ← 機器索引（含 Scope 欄）
+│   ├── _roles.md              ← 管理職白名單（shared，入版控）
+│   ├── shared/                ← project-shared atoms（入版控）
+│   │   ├── {atom}.md
+│   │   └── _pending_review/   ← 待管理職裁決的衝突草稿
+│   ├── roles/                 ← role-shared（入版控）
+│   │   └── {role_name}/       ← 如 programmer/, art/
+│   ├── personal/              ← per-user（.gitignore 排除）
+│   │   └── {user}/
+│   │       └── role.md        ← 個人角色宣告
+│   ├── *.md                   ← 遷移中的舊位置 atoms（漸進搬入 shared/）
+│   ├── episodic/              ← 自動生成（gitignore）
+│   ├── failures/              ← 踩坑記錄（版控）
+│   ├── _staging/              ← 暫存（gitignore）
+│   └── _merge_history.log     ← 衝突 audit log（TSV append-only）
 ├── hooks/
-│   └── project_hooks.py ← 專案 delegate（inject/extract/session_start）
+│   └── project_hooks.py       ← 專案 delegate（inject/extract/session_start）
 └── .gitignore
 ```
 

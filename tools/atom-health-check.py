@@ -23,10 +23,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 MEMORY_ROOT = Path.home() / ".claude" / "memory"
-SKIP_FILES = {"MEMORY.md", "SPEC_Atomic_Memory_System.md"}
+SKIP_FILES = {"MEMORY.md", "SPEC_Atomic_Memory_System.md", "_ATOM_INDEX.md"}
 SKIP_DIRS = {"_distant", "_staging", "_vectordb", "episodic", "_reference", "templates"}
 # Central hub atoms — skip reverse-link warnings for these
-CENTRAL_HUBS = {"decisions", "spec"}
+# (hub docs don't back-reference every detail doc that points to them)
+CENTRAL_HUBS = {"decisions", "decisions-architecture", "spec"}
 
 
 def parse_memory_index(root: Path) -> dict[str, str]:
@@ -51,6 +52,9 @@ def find_atoms(root: Path) -> dict[str, Path]:
     atoms = {}
     for md in root.rglob("*.md"):
         if md.name in SKIP_FILES:
+            continue
+        # Skip underscore-prefixed files (_ATOM_INDEX, _reference docs, etc.)
+        if md.name.startswith("_"):
             continue
         if any(part in SKIP_DIRS for part in md.relative_to(root).parts):
             continue

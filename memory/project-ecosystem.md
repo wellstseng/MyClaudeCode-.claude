@@ -3,9 +3,9 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 專案, SGI, TSLG, TCSM, Orbit, Titan, Server, 監控, 專案狀態, 生態
-- Last-used: 2026-04-21
-- Confirmations: 51
-- Related: redmine-config, team-roster, hot-topics, unity-mcp-自動化工具鏈
+- Last-used: 2026-04-14
+- Confirmations: 39
+- Related: redmine-config, team-roster, hot-topics
 
 ## 知識
 
@@ -20,15 +20,9 @@
   - .claude/memory：預定 `C:\Projects\TSLG\.claude\memory\`（尚未建立）
   - 注意：`Develop/_AIDocs` 是 TCSM 的知識庫，不可直接信任
   - [固] TSLG Develop（Client）是從 TCSM 搬過來並做拆除工程；_AIDocs 內容與 TCSM 一致，但實際程式碼已有落差（部分內容已砍掉），閱讀時需與原始碼交叉驗證
-  - [固] TSLG Client SVN：`svn://uj-svn.uj.com.tw/PJA146_TSLG/DevTeamShare/Develop/Client_HybridCLR`（r535, 2026-04-19 確認）
-  - [固] TSLG Client 已整合 HybridCLR（com.code-philosophy.hybridclr git 依賴）；ILRuntime 殘留程式碼為無功能遺留（ILRuntimeTool.cs 已清空）
-  - [固] TSLG Unity 精確版本：2022.3.62f3；Hotfix 專案 BRM_ILR_Hotfix/ 164 支 .cs (.NET 4.8)
-  - [固] TSLG Develop 本機路徑 `C:\Projects\TSLG\Develop`：Client（SVN）+ Server + _AIDocs（從 TCSM 帶來）；Git repo 管 Server + _AIDocs，Client 由 SVN 管
   - [固] TSLG Server 是從 SGI Server 搬過來的，底層核心同為 Orbit
   - [固] TSLG Server 策略：保留 SGI Server 的底與業務邏輯，參考 Titan 進行大幅度業務與架構重構（非打掉重練）
-  - [固] TSLG Server 基建升級已完成（2026-04-08）：.NET 8 + CoreModule 3.0.3 + sgi 跨 repo link 全拔除
-  - [固] TSLG Server 架構：19 個 game server（SGI 框架），入口模式 `SGIApp.Build(args).AddServer<Service>().Main()`，~48.5K 行 C#
-  - [固] TSLG Server SVN r530（2026-04-15）；Client SVN r535（2026-04-18）
+  - [固] TSLG Server 基建升級已完成（2026-04-08）：.NET 8 + CoreModule 3.0.1 + sgi 跨 repo link 全拔除
   - [固] TSLG Server SVN：`svn://uj-svn.uj.com.tw/PJA146_TSLG/programmer_server/Develop/Server`
   - [固] TSLG Server 知識庫進度文件：`C:\Projects\TSLG\_AIDocs\orbit-merge-progress.md`
 - [固] TCSM（軌跡）：🟢 營運・維護期

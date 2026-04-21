@@ -6,6 +6,7 @@ wg_paths.py — 原子記憶系統路徑集中管理 (V2.20)
 
 V2.20: 行為等價重構（路徑仍走 ~/.claude/projects/{slug}/memory/）
 V2.21: 切換到 {project_root}/.claude/memory/（僅改此檔）
+V4.0:  三層 scope（shared / role:{name} / personal:{user}）與 JIT layer 擴展
 """
 
 import json
@@ -22,6 +23,7 @@ EPISODIC_DIR = MEMORY_DIR / "episodic"
 WORKFLOW_DIR = CLAUDE_DIR / "workflow"
 CONFIG_PATH = WORKFLOW_DIR / "config.json"
 MEMORY_INDEX = "MEMORY.md"
+ATOM_INDEX = "_ATOM_INDEX.md"  # V3.2: machine-only trigger table (not @imported)
 
 # ─── Project Registry (V2.21 預留) ───────────────────────────────────────────
 
@@ -76,6 +78,8 @@ def get_project_memory_dir(cwd: str) -> Optional[Path]:
     """Get project-level memory dir from CWD.
 
     V2.21: 新路徑（{project_root}/.claude/memory/）優先，舊路徑 fallback。
+    V4:    若新路徑無 MEMORY.md 但有 shared/roles/personal 任一子目錄，
+           仍視為合法 V4 memory dir（MEMORY.md 由 SessionStart 動態生成）。
     """
     if not cwd:
         return None
@@ -83,14 +87,75 @@ def get_project_memory_dir(cwd: str) -> Optional[Path]:
     root = find_project_root(cwd)
     if root:
         new_mem = root / ".claude" / "memory"
-        if new_mem.is_dir() and (new_mem / MEMORY_INDEX).exists():
-            return new_mem
+        if new_mem.is_dir():
+            if (new_mem / MEMORY_INDEX).exists():
+                return new_mem
+            # V4: 純 V4 layout 也算
+            if any((new_mem / d).is_dir() for d in ("shared", "roles", "personal")):
+                return new_mem
     # fallback: 舊路徑（相容未遷移的專案）
     slug = cwd_to_project_slug(cwd)
     old_mem = CLAUDE_DIR / "projects" / slug / "memory"
     if old_mem.exists():
         return old_mem
     return None
+
+
+def get_scope_dir(
+    scope: str,
+    cwd: str,
+    user: Optional[str] = None,
+    role: Optional[str] = None,
+) -> Optional[Path]:
+    """V4: 回傳指定 scope 的目錄，必要時自動建立。
+
+    scope:
+      - "global"   → ~/.claude/memory/
+      - "shared"   → {proj}/.claude/memory/shared/
+      - "role"     → {proj}/.claude/memory/roles/{role}/  （role 必填）
+      - "personal" → {proj}/.claude/memory/personal/{user}/  （user 必填）
+
+    專案類 scope 需要 find_project_root 找到真實標記（.git/.svn/_AIDocs/
+    .claude/memory/MEMORY.md）才建立，避免在亂目錄污染。找不到 → None。
+    """
+    if scope == "global":
+        MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+        return MEMORY_DIR
+
+    if scope == "role" and not role:
+        return None
+    if scope == "personal" and not user:
+        return None
+    if scope not in ("shared", "role", "personal"):
+        return None
+
+    root = find_project_root(cwd)
+    if not root:
+        return None
+    # ~/.claude 自身就是全域 .claude，其 memory == global，不再切 V4 三層
+    try:
+        if root.resolve() == CLAUDE_DIR.resolve():
+            return None
+    except OSError:
+        pass
+    has_marker = (
+        (root / ".claude" / "memory" / MEMORY_INDEX).exists()
+        or (root / "_AIDocs").is_dir()
+        or (root / ".git").exists()
+        or (root / ".svn").exists()
+    )
+    if not has_marker:
+        return None
+
+    base = root / ".claude" / "memory"
+    if scope == "shared":
+        target = base / "shared"
+    elif scope == "role":
+        target = base / "roles" / role
+    else:  # personal
+        target = base / "personal" / user
+    target.mkdir(parents=True, exist_ok=True)
+    return target
 
 
 def get_project_claude_dir(cwd: str) -> Optional[Path]:
@@ -286,23 +351,124 @@ def discover_all_project_memory_dirs() -> List[Tuple[str, Path]]:
 # ─── Vector Service Layer 發現 ────────────────────────────────────────────────
 
 
+def discover_v4_sublayers(slug: str, mem_dir: Path) -> List[Tuple[str, Path, str]]:
+    """V4: enumerate 一個 project memory 下所有子 scope 層。
+
+    回傳 [(layer_label, path, kind), ...]，kind ∈ {"recursive", "flat-legacy"}。
+    `flat-legacy` 表 mem_dir 直下的舊 atoms（無 scope subdir）— indexer 應只掃
+    直下 .md 不遞迴；其他 kind 全部遞迴。
+
+    層命名（SPEC §8.3）：
+      shared:{slug} | role:{slug}:{r} | personal:{slug}:{user}
+    """
+    out: List[Tuple[str, Path, str]] = []
+    shared_label = f"shared:{slug}"
+
+    # 直下 legacy atom（無 V4 scope）→ 視為 shared:{slug}
+    # 排除 MEMORY/ATOM index 與 _-/SPEC_-prefix 系統檔
+    def _is_legacy_atom(p: Path) -> bool:
+        if not (p.is_file() and p.suffix == ".md"):
+            return False
+        if p.name in (MEMORY_INDEX, ATOM_INDEX):
+            return False
+        if p.name.startswith("_") or p.name.startswith("SPEC_"):
+            return False
+        return True
+    has_flat_legacy = any(_is_legacy_atom(p) for p in mem_dir.iterdir()) if mem_dir.is_dir() else False
+    if has_flat_legacy:
+        out.append((shared_label, mem_dir, "flat-legacy"))
+
+    shared_dir = mem_dir / "shared"
+    if shared_dir.is_dir():
+        out.append((shared_label, shared_dir, "recursive"))
+
+    roles_root = mem_dir / "roles"
+    if roles_root.is_dir():
+        for rd in sorted(roles_root.iterdir()):
+            if rd.is_dir() and not rd.name.startswith("_"):
+                out.append((f"role:{slug}:{rd.name}", rd, "recursive"))
+
+    personal_root = mem_dir / "personal"
+    if personal_root.is_dir():
+        for pd in sorted(personal_root.iterdir()):
+            if pd.is_dir() and not pd.name.startswith("_"):
+                out.append((f"personal:{slug}:{pd.name}", pd, "recursive"))
+
+    return out
+
+
 def discover_memory_layers(
     layer_filter: Optional[str] = None,
+    user: Optional[str] = None,
+    role: Optional[str] = None,
 ) -> List[Tuple[str, Path]]:
-    """Discover all memory layers for vector service indexing.
+    """Discover memory layers.
 
-    Returns [("global", path), ("project:{slug}", path), ...]
+    兩種 mode：
+      - 預設（無 user 也無 role）：enumerate 全部 sub-layer（給 indexer / 全索引用）
+      - 帶 user/role：只回該使用者可見的層（給 JIT 用，對應 SPEC §8.1）
+
+    Layer label 格式：
+      "global" | "shared:{slug}" | "role:{slug}:{r}" | "personal:{slug}:{user}"
+
+    `layer_filter`（若有）按 prefix 比對：
+      - "global"            → 只 global
+      - "shared"            → 所有 shared:*
+      - "role" / "role:{r}" → role:* / role:*:{r}
+      - "personal:{u}"      → personal:*:{u}
+      - 其他 → 字面相等
+    回傳 [(label, path), ...]
     """
-    layers: List[Tuple[str, Path]] = [("global", MEMORY_DIR)]
+    layers: List[Tuple[str, Path]] = []
+
+    def _accept(label: str) -> bool:
+        if not layer_filter or layer_filter == "all":
+            return True
+        if layer_filter == label:
+            return True
+        if layer_filter == "global":
+            return label == "global"
+        if layer_filter == "shared":
+            return label.startswith("shared:")
+        if layer_filter == "role":
+            return label.startswith("role:")
+        if layer_filter.startswith("role:") and ":" not in layer_filter[5:]:
+            r = layer_filter.split(":", 1)[1]
+            return label.startswith("role:") and label.endswith(f":{r}")
+        if layer_filter == "personal":
+            return label.startswith("personal:")
+        if layer_filter.startswith("personal:") and ":" not in layer_filter[9:]:
+            u = layer_filter.split(":", 1)[1]
+            return label.startswith("personal:") and label.endswith(f":{u}")
+        return False
+
+    if _accept("global"):
+        layers.append(("global", MEMORY_DIR))
+
+    role_set = set()
+    if role:
+        role_set = {r.strip() for r in role.split(",") if r.strip()}
+
+    user_aware = bool(user or role)
+
     for slug, mem_dir in discover_all_project_memory_dirs():
-        label = f"project:{slug}"
-        if (
-            layer_filter
-            and layer_filter not in ("all", "project")
-            and layer_filter != slug
-        ):
-            continue
-        layers.append((label, mem_dir))
+        for label, path, _kind in discover_v4_sublayers(slug, mem_dir):
+            # 在 user-aware mode 下做角色 filter
+            if user_aware:
+                if label.startswith("shared:"):
+                    pass  # 一律可見
+                elif label.startswith("role:"):
+                    r = label.rsplit(":", 1)[1]
+                    if r not in role_set:
+                        continue
+                elif label.startswith("personal:"):
+                    u = label.rsplit(":", 1)[1]
+                    if u != user:
+                        continue
+            if not _accept(label):
+                continue
+            layers.append((label, path))
+
     return layers
 
 

@@ -1,7 +1,7 @@
 """
 quick-extract.py — Stop async hook: 快速知識萃取 → hot cache (V3)
 
-背景執行，讀 last_assistant_message，呼叫 local qwen3:1.7b 快篩，
+背景執行，讀 last_assistant_message，呼叫 local LLM (qwen3:1.7b) 快篩，
 結果寫入 workflow/hot_cache.json。
 """
 
@@ -90,7 +90,7 @@ def main():
     # 2. Truncate
     truncated = text[:MAX_TEXT_LEN]
 
-    # 3. Call Ollama (local qwen3:1.7b)
+    # 3. Call Ollama (local backend, qwen3:1.7b)
     try:
         from ollama_client import get_client
 

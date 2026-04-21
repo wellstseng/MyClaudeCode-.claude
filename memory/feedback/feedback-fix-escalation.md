@@ -3,9 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 重試, retry, escalation, 精確修正, fix-escalation, 修不好, 又壞了, 失敗
-- Last-used: 2026-04-02
-- Confirmations: 24
-- Related: failures, decisions
+- Last-used: 2026-04-15
+- Confirmations: 19
 
 ## 知識
 
@@ -21,3 +20,4 @@
 
 - 收到 `[Guardian:FixEscalation]` 或自我察覺重試 → 立即執行 `/fix-escalation`
 - 連續 3 次未解決 → 強制暫停，向使用者報告
+

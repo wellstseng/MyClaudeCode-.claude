@@ -1,12 +1,12 @@
 {
   "projects": {
-    "c--users-holylight--claude": {
-      "root": "c:\\Users\\holylight\\.claude",
-      "last_seen": "2026-04-02"
+    "c--users-wellstseng--claude": {
+      "root": "c:\\Users\\wellstseng\\.claude",
+      "last_seen": "2026-04-21"
     },
     "c--projects": {
       "root": "c:\\Projects",
-      "last_seen": "2026-04-01",
+      "last_seen": "2026-04-21",
       "aliases": [
         "sgi",
         "sgi_server",
@@ -15,77 +15,13 @@
         "遊戲後端"
       ]
     },
-    "c--tmp-office": {
-      "root": "C:\\tmp\\office",
-      "last_seen": "2026-03-27"
-    },
-    "d--ai-play-ai-gen-projs-fastsvnviewer": {
-      "root": "D:\\AI-PLAY\\AI-gen-projs\\FastSVNViewer",
-      "last_seen": "2026-03-27"
-    },
-    "d--mydev": {
-      "root": "d:\\MyDev",
-      "last_seen": "2026-03-27"
-    },
-    "c--myofficeai": {
-      "root": "C:\\MyOfficeAI",
-      "last_seen": "2026-03-30",
-      "aliases": [
-        "office",
-        "辦公",
-        "MyOfficeAI"
-      ]
-    },
-    "c--users-wellstseng--catclaw": {
-      "root": "c:\\Users\\wellstseng\\.catclaw",
-      "last_seen": "2026-03-31"
-    },
-    "c--workspace-catclaw": {
-      "root": "C:\\WorkSpace\\catclaw",
-      "last_seen": "2026-04-19"
-    },
-    "c--olgcase-mobileanime": {
-      "root": "c:\\OlgCase\\MobileAnime",
-      "last_seen": "2026-03-31"
-    },
     "c--projects-tslg-develop": {
       "root": "c:\\Projects\\TSLG\\Develop",
       "last_seen": "2026-04-21",
       "aliases": [
-        "TSLG"
-      ],
-      "note": "sub-directory, uses parent root"
-    },
-    "c--projects-tslg": {
-      "root": "C:\\Projects\\TSLG",
-      "last_seen": "2026-03-31",
-      "aliases": [
-        "TSLG"
+        "tslg",
+        "tslg-client"
       ]
-    },
-    "c--projects-titan": {
-      "root": "c:\\Projects\\Titan",
-      "last_seen": "2026-04-02"
-    },
-    "c--projects-orbit": {
-      "root": "c:\\Projects\\Orbit",
-      "last_seen": "2026-04-17"
-    },
-    "c--projects-sgi": {
-      "root": "c:\\Projects\\SGI",
-      "last_seen": "2026-04-14"
-    },
-    "c--projects-tslg-tools": {
-      "root": "c:\\Projects\\TSLG\\Tools",
-      "last_seen": "2026-04-14"
-    },
-    "c--projects-tslg-tools-serverlauncher": {
-      "root": "c:\\Projects\\TSLG\\Tools\\ServerLauncher",
-      "last_seen": "2026-04-14"
-    },
-    "c--users-wellstseng": {
-      "root": "C:\\Users\\wellstseng",
-      "last_seen": "2026-04-19"
     }
   }
 }

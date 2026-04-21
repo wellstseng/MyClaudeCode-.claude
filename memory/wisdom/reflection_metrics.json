@@ -3,31 +3,672 @@
   "metrics": {
     "first_approach_accuracy": {
       "single_file": {
-        "correct": 265,
-        "total": 272
+        "correct": 342,
+        "total": 356
       },
       "multi_file": {
-        "correct": 7,
-        "total": 13
+        "correct": 3,
+        "total": 12
       },
       "architecture": {
-        "correct": 0,
-        "total": 215
+        "correct": 1,
+        "total": 12
       }
     },
     "over_engineering_rate": {
       "user_reverted_or_simplified": 0,
-      "total_suggestions": 529
+      "total_suggestions": 409
     },
     "silence_accuracy": {
-      "held_back_ok": 272,
-      "held_back_missed": 13
+      "held_back_ok": 345,
+      "held_back_missed": 23
     }
   },
   "blind_spots": [
-    "multi_file 首次正確率 54%",
-    "architecture 首次正確率 0%"
+    "multi_file 首次正確率 25%",
+    "architecture 首次正確率 8%"
   ],
   "arch_sensitivity_elevated": true,
-  "last_reflection": "2026-04-21T02:29:04.473464+00:00"
+  "last_reflection": "2026-04-17T11:28:18.831609+00:00",
+  "v41_extraction": {
+    "total_written": 0,
+    "total_rejected": 0,
+    "reject_reasons": {
+      "emotion": 0,
+      "ambiguous": 0,
+      "privacy": 0,
+      "scope": 0,
+      "other": 0
+    },
+    "precision_observed": 1.0,
+    "session_scores": [
+      {
+        "session_id": "bf24fb56-5066-40d9-b1c5-38890bc208e1",
+        "ts": "2026-04-16T09:21:00.123430+00:00",
+        "prompt_count": 0,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "0810ccb3-6a44-42a3-8b1c-83e35d1739e6",
+        "ts": "2026-04-16T09:21:28.641994+00:00",
+        "prompt_count": 0,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "2061361b-5f41-4835-8224-43a91d3ed354",
+        "ts": "2026-04-16T09:22:25.569383+00:00",
+        "prompt_count": 0,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "0f7c40aa-8944-4f96-96d1-ea4f7eebeeb8",
+        "ts": "2026-04-16T09:42:02.536433+00:00",
+        "prompt_count": 2,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "34b5b26e-abec-4577-b2a0-f9f050b21ca2",
+        "ts": "2026-04-16T09:53:45.406940+00:00",
+        "prompt_count": 1,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "08b557ff-95b3-4cb7-b806-375293ddfdda",
+        "ts": "2026-04-16T09:55:01.335193+00:00",
+        "prompt_count": 5,
+        "extract_triggered": 2,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 502,
+        "scores": {
+          "density": 0.3799,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 0.0,
+          "trust": 1.0,
+          "weighted_total": 0.757
+        }
+      },
+      {
+        "session_id": "08b557ff-95b3-4cb7-b806-375293ddfdda",
+        "ts": "2026-04-16T09:59:41.775174+00:00",
+        "prompt_count": 5,
+        "extract_triggered": 2,
+        "extract_written": 1,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.95,
+        "token_used": 263,
+        "scores": {
+          "density": 0.3799,
+          "precision_proxy": 0.95,
+          "novelty": 1.0,
+          "cost_efficiency": 0.0,
+          "trust": 1.0,
+          "weighted_total": 0.7395
+        }
+      },
+      {
+        "session_id": "08b557ff-95b3-4cb7-b806-375293ddfdda",
+        "ts": "2026-04-16T10:02:36.580750+00:00",
+        "prompt_count": 5,
+        "extract_triggered": 1,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 51,
+        "scores": {
+          "density": 0.1974,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 0.7875,
+          "trust": 1.0,
+          "weighted_total": 0.8477
+        }
+      },
+      {
+        "session_id": "5a349797-9114-4252-b4fa-7c40400f0627",
+        "ts": "2026-04-16T11:15:24.826553+00:00",
+        "prompt_count": 3,
+        "extract_triggered": 1,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 97,
+        "scores": {
+          "density": 0.3215,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 0.5958,
+          "trust": 1.0,
+          "weighted_total": 0.8376
+        }
+      },
+      {
+        "session_id": "5a349797-9114-4252-b4fa-7c40400f0627",
+        "ts": "2026-04-16T11:16:43.665158+00:00",
+        "prompt_count": 4,
+        "extract_triggered": 1,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 97,
+        "scores": {
+          "density": 0.2449,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 0.5958,
+          "trust": 1.0,
+          "weighted_total": 0.8261
+        }
+      },
+      {
+        "session_id": "5a349797-9114-4252-b4fa-7c40400f0627",
+        "ts": "2026-04-16T11:37:40.415844+00:00",
+        "prompt_count": 5,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "08b557ff-95b3-4cb7-b806-375293ddfdda",
+        "ts": "2026-04-16T11:39:07.668817+00:00",
+        "prompt_count": 1,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "ba9abdb3-60a7-4be2-8975-83e556ae9c17",
+        "ts": "2026-04-16T11:48:02.040135+00:00",
+        "prompt_count": 3,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "126f59eb-88c7-4ebb-874a-2641d65a0da2",
+        "ts": "2026-04-16T12:05:58.256807+00:00",
+        "prompt_count": 2,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "5f8f9031-4e42-419c-baa8-eb2ea2c0c007",
+        "ts": "2026-04-16T12:06:02.086169+00:00",
+        "prompt_count": 3,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "ab8f8521-b3ab-4ba4-b5c8-ae98e25a44c5",
+        "ts": "2026-04-16T12:09:25.296873+00:00",
+        "prompt_count": 0,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "51538ddb-ba48-4b12-85eb-8e9a3098abaa",
+        "ts": "2026-04-16T12:10:40.571468+00:00",
+        "prompt_count": 0,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "ac13802c-e67e-4039-80dc-cc074dafad07",
+        "ts": "2026-04-16T12:16:02.015602+00:00",
+        "prompt_count": 0,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "8194cf5b-a6ae-4721-8e38-81a96ccbaa24",
+        "ts": "2026-04-16T12:16:45.250413+00:00",
+        "prompt_count": 0,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "d5aee2c0-1dae-4a46-85ae-669b3eda25e1",
+        "ts": "2026-04-16T12:18:47.251974+00:00",
+        "prompt_count": 0,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "a28d01ec-9244-45aa-a165-672d0cf7e1f3",
+        "ts": "2026-04-16T12:22:07.945368+00:00",
+        "prompt_count": 1,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "c0248840-0634-4bd8-a10c-cc9b5e79ad87",
+        "ts": "2026-04-16T12:22:11.634162+00:00",
+        "prompt_count": 0,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "7536c234-bc02-4e34-a166-00fe50bc1781",
+        "ts": "2026-04-17T07:24:37.713461+00:00",
+        "prompt_count": 0,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "cf4797d3-e2d8-40c1-b01b-d369c61ed296",
+        "ts": "2026-04-17T10:18:47.224804+00:00",
+        "prompt_count": 0,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "68e6cef7-d455-4537-a637-73c564ac78a7",
+        "ts": "2026-04-17T10:34:25.729915+00:00",
+        "prompt_count": 0,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "1344ddce-0c04-4b5a-a4b9-b8c42feafbb5",
+        "ts": "2026-04-17T10:43:35.104587+00:00",
+        "prompt_count": 0,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "1528649a-04dc-4adb-80bc-8835c9c236ba",
+        "ts": "2026-04-17T10:52:49.338179+00:00",
+        "prompt_count": 2,
+        "extract_triggered": 1,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 38,
+        "scores": {
+          "density": 0.4621,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 0.8417,
+          "trust": 1.0,
+          "weighted_total": 0.8956
+        }
+      },
+      {
+        "session_id": "e6cfc1f1-44f9-4312-845e-7fcc716e5c8d",
+        "ts": "2026-04-17T11:14:30.179667+00:00",
+        "prompt_count": 1,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "4a1ca8ba-3530-4287-96b8-1cda9873230f",
+        "ts": "2026-04-17T11:14:31.966641+00:00",
+        "prompt_count": 11,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "9f4df01f-bee2-40e5-92fd-c82f6446cc04",
+        "ts": "2026-04-17T11:14:38.876976+00:00",
+        "prompt_count": 0,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "1528649a-04dc-4adb-80bc-8835c9c236ba",
+        "ts": "2026-04-17T11:28:18.817245+00:00",
+        "prompt_count": 8,
+        "extract_triggered": 0,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 0,
+        "scores": {
+          "density": 0.0,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 1.0,
+          "trust": 1.0,
+          "weighted_total": 0.85
+        }
+      },
+      {
+        "session_id": "d87e4cd4-d32d-42b2-aee9-2170afc6165c",
+        "ts": "2026-04-17T11:51:38.209870+00:00",
+        "prompt_count": 3,
+        "extract_triggered": 1,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 207,
+        "scores": {
+          "density": 0.3215,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 0.1375,
+          "trust": 1.0,
+          "weighted_total": 0.7689
+        }
+      },
+      {
+        "session_id": "c2ff2ee2-db65-45d6-b187-7868501691b4",
+        "ts": "2026-04-17T12:07:04.914540+00:00",
+        "prompt_count": 2,
+        "extract_triggered": 1,
+        "extract_written": 0,
+        "dedup_hit": 0,
+        "rejected_24h": 0,
+        "avg_l2_conf": 0.0,
+        "token_used": 144,
+        "scores": {
+          "density": 0.4621,
+          "precision_proxy": 1.0,
+          "novelty": 1.0,
+          "cost_efficiency": 0.4,
+          "trust": 1.0,
+          "weighted_total": 0.8293
+        }
+      }
+    ]
+  }
 }
