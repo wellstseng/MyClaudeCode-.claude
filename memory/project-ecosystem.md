@@ -5,7 +5,7 @@
 - Trigger: 專案, SGI, TSLG, TCSM, Orbit, Titan, Server, 監控, 專案狀態, 生態
 - Last-used: 2026-04-14
 - Confirmations: 39
-- Related: redmine-config, team-roster, hot-topics
+- Related: redmine-config, team-roster, hot-topics, unity-mcp-自動化工具鏈
 
 ## 知識
 

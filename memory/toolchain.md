@@ -7,7 +7,7 @@
 - Confirmations: 185
 - Type: procedural
 - Tags: toolchain, environment, commands
-- Related: toolchain-ollama, decisions, feedback-global-install, hotfix-ilruntime-traps, unity-mcp-自動化工具鏈
+- Related: toolchain-ollama, decisions, feedback-global-install, hotfix-ilruntime-traps, unity-mcp-自動化工具鏈, failures
 
 ## 知識
 

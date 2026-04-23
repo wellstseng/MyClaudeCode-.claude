@@ -17,11 +17,27 @@
     },
     "c--projects-tslg-develop": {
       "root": "c:\\Projects\\TSLG\\Develop",
-      "last_seen": "2026-04-21",
+      "last_seen": "2026-04-23",
       "aliases": [
         "tslg",
         "tslg-client"
       ]
+    },
+    "c--users-wellstseng": {
+      "root": "C:\\Users\\wellstseng",
+      "last_seen": "2026-04-21"
+    },
+    "c--projects-orbit": {
+      "root": "c:\\Projects\\Orbit",
+      "last_seen": "2026-04-21"
+    },
+    "c--workspace-catclaw": {
+      "root": "C:\\WorkSpace\\catclaw",
+      "last_seen": "2026-04-23"
+    },
+    "c--workspace-pscodereview": {
+      "root": "C:\\WorkSpace\\pscodereview",
+      "last_seen": "2026-04-23"
     }
   }
 }

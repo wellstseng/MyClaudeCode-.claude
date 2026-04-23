@@ -2,11 +2,15 @@
   "mcpServers": {
     "MCPControl": {
       "command": "C:\\Program Files\\nodejs\\node.exe",
-      "args": ["C:\\Users\\wellstseng\\AppData\\Roaming\\npm\\node_modules\\computer-use-mcp\\dist\\main.js"]
+      "args": ["C:\\Users\\wellstseng\\.claude\\mcp\\computer-use\\dist\\index.js"]
+    },
+    "playwright": {
+      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "args": ["C:\\Users\\wellstseng\\.claude\\mcp\\playwright\\dist\\index.js"]
     },
     "workflow-guardian": {
-      "command": "node",
-      "args": ["C:\\Users\\weiandwen\\.claude\\tools\\workflow-guardian-mcp\\server.js"]
+      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "args": ["C:\\Users\\wellstseng\\.claude\\tools\\workflow-guardian-mcp\\server.js"]
     }
   }
 }
