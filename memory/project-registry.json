@@ -2,7 +2,11 @@
   "projects": {
     "-users-wellstseng-project-catclaw": {
       "root": "/Users/wellstseng/project/catclaw",
-      "last_seen": "2026-04-12"
+      "last_seen": "2026-04-23"
+    },
+    "-users-wellstseng-project-hermes": {
+      "root": "/Users/wellstseng/project/hermes",
+      "last_seen": "2026-04-22"
     }
   }
 }
