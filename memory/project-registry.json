@@ -2,7 +2,7 @@
   "projects": {
     "c--users-holylight--claude": {
       "root": "c:\\Users\\holylight\\.claude",
-      "last_seen": "2026-04-23"
+      "last_seen": "2026-04-24"
     },
     "c--projects": {
       "root": "c:\\Projects",
@@ -58,15 +58,19 @@
     },
     "c--users-holylight": {
       "root": "C:\\Users\\holylight",
-      "last_seen": "2026-04-15"
+      "last_seen": "2026-04-23"
     },
     "c--users-holylight--claude--claude-worktrees-nice-visvesvaraya": {
       "root": "C:\\Users\\holylight\\.claude\\.claude\\worktrees\\nice-visvesvaraya",
-      "last_seen": "2026-04-15"
+      "last_seen": "2026-04-23"
     },
     "c--tslg": {
       "root": "c:\\TSLG",
       "last_seen": "2026-04-21"
+    },
+    "c--users-holylight--claude--claude-worktrees-youthful-bose": {
+      "root": "C:\\Users\\holylight\\.claude\\.claude\\worktrees\\youthful-bose",
+      "last_seen": "2026-04-23"
     }
   }
 }
