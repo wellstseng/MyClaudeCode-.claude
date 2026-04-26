@@ -1,6 +1,6 @@
 # 原子記憶系統 — 全檔案索引
 
-> 由 `/read-project` 產出，最近同步：2026-04-15（V4 Phase 6 收尾）。
+> 由 `/read-project` 產出，最近同步：2026-04-26（journal-aggregate VCS+Obsidian fallback）。
 > 目標：讓 Claude Code AI 能了解自己，以利後續升級、迭代、進化。
 
 ---
@@ -158,6 +158,7 @@ Session Ready
 - read-excel.py（openpyxl+xlrd）| unity-yaml-tool.py | rag-engine.py（CLI wrapper）
 - gdoc-harvester/（Playwright 網頁收割 + dashboard）
 - workflow-guardian-mcp/server.js（MCP stdio + dashboard port 3848，含「已知專案」分頁）
+- journal-aggregate.py — `/journal` 後端：彙整來源 = episodic atoms + workflow state + VCS commits（git/svn）；模式 daily/weekly/monthly/range；`has_records()` 三來源檢查（含 VCS fallback）；SVN xml 取較寬區間後依本地時區重歸日（避開 SVN 對 `{date}` 的時區歧義）；候選 cwd 來源 = `CLAUDE_JOURNAL_VCS_ROOTS` env + 當前 state files + 歷史 journals 解析；Obsidian 鏡射讀 `CLAUDE_JOURNAL_OBSIDIAN_DIR`，os.environ 沒有時自動 fallback 讀 `~/.claude/settings*.json` 的 env 區段
 
 ## 7. 記憶層
 

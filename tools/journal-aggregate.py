@@ -19,7 +19,7 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Windows cp950 → UTF-8
@@ -32,7 +32,23 @@ JOURNALS_DIR = CLAUDE_DIR / "journals"
 WORKFLOW_DIR = CLAUDE_DIR / "workflow"
 RETENTION_DAYS = 60
 
-_obsidian_env = os.environ.get("CLAUDE_JOURNAL_OBSIDIAN_DIR")
+def _load_env_from_settings(name: str) -> str | None:
+    """Fallback：os.environ 沒有時，從 ~/.claude/settings*.json 的 env 區段讀。"""
+    for fn in ("settings.local.json", "settings.json"):
+        p = Path.home() / ".claude" / fn
+        if not p.exists():
+            continue
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            v = data.get("env", {}).get(name)
+            if v:
+                return v
+        except (json.JSONDecodeError, OSError):
+            pass
+    return None
+
+
+_obsidian_env = os.environ.get("CLAUDE_JOURNAL_OBSIDIAN_DIR") or _load_env_from_settings("CLAUDE_JOURNAL_OBSIDIAN_DIR")
 OBSIDIAN_BASE = Path(_obsidian_env) if _obsidian_env else None
 OBSIDIAN_SUBDIR = {"daily": "日報", "weekly": "週報", "monthly": "月報"}
 
@@ -495,9 +511,6 @@ def build_journal(target_date: str) -> str:
     atoms = scan_episodic(target_date)
     states = scan_states(target_date)
 
-    if not atoms and not states:
-        return f"# {target_date} 工作日誌\n\n> 當天無記錄。\n"
-
     # 以 cwd（或 workspace fallback）分組
     by_proj: dict[str, dict] = defaultdict(lambda: {
         "project": "", "cwd": "", "sessions": [], "atoms": [],
@@ -514,6 +527,17 @@ def build_journal(target_date: str) -> str:
         if not g["project"]:
             g["project"] = a["workspace"]
         g["atoms"].append(a)
+
+    # VCS-only fallback：在沒 atom/state 的 cwd 中找有 commits 的
+    existing_cwds = {g["cwd"] for g in by_proj.values() if g["cwd"]}
+    vcs_only = _vcs_only_projects(target_date, existing_cwds)
+    for cwd, _commits, _vcs in vcs_only:
+        g = by_proj[cwd]
+        g["project"] = _project_name(cwd)
+        g["cwd"] = cwd
+
+    if not by_proj:
+        return f"# {target_date} 工作日誌\n\n> 當天無記錄。\n"
 
     # Commits + 統計
     proj_data = []
@@ -563,14 +587,34 @@ def _build_period_lines(start: str, end: str) -> tuple[list[str], bool]:
     ep_by_date = scan_episodic_range(start, end)
     st_by_date = scan_states_range(start, end)
 
-    all_dates = sorted(set(list(ep_by_date.keys()) + list(st_by_date.keys())))
+    # VCS-only 日期：候選 cwd 中當天有 commits、但沒 atom/state
+    vcs_only_cwds: set[str] = set()
+    vcs_only_dates: set[str] = set()
+    existing_dates = set(ep_by_date.keys()) | set(st_by_date.keys())
+    existing_cwds: set[str] = set()
+    for s_list in st_by_date.values():
+        for s in s_list:
+            if s["cwd"]:
+                existing_cwds.add(s["cwd"])
+    for cwd in _historical_cwds():
+        if cwd in existing_cwds:
+            continue
+        for d in _iter_dates(start, end):
+            commits, _vcs = commits_for(cwd, d)
+            if commits:
+                vcs_only_cwds.add(cwd)
+                vcs_only_dates.add(d)
+
+    all_dates = sorted(existing_dates | vcs_only_dates)
     if not all_dates:
         return [], False
 
-    return _render_period(all_dates, ep_by_date, st_by_date), True
+    return _render_period(all_dates, ep_by_date, st_by_date, vcs_only_cwds), True
 
 
-def _render_period(all_dates: list[str], ep_by_date: dict, st_by_date: dict) -> list[str]:
+def _render_period(all_dates: list[str], ep_by_date: dict, st_by_date: dict,
+                   vcs_only_cwds: set[str] | None = None) -> list[str]:
+    vcs_only_cwds = vcs_only_cwds or set()
     # 以 cwd（fallback workspace）分組，跨整個區間
     by_proj: dict[str, dict] = defaultdict(lambda: {
         "project": "", "cwd": "", "sessions": [], "atoms": [],
@@ -591,6 +635,16 @@ def _render_period(all_dates: list[str], ep_by_date: dict, st_by_date: dict) -> 
                 g["project"] = a["workspace"]
             g["atoms"].append(a)
             g["dates"].add(d)
+
+    # 補入 VCS-only cwd（之後 commits_for 會逐日查）
+    for cwd in vcs_only_cwds:
+        g = by_proj[cwd]
+        g["project"] = _project_name(cwd)
+        g["cwd"] = cwd
+        for d in all_dates:
+            commits, _vcs = commits_for(cwd, d)
+            if commits:
+                g["dates"].add(d)
 
     # 各專案彙整 commits（區間內每天 commits 的聯集）
     proj_data = []
@@ -657,11 +711,21 @@ def _render_period(all_dates: list[str], ep_by_date: dict, st_by_date: dict) -> 
             for s in sorted(day_states, key=lambda x: x["start"]):
                 parts.append(f"{s['project']} {s['prompts']}p")
             lines.append(f"- **{d} ({wd})** · " + " | ".join(parts))
-        else:
-            day_atoms = ep_by_date.get(d, [])
-            if day_atoms:
-                parts = [f"{a['workspace']} {a['files_mod_n']}f" for a in day_atoms]
-                lines.append(f"- **{d} ({wd})** · " + " | ".join(parts))
+            continue
+        day_atoms = ep_by_date.get(d, [])
+        if day_atoms:
+            parts = [f"{a['workspace']} {a['files_mod_n']}f" for a in day_atoms]
+            lines.append(f"- **{d} ({wd})** · " + " | ".join(parts))
+            continue
+        # VCS-only fallback
+        parts = []
+        for _, g, _, _ in proj_data:
+            if d in g["dates"] and g["cwd"]:
+                day_commits, _ = commits_for(g["cwd"], d)
+                if day_commits:
+                    parts.append(f"{g['project']} {len(day_commits)}c")
+        if parts:
+            lines.append(f"- **{d} ({wd})** · " + " | ".join(parts))
     lines.append("")
 
     return lines
@@ -706,8 +770,58 @@ def _iter_dates(start: str, end: str):
         cur += timedelta(days=1)
 
 
+def _historical_cwds() -> set[str]:
+    """收集候選 repo cwd：環境變數 + 當前 state + 歷史 journals 解析。"""
+    cwds: set[str] = set()
+
+    env_roots = os.environ.get("CLAUDE_JOURNAL_VCS_ROOTS", "")
+    for r in env_roots.split(os.pathsep):
+        r = r.strip()
+        if r:
+            cwds.add(r)
+
+    if WORKFLOW_DIR.exists():
+        for f in WORKFLOW_DIR.glob("state-*.json"):
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                cwd = data.get("session", {}).get("cwd", "")
+                if cwd:
+                    cwds.add(cwd)
+            except (json.JSONDecodeError, KeyError, TypeError, OSError):
+                pass
+
+    if JOURNALS_DIR.exists():
+        pattern = re.compile(r"`([A-Za-z]:[\\/][^`]+|/[^`]+)`\s*·\s*(git|svn)")
+        for f in JOURNALS_DIR.glob("*.md"):
+            try:
+                for m in pattern.finditer(f.read_text(encoding="utf-8")):
+                    cwds.add(m.group(1))
+            except OSError:
+                pass
+
+    return cwds
+
+
+def _vcs_only_projects(target_date: str, exclude_cwds: set[str]) -> list[tuple[str, list[tuple[str, str]], str]]:
+    """在沒 atom/state 的 cwd 中找出當天有 commits 的，回傳 [(cwd, commits, vcs)]。"""
+    out = []
+    for cwd in _historical_cwds():
+        if cwd in exclude_cwds:
+            continue
+        commits, vcs = commits_for(cwd, target_date)
+        if commits:
+            out.append((cwd, commits, vcs))
+    return out
+
+
 def has_records(target_date: str) -> bool:
-    return bool(scan_episodic(target_date)) or bool(scan_states(target_date))
+    if scan_episodic(target_date) or scan_states(target_date):
+        return True
+    for cwd in _historical_cwds():
+        commits, _ = commits_for(cwd, target_date)
+        if commits:
+            return True
+    return False
 
 
 # ── Obsidian Mirror ─────────────────────────────────────────────
@@ -779,23 +893,44 @@ def _git_commits(repo_root: Path, date: str, author: str) -> list[tuple[str, str
 
 
 def _svn_commits(repo_root: Path, date: str, author: str) -> list[tuple[str, str]]:
-    next_day = (datetime.strptime(date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+    # 用較寬的 UTC 範圍抓回後依本地時區過濾，避免 SVN client 對 {date} 的時區歧義
+    target = datetime.strptime(date, "%Y-%m-%d")
+    prev_day = (target - timedelta(days=1)).strftime("%Y-%m-%d")
+    next_day = (target + timedelta(days=1)).strftime("%Y-%m-%d")
     try:
         r = subprocess.run(
             ["svn", "log", "--xml", "--non-interactive",
-             "-r", f"{{{date}}}:{{{next_day}}}"],
-            capture_output=True, text=True, timeout=VCS_TIMEOUT, cwd=str(repo_root),
+             "-r", f"{{{prev_day}}}:{{{next_day}T23:59:59Z}}"],
+            capture_output=True, timeout=VCS_TIMEOUT, cwd=str(repo_root),
         )
         if r.returncode != 0:
             return []
-        tree = ET.fromstring(r.stdout)
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError, ET.ParseError):
+        xml_text = r.stdout.decode("utf-8", errors="replace")
+        tree = ET.fromstring(xml_text)
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError, ET.ParseError, UnicodeDecodeError):
         return []
+
+    # 本地時區偏移：依當前系統 timezone 計算
+    now = datetime.now()
+    utc_now = datetime.now(timezone.utc).replace(tzinfo=None)
+    tz_offset = now - utc_now
+    target_local_start = target
+    target_local_end = target + timedelta(days=1)
 
     out: list[tuple[str, str]] = []
     for entry in tree.findall("logentry"):
         a = entry.find("author")
         if a is None or (a.text or "").strip() != author:
+            continue
+        date_node = entry.find("date")
+        if date_node is None or not date_node.text:
+            continue
+        try:
+            utc_dt = datetime.fromisoformat(date_node.text[:19])
+        except ValueError:
+            continue
+        local_dt = utc_dt + tz_offset
+        if not (target_local_start <= local_dt < target_local_end):
             continue
         rev = entry.get("revision", "?")
         msg_node = entry.find("msg")
