@@ -71,6 +71,7 @@ Session Ready
 | wg_extraction.py | ~285 | per-turn 萃取/worker 管理/failure 偵測 |
 | wg_episodic.py | ~856 | episodic 生成/衝突偵測/品質回饋 |
 | wg_iteration.py | ~431 | 自我迭代/震盪/衰減/晉升/覆轍偵測 |
+| codex_companion.py | ~290 | Codex Companion hook：事件轉發/assessment 注入/heuristic 軟閘 |
 | extract-worker.py | ~774 | SessionEnd/per-turn/failure 子程序：LLM 萃取 + dedup |
 | wisdom_engine.py | ~199 | 2 硬規則 + 3 反思指標 + Bayesian arch sensitivity |
 | user-init.sh | ~20 | 多人 USER.md 初始化（SessionStart） |
@@ -79,11 +80,12 @@ Session Ready
 
 合計：~5308 行
 
-## 5. Skills（commands/，19 個）
+## 5. Skills（commands/，20 個）
 
 | 指令 | 用途 | 依賴 |
 |------|------|------|
 | /atom-debug | Debug log 開關 | 無 |
+| /codex-companion | Codex Companion 開關（service 啟停 + config toggle） | codex CLI |
 | /changelog-roll | 手動滾動 _CHANGELOG.md（PostToolUse 自動掛，通常不用手跑）`--keep N\|--dry-run` | 無 |
 | /conflict | 記憶衝突偵測（向量比對 + LLM 判定） | Vector Service + Ollama |
 | /conflict-review | V4 管理職裁決 Pending Queue（雙向認證） | wg_roles + Vector Service |
@@ -144,6 +146,13 @@ Session Ready
 - migrate-confirmations.py — v3 雙欄位拆分 migration（Confirmations→ReadHits+Confirmations 歸零，支援 --dry-run）
 - eval-ranked-search.py — 50 query benchmark
 - cleanup-old-files.py — 環境清理
+
+### Codex Companion（port 3850）
+- service.py — HTTP daemon（接收 hook 事件、觸發 async Codex assessment）
+- assessor.py — 組 prompt → `codex exec` → parse JSON 結果
+- prompts.py — plan review / turn audit / architecture review 模板
+- heuristics.py — 規則式軟閘（缺驗證/完成缺證據/架構變更/空轉，< 10ms，無 LLM）
+- state.py — per-session 狀態 + assessment cache（原子寫入）
 
 ### 其他
 - read-excel.py（openpyxl+xlrd）| unity-yaml-tool.py | rag-engine.py（CLI wrapper）

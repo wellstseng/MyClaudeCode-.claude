@@ -4,10 +4,10 @@
 - Confidence: [固]
 - Type: procedural
 - Trigger: svn, svn-update, TortoiseSVN, 衝突, conflict
-- Last-used: 2026-04-21
+- Last-used: 2026-04-24
 - Created: 2026-03-18
 - Confirmations: 0
-- ReadHits: 152
+- ReadHits: 153
 - Tags: svn, vcs
 - Related: workflow-rules
 

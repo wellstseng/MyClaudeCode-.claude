@@ -137,6 +137,17 @@
     "enabled": true,
     "threshold": 8
   },
+  "codex_companion": {
+    "enabled": false,
+    "service_port": 3850,
+    "codex_binary": "codex",
+    "model": "o3",
+    "assessment_timeout": 60,
+    "soft_gate": {
+      "completion_evidence": true,
+      "architecture_review": false
+    }
+  },
   "docdrift": {
     "enabled": true,
     "path_mappings": {

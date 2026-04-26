@@ -64,7 +64,8 @@
       "c:\\tmp\\docs-progg\\.claude\\memory\\_staging",
       "C:\\Users\\holylight\\.claude\\tests",
       "c:\\tmp\\docs-progg\\.claude\\memory\\shared\\_pending_review",
-      "C:\\Users\\holylight\\.claude\\journals"
+      "C:\\Users\\holylight\\.claude\\journals",
+      "C:\\Users\\holylight\\.claude\\tools"
     ]
   },
   "hooks": {
@@ -87,6 +88,15 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/codex_companion.py'),run_name='__main__')\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
@@ -96,6 +106,15 @@
             "type": "command",
             "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
             "timeout": 8
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/codex_companion.py'),run_name='__main__')\"",
+            "timeout": 3
           }
         ]
       }
@@ -140,6 +159,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write|Bash|ExitPlanMode|EnterPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/codex_companion.py'),run_name='__main__')\"",
+            "timeout": 3
+          }
+        ]
       }
     ],
     "PreCompact": [
@@ -168,6 +197,15 @@
             "async": true
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/codex_companion.py'),run_name='__main__')\"",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "SessionEnd": [
@@ -177,6 +215,15 @@
             "type": "command",
             "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
             "timeout": 30
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/codex_companion.py'),run_name='__main__')\"",
+            "timeout": 5
           }
         ]
       }
