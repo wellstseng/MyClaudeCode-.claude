@@ -12,9 +12,11 @@ Usage:
     python journal-aggregate.py --cleanup    # 僅清理過期日誌
 """
 
+import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -28,7 +30,7 @@ for stream in (sys.stdout, sys.stderr):
         stream.reconfigure(encoding="utf-8")
 
 CLAUDE_DIR = Path.home() / ".claude"
-JOURNALS_DIR = CLAUDE_DIR / "journals"
+DEFAULT_JOURNALS_DIR = CLAUDE_DIR / "journals"
 WORKFLOW_DIR = CLAUDE_DIR / "workflow"
 RETENTION_DAYS = 60
 
@@ -48,9 +50,41 @@ def _load_env_from_settings(name: str) -> str | None:
     return None
 
 
-_obsidian_env = os.environ.get("CLAUDE_JOURNAL_OBSIDIAN_DIR") or _load_env_from_settings("CLAUDE_JOURNAL_OBSIDIAN_DIR")
-OBSIDIAN_BASE = Path(_obsidian_env) if _obsidian_env else None
-OBSIDIAN_SUBDIR = {"daily": "日報", "weekly": "週報", "monthly": "月報"}
+def _env(name: str, default: str | None = None) -> str | None:
+    """環境變數讀取：os.environ → settings*.json env → default。"""
+    v = os.environ.get(name)
+    if v:
+        return v
+    v = _load_env_from_settings(name)
+    return v if v is not None else default
+
+
+def _resolve_journal_dirs() -> list[Path]:
+    """日誌儲存路徑解析。優先序：
+    1. CLAUDE_JOURNAL_DIRS（新，多路徑 pathsep 分隔，第一個為主、其餘複製）
+    2. CLAUDE_JOURNAL_OBSIDIAN_DIR（向後相容，視為單一主路徑）
+    3. ~/.claude/journals/（預設 fallback）
+    """
+    multi = _env("CLAUDE_JOURNAL_DIRS")
+    if multi:
+        dirs: list[Path] = []
+        seen: set[str] = set()
+        for p in multi.split(os.pathsep):
+            p = p.strip()
+            if p and p not in seen:
+                seen.add(p)
+                dirs.append(Path(p))
+        if dirs:
+            return dirs
+    legacy = _env("CLAUDE_JOURNAL_OBSIDIAN_DIR")
+    if legacy:
+        return [Path(legacy)]
+    return [DEFAULT_JOURNALS_DIR]
+
+
+JOURNAL_DIRS = _resolve_journal_dirs()
+JOURNAL_SUBDIR = {"daily": "日報", "weekly": "週報", "monthly": "月報"}
+JOURNALS_DIR = JOURNAL_DIRS[0]  # 主要儲存（向後相容變數名）
 
 VCS_TIMEOUT = 10
 MAX_FILES_LIST = 30  # 修改檔案清單上限
@@ -277,7 +311,7 @@ def _llm_summary(proj_data: list, active_days: int | None = None) -> str:
         return ""
 
     # 直接用本地 backend，不試遠端（避免 timeout 拖長 journal 產出）
-    model = os.environ.get("CLAUDE_JOURNAL_LLM_MODEL", "qwen3:1.7b")
+    model = _env("CLAUDE_JOURNAL_LLM_MODEL", "qwen3:1.7b")
     local_backend = OllamaBackend(
         name="local", base_url="http://127.0.0.1:11434", auth=None,
         llm_model=model, embedding_model=None, priority=1,
@@ -774,7 +808,7 @@ def _historical_cwds() -> set[str]:
     """收集候選 repo cwd：環境變數 + 當前 state + 歷史 journals 解析。"""
     cwds: set[str] = set()
 
-    env_roots = os.environ.get("CLAUDE_JOURNAL_VCS_ROOTS", "")
+    env_roots = _env("CLAUDE_JOURNAL_VCS_ROOTS", "") or ""
     for r in env_roots.split(os.pathsep):
         r = r.strip()
         if r:
@@ -790,9 +824,17 @@ def _historical_cwds() -> set[str]:
             except (json.JSONDecodeError, KeyError, TypeError, OSError):
                 pass
 
-    if JOURNALS_DIR.exists():
-        pattern = re.compile(r"`([A-Za-z]:[\\/][^`]+|/[^`]+)`\s*·\s*(git|svn)")
-        for f in JOURNALS_DIR.glob("*.md"):
+    pattern = re.compile(r"`([A-Za-z]:[\\/][^`]+|/[^`]+)`\s*·\s*(git|svn)")
+    primary = JOURNAL_DIRS[0]
+    scan_dirs: list[Path] = []
+    if primary.exists():
+        scan_dirs.append(primary)  # 平鋪舊檔
+        for sub in JOURNAL_SUBDIR.values():
+            d = primary / sub
+            if d.exists():
+                scan_dirs.append(d)
+    for d in scan_dirs:
+        for f in d.glob("*.md"):
             try:
                 for m in pattern.finditer(f.read_text(encoding="utf-8")):
                     cwds.add(m.group(1))
@@ -824,23 +866,45 @@ def has_records(target_date: str) -> bool:
     return False
 
 
-# ── Obsidian Mirror ─────────────────────────────────────────────
+# ── Journal Write (Multi-target) ────────────────────────────────
 
-def mirror_to_obsidian(content: str, filename: str, kind: str) -> Path | None:
-    if OBSIDIAN_BASE is None:
+def _path_for(kind: str, filename: str, base: Path | None = None) -> Path | None:
+    """取得 (base|JOURNAL_DIRS[0]) / 子目錄 / filename 的完整路徑。kind 不認得回 None。"""
+    sub = JOURNAL_SUBDIR.get(kind)
+    if not sub:
         return None
-    sub = OBSIDIAN_SUBDIR.get(kind)
-    if sub is None or not OBSIDIAN_BASE.parent.exists():
-        return None
-    target_dir = OBSIDIAN_BASE / sub
+    return (base or JOURNAL_DIRS[0]) / sub / filename
+
+
+def write_journal(content: str, filename: str, kind: str) -> list[Path]:
+    """寫入 JOURNAL_DIRS[0] 為主，其餘 dirs 用 shutil.copy2 複製過去。
+    回傳實際寫入成功的所有路徑（[0] 是 primary）。"""
+    sub = JOURNAL_SUBDIR.get(kind)
+    if not sub:
+        return []
+    written: list[Path] = []
+    primary = JOURNAL_DIRS[0] / sub / filename
     try:
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target = target_dir / filename
-        target.write_text(content, encoding="utf-8")
-        return target
+        primary.parent.mkdir(parents=True, exist_ok=True)
+        primary.write_text(content, encoding="utf-8")
+        written.append(primary)
     except OSError as e:
-        print(f"[WARN] Obsidian 鏡射失敗: {e}", file=sys.stderr)
-        return None
+        print(f"[ERROR] 主路徑寫入失敗 ({primary}): {e}", file=sys.stderr)
+        return []
+
+    for base in JOURNAL_DIRS[1:]:
+        if not base.parent.exists():
+            print(f"[WARN] 跳過不存在的鏡射 base: {base}", file=sys.stderr)
+            continue
+        try:
+            target_dir = base / sub
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target = target_dir / filename
+            shutil.copy2(primary, target)
+            written.append(target)
+        except OSError as e:
+            print(f"[WARN] 複製失敗 ({base}): {e}", file=sys.stderr)
+    return written
 
 
 # ── VCS Commits ─────────────────────────────────────────────────
@@ -861,7 +925,7 @@ def _find_repo_root(cwd_str: str) -> tuple[Path, str] | None:
 
 
 def _resolve_author(repo_root: Path, vcs: str) -> str:
-    env_override = os.environ.get("CLAUDE_JOURNAL_AUTHOR")
+    env_override = _env("CLAUDE_JOURNAL_AUTHOR")
     if env_override:
         return env_override
     if vcs == "git":
@@ -955,22 +1019,97 @@ def commits_for(cwd_str: str, date: str) -> tuple[list[tuple[str, str]], str | N
     return _svn_commits(repo_root, date, author), "svn"
 
 
+# ── Migration ───────────────────────────────────────────────────
+
+def _kind_for_filename(name: str) -> str | None:
+    """從檔名推斷 kind：week-* / month-* / YYYY-MM-DD."""
+    if name.startswith("week-"):
+        return "weekly"
+    if name.startswith("month-"):
+        return "monthly"
+    if re.match(r"\d{4}-\d{2}-\d{2}\.md$", name):
+        return "daily"
+    return None
+
+
+def _file_hash(p: Path) -> str:
+    h = hashlib.md5()
+    h.update(p.read_bytes())
+    return h.hexdigest()
+
+
+def _migrate_one(src: Path, dst: Path) -> str:
+    """搬一個檔案。回傳: moved/duplicate/conflict/skipped。"""
+    if not src.is_file():
+        return "skipped"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists():
+        try:
+            if _file_hash(src) == _file_hash(dst):
+                src.unlink()
+                return "duplicate"
+        except OSError:
+            return "skipped"
+        bak = src.with_suffix(src.suffix + ".conflict")
+        try:
+            src.rename(bak)
+        except OSError:
+            return "skipped"
+        return "conflict"
+    try:
+        shutil.move(str(src), str(dst))
+    except OSError:
+        return "skipped"
+    return "moved"
+
+
+def migrate_legacy_layout() -> dict:
+    """把平鋪舊檔搬進子目錄（日報/週報/月報），且把非主路徑的舊位置（DEFAULT_JOURNALS_DIR）
+    搬到 JOURNAL_DIRS[0]。冪等。回傳統計。"""
+    stats = {"moved": 0, "duplicate": 0, "conflict": 0, "skipped": 0}
+    primary = JOURNAL_DIRS[0]
+    sources: list[Path] = []
+    if primary.exists():
+        sources.append(primary)
+    if DEFAULT_JOURNALS_DIR.exists() and DEFAULT_JOURNALS_DIR.resolve() != primary.resolve():
+        sources.append(DEFAULT_JOURNALS_DIR)
+
+    for src_dir in sources:
+        for f in list(src_dir.glob("*.md")):
+            kind = _kind_for_filename(f.name)
+            if not kind:
+                continue
+            dst = primary / JOURNAL_SUBDIR[kind] / f.name
+            if f.resolve() == dst.resolve():
+                continue
+            stats[_migrate_one(f, dst)] += 1
+    return stats
+
+
 # ── Cleanup ─────────────────────────────────────────────────────
 
 def cleanup() -> int:
-    if not JOURNALS_DIR.exists():
-        return 0
     cutoff = datetime.now() - timedelta(days=RETENTION_DAYS)
     removed = 0
-    for f in JOURNALS_DIR.glob("*.md"):
-        m = re.match(r"(\d{4}-\d{2}-\d{2})", f.name)
-        if m:
-            try:
-                if datetime.strptime(m.group(1), "%Y-%m-%d") < cutoff:
-                    f.unlink()
-                    removed += 1
-            except ValueError:
-                pass
+    targets: list[Path] = []
+    for base in JOURNAL_DIRS:
+        if not base.exists():
+            continue
+        for sub in JOURNAL_SUBDIR.values():
+            d = base / sub
+            if d.exists():
+                targets.append(d)
+        targets.append(base)  # 平鋪舊檔
+    for d in targets:
+        for f in d.glob("*.md"):
+            m = re.match(r"(\d{4}-\d{2}-\d{2})", f.name)
+            if m:
+                try:
+                    if datetime.strptime(m.group(1), "%Y-%m-%d") < cutoff:
+                        f.unlink()
+                        removed += 1
+                except ValueError:
+                    pass
     return removed
 
 
@@ -1017,29 +1156,31 @@ def main():
         print(f"清理 {n} 份過期日誌 (>{RETENTION_DAYS} 天)")
         return
 
-    JOURNALS_DIR.mkdir(parents=True, exist_ok=True)
+    # 路徑可見：讓使用者/AI 知道實際儲存位置
+    paths_str = " | ".join(str(p) for p in JOURNAL_DIRS)
+    print(f"[INFO] 日誌路徑: {paths_str}", file=sys.stderr)
+
+    # 一次性遷移（冪等）：平鋪舊檔 / DEFAULT_JOURNALS_DIR 搬到 JOURNAL_DIRS[0]/子目錄
+    mig = migrate_legacy_layout()
+    if any(mig.values()):
+        print(f"[OK] 遷移: moved={mig['moved']} dup={mig['duplicate']} "
+              f"conflict={mig['conflict']} skipped={mig['skipped']}", file=sys.stderr)
 
     if mode == "weekly":
         journal = build_weekly(target)
         _, _, iso_y, iso_w = _week_range(target)
         fname = f"week-{iso_y}-W{iso_w:02d}.md"
-        out = JOURNALS_DIR / fname
-        out.write_text(journal, encoding="utf-8")
+        written = write_journal(journal, fname, "weekly")
         print(journal)
-        print(f"\n---\n[OK] 已存檔: {out}")
-        mirrored = mirror_to_obsidian(journal, fname, "weekly")
-        if mirrored:
-            print(f"[OK] Obsidian: {mirrored}")
+        for w in written:
+            print(f"[OK] 已存檔: {w}")
     elif mode == "monthly":
         journal, label = build_monthly(month_arg)
         fname = f"month-{label}.md"
-        out = JOURNALS_DIR / fname
-        out.write_text(journal, encoding="utf-8")
+        written = write_journal(journal, fname, "monthly")
         print(journal)
-        print(f"\n---\n[OK] 已存檔: {out}")
-        mirrored = mirror_to_obsidian(journal, fname, "monthly")
-        if mirrored:
-            print(f"[OK] Obsidian: {mirrored}")
+        for w in written:
+            print(f"[OK] 已存檔: {w}")
     elif mode == "range":
         if len(range_dates) != 2:
             print("用法：range YYYY-MM-DD YYYY-MM-DD", file=sys.stderr)
@@ -1053,23 +1194,23 @@ def main():
                 continue
             journal = build_journal(d)
             fname = f"{d}.md"
-            out = JOURNALS_DIR / fname
-            out.write_text(journal, encoding="utf-8")
-            mirrored = mirror_to_obsidian(journal, fname, "daily")
-            mirror_str = f" → {mirrored}" if mirrored else ""
-            print(f"[OK] {d}: {out}{mirror_str}")
+            written = write_journal(journal, fname, "daily")
+            if not written:
+                tail = ""
+            elif len(written) == 1:
+                tail = f" → {written[0]}"
+            else:
+                tail = f" → {written[0]} (+{len(written)-1} 處)"
+            print(f"[OK] {d}:{tail}")
             produced += 1
         print(f"\n[OK] 區間 {start} ~ {end}：產生 {produced} 份日報，跳過 {skipped} 個無記錄日")
     else:
         journal = build_journal(target)
         fname = f"{target}.md"
-        out = JOURNALS_DIR / fname
-        out.write_text(journal, encoding="utf-8")
+        written = write_journal(journal, fname, "daily")
         print(journal)
-        print(f"\n---\n[OK] 已存檔: {out}")
-        mirrored = mirror_to_obsidian(journal, fname, "daily")
-        if mirrored:
-            print(f"[OK] Obsidian: {mirrored}")
+        for w in written:
+            print(f"[OK] 已存檔: {w}")
 
     n = cleanup()
     if n:
