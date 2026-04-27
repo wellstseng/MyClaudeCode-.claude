@@ -87,12 +87,60 @@ JOURNAL_SUBDIR = {"daily": "日報", "weekly": "週報", "monthly": "月報"}
 JOURNALS_DIR = JOURNAL_DIRS[0]  # 主要儲存（向後相容變數名）
 
 VCS_TIMEOUT = 10
-MAX_FILES_LIST = 30  # 修改檔案清單上限
 
 _WEEKDAY_NAMES = ["一", "二", "三", "四", "五", "六", "日"]
 
 # Episodic 知識行中屬於統計類的 pattern（日誌中跳過）
 _STAT_PATTERNS = ("閱讀 ", "閱讀區域", "版控查詢", "覆轍信號", "引用 atoms")
+
+# HTML/XML 標籤 + 註解（避免 catclaw_cli_bridge 訊息標頭未閉合 tag 汙染 markdown 渲染）
+_HTML_RE = re.compile(r"<!--.*?-->|<[^>]+>", re.DOTALL)
+
+# 「我的增補」heading：重產時整段內容（heading 之後到下一個 heading 之前）保留
+KEEPOUT_HEADING = "### 我的增補"
+_KEEPOUT_RE = re.compile(
+    r"(^" + re.escape(KEEPOUT_HEADING) + r"\s*\n)(.*?)(?=^##\s|^###\s|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+
+
+def _strip_html(s: str) -> str:
+    """移除 HTML/XML tag 與註解，壓縮空白。
+    殘留的孤立 `<`（未閉合 tag/註解）視為汙染，從該位置截掉到結尾。"""
+    if not s:
+        return s
+    s = _HTML_RE.sub("", s)
+    idx = s.find("<")
+    if idx >= 0:
+        s = s[:idx]
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _extract_keepout(path: Path) -> str | None:
+    """從既有檔抽出『### 我的增補』 heading 之後到下個 heading 之前的全部內容。
+    清掉舊版的 `<!-- ai-keepout:start/end -->` 標記殘留（一次性遷移）。"""
+    if not path.exists():
+        return None
+    try:
+        existing = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = _KEEPOUT_RE.search(existing)
+    if not m:
+        return None
+    body = re.sub(r"<!--\s*ai-keepout:(?:start|end)\s*-->\s*\n?", "", m.group(2))
+    return body
+
+
+def _apply_keepout(content: str, preserved: str | None) -> str:
+    """把保留內容塞回新 content 的『### 我的增補』段（取代預設空段）。"""
+    if preserved is None:
+        return content
+    return _KEEPOUT_RE.sub(
+        lambda m: m.group(1) + preserved,
+        content,
+        count=1,
+    )
 
 
 # ── Episodic Atoms ──────────────────────────────────────────────
@@ -122,10 +170,10 @@ def _parse_episodic(stem: str, content: str) -> dict:
     if m:
         info["workspace"] = m.group(1)
 
-    # 摘要
+    # 摘要（清掉 HTML/XML tag，避免渲染汙染）
     m = re.search(r"## 摘要\s*\n(.+?)(?=\n## |\Z)", content, re.DOTALL)
     if m:
-        info["summary"] = m.group(1).strip()
+        info["summary"] = _strip_html(m.group(1))
 
     # 知識
     m = re.search(r"## 知識\s*\n(.+?)(?=\n## |\Z)", content, re.DOTALL)
@@ -399,15 +447,27 @@ def _strip_preamble(text: str) -> str:
 def _build_summary(proj_data: list, grand_sessions: int, grand_prompts: int,
                    grand_files: int, grand_commits: int,
                    active_days: int | None = None) -> list[str]:
-    lines = ["## 總結", ""]
+    lines: list[str] = ["## 總覽", ""]
 
-    # LLM 速覽（Ollama 不在則跳過）
+    # ── 自動分析（LLM）─────────────────────────────────
+    lines.append("### 自動分析")
+    lines.append("")
     llm_text = _llm_summary(proj_data, active_days)
     if llm_text:
         lines.append(llm_text)
-        lines.append("")
+    else:
+        lines.append("_（無自動分析；本地 Ollama 不可達或本期無資料）_")
+    lines.append("")
 
-    # 統計數字
+    # ── 我的增補（重產時整段保留：heading 之後到下個 heading 之前）──
+    lines.append(KEEPOUT_HEADING)
+    lines.append("")
+    lines.append("")
+
+    # ── 統計 ──────────────────────────────────────────
+    lines.append("### 統計")
+    lines.append("")
+
     stats = [
         f"{len(proj_data)} 專案",
         f"{grand_sessions} sessions",
@@ -422,27 +482,31 @@ def _build_summary(proj_data: list, grand_sessions: int, grand_prompts: int,
 
     # 結構事實列
     for item in proj_data:
-        if len(item) == 4:
-            _key, g, commits, _vcs = item
-        else:
+        if len(item) != 4:
             continue
+        _key, g, commits, _vcs = item
         unique_files = len({f for s in g["sessions"] for f in s["modified_files"]})
         lines.append(_project_summary_line(g["project"], g["sessions"], commits, unique_files))
+    lines.append("")
+
+    # 統計表
+    if active_days is not None:
+        lines.append("| Sessions | Prompts | 改檔 | Commits | 活躍天數 |")
+        lines.append("|:--:|:--:|:--:|:--:|:--:|")
+        lines.append(
+            f"| {grand_sessions} | {grand_prompts} | {grand_files} | "
+            f"{grand_commits} | {active_days} |"
+        )
+    else:
+        lines.append("| Sessions | Prompts | 改檔 | Commits |")
+        lines.append("|:--:|:--:|:--:|:--:|")
+        lines.append(f"| {grand_sessions} | {grand_prompts} | {grand_files} | {grand_commits} |")
     lines.append("")
     return lines
 
 
 def _intent_str(intent: dict) -> str:
     return " ".join(f"{k}({v})" for k, v in sorted(intent.items(), key=lambda x: -x[1]) if v > 0)
-
-
-def _rel_path(p: str, base: str) -> str:
-    if not base:
-        return p
-    try:
-        return str(Path(p).relative_to(base)).replace("\\", "/")
-    except (ValueError, OSError):
-        return p.replace("\\", "/")
 
 
 def _clean_knowledge(k: str) -> str:
@@ -489,31 +553,13 @@ def _build_project_block(project: str, cwd: str, sessions: list[dict],
             lines.append(f"- `{cid}` {msg}")
         lines.append("")
 
-    # 修改檔案 (deduped, relative)
-    files_set: list[str] = []
-    seen = set()
-    for s in sessions:
-        for fp in s["modified_files"]:
-            rel = _rel_path(fp, cwd)
-            if rel not in seen:
-                seen.add(rel)
-                files_set.append(rel)
-    if files_set:
-        shown = files_set[:MAX_FILES_LIST]
-        more = len(files_set) - len(shown)
-        lines.append(f"**修改檔案 ({len(files_set)})**")
-        for fp in shown:
-            lines.append(f"- `{fp}`")
-        if more > 0:
-            lines.append(f"- … 還有 {more} 個")
-        lines.append("")
-
-    # Episodic 摘要 (若有)
+    # Episodic 摘要 (若有；strip HTML 避免 Obsidian 渲染汙染)
     if atoms:
         for a in atoms:
-            if a.get("summary"):
-                lines.append(f"**摘要**")
-                lines.append(a["summary"])
+            cleaned = _strip_html(a.get("summary", ""))
+            if cleaned:
+                lines.append("**摘要**")
+                lines.append(cleaned)
                 lines.append("")
                 break
 
@@ -534,8 +580,8 @@ def _build_project_block(project: str, cwd: str, sessions: list[dict],
                 knowledge.append(ck)
     if knowledge:
         lines.append(f"**知識 ({len(knowledge)})**")
-        for k in knowledge[:15]:
-            lines.append(f"- {k}")
+        for k in knowledge:
+            lines.append(f"- {_strip_html(k)}")
         lines.append("")
 
     return lines
@@ -591,10 +637,6 @@ def build_journal(target_date: str) -> str:
     lines = [f"# {target_date} 工作日誌", ""]
     lines.extend(_build_summary(proj_data, total_sessions, total_prompts,
                                 total_files, total_commits))
-    lines.append("| Sessions | Prompts | 改檔 | Commits |")
-    lines.append("|:--:|:--:|:--:|:--:|")
-    lines.append(f"| {total_sessions} | {total_prompts} | {total_files} | {total_commits} |")
-    lines.append("")
 
     for _key, g, commits, vcs in proj_data:
         lines.append("---")
@@ -713,16 +755,10 @@ def _render_period(all_dates: list[str], ep_by_date: dict, st_by_date: dict,
     # 排序：有 commit 的優先
     proj_data.sort(key=lambda x: (-len(x[2]), -sum(s["prompts"] for s in x[1]["sessions"])))
 
-    # ── 總結 ──
+    # ── 總覽（含 自動分析 / 我的增補 / 統計 + 統計表）──
     lines: list[str] = []
     lines.extend(_build_summary(proj_data, grand_sessions, grand_prompts,
                                 grand_files, grand_commits, active_days=len(all_dates)))
-
-    # ── 總覽表 ──
-    lines.append("| Sessions | Prompts | 改檔 | Commits | 活躍天數 |")
-    lines.append("|:--:|:--:|:--:|:--:|:--:|")
-    lines.append(f"| {grand_sessions} | {grand_prompts} | {grand_files} | {grand_commits} | {len(all_dates)} |")
-    lines.append("")
 
     # ── 各專案 ──
     for _key, g, commits, vcs in proj_data:
@@ -878,12 +914,16 @@ def _path_for(kind: str, filename: str, base: Path | None = None) -> Path | None
 
 def write_journal(content: str, filename: str, kind: str) -> list[Path]:
     """寫入 JOURNAL_DIRS[0] 為主，其餘 dirs 用 shutil.copy2 複製過去。
+    若既有檔含 `<!-- ai-keepout:start -->...<!-- ai-keepout:end -->` 區塊，
+    內容會被原樣保留塞回新 content。
     回傳實際寫入成功的所有路徑（[0] 是 primary）。"""
     sub = JOURNAL_SUBDIR.get(kind)
     if not sub:
         return []
     written: list[Path] = []
     primary = JOURNAL_DIRS[0] / sub / filename
+    preserved = _extract_keepout(primary)
+    content = _apply_keepout(content, preserved)
     try:
         primary.parent.mkdir(parents=True, exist_ok=True)
         primary.write_text(content, encoding="utf-8")
@@ -932,11 +972,13 @@ def _resolve_author(repo_root: Path, vcs: str) -> str:
         try:
             r = subprocess.run(
                 ["git", "-C", str(repo_root), "config", "user.name"],
-                capture_output=True, text=True, timeout=VCS_TIMEOUT,
+                capture_output=True, timeout=VCS_TIMEOUT,
             )
-            if r.returncode == 0 and r.stdout.strip():
-                return r.stdout.strip()
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            if r.returncode == 0:
+                name = r.stdout.decode("utf-8", errors="replace").strip()
+                if name:
+                    return name
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError, UnicodeDecodeError):
             pass
     return os.environ.get("USERNAME") or os.environ.get("USER") or ""
 
@@ -947,12 +989,13 @@ def _git_commits(repo_root: Path, date: str, author: str) -> list[tuple[str, str
             ["git", "-C", str(repo_root), "log",
              f"--since={date} 00:00:00", f"--until={date} 23:59:59",
              f"--author={author}", "--pretty=format:%h|%s"],
-            capture_output=True, text=True, timeout=VCS_TIMEOUT,
+            capture_output=True, timeout=VCS_TIMEOUT,
         )
         if r.returncode != 0:
             return []
-        return [tuple(line.split("|", 1)) for line in r.stdout.splitlines() if "|" in line]
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        out = r.stdout.decode("utf-8", errors="replace")
+        return [tuple(line.split("|", 1)) for line in out.splitlines() if "|" in line]
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError, UnicodeDecodeError):
         return []
 
 
