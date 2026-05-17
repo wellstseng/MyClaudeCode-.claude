@@ -113,15 +113,15 @@
         ]
       },
       {
-          "matcher": "Edit|Write",
-          "hooks": [
-            {
-              "type": "command",
-              "command": "bash \"$HOME/.claude/hooks/obsidian-sync.sh\"",
-              "timeout": 5
-            }
-          ]
-        }
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/obsidian-sync.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
     ],
     "PreCompact": [
       {
@@ -185,5 +185,6 @@
     }
   },
   "autoUpdatesChannel": "latest",
-  "skipDangerousModePermissionPrompt": true
+  "skipDangerousModePermissionPrompt": true,
+  "theme": "light"
 }

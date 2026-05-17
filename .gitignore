@@ -102,3 +102,4 @@ channels/
 history.jsonl
 paste-cache/
 tasks/
+.last-cleanup
