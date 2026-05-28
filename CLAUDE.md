@@ -1,5 +1,4 @@
 # 啟動設定
- * **認清楚自己與使用者各種面向的不同與相同**
 @IDENTITY.md
 @USER.md
 @memory/MEMORY.md

@@ -22,14 +22,33 @@ todos/
 
 # ─── Runtime cache files ─────────────────────────────────
 stats-cache.json
+.last-cleanup
 
 # ─── Workflow Guardian runtime state ─────────────────────
 # config.json IS tracked; state files are not
 workflow/state-*.json
+workflow/state-*.json.bak-*
 workflow/guardian-crash.log
 workflow/extract-worker.log
 workflow/hot_cache.json
 workflow/vector_ready.flag
+workflow/.backend_long_die.json
+workflow/_merge_history.log
+workflow/last_review_marker.json
+workflow/mcp-version-cache.json
+
+# ─── Per-user / per-machine state (Wave 5 untracked) ─────
+memory/project-registry.json
+memory/wisdom/reflection_metrics.json
+memory/wisdom/causal_graph.json
+memory/_meta/atom_io_audit.jsonl
+policy-limits.json
+
+# ─── Codex Companion runtime state ────────────────────────
+workflow/companion-state-*.json
+workflow/companion-assessment-*.json
+workflow/companion-metrics-*.json
+workflow/companion.pid
 
 # ─── Runtime logs (atom-debug, hook output) ───────────────
 Logs/
@@ -45,6 +64,7 @@ memory/*.access.json
 memory/**/*.access.json
 **/memory/*.access.json
 **/memory/**/*.access.json
+_AIDocs/Failures/*.access.json
 
 # ─── Staging area (temp files, session prompts) ──────────
 memory/_staging/
@@ -56,6 +76,7 @@ memory/episodic/
 memory/_distant/
 
 # ─── User-specific config (per-user, auto-generated) ──────
+# IDENTITY.md / USER.md 為個人實例（從 IDENTITY.template / USER.template 拷出）；模板 tracked, 實例 ignored
 USER.md
 USER-*.md
 !prompts/user-decision-*.md

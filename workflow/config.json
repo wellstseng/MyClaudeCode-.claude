@@ -41,20 +41,6 @@
         "think": true,
         "llm_num_predict": 4096
       },
-      "rdchat": {
-        "base_url": "https://rdchat.uj.com.tw/ollama",
-        "auth": {
-          "type": "bearer_ldap",
-          "login_url": "https://rdchat.uj.com.tw/api/v1/auths/ldap",
-          "password_file": "~/.claude/workflow/.rdchat_password"
-        },
-        "llm_model": "gemma4:e4b",
-        "embedding_model": "qwen3-embedding:latest",
-        "priority": 2,
-        "enabled": true,
-        "think": true,
-        "llm_num_predict": 4096
-      },
       "local": {
         "base_url": "http://127.0.0.1:11434",
         "llm_model": "qwen3:14b",
@@ -68,7 +54,10 @@
     "search_min_score": 0.65,
     "search_timeout_ms": 3500,
     "auto_start_service": true,
-    "auto_index_on_change": true
+    "auto_index_on_change": true,
+    "global_layer": "bm25",
+    "bm25_min_score": 1.0,
+    "bm25_top_k": 3
   },
   "write_gate": {
     "enabled": true,
@@ -143,15 +132,34 @@
     "enabled": true,
     "threshold": 8
   },
+  "codex_companion": {
+    "enabled": true,
+    "codex_binary": "C:/Users/holylight/AppData/Roaming/npm/codex.cmd",
+    "model": "",
+    "assessment_timeout": 60,
+    "subprocess_timeout": 90,
+    "score_threshold": 7,
+    "max_audits_per_session": 30,
+    "silent_advisory": true,
+    "max_inject_severity": "high",
+    "soft_gate": {
+      "completion_evidence": true,
+      "architecture_review": false,
+      "block_severity_threshold": "high"
+    },
+    "block_template": "Codex Companion 軟閘：偵測到高風險缺漏。\n{detail}\n請補充驗證或修正後再收尾。"
+  },
   "docdrift": {
     "enabled": true,
     "path_mappings": {
       "hooks/wg_*.py": ["Architecture.md"],
+      "hooks/dispatcher.py": ["Architecture.md"],
+      "hooks/handlers/*.py": ["Architecture.md"],
       "hooks/workflow-guardian.py": ["Architecture.md"],
       "hooks/extract-worker.py": ["Architecture.md"],
       "hooks/quick-extract.py": ["Architecture.md"],
       "hooks/wisdom_engine.py": ["Architecture.md"],
-      "commands/*.md": ["DocIndex-System.md"],
+      "skills/*/SKILL.md": ["DocIndex-System.md"],
       "rules/*.md": ["DocIndex-System.md"],
       "tools/*.py": ["DocIndex-System.md"]
     },
