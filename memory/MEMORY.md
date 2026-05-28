@@ -13,7 +13,10 @@
 | toolchain | 環境設定、工具鏈 |
 | toolchain-ollama | Ollama 萃取配置 |
 | feedback-* | 行為校正（9 個含 handoff、fix-on-discovery、knowledge-doc-iteration） |
+| wells-workflow-* | AI 工作流心路歷程沉澱（5 條：基建先於應用 / 講你不喜歡什麼 / 不靠決心靠機制 / 多LLM ledger / 小自動化回報） |
 | gdoc-harvester | Google Docs 收割 |
+| reference-obsidian-vault | Obsidian vault 在 ~/WellsDB（非 iCloud） |
+| experience-vmlx-gemma4-abliterated | Gemma 4 31B 破解本地化（Mac vmlx 暫停；Windows + Ollama 已驗證 juilpark/gemma-4-31B-it-uncensored-heretic:q4_k_m；dealignai/JANG 衍生 gguf 全廢） |
 
 > **知識庫查閱**：
 | 知識庫 | 路徑 | 涵蓋主題 |

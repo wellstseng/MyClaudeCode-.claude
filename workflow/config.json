@@ -26,7 +26,7 @@
     "enabled": true,
     "service_port": 3849,
     "embedding_backend": "ollama",
-    "embedding_model": "qwen3-embedding",
+    "embedding_model": "qwen3-embedding:8b",
     "fallback_backend": "sentence-transformers",
     "fallback_model": "BAAI/bge-m3",
     "ollama_base_url": "http://127.0.0.1:11434",
@@ -58,7 +58,7 @@
       "local": {
         "base_url": "http://127.0.0.1:11434",
         "llm_model": "qwen3:14b",
-        "embedding_model": "qwen3-embedding",
+        "embedding_model": "qwen3-embedding:8b",
         "priority": 3,
         "think": false,
         "llm_num_predict": 2048

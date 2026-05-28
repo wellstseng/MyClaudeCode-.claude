@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 決策, 記憶系統, 原子記憶, guardian, hooks, MCP
-- Last-used: 2026-05-17
-- Confirmations: 219
+- Last-used: 2026-05-28
+- Confirmations: 237
 - Related: decisions-architecture
 
 ## 知識

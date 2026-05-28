@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 偏好, 風格, 習慣, 語言, 回應, 執P, 執驗上P, 上GIT
-- Last-used: 2026-05-17
-- Confirmations: 2943
+- Last-used: 2026-05-28
+- Confirmations: 2983
 - Type: preference
 
 - Related: collab-anchor, feedback-humanist-decision-framing, feedback-no-outsource-rigor, feedback-decision-no-tech-menu, feedback-git-log-chinese, feedback-fix-on-discovery

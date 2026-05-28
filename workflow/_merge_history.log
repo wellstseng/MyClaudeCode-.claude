@@ -20,3 +20,11 @@
 [2026-05-15 00:38:22] action=auto-extract-v41 session=bdcdffa0-8009-4d3d-81d0-4aeb06582679 processed=1 confirmed=0 l1_yes=0 l1_no=0 skipped=1
 [2026-05-15 00:43:50] action=auto-extract-v41 session=bdcdffa0-8009-4d3d-81d0-4aeb06582679 processed=1 confirmed=0 l1_yes=0 l1_no=1 skipped=0
 [2026-05-17 14:33:27] action=auto-extract-v41 session=a87266c1-ffe8-4c65-aa52-8710b68ae6d7 processed=1 confirmed=0 l1_yes=0 l1_no=1 skipped=0
+[2026-05-17 22:19:54] action=auto-extract-v41 session=0fbd3b92-cc36-48e1-9244-7aa1aaefd12a processed=1 confirmed=0 l1_yes=1 l1_no=0 skipped=0
+[2026-05-19 18:54:24] action=auto-extract-v41 session=4e97fdb7-2d2a-457f-8f47-8cc016c68316 processed=1 confirmed=0 l1_yes=0 l1_no=0 skipped=1
+[2026-05-23 16:39:23] action=auto-extract-v41 session=c7a6266d-d3e5-4492-b708-c9a1e8d17920 processed=1 confirmed=0 l1_yes=0 l1_no=1 skipped=0
+[2026-05-23 17:34:07] action=auto-extract-v41 session=c7a6266d-d3e5-4492-b708-c9a1e8d17920 processed=1 confirmed=0 l1_yes=1 l1_no=0 skipped=0
+[2026-05-25 19:58:53] action=auto-extract-v41 session=c7a6266d-d3e5-4492-b708-c9a1e8d17920 processed=1 confirmed=0 l1_yes=0 l1_no=1 skipped=0
+[2026-05-26 00:19:18] action=auto-extract-v41 session=c7a6266d-d3e5-4492-b708-c9a1e8d17920 processed=1 confirmed=1 l1_yes=1 l1_no=0 skipped=0
+[2026-05-26 22:22:59] action=auto-extract-v41 session=c7a6266d-d3e5-4492-b708-c9a1e8d17920 processed=1 confirmed=0 l1_yes=0 l1_no=1 skipped=0
+[2026-05-28 12:14:24] action=auto-extract-v41 session=33add02a-9504-4f16-b2ee-9a199bff53af processed=1 confirmed=0 l1_yes=0 l1_no=1 skipped=0

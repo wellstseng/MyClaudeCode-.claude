@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 工具鏈, 環境設定, bash指令, command, bash, git, python, npm
-- Last-used: 2026-05-11
-- Confirmations: 293
+- Last-used: 2026-05-28
+- Confirmations: 319
 - Type: procedural
 - Tags: toolchain, environment, commands
 - Related: toolchain-ollama, decisions-architecture, feedback_global_install, nodejs-ecosystem, feedback-global-install

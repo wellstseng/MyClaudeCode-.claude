@@ -602,7 +602,7 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             and not state.get("_skip_vector_init")):
         try:
             vs_port = config.get("vector_search", {}).get("service_port", 3849)
-            vs_script = str(CLAUDE_DIR / "tools" / "vector-service.py")
+            vs_script = str(CLAUDE_DIR / "tools" / "memory-vector-service" / "service.py")
             flag_path = str(WORKFLOW_DIR / "vector_ready.flag")
             # Inline script: health check → spawn if needed → poll → flag → warmup
             _bg_code = f"""
