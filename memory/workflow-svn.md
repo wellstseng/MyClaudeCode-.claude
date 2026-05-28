@@ -6,7 +6,7 @@
 - Trigger: svn, svn-update, TortoiseSVN, 衝突, conflict
 - Created: 2026-03-18
 - Tags: svn, vcs
-- Related: workflow-rules
+- Related: workflow-rules, svn-windows-中文-commit-log-編碼陷阱
 
 ## 知識
 
