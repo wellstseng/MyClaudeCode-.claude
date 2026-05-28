@@ -3,8 +3,10 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 重試, retry, escalation, 精確修正, fix-escalation, 修不好, 又壞了, 失敗
-- Last-used: 2026-04-23
-- Confirmations: 20
+- Last-used: 2026-04-24
+- Confirmations: 21
+
+- Related: wells-workflow-brake-mechanism
 
 ## 知識
 

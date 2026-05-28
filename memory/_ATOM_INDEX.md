@@ -24,3 +24,9 @@
 | feedback-git-log-chinese | memory/feedback/feedback-git-log-chinese.md | commit message, commit msg, 上GIT, git commit, git log, git push |
 | feedback-fix-on-discovery | memory/feedback/feedback-fix-on-discovery.md | 不在範圍, 範圍外, 未來處理, 另開 session, out of scope, 順手發現, 不在本次範圍 |
 | feedback-humanist-decision-framing | memory/feedback-humanist-decision-framing.md | 裁決, 決策呈現, 選項, 多選題, 技術細節, 使用者認知負擔 |
+| svn-windows-中文-commit-log-編碼陷阱 | memory/svn-windows-中文-commit-log-編碼陷阱.md | SVN, commit log, 中文, UTF-8, CP950, Windows, 亂碼, encoding, BOM, commit message, svn:log |
+| obsidian-sync-hook-全域同步-stdin-json-測試陷阱 | memory/obsidian-sync-hook-全域同步-stdin-json-測試陷阱.md | obsidian-sync, obsidian, Obsidian 同步, _global, 全域 memory 同步, PostToolUse hook 測試, stdin JSON, echo 反斜線, MSYS bash, hook 測試陷阱 |
+| wells-workflow-feedback-driven-teaching | memory/wells-workflow-feedback-driven-teaching.md | 工作流洞見, 教AI, feedback, 行為校正, 糾正, teaching |
+| wells-workflow-brake-mechanism | memory/wells-workflow-brake-mechanism.md | 工作流洞見, 煞車, 重試, retry, 越改越爛, hook |
+| wells-workflow-handoff-quality | memory/wells-workflow-handoff-quality.md | 工作流洞見, handoff, 交接, 大型任務, 跨session |
+| wells-workflow-copilot-not-driver | memory/wells-workflow-copilot-not-driver.md | 工作流洞見, 副駕, copilot, 人機協作, 決策權 |

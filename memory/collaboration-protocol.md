@@ -5,7 +5,7 @@
 - Trigger: 協作, 協作原則, 副駕, 收斂, 跑偏, 發散, 焦慮, 經驗汲取, 避危, 工作流拆解, session回顧
 - Last-used: 2026-04-08
 - Confirmations: 9
-- Related: preferences, workflow-rules, fail-cognitive
+- Related: preferences, workflow-rules, fail-cognitive, wells-workflow-copilot-not-driver, wells-workflow-feedback-driven-teaching
 
 ## 知識
 

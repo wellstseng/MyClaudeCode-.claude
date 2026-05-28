@@ -3,10 +3,10 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 偏好, 風格, 習慣, 語言, 回應, 執P, 執驗上P, 上GIT
-- Last-used: 2026-04-23
-- Confirmations: 167
+- Last-used: 2026-05-26
+- Confirmations: 176
 - Type: preference
-- Related: feedback-upload-discord, collaboration-protocol, hotfix-ilruntime-traps, feedback-decision-no-tech-menu, feedback-no-outsource-rigor, feedback-git-log-chinese, feedback-fix-on-discovery, feedback-humanist-decision-framing, feedback_upload_discord
+- Related: feedback-upload-discord, collaboration-protocol, hotfix-ilruntime-traps, feedback-decision-no-tech-menu, feedback-no-outsource-rigor, feedback-git-log-chinese, feedback-fix-on-discovery, feedback-humanist-decision-framing, feedback_upload_discord, wells-workflow-copilot-not-driver, wells-workflow-feedback-driven-teaching
 
 ## 知識
 

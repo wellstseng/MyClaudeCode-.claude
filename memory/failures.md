@@ -7,7 +7,7 @@
 - Confirmations: 50
 - Type: procedural
 - Tags: failure, pitfall, debug, quality-feedback
-- Related: decisions, toolchain, fix-escalation
+- Related: decisions, toolchain, fix-escalation, wells-workflow-brake-mechanism
 
 ## 知識
 

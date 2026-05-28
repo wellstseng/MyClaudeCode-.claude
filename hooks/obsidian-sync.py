@@ -34,13 +34,19 @@ def main():
         return
 
     # 提取 project slug
-    # 路徑格式: ~/.claude/projects/{slug}/memory/{file}.md
+    # 專案記憶體: ~/.claude/projects/{slug}/memory/{file}.md → slug = 專案名
+    # 全域記憶體: ~/.claude/memory/{file}.md          → slug = _global
     normalized = file_path.replace("\\", "/")
     match = re.search(r"\.claude/projects/([^/]+)/memory/", normalized)
-    if not match:
+    if match:
+        slug = match.group(1)
+    elif re.search(r"\.claude/memory/", normalized):
+        # _staging 為進行中草稿，不進長期知識庫
+        if "/memory/_staging/" in normalized:
+            return
+        slug = "_global"
+    else:
         return
-
-    slug = match.group(1)
     filename = os.path.basename(file_path)
     target_dir = OBSIDIAN_BASE / slug
     target_path = target_dir / filename

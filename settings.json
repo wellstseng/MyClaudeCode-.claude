@@ -155,6 +155,5 @@
   },
   "effortLevel": "max",
   "autoUpdatesChannel": "latest",
-  "skipDangerousModePermissionPrompt": true,
-  "skipAutoPermissionPrompt": true
+  "skipDangerousModePermissionPrompt": true
 }

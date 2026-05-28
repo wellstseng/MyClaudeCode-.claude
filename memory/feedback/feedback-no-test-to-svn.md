@@ -3,8 +3,8 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 上SVN, svn commit, 測試碼, 新手作業, 練習, 不可上傳
-- Last-used: 2026-04-23
-- Confirmations: 15
+- Last-used: 2026-05-21
+- Confirmations: 19
 
 ## 知識
 
