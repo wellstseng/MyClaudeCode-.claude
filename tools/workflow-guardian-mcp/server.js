@@ -303,81 +303,16 @@ function handleMessage(msg) {
 
 // ─── Tool Definitions ───────────────────────────────────────────────────────
 
+// V5 P2 (2026-05-26): 4 internal IPC tools removed from MCP surface
+// (workflow_status / workflow_signal / memory_queue_add / memory_queue_flush).
+// Reason: these are hook-internal state ops that should not appear in Claude's
+// tool menu. Replacements:
+//   - workflow_status     → 由 SessionStart hook 自動注入 state 摘要
+//   - workflow_signal     → Stop gate 自動偵測 git/svn clean 標 sync_completed
+//   - memory_queue_*      → 由 wg_extraction extract-worker 全自動處理
+// The toolXxx() handler functions below are kept temporarily as dead code
+// (until P6 Wave 5 cleanup) so the file structure stays stable.
 const TOOL_DEFINITIONS = [
-  {
-    name: "workflow_status",
-    description:
-      "Query the current workflow guardian state. " +
-      "Shows modified files, knowledge queue, sync status, and phase. " +
-      "Omit session_id to list all active sessions.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        session_id: {
-          type: "string",
-          description: "Session ID to query. Omit for all sessions.",
-        },
-      },
-    },
-  },
-  {
-    name: "workflow_signal",
-    description:
-      "Send a workflow signal to update session state. " +
-      "Use sync_started when beginning sync, sync_completed when done, " +
-      "reset to clear a stuck state.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        session_id: { type: "string", description: "Target session ID" },
-        signal: {
-          type: "string",
-          enum: ["sync_started", "sync_completed", "reset", "mute"],
-          description: "Signal to send. Use 'mute' to silence Guardian reminders for this session.",
-        },
-      },
-      required: ["session_id", "signal"],
-    },
-  },
-  {
-    name: "memory_queue_add",
-    description:
-      "Add a knowledge item to the session's pending memory queue. " +
-      "Items will be written to atom files during end-of-session sync.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        session_id: { type: "string" },
-        content: {
-          type: "string",
-          description: "The knowledge to remember",
-        },
-        classification: {
-          type: "string",
-          enum: ["[固]", "[觀]", "[臨]"],
-          description: "Memory classification level",
-        },
-        trigger_context: {
-          type: "string",
-          description: "What triggered this knowledge discovery",
-        },
-      },
-      required: ["session_id", "content", "classification"],
-    },
-  },
-  {
-    name: "memory_queue_flush",
-    description:
-      "Mark all pending knowledge queue items as flushed (written to atoms). " +
-      "Call this after successfully writing atom files.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        session_id: { type: "string" },
-      },
-      required: ["session_id"],
-    },
-  },
   {
     name: "atom_write",
     description:
@@ -456,7 +391,7 @@ const TOOL_DEFINITIONS = [
     name: "atom_promote",
     description:
       "Promote an atom's confidence level. " +
-      "Checks promotion thresholds: [臨]≥20 confirmations→[觀], [觀]≥40→[固]. " +
+      "Checks dual thresholds: [臨]→[觀] Conf≥4 or RH≥20, [觀]→[固] Conf≥10 or RH≥50. " +
       "Use execute=false for dry-run. " +
       "When promoting to [固], pass merge_to_preferences=true to append knowledge " +
       "into preferences.md and archive the source atom (global scope only).",
@@ -475,24 +410,42 @@ const TOOL_DEFINITIONS = [
       required: ["atom_name", "scope", "execute"],
     },
   },
+  {
+    name: "atom_move",
+    description:
+      "Atomic atom move/reconcile across memory layers. " +
+      "subcommand='move' moves atom from --from to --to (both memory-root dirs) and syncs _ATOM_INDEX/MEMORY.md/inbound refs. " +
+      "subcommand='reconcile' assumes atom already lives at --at and cleans stale state elsewhere. " +
+      "Enforces layering: down-refs (global→project) removed automatically, up-refs (project→global) kept, " +
+      "sibling cross-project refs reported as warnings. Use dry_run=true to preview.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        subcommand: { type: "string", enum: ["move", "reconcile"], description: "move=full mv + sync; reconcile=sync only (atom already at target)" },
+        atom: { type: "string", description: "Atom slug (filename without .md)" },
+        from: { type: "string", description: "Source memory root dir (required for move)" },
+        to: { type: "string", description: "Target memory root dir (required for move)" },
+        at: { type: "string", description: "Current memory root where atom lives (required for reconcile)" },
+        dry_run: { type: "boolean", description: "Preview without applying changes" },
+      },
+      required: ["subcommand", "atom"],
+    },
+  },
 ];
 
 // ─── Tool Handlers ──────────────────────────────────────────────────────────
 
 function handleToolCall(id, toolName, args) {
   switch (toolName) {
-    case "workflow_status":
-      return toolWorkflowStatus(id, args);
-    case "workflow_signal":
-      return toolWorkflowSignal(id, args);
-    case "memory_queue_add":
-      return toolMemoryQueueAdd(id, args);
-    case "memory_queue_flush":
-      return toolMemoryQueueFlush(id, args);
+    // V5 P2: workflow_status / workflow_signal / memory_queue_add / memory_queue_flush
+    // no longer exposed in TOOL_DEFINITIONS — they fall through to default error.
     case "atom_write":
       return toolAtomWrite(id, args).catch(e => sendToolResult(id, `atom_write error: ${e.message}`, true));
     case "atom_promote":
-      return toolAtomPromote(id, args);
+      // S3.2: toolAtomPromote 改 async，需 .catch 包 throw（與 atom_write/atom_move 一致）
+      return toolAtomPromote(id, args).catch(e => sendToolResult(id, `atom_promote error: ${e.message}`, true));
+    case "atom_move":
+      return toolAtomMove(id, args).catch(e => sendToolResult(id, `atom_move error: ${e.message}`, true));
     default:
       sendError(id, -32601, `Unknown tool: ${toolName}`);
   }
@@ -668,8 +621,7 @@ function buildAtomContent({
   }
   lines.push(`- Confidence: ${confidence}`);
   lines.push(`- Trigger: ${triggers.join(", ")}`);
-  lines.push(`- Last-used: ${today}`);
-  lines.push("- Confirmations: 0");
+  // Wave 2: Last-used / Confirmations / ReadHits 移到 <atom>.access.json，不再寫 .md
   if (pendingReviewBy) {
     lines.push(`- Pending-review-by: ${pendingReviewBy}`);
   }
@@ -752,6 +704,45 @@ function isSensitiveAudience(audience) {
  */
 function resolveMemDir(scope, projectCwd, opts = {}) {
   scope = scope || "shared";
+
+  // ─── S3.2 P3+P4: cwd-scope mismatch 防護 ────────────────────────────────
+  // 防止「在專案 root 下用 scope=global 寫個人/專案知識到全域」與
+  // 「在 ~/.claude 下用 scope=shared/role/personal 落到不存在的 V4 子層」。
+  // force_global escape hatch 給 migration / 測試使用。
+  const normCwd = (s) => {
+    if (!s) return "";
+    try { return path.resolve(s).toLowerCase(); }
+    catch { return String(s).toLowerCase(); }
+  };
+  const claudeDirNorm = normCwd(CLAUDE_DIR);
+  const cwdNorm = normCwd(projectCwd);
+  const isUnderClaudeDir = cwdNorm && (
+    cwdNorm === claudeDirNorm ||
+    cwdNorm.startsWith(claudeDirNorm + path.sep.toLowerCase()) ||
+    cwdNorm.startsWith(claudeDirNorm + "/")
+  );
+
+  if (scope === "global" && !opts.force_global) {
+    // P3: 若 cwd 落在某個專案 root（非 ~/.claude）→ 拒絕（避免污染 global）
+    if (cwdNorm && !isUnderClaudeDir) {
+      const projRoot = findProjectRoot(projectCwd);
+      if (projRoot && normCwd(projRoot) !== claudeDirNorm) {
+        return { error:
+          `scope=global rejected: cwd=${projectCwd} is inside project root=${projRoot}; ` +
+          `use scope=shared/role/personal for project knowledge, or pass force_global=true`,
+        };
+      }
+    }
+  }
+
+  if ((scope === "shared" || scope === "role" || scope === "personal") && isUnderClaudeDir) {
+    // P4: ~/.claude 本身沒有 V4 sub-scope 結構（已被 P1 防護擋住）
+    return { error:
+      `scope=${scope} rejected: cwd=${projectCwd} is under ~/.claude itself; ` +
+      `use scope=global for cross-project knowledge`,
+    };
+  }
+  // ─── /S3.2 P3+P4 ────────────────────────────────────────────────────────
 
   if (scope === "global") {
     fs.mkdirSync(MEMORY_DIR, { recursive: true });
@@ -925,68 +916,11 @@ function execWriteGate(content, classification) {
   });
 }
 
-/** Append or update an atom entry in MEMORY.md index table */
-function appendToIndex(memDir, atomName, relPath, triggers) {
-  const indexPath = resolveMemoryIndex(memDir);
-  const triggerStr = triggers.join(", ");
-  const newRow = `| ${atomName} | ${relPath} | ${triggerStr} |`;
-
-  let content = "";
-  try {
-    content = fs.readFileSync(indexPath, "utf-8");
-  } catch {
-    // Create new MEMORY.md with table header
-    content = [
-      "# Atom Index",
-      "",
-      "> Session 啟動時先讀此索引。比對 Trigger → Read 對應 atom。",
-      "| Atom | Path | Trigger |",
-      "|------|------|---------|",
-      "",
-    ].join("\n");
-  }
-
-  // Check if atom already exists in the table
-  const escapedName = atomName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const existingRe = new RegExp(`^\\|\\s*${escapedName}\\s*\\|.*$`, "m");
-  if (existingRe.test(content)) {
-    // Update existing row
-    content = content.replace(existingRe, newRow);
-  } else {
-    // Insert before the first empty line after the table header separator
-    const sepIdx = content.indexOf("|------|");
-    if (sepIdx >= 0) {
-      const afterSep = content.indexOf("\n", sepIdx);
-      if (afterSep >= 0) {
-        // Find the end of the table (first line that doesn't start with |)
-        const lines = content.split("\n");
-        let insertIdx = -1;
-        let foundSep = false;
-        for (let i = 0; i < lines.length; i++) {
-          if (lines[i].startsWith("|------")) { foundSep = true; continue; }
-          if (foundSep && !lines[i].startsWith("|")) {
-            insertIdx = i;
-            break;
-          }
-        }
-        if (insertIdx >= 0) {
-          lines.splice(insertIdx, 0, newRow);
-          content = lines.join("\n");
-        } else {
-          // Table runs to end of file
-          content = content.trimEnd() + "\n" + newRow + "\n";
-        }
-      }
-    } else {
-      // No table found, append
-      content += "\n" + newRow + "\n";
-    }
-  }
-
-  // Write atomically
-  const tmp = indexPath + ".tmp";
-  fs.writeFileSync(tmp, content, "utf-8");
-  fs.renameSync(tmp, indexPath);
+/** V5 P3b: Upsert atom entry to _atom_index.json (SoT) via funnel.
+ *  Auto-regenerates _ATOM_INDEX.md mirror via lib/atom_index_json.upsert_atom. */
+async function appendToIndex(memDir, atomName, relPath, triggers) {
+  const r = await funnelWriteIndex(memDir, atomName, relPath, triggers, "mcp");
+  if (!r.ok) crashLog("appendToIndex funnel (json)", r.error);
 }
 
 /** Trigger vector service re-index (fire and forget) */
@@ -996,6 +930,20 @@ function triggerVectorReindex() {
     const req = http.request(url, { method: "POST", timeout: 3000 }, () => {});
     req.on("error", () => {}); // ignore
     req.end();
+  } catch {}
+}
+
+/** Regenerate MEMORY.md from _ATOM_INDEX (fire and forget).
+ *  Only touches global memory — project layers don't have sync-memory-index hookup yet. */
+function syncMemoryIndex() {
+  try {
+    const script = path.join(TOOLS_DIR, "sync-memory-index.py");
+    if (!fs.existsSync(script)) return;
+    const cp = require("child_process").spawn("python", [script, "--write"], {
+      windowsHide: true, detached: true, stdio: "ignore",
+    });
+    cp.on("error", () => {});
+    cp.unref();
   } catch {}
 }
 
@@ -1009,17 +957,128 @@ function parseAtomMeta(content) {
     const val = m[2].trim();
     switch (key) {
       case "confidence": meta.confidence = val; break;
-      case "confirmations": meta.confirmations = parseInt(val, 10) || 0; break;
       case "scope": meta.scope = val; break;
       case "trigger": meta.triggers = val; break;
-      case "last-used": meta.lastUsed = val; break;
       case "related": meta.related = val; break;
+      // Wave 2: confirmations / readhits / last-used 從 <atom>.access.json 讀（見 readAtomAccess）
     }
   }
   const titleMatch = content.match(/^# (.+)$/m);
   if (titleMatch) meta.title = titleMatch[1];
   return meta;
 }
+
+/** Wave 2: 讀 <atom>.access.json 旁路檔（同步 fs，不 spawn 子程序）。 */
+function readAtomAccess(atomPath) {
+  try {
+    const accessPath = atomPath.replace(/\.md$/, ".access.json");
+    if (!fs.existsSync(accessPath)) return {};
+    const raw = JSON.parse(fs.readFileSync(accessPath, "utf-8"));
+    let confirmations = raw.confirmations;
+    if (Array.isArray(confirmations)) confirmations = confirmations.length;
+    return {
+      confirmations: parseInt(confirmations, 10) || 0,
+      readhits: parseInt(raw.read_hits, 10) || 0,
+      lastUsed: raw.last_used || null,
+      lastPromotedAt: raw.last_promoted_at || null,
+    };
+  } catch {
+    return {};
+  }
+}
+
+/** Wave 2: spawn `python -m lib.atom_access <subcommand>` 對 access 旁路檔做寫入。 */
+function spawnAtomAccess(subcommand, args) {
+  return new Promise((resolve) => {
+    let cp;
+    try {
+      cp = require("child_process").spawn(
+        "python", ["-m", "lib.atom_access", subcommand, ...args],
+        { cwd: CLAUDE_DIR, windowsHide: true,
+          env: { ...process.env, PYTHONIOENCODING: "utf-8" } },
+      );
+    } catch (e) {
+      return resolve({ ok: false, error: `spawn failed: ${e.message}` });
+    }
+    let out = "", err = "";
+    cp.stdout.on("data", (d) => { out += d.toString("utf-8"); });
+    cp.stderr.on("data", (d) => { err += d.toString("utf-8"); });
+    cp.on("close", (code) => {
+      try {
+        resolve(out ? JSON.parse(out) : { ok: code === 0 });
+      } catch (e) {
+        resolve({ ok: false, error: `cli parse fail: ${e.message} stderr=${err.slice(0, 200)}` });
+      }
+    });
+    cp.on("error", (e) => resolve({ ok: false, error: `spawn error: ${e.message}` }));
+  });
+}
+
+// ─── S3.2: Atom Funnel Bridge (spawn lib/atom_io_cli) ─────────────────────
+
+/** Spawn `python -m lib.atom_io_cli` to perform atom write through the
+ *  centralized funnel (audit log + audit-id + uniform error contract).
+ *  Returns Promise<{ok, error, audit_id, path}>.
+ *  All atomic writes from MCP go through this so PreToolUse strict gate
+ *  (S3.3) can verify every write has an audit log entry.
+ */
+function spawnAtomCli(action, payload) {
+  return new Promise((resolve) => {
+    let cp;
+    try {
+      cp = require("child_process").spawn(
+        "python", ["-m", "lib.atom_io_cli"],
+        {
+          cwd: CLAUDE_DIR,
+          windowsHide: true,
+          env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+        }
+      );
+    } catch (e) {
+      return resolve({ ok: false, error: `spawn failed: ${e.message}` });
+    }
+    let out = "", err = "";
+    cp.stdout.on("data", (d) => { out += d.toString("utf-8"); });
+    cp.stderr.on("data", (d) => { err += d.toString("utf-8"); });
+    cp.on("close", () => {
+      try {
+        resolve(JSON.parse(out));
+      } catch (e) {
+        resolve({ ok: false, error: `cli parse fail: ${e.message} stderr=${err.slice(0, 200)}` });
+      }
+    });
+    cp.on("error", (e) => resolve({ ok: false, error: `spawn error: ${e.message}` }));
+    try {
+      cp.stdin.write(JSON.stringify({ action, ...payload }));
+      cp.stdin.end();
+    } catch (e) {
+      resolve({ ok: false, error: `stdin write failed: ${e.message}` });
+    }
+  });
+}
+
+/** Atomic write through funnel: routes raw content via lib.atom_io.write_raw. */
+function funnelWriteRaw(filePath, content, source, op) {
+  return spawnAtomCli("write_raw", {
+    file_path: filePath, content, source, op: op || "raw",
+  });
+}
+
+/** Index full overwrite through funnel. */
+function funnelWriteIndexFull(indexPath, content, source) {
+  return spawnAtomCli("write_index_full", {
+    index_path: indexPath, content, source,
+  });
+}
+
+/** V5 P3b: Single-atom upsert via lib.atom_io.write_index → _atom_index.json. */
+function funnelWriteIndex(baseDir, slug, relPath, triggers, source) {
+  return spawnAtomCli("write_index", {
+    base_dir: baseDir, slug, rel_path: relPath,
+    triggers, source,
+  });
+}
+
 
 // ─── Atom Write Handler ────────────────────────────────────────────────────
 
@@ -1051,7 +1110,26 @@ async function toolAtomWrite(id, args) {
     return sendToolResult(id, `atom_write: ${resolved.error}`, true);
   }
   let memDir = resolved.dir;
-  const baseDir = resolved.base;
+  let baseDir = resolved.base;
+  // V5+: indexDir = where _atom_index.json lives; indexRoot = rel_path 基準
+  // 預設沿用既有語意（global→CLAUDE_DIR，project→projRoot/.claude）
+  let indexDir = baseDir;
+  let indexRoot = path.dirname(baseDir);
+
+  const slug = slugify(title);
+
+  // V5+ feedback-* routing：global scope + title 前綴 feedback- → _AIDocs/Failures/
+  // 索引仍在 memory/_atom_index.json（單一來源）
+  let routedToFailures = false;
+  if (scope === "global" && slug.startsWith("feedback-")) {
+    const failuresDir = path.join(CLAUDE_DIR, "_AIDocs", "Failures");
+    fs.mkdirSync(failuresDir, { recursive: true });
+    memDir = failuresDir;
+    baseDir = failuresDir;
+    indexDir = MEMORY_DIR;
+    indexRoot = CLAUDE_DIR;
+    routedToFailures = true;
+  }
 
   // SPEC 7.4: sensitive audience on shared → auto-pending
   let pendingReviewBy = pending_review_by || null;
@@ -1066,11 +1144,9 @@ async function toolAtomWrite(id, args) {
   if (scope === "role") scopeLabel = `role:${role}`;
   else if (scope === "personal") scopeLabel = `personal:${user}`;
 
-  const slug = slugify(title);
   // V4 Phase 5: filePath/relPath may be recomputed after conflict-detector reroute
   let filePath = path.join(memDir, slug + ".md");
-  let relFromBase = path.relative(baseDir, filePath).replace(/\\/g, "/");
-  let relPath = "memory/" + relFromBase;
+  let relPath = path.relative(indexRoot, filePath).replace(/\\/g, "/");
 
   const author = getCurrentUser();
   const today = new Date().toISOString().slice(0, 10);
@@ -1087,7 +1163,7 @@ async function toolAtomWrite(id, args) {
         `New atom must start at [臨] (confidence=${confidence} rejected).\n` +
         `Reason: [觀]/[固] reflect cross-session stability; first-write cannot assert that.\n` +
         `Knowledge items inside should also use [臨] prefix.\n` +
-        `Promotion: trigger hits auto-accumulate Confirmations → ≥20 auto-promote to [觀] → ≥40 user-approve [固]`,
+        `Promotion: Confirmations (cross-session) ≥4→[觀] ≥10→[固]; ReadHits (injection) ≥20/≥50 auxiliary.`,
         true);
     }
 
@@ -1132,8 +1208,7 @@ async function toolAtomWrite(id, args) {
         fs.mkdirSync(memDir, { recursive: true });
         if (!pendingReviewBy) pendingReviewBy = "management";
         filePath = path.join(memDir, slug + ".md");
-        relFromBase = path.relative(baseDir, filePath).replace(/\\/g, "/");
-        relPath = "memory/" + relFromBase;
+        relPath = path.relative(indexRoot, filePath).replace(/\\/g, "/");
         appendMergeHistory(baseDir, "pending-create", slug, scopeLabel, author,
           `extend_overlap vs ${(cr.matches[0] || {}).atom_name || "?"} sim=${((cr.matches[0] || {}).similarity || 0).toFixed(3)}`);
       }
@@ -1149,12 +1224,20 @@ async function toolAtomWrite(id, args) {
     }
 
     fs.mkdirSync(memDir, { recursive: true });
-    const tmp = filePath + ".tmp";
-    fs.writeFileSync(tmp, content, "utf-8");
-    fs.renameSync(tmp, filePath);
+    // S3.2: 走 lib.atom_io.write_raw funnel（atomic write + audit log）
+    const wr = await funnelWriteRaw(filePath, content, "mcp", "atom_create");
+    if (!wr.ok) {
+      return sendToolResult(id, `funnel write_raw failed: ${wr.error}`, true);
+    }
 
-    appendToIndex(baseDir, slug, relPath, triggers);
+    // Wave 2: 同步建立 <atom>.access.json 旁路檔（first_seen=today）
+    await spawnAtomAccess("init", [filePath, "--first-seen", today, "--source", "mcp"]);
+    await spawnAtomAccess("set", [filePath, "--field", "last_used",
+                                  "--value", today, "--source", "mcp"]);
+
+    await appendToIndex(indexDir, slug, relPath, triggers);
     triggerVectorReindex();
+    if (scopeLabel === "global") syncMemoryIndex();
 
     return sendToolResult(id,
       `Created atom: ${slug}.md (${confidence}, scope=${scopeLabel})\n` +
@@ -1183,22 +1266,23 @@ async function toolAtomWrite(id, args) {
     const newLines = knowledge.map(k => k.startsWith("- ") ? k : `- ${k}`).join("\n");
     const before = existing.slice(0, actionIdx).trimEnd();
     const after = existing.slice(actionIdx);
-    const updated = before + "\n" + newLines + "\n\n" + after;
-
-    // Append only updates Last-used; Author/Created-at preserved (initial writer's identity)
-    const finalContent = updated.replace(
-      /^- Last-used:\s*.+$/m,
-      `- Last-used: ${today}`
-    );
+    // Wave 2: Last-used 不在 .md，append 後改寫 access.json
+    const finalContent = before + "\n" + newLines + "\n\n" + after;
 
     const err = validateAtomContent(finalContent);
     if (err) {
       return sendToolResult(id, `Validation failed after append: ${err}`, true);
     }
 
-    const tmp = filePath + ".tmp";
-    fs.writeFileSync(tmp, finalContent, "utf-8");
-    fs.renameSync(tmp, filePath);
+    // S3.2: 走 lib.atom_io.write_raw funnel
+    const wr = await funnelWriteRaw(filePath, finalContent, "mcp", "atom_append");
+    if (!wr.ok) {
+      return sendToolResult(id, `funnel write_raw failed: ${wr.error}`, true);
+    }
+
+    // Wave 2: 同步刷 access.json last_used
+    await spawnAtomAccess("set", [filePath, "--field", "last_used",
+                                  "--value", today, "--source", "mcp"]);
 
     triggerVectorReindex();
 
@@ -1210,15 +1294,13 @@ async function toolAtomWrite(id, args) {
 
   // ── Mode: replace ──
   if (mode === "replace") {
-    // Preserve Confirmations + initial Author/Created-at if file exists
-    let confirmations = 0;
+    // Wave 2: Confirmations / ReadHits 在 access.json，replace 不需保留（檔本就分離）
+    // 仍保留 Author / Created-at（屬知識性 metadata）
     let prevAuthor = author;
     let prevCreatedAt = today;
     if (fs.existsSync(filePath)) {
       try {
         const old = fs.readFileSync(filePath, "utf-8");
-        const meta = parseAtomMeta(old);
-        confirmations = meta.confirmations || 0;
         const am = old.match(/^- Author:\s*(.+)$/m);
         if (am) prevAuthor = am[1].trim();
         const cm = old.match(/^- Created-at:\s*(.+)$/m);
@@ -1235,21 +1317,25 @@ async function toolAtomWrite(id, args) {
       return sendToolResult(id, `Validation failed: ${err}`, true);
     }
 
-    const finalContent = content.replace(
-      /^- Confirmations:\s*\d+$/m,
-      `- Confirmations: ${confirmations}`
-    );
-
     fs.mkdirSync(memDir, { recursive: true });
-    const tmp = filePath + ".tmp";
-    fs.writeFileSync(tmp, finalContent, "utf-8");
-    fs.renameSync(tmp, filePath);
+    // S3.2: 走 lib.atom_io.write_raw funnel
+    const wr = await funnelWriteRaw(filePath, content, "mcp", "atom_replace");
+    if (!wr.ok) {
+      return sendToolResult(id, `funnel write_raw failed: ${wr.error}`, true);
+    }
 
-    appendToIndex(baseDir, slug, relPath, triggers);
+    // Wave 2: 刷 access.json last_used（access 計數自動保留）
+    await spawnAtomAccess("set", [filePath, "--field", "last_used",
+                                  "--value", today, "--source", "mcp"]);
+
+    await appendToIndex(indexDir, slug, relPath, triggers);
     triggerVectorReindex();
+    if (scopeLabel === "global") syncMemoryIndex();
 
+    // 讀 access 給訊息顯示保留的計數
+    const accAfter = readAtomAccess(filePath);
     return sendToolResult(id,
-      `Replaced atom: ${slug}.md (${confidence}, preserved confirmations=${confirmations}, author=${prevAuthor})\n` +
+      `Replaced atom: ${slug}.md (${confidence}, preserved conf=${accAfter.confirmations || 0} rh=${accAfter.readhits || 0}, author=${prevAuthor})\n` +
       `MEMORY.md index updated.`
     );
   }
@@ -1259,7 +1345,33 @@ async function toolAtomWrite(id, args) {
 
 // ─── Atom Promote Handler ──────────────────────────────────────────────────
 
-function toolAtomPromote(id, args) {
+// Locate <atom_name>.md anywhere under memDir; needed because feedback/ etc.
+// are valid atom subdirs (mirrors lib/atom_spec.SKIP_DIRS exclusions).
+function findAtomFileRecursive(memDir, atomName) {
+  const target = atomName + ".md";
+  const SKIP = new Set([
+    "_reference", "_archived", "_pending_review", "_staging",
+    "templates", "wisdom", "_drafts", "episodic", "_meta",
+  ]);
+  const queue = [memDir];
+  while (queue.length) {
+    const cur = queue.shift();
+    let entries;
+    try { entries = fs.readdirSync(cur, { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      const full = path.join(cur, e.name);
+      if (e.isDirectory()) {
+        if (SKIP.has(e.name) || e.name.startsWith("_archive")) continue;
+        queue.push(full);
+      } else if (e.isFile() && e.name === target) {
+        return full;
+      }
+    }
+  }
+  return null;
+}
+
+async function toolAtomPromote(id, args) {
   const { atom_name, scope, project_cwd, execute, role, user, merge_to_preferences } = args;
 
   const resolved = resolveMemDir(scope, project_cwd, { role, user });
@@ -1267,10 +1379,15 @@ function toolAtomPromote(id, args) {
     return sendToolResult(id, `atom_promote: ${resolved.error}`, true);
   }
   const memDir = resolved.dir;
-  const filePath = path.join(memDir, atom_name + ".md");
+  let filePath = path.join(memDir, atom_name + ".md");
 
   if (!fs.existsSync(filePath)) {
-    return sendToolResult(id, `Atom not found: ${atom_name}.md in ${scope} scope`, true);
+    // Fallback: recursive lookup (atom may live in feedback/ or other subdir)
+    const found = findAtomFileRecursive(memDir, atom_name);
+    if (!found) {
+      return sendToolResult(id, `Atom not found: ${atom_name}.md in ${scope} scope`, true);
+    }
+    filePath = found;
   }
 
   let content = fs.readFileSync(filePath, "utf-8");
@@ -1281,10 +1398,11 @@ function toolAtomPromote(id, args) {
     return sendToolResult(id, `Cannot parse confidence from ${atom_name}.md`, true);
   }
 
-  // Determine promotion path
+  // Determine promotion path (v3 dual-field)
+  // SYNC: memory/decisions.md — promotion thresholds
   const THRESHOLDS = {
-    "[臨]": { next: "[觀]", required: 20 },
-    "[觀]": { next: "[固]", required: 40 },
+    "[臨]": { next: "[觀]", confirmations: 4, readhits: 20 },
+    "[觀]": { next: "[固]", confirmations: 10, readhits: 50 },
     "[固]": null, // already max
   };
 
@@ -1295,15 +1413,33 @@ function toolAtomPromote(id, args) {
     );
   }
 
-  const { next, required } = path_info;
-  const confirmations = meta.confirmations || 0;
+  const { next, confirmations: reqConf, readhits: reqRH } = path_info;
+  // Wave 2: 計數從 <atom>.access.json 讀，不再 parseAtomMeta（meta.confidence 仍從 .md 抽）
+  const access = readAtomAccess(filePath);
+  const confirmations = access.confirmations || 0;
+  const readhits = access.readhits || 0;
 
-  if (confirmations < required) {
+  // Primary gate: Confirmations (cross-session behavior hits)
+  let eligible = confirmations >= reqConf;
+  let method = "confirmations";
+
+  // Auxiliary gate: ReadHits (injection hits)
+  if (!eligible && readhits >= reqRH) {
+    eligible = true;
+    method = "readhits_auxiliary";
+  }
+
+  // Wave 2: 移除 7-day migration.json fallback
+  // （dual-field-v1 遷移於 2026-04-24 完成、超過 7 天；access-stats-v2 不需此條款）
+
+  if (!eligible) {
     return sendToolResult(id,
       `## Dry-run: ${atom_name}\n` +
-      `Current: ${meta.confidence} (${confirmations} confirmations)\n` +
-      `Required: ${required} confirmations for → ${next}\n` +
-      `Deficit: ${required - confirmations} more confirmations needed.`
+      `Current: ${meta.confidence}\n` +
+      `  Confirmations: ${confirmations}/${reqConf}\n` +
+      `  ReadHits: ${readhits}/${reqRH} (auxiliary)\n` +
+      `Required: Confirmations ≥ ${reqConf} OR ReadHits ≥ ${reqRH}\n` +
+      `Deficit: ${Math.max(0, reqConf - confirmations)} conf / ${Math.max(0, reqRH - readhits)} rh`
     );
   }
 
@@ -1311,16 +1447,18 @@ function toolAtomPromote(id, args) {
   if (!execute) {
     return sendToolResult(id,
       `## Dry-run: ${atom_name}\n` +
-      `Current: ${meta.confidence} (${confirmations} confirmations)\n` +
-      `Eligible for promotion → ${next}\n` +
+      `Current: ${meta.confidence}\n` +
+      `  Confirmations: ${confirmations}/${reqConf}\n` +
+      `  ReadHits: ${readhits}/${reqRH}\n` +
+      `Eligible via: ${method} → ${next}\n` +
       `Set execute=true to apply.`
     );
   }
 
   // Execute promotion
+  // Wave 2: Last-used 不在 .md，只改 Confidence + 知識條目層級的 [臨]/[觀]
   const updated = content
-    .replace(/^- Confidence:\s*.+$/m, `- Confidence: ${next}`)
-    .replace(/^- Last-used:\s*.+$/m, `- Last-used: ${new Date().toISOString().slice(0, 10)}`);
+    .replace(/^- Confidence:\s*.+$/m, `- Confidence: ${next}`);
 
   // Also update individual knowledge lines: [臨] → [觀] etc.
   const finalContent = updated.replace(
@@ -1328,9 +1466,15 @@ function toolAtomPromote(id, args) {
     `- ${next}`
   );
 
-  const tmp = filePath + ".tmp";
-  fs.writeFileSync(tmp, finalContent, "utf-8");
-  fs.renameSync(tmp, filePath);
+  // S3.2: 走 lib.atom_io.write_raw funnel
+  const wrPromote = await funnelWriteRaw(filePath, finalContent, "mcp", "atom_promote");
+  if (!wrPromote.ok) {
+    return sendToolResult(id, `funnel write_raw failed: ${wrPromote.error}`, true);
+  }
+
+  // Wave 2: 同步寫 access.json 的 last_promoted_at + last_used
+  await spawnAtomAccess("record-promotion",
+    [filePath, "--target", next, "--source", "mcp"]);
 
   triggerVectorReindex();
 
@@ -1344,6 +1488,8 @@ function toolAtomPromote(id, args) {
       from: meta.confidence,
       to: next,
       confirmations,
+      readhits,
+      method,
       scope,
     };
     fs.appendFileSync(auditPath, JSON.stringify(entry) + "\n");
@@ -1374,7 +1520,11 @@ function toolAtomPromote(id, args) {
           `\n\n### 歸檔合併 · ${atom_name} (${today})\n` +
           `> 自 [觀]→[固] 晉升時合併自 \`${path.basename(filePath)}\`\n\n` +
           knowledgeLines.map(l => `- ${l}`).join("\n") + "\n";
-        fs.writeFileSync(prefPath, prefText.trimEnd() + mergeSection, "utf-8");
+        // S3.2: 走 lib.atom_io.write_raw funnel
+        const wrPref = await funnelWriteRaw(
+          prefPath, prefText.trimEnd() + mergeSection, "mcp", "promote_merge_pref"
+        );
+        if (!wrPref.ok) throw new Error(`funnel write_raw failed: ${wrPref.error}`);
 
         fs.renameSync(filePath, archivePath);
 
@@ -1396,11 +1546,62 @@ function toolAtomPromote(id, args) {
 
   return sendToolResult(id,
     `Promoted ${atom_name}: ${meta.confidence} → ${next}\n` +
-    `Confirmations: ${confirmations}\n` +
+    `Confirmations: ${confirmations} | ReadHits: ${readhits} (via ${method})\n` +
     `Knowledge lines updated to ${next}.` +
     mergeReport +
     mergeHint
   );
+}
+
+// ─── Atom Move Handler ─────────────────────────────────────────────────────
+
+function toolAtomMove(id, args) {
+  const { subcommand, atom, dry_run } = args;
+  if (!subcommand || !atom) {
+    return Promise.resolve(sendToolResult(id, "atom_move: subcommand and atom are required", true));
+  }
+  const scriptPath = path.join(TOOLS_DIR, "atom-move.py");
+  if (!fs.existsSync(scriptPath)) {
+    return Promise.resolve(sendToolResult(id, `atom_move: script not found at ${scriptPath}`, true));
+  }
+  const argv = [scriptPath, subcommand, atom];
+  if (subcommand === "move") {
+    if (!args.from || !args.to) {
+      return Promise.resolve(sendToolResult(id, "atom_move move: --from and --to required", true));
+    }
+    argv.push("--from", args.from, "--to", args.to);
+  } else if (subcommand === "reconcile") {
+    if (!args.at) {
+      return Promise.resolve(sendToolResult(id, "atom_move reconcile: --at required", true));
+    }
+    argv.push("--at", args.at);
+  } else {
+    return Promise.resolve(sendToolResult(id, `atom_move: unknown subcommand '${subcommand}'`, true));
+  }
+  if (dry_run) argv.push("--dry-run");
+
+  return new Promise((resolve) => {
+    const cp = require("child_process").spawn("python", argv, { windowsHide: true });
+    let out = "", err = "";
+    const timer = setTimeout(() => { try { cp.kill(); } catch {} }, 30000);
+    cp.stdout.on("data", d => { out += d.toString(); });
+    cp.stderr.on("data", d => { err += d.toString(); });
+    cp.on("close", (code) => {
+      clearTimeout(timer);
+      const combined = (out || "") + (err ? ("\n[stderr]\n" + err) : "");
+      if (code !== 0) {
+        sendToolResult(id, `atom_move exited ${code}\n${combined}`, true);
+      } else {
+        sendToolResult(id, combined.trim() || "(no output)");
+      }
+      resolve();
+    });
+    cp.on("error", (e) => {
+      clearTimeout(timer);
+      sendToolResult(id, `atom_move spawn error: ${e.message}`, true);
+      resolve();
+    });
+  });
 }
 
 function extractKnowledgeLines(content) {
@@ -1816,6 +2017,7 @@ function apiAtoms(req, res) {
             case "confidence": atom.confidence = val; break;
             case "last-used": atom.last_used = val; break;
             case "confirmations": atom.confirmations = parseInt(val) || 0; break;
+            case "readhits": atom.readhits = parseInt(val) || 0; break;
             case "trigger": atom.triggers = val.split(",").map(t => t.trim()); break;
             case "related": atom.related = val.split(",").map(t => t.trim()); break;
             case "created": atom.created = val; break;
@@ -1877,6 +2079,7 @@ function apiAtoms(req, res) {
           case "confidence": atom.confidence = val; break;
           case "last-used": atom.last_used = val; break;
           case "confirmations": atom.confirmations = parseInt(val) || 0; break;
+          case "readhits": atom.readhits = parseInt(val) || 0; break;
           case "related": atom.related = val.split(",").map(t => t.trim()); break;
           case "trigger": atom.triggers = val.split(",").map(t => t.trim()); break;
           case "scope": atom.scope = val; break;
@@ -2983,6 +3186,7 @@ function renderAtomsTable(atoms) {
     '<th onclick="sortAtoms(\\'layer\\')">層級 &#8597;</th>' +
     '<th onclick="sortAtoms(\\'confidence\\')">信心 &#8597;</th>' +
     '<th onclick="sortAtoms(\\'confirmations\\')">確認數 &#8597;</th>' +
+    '<th onclick="sortAtoms(\\'readhits\\')">讀取數 &#8597;</th>' +
     '<th onclick="sortAtoms(\\'last_used\\')">最後使用 &#8597;</th>' +
     '<th onclick="sortAtoms(\\'knowledge_count\\')">知識數 &#8597;</th>' +
     '<th>行數</th>' +
@@ -3006,12 +3210,13 @@ function buildAtomRows(atoms) {
       '<td><span class="atom-layer">' + esc(a.layer) + '</span></td>' +
       '<td><span class="atom-conf ' + confClass + '">' + esc(a.confidence||"-") + '</span></td>' +
       '<td>' + (a.confirmations||0) + '</td>' +
+      '<td>' + (a.readhits||0) + '</td>' +
       '<td title="' + esc(a.last_used||"") + '">' + daysAgo + '</td>' +
       '<td>' + (a.knowledge_count||'-') + '</td>' +
       '<td>' + (a.line_count||'-') + '</td>' +
     '</tr>';
     const detailVis = expandedAtoms.has(a.name) ? '' : 'none';
-    html += '<tr id="detail-' + esc(a.name) + '" style="display:' + detailVis + '"><td colspan="8"><div class="atom-detail">' + esc(a.content||"") + '</div></td></tr>';
+    html += '<tr id="detail-' + esc(a.name) + '" style="display:' + detailVis + '"><td colspan="9"><div class="atom-detail">' + esc(a.content||"") + '</div></td></tr>';
   }
   return html;
 }

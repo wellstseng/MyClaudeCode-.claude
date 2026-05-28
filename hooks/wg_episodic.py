@@ -16,16 +16,23 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from wg_paths import (
+from wg_core import (
     CLAUDE_DIR, MEMORY_DIR, EPISODIC_DIR, MEMORY_INDEX, ATOM_INDEX, WORKFLOW_DIR,
     cwd_to_project_slug, get_project_memory_dir,
     resolve_episodic_dir, get_transcript_path,
+    _now_iso, _atom_debug_log, _atom_debug_error,
 )
-from wg_core import _now_iso, _atom_debug_log, _atom_debug_error
-from wg_content_classify import is_plan_content
+from wg_extraction import is_plan_content
 
 sys.path.insert(0, str(Path.home() / ".claude" / "tools"))
 from ollama_client import get_client
+
+# S3.0: route Confirmations counter update through atom_io funnel
+_LIB_PARENT = str(Path.home() / ".claude")
+if _LIB_PARENT not in sys.path:
+    sys.path.insert(0, _LIB_PARENT)
+from lib.atom_io import write_raw  # noqa: E402
+from lib.atom_access import increment_confirmation  # noqa: E402
 
 
 # ─── Episodic Gate ────────────────────────────────────────────────────────────
@@ -351,21 +358,23 @@ def _check_cross_session_patterns(
             else:
                 action = f"跨 session 命中 {hit_count} 次（Confirmations +1）"
 
-            # Increment Confirmations in matched atom files
+            # Wave 2: 跨 session 加計透過 atom_access.increment_confirmation
+            # （取代原 update_atom_field + 直接寫 access.json 的雙寫路徑）
+            import uuid as _uuid
             for r in results:
                 atom_file = r.get("file_path", "")
                 if atom_file and os.path.isfile(atom_file):
                     try:
-                        atom_text = Path(atom_file).read_text(encoding="utf-8-sig")
-                        cm = re.search(r"^(- Confirmations:\s*)(\d+)", atom_text, re.MULTILINE)
-                        if cm:
-                            new_c = int(cm.group(2)) + 1
-                            atom_text = re.sub(
-                                r"^(- Confirmations:\s*)\d+", rf"\g<1>{new_c}",
-                                atom_text, count=1, flags=re.MULTILINE,
-                            )
-                            Path(atom_file).write_text(atom_text, encoding="utf-8")
-                    except (OSError, UnicodeDecodeError):
+                        increment_confirmation(
+                            Path(atom_file),
+                            event={
+                                "ts": time.time(),
+                                "correlation_id": str(_uuid.uuid4()),
+                                "hit_count": hit_count,
+                            },
+                            source="hook:episodic-confirm",
+                        )
+                    except (OSError, ValueError):
                         pass
 
             observations.append({
@@ -556,8 +565,25 @@ def _generate_triggers(state: Dict[str, Any], work_areas: list) -> list:
 
 
 def _update_memory_index(memory_dir: Path, atom_name: str, triggers: list) -> None:
-    """Append a row to _ATOM_INDEX.md (V3.2) or MEMORY.md atom index table."""
-    # V3.2: prefer _ATOM_INDEX.md
+    """V5 P3b: Upsert atom entry to _atom_index.json (JSON is single source of truth).
+
+    Auto-regenerates _ATOM_INDEX.md mirror via lib/atom_index_json.upsert_atom.
+    Legacy fallback: if JSON helper missing, write to _ATOM_INDEX.md directly.
+    """
+    try:
+        from lib.atom_index_json import upsert_atom
+        upsert_atom(
+            mem_dir=memory_dir,
+            name=atom_name,
+            path=f"memory/{atom_name}.md",
+            triggers=list(triggers),
+            scope="global",
+        )
+        return
+    except ImportError:
+        _atom_debug_log("update_index_md_fallback", atom=atom_name)
+
+    # Legacy fallback path (kept for safety; should never run in V5)
     atom_idx = memory_dir / ATOM_INDEX
     index_path = atom_idx if atom_idx.exists() else memory_dir / MEMORY_INDEX
     if not index_path.exists():
@@ -748,6 +774,8 @@ def _generate_episodic_atom(
             f"- Referenced atoms: {', '.join(summary['atoms_referenced'])}"
         )
 
+    # Wave 2: episodic atom .md 檔頭不再寫 Last-used / Confirmations / ReadHits
+    # （這些計數搬到 <atom>.access.json，由 atom_access.init_access 在落檔後建立）
     content = (
         f"# Session: {today} {summary['primary_area']}\n"
         f"\n"
@@ -755,9 +783,7 @@ def _generate_episodic_atom(
         f"- Confidence: [臨]\n"
         f"- Type: episodic\n"
         f"- Trigger: {', '.join(triggers)}\n"
-        f"- Last-used: {today}\n"
         f"- Created: {today}\n"
-        f"- Confirmations: 0\n"
         f"- TTL: 24d\n"
         f"- Expires-at: {expires}\n"
         f"\n"
@@ -786,7 +812,15 @@ def _generate_episodic_atom(
         f"| {today} | 自動建立 episodic atom (v2.2) | session:{session_id[:8]} |\n"
     )
 
-    atom_path.write_text(content, encoding="utf-8")
+    # S3.3: episodic atom 走 funnel write_raw（在 SKIP_DIRS 不算 V4 atom，
+    # 但仍經 audit log 確保 PreToolUse 強制門禁可放行）
+    write_raw(atom_path, content, source="hook:episodic", op="episodic_create")
+    # Wave 2: 同步建立 access.json 旁路檔（first_seen=今天，後續注入時 increment_read_hits）
+    try:
+        from lib.atom_access import init_access
+        init_access(atom_path, first_seen=today, source="hook:episodic")
+    except (ImportError, OSError, ValueError):
+        pass
     # v2.2: Episodic atoms NOT listed in MEMORY.md index (TTL 24d, vector search discovers them)
 
     # Debug log: one-line summary instead of full content (full is in atom file)

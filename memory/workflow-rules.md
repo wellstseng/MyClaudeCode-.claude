@@ -4,11 +4,9 @@
 - Confidence: [固]
 - Type: procedural
 - Trigger: 工作流程, 大型任務, 分階段, SOP, 任務拆分, 上版, GIT, Phase
-- Last-used: 2026-05-22
 - Created: 2026-03-06
-- Confirmations: 158
 - Tags: workflow, vcs
-- Related: decisions, workflow-svn, workflow-icld, feedback-handoff-self-sufficient, feedback-git-log-chinese, feedback-fix-on-discovery, collaboration-protocol, wells-workflow-handoff-quality
+- Related: decisions, workflow-svn, workflow-icld, feedback-handoff-self-sufficient, feedback-git-log-chinese, feedback-fix-on-discovery, memory-pipeline-silent-failure-2026-05
 
 ## 知識
 

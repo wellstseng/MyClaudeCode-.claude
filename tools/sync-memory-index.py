@@ -1,0 +1,163 @@
+"""
+sync-memory-index.py — 從 _atom_index.json 自動生成 memory/MEMORY.md（V5 P6c）
+
+設計依據：V5 Wave 3 P3b — `_atom_index.json` 為 SoT
+
+V4→V5 變更：parse_atom_index 改讀 `_atom_index.json`（先前讀 `_ATOM_INDEX.md`，
+該檔現為自動生成 mirror，drift 風險可避）。
+
+行為：
+- 讀 `_atom_index.json` 取得所有 atom（按 name 排序、計數）
+- 從每 atom 檔的 H1 第一行抽取「說明」欄
+- 重組「Atom Index」區，feedback-* 自動歸納並計數
+- 保留現有「知識庫查閱」段落（自動偵測 `> **知識庫查閱**：` 標記後內容）
+
+模式：
+  --check  drift 偵測，stderr 列出差異，exit 1 表示有 drift
+  --write  覆寫 MEMORY.md
+  (default) dry-run，stdout 顯示新內容
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+from typing import List, Tuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from lib.atom_io import write_index_full  # noqa: E402
+from lib.atom_index_json import load_atom_index_json  # noqa: E402
+
+MEMORY_DIR = Path.home() / ".claude" / "memory"
+MEMORY_INDEX_NAME = "MEMORY.md"
+
+
+def parse_atom_index(memory_dir: Path) -> List[Tuple[str, str, str]]:
+    """V5: 讀 _atom_index.json，回傳 (atom_name, rel_path, scope) list."""
+    data = load_atom_index_json(memory_dir)
+    rows: List[Tuple[str, str, str]] = []
+    for a in data.get("atoms", []):
+        rows.append((
+            a.get("name", ""),
+            a.get("path", ""),
+            a.get("scope", "global"),
+        ))
+    return rows
+
+
+def extract_atom_caption(atom_path: Path) -> str:
+    """Read first H1 line as caption."""
+    if not atom_path.exists():
+        return ""
+    try:
+        for line in atom_path.read_text(encoding="utf-8-sig").splitlines()[:5]:
+            if line.startswith("# "):
+                return line[2:].strip()
+    except (OSError, UnicodeDecodeError):
+        pass
+    return ""
+
+
+def render_atom_section(rows: List[Tuple[str, str, str]],
+                        claude_root: Path) -> str:
+    """Render the atom index table.
+    原樣簡單版：feedback-* 聚合一行；其他 atoms 各自一行用 H1 caption。
+    V5+ 小修：feedback-* 聚合行加 `→ _AIDocs/Failures/` 指標；
+    其他 _AIDocs/Failures/ 內 atoms（cognitive-patterns / 後續加入者）獨立一行
+    + 行尾加 `→` 指標（不在 memory/ 根目錄者顯式標位置）。
+    """
+    individual: List[Tuple[str, str, str]] = []  # (name, caption, rel_path)
+    feedback_names: List[str] = []
+    failures_other: List[Tuple[str, str, str]] = []  # _AIDocs/Failures/ 內非 feedback-*
+    for name, rel_path, _scope in rows:
+        if name.startswith("feedback") and rel_path.startswith("_AIDocs/Failures/"):
+            feedback_names.append(name)
+        elif rel_path.startswith("_AIDocs/Failures/"):
+            cap = extract_atom_caption(claude_root / rel_path) if rel_path else ""
+            failures_other.append((name, cap, rel_path))
+        else:
+            cap = extract_atom_caption(claude_root / rel_path) if rel_path else ""
+            individual.append((name, cap, rel_path))
+
+    lines = [
+        "# Atom Index — Global",
+        "",
+        "> Hook 自動匹配 trigger 注入相關 atom（完整觸發表見 `_atom_index.json` / `_ATOM_INDEX.md` mirror）。",
+        "",
+        "| Atom | 說明 |",
+        "|------|------|",
+    ]
+    for name, cap, _ in individual:
+        lines.append(f"| {name} | {cap} |")
+    if feedback_names:
+        sample = ", ".join(n.replace("feedback-", "") for n in feedback_names[:5])
+        lines.append(
+            f"| feedback-* | 行為校正（{len(feedback_names)} 個含 {sample} 等）"
+            f" → [`_AIDocs/Failures/`](../_AIDocs/Failures/) |"
+        )
+    for name, cap, rel_path in failures_other:
+        lines.append(f"| {name} | {cap} → [`{rel_path}`](../{rel_path}) |")
+    return "\n".join(lines)
+
+
+KNOWLEDGE_BLOCK_MARKER = "> **知識庫查閱**："
+
+
+def split_existing(memory_path: Path) -> Tuple[str, str]:
+    """Split existing MEMORY.md into (atom_section, knowledge_block).
+    knowledge_block 從 marker 那行開始（含），到檔尾。
+    """
+    if not memory_path.exists():
+        return "", ""
+    text = memory_path.read_text(encoding="utf-8-sig")
+    idx = text.find(KNOWLEDGE_BLOCK_MARKER)
+    if idx < 0:
+        return text, ""
+    head = text[:idx].rstrip() + "\n"
+    tail = text[idx:]
+    return head, tail
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--check", action="store_true")
+    parser.add_argument("--write", action="store_true")
+    parser.add_argument("--memory-dir", type=Path, default=MEMORY_DIR)
+    args = parser.parse_args()
+
+    memory_dir: Path = args.memory_dir
+    claude_root = memory_dir.parent
+    memory_path = memory_dir / MEMORY_INDEX_NAME
+
+    rows = parse_atom_index(memory_dir)
+    if not rows:
+        print("[sync-memory-index] _atom_index.json empty or missing", file=sys.stderr)
+        return 1
+
+    new_atom_section = render_atom_section(rows, claude_root)
+    _old_head, knowledge_tail = split_existing(memory_path)
+    new_full = new_atom_section + "\n\n" + knowledge_tail if knowledge_tail else new_atom_section + "\n"
+
+    if args.check:
+        current = memory_path.read_text(encoding="utf-8-sig") if memory_path.exists() else ""
+        if current.strip() != new_full.strip():
+            print("[sync-memory-index] MEMORY.md drift detected", file=sys.stderr)
+            return 1
+        return 0
+
+    if args.write:
+        result = write_index_full(memory_path, new_full,
+                                  source="tool:sync-memory-index")
+        if not result.ok:
+            print(f"[sync-memory-index] write failed: {result.error}",
+                  file=sys.stderr)
+            return 1
+        print(f"[sync-memory-index] wrote {memory_path}")
+        return 0
+
+    print(new_full)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

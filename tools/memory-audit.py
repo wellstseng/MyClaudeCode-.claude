@@ -34,26 +34,94 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-# ─── Constants ───────────────────────────────────────────────────────────────
+# S3.3: route memory-audit atom writes through funnel
+_CLAUDE_DIR = Path.home() / ".claude"
+if str(_CLAUDE_DIR) not in sys.path:
+    sys.path.insert(0, str(_CLAUDE_DIR))
+from lib.atom_io import write_raw  # noqa: E402
+
+_AUDIT_SOURCE = "tool:memory-audit"
+
+# ─── Single source of truth: lib/atom_spec.py（S1.2 規則收束） ────────────────
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from lib.atom_spec import (
+    SKIP_DIRS, SKIP_PREFIXES, REQUIRED_METADATA, OPTIONAL_METADATA,
+    REQUIRED_SECTIONS, KNOWLEDGE_SECTIONS, VALID_CONFIDENCE,
+    INDEX_MAX_LINES, ATOM_MAX_LINES, TRIGGER_MIN, TRIGGER_MAX,
+    MEMORY_INDEX,
+)
+
+# ─── Audit-specific constants（atom_spec 不需共享的） ────────────────────────
 
 STALENESS_THRESHOLDS: Dict[str, int] = {"[固]": 90, "[觀]": 60, "[臨]": 30}
 # v2.1 Sprint 3: Type-based decay multiplier (procedural ages slower, episodic faster)
 TYPE_DECAY_MULTIPLIER: Dict[str, float] = {"semantic": 1.0, "episodic": 0.8, "procedural": 1.5}
-PROMOTION_THRESHOLDS: Dict[str, int] = {"[臨]": 2, "[觀]": 4}
-INDEX_MAX_LINES = 40
-ATOM_MAX_LINES = 200
-TRIGGER_MIN = 3
-TRIGGER_MAX = 12
-MEMORY_INDEX = "MEMORY.md"
+# SYNC: memory/decisions.md — dual-track promotion thresholds (suggest only, not gate)
+PROMOTION_THRESHOLDS = {
+    "[臨]": {"confirmations": 4, "readhits": 20},
+    "[觀]": {"confirmations": 10, "readhits": 50},
+}
 DISTANT_DIR = "_distant"
-SKIP_PREFIXES = ("SPEC_", "_")  # Files to skip during atom scanning
-REQUIRED_METADATA = {"Scope", "Confidence", "Trigger", "Last-used"}
-OPTIONAL_METADATA = {"Confirmations", "Privacy", "Source", "Type", "Created", "TTL",
-                     "Expires-at", "Tags", "Related", "Supersedes", "Quality"}
-REQUIRED_SECTIONS = {"知識", "行動"}
-VALID_CONFIDENCE = {"[固]", "[觀]", "[臨]"}
 VALID_TYPES = {"semantic", "episodic", "procedural"}
 VALID_PRIVACY = {"public", "internal", "sensitive"}
+
+
+def _load_failures_atom_names() -> set:
+    """V5+ helper: 從 _atom_index.json 抽出居 _AIDocs/Failures/ 的 atom name 集合。
+
+    用於區分 _AIDocs/Failures/ 內「atom」vs「參考文件」— atom 已登記於索引（含 feedback-* /
+    cognitive-patterns / memory-pipeline-silent-failure-* 等），其他 .md 為參考。
+    """
+    try:
+        import json
+        idx = Path.home() / ".claude" / "memory" / "_atom_index.json"
+        if not idx.exists():
+            return set()
+        data = json.loads(idx.read_text(encoding="utf-8"))
+        return {
+            (a.get("path") or "").rsplit("/", 1)[-1].removesuffix(".md")
+            for a in data.get("atoms", [])
+            if (a.get("path") or "").startswith("_AIDocs/Failures/")
+        }
+    except (OSError, ValueError, json.JSONDecodeError):
+        return set()
+
+
+def iter_atom_files(mem_dir: Path):
+    """Recursive scan for atom .md files, skipping non-atom subdirs and SKIP_PREFIXES files.
+
+    Replaces `mem_dir.glob("*.md")` to include atoms in `feedback/` / `wisdom/` etc.
+    V5+: 若 mem_dir 為全域 memory（~/.claude/memory），自動延伸掃 _AIDocs/Failures/；
+    Failures 內僅依 _atom_index.json 登記者計入 atom（其他為失敗模式參考文件）。
+    """
+    roots = [(mem_dir, False)]  # (root, is_failures)
+    failures_names = set()
+    try:
+        global_memory = Path.home() / ".claude" / "memory"
+        if mem_dir.resolve() == global_memory.resolve():
+            failures = Path.home() / ".claude" / "_AIDocs" / "Failures"
+            if failures.is_dir():
+                roots.append((failures, True))
+                failures_names = _load_failures_atom_names()
+    except OSError:
+        pass
+
+    for root, is_failures in roots:
+        for md in sorted(root.rglob("*.md")):
+            if md.name == MEMORY_INDEX:
+                continue
+            if any(md.name.startswith(p) for p in SKIP_PREFIXES):
+                continue
+            if is_failures and md.stem not in failures_names:
+                continue
+            try:
+                rel_parts = md.relative_to(root).parts
+            except ValueError:
+                continue
+            if any(part in SKIP_DIRS for part in rel_parts[:-1]):
+                continue
+            yield md
+
 
 # ─── Data Classes ────────────────────────────────────────────────────────────
 
@@ -64,6 +132,7 @@ class AtomMetadata:
     layer_name: str
     title: str = ""
     scope: str = ""
+    scope_label: str = ""  # P7: dedup 用（frontmatter 優先，缺則由路徑推斷；對齊 lib/atom_spec.VALID_SCOPES）
     confidence: str = ""
     trigger: List[str] = field(default_factory=list)
     last_used: Optional[date] = None
@@ -191,6 +260,8 @@ def parse_atom_file(path: Path, layer_name: str) -> AtomMetadata:
 
     # Extract structured fields
     atom.scope = atom.raw_metadata.get("Scope", "")
+    # P7: scope_label — frontmatter 優先，缺則路徑推斷（對齊 tools/migrate-scope-field.py:infer_scope）
+    atom.scope_label = atom.scope or _infer_scope_from_path(path)
     raw_conf = atom.raw_metadata.get("Confidence", "")
     cm = CONFIDENCE_EXTRACT.search(raw_conf)
     atom.confidence = f"[{cm.group(1)}]" if cm else raw_conf
@@ -198,18 +269,35 @@ def parse_atom_file(path: Path, layer_name: str) -> AtomMetadata:
     raw_trigger = atom.raw_metadata.get("Trigger", "")
     atom.trigger = [t.strip() for t in re.split(r"[,，]", raw_trigger) if t.strip()]
 
-    raw_date = atom.raw_metadata.get("Last-used", "").strip()
-    if DATE_PATTERN.match(raw_date):
+    # Wave 2: Last-used / Confirmations / ReadHits 從 <atom>.access.json 讀
+    # （legacy 過渡：若 .md 仍有 frontmatter 欄則作為 fallback，access 優先）
+    try:
+        from lib.atom_access import read_access
+        acc = read_access(path)
+    except (ImportError, OSError):
+        acc = {}
+
+    raw_date = acc.get("last_used") or atom.raw_metadata.get("Last-used", "").strip()
+    if raw_date and DATE_PATTERN.match(raw_date):
         try:
             atom.last_used = datetime.strptime(raw_date, "%Y-%m-%d").date()
         except ValueError:
             pass
 
-    raw_conf_count = atom.raw_metadata.get("Confirmations", "0")
-    try:
-        atom.confirmations = int(raw_conf_count)
-    except ValueError:
-        atom.confirmations = 0
+    if "confirmations" in acc:
+        atom.confirmations = int(acc.get("confirmations") or 0)
+    else:
+        try:
+            atom.confirmations = int(atom.raw_metadata.get("Confirmations", "0"))
+        except ValueError:
+            atom.confirmations = 0
+    if "read_hits" in acc:
+        atom.readhits = int(acc.get("read_hits") or 0)
+    else:
+        try:
+            atom.readhits = int(atom.raw_metadata.get("ReadHits", "0"))
+        except ValueError:
+            atom.readhits = 0
 
     atom.privacy = atom.raw_metadata.get("Privacy", "public")
     atom.source = atom.raw_metadata.get("Source", "")
@@ -366,6 +454,9 @@ def validate_format(atom: AtomMetadata) -> List[Issue]:
     for section in REQUIRED_SECTIONS:
         if section not in atom.sections_found:
             issues.append(Issue(rel, "warning", "format", f"缺少建議區段: ## {section}"))
+    # 知識 / 印象 二選一（指標型 atom 用 ## 印象 取代 ## 知識）
+    if not (atom.sections_found & KNOWLEDGE_SECTIONS):
+        issues.append(Issue(rel, "warning", "format", "缺少建議區段: ## 知識 或 ## 印象"))
 
     # Line count
     if atom.line_count > ATOM_MAX_LINES:
@@ -409,22 +500,27 @@ def check_staleness(atom: AtomMetadata, today: date) -> Optional[Suggestion]:
 
 
 def suggest_promotions(atom: AtomMetadata) -> Optional[Suggestion]:
-    """Suggest promotion based on confirmations count."""
-    threshold = PROMOTION_THRESHOLDS.get(atom.confidence)
-    if threshold is None:
+    """Suggest promotion based on dual-track thresholds (v3)."""
+    thresholds = PROMOTION_THRESHOLDS.get(atom.confidence)
+    if thresholds is None:
         return None
 
-    if atom.confirmations < threshold:
+    conf_ok = atom.confirmations >= thresholds["confirmations"]
+    rh_ok = getattr(atom, "readhits", 0) >= thresholds["readhits"]
+    if not conf_ok and not rh_ok:
         return None
 
+    method = "Conf" if conf_ok else "ReadHits"
+    val = atom.confirmations if conf_ok else getattr(atom, "readhits", 0)
+    req = thresholds["confirmations"] if conf_ok else thresholds["readhits"]
     rel = _rel_path(atom.file_path)
     if atom.confidence == "[臨]":
         return Suggestion(
-            rel, "[臨]", "[觀]", f"{atom.confirmations} confirmations（閾值 {threshold}）"
+            rel, "[臨]", "[觀]", f"{method}={val}（閾值 {req}）"
         )
     elif atom.confidence == "[觀]":
         return Suggestion(
-            rel, "[觀]", "[固]", f"{atom.confirmations} confirmations（閾值 {threshold}）"
+            rel, "[觀]", "[固]", f"{method}={val}（閾值 {req}）"
         )
     return None
 
@@ -440,6 +536,18 @@ def validate_index(index_path: Path, memory_dir: Path, index_entries: List[Index
         if f.is_file() and f.suffix == ".md" and f.name != MEMORY_INDEX:
             if not any(f.name.startswith(p) for p in SKIP_PREFIXES):
                 actual_files.add(f.name)
+    # V5+: 索引 wildcard 也納入 _AIDocs/Failures/ 已登記 atom（feedback-* 等）
+    try:
+        global_memory = Path.home() / ".claude" / "memory"
+        if memory_dir.resolve() == global_memory.resolve():
+            failures = Path.home() / ".claude" / "_AIDocs" / "Failures"
+            failures_names = _load_failures_atom_names()
+            for stem in failures_names:
+                fp = failures / f"{stem}.md"
+                if fp.exists():
+                    actual_files.add(fp.name)
+    except OSError:
+        pass
 
     # Check index → file
     indexed_files: Set[str] = set()
@@ -468,7 +576,11 @@ def validate_index(index_path: Path, memory_dir: Path, index_entries: List[Index
         if not full_path.exists():
             # Try relative to parent of memory_dir
             alt_path = memory_dir.parent / entry.path
-            if not alt_path.exists():
+            # V5+: feedback-* / cognitive-patterns 居 _AIDocs/Failures/
+            failures_path = (
+                Path.home() / ".claude" / "_AIDocs" / "Failures" / file_name
+            )
+            if not alt_path.exists() and not failures_path.exists():
                 issues.append(
                     Issue(rel_index, "error", "index", f"索引指向不存在的檔案: {entry.path}")
                 )
@@ -494,10 +606,11 @@ def detect_duplicates(all_atoms: List[AtomMetadata]) -> List[DuplicatePair]:
             if a.file_path.parent == b.file_path.parent:
                 continue
 
-            # Title match
-            title_match = (
-                a.title and b.title and _normalize(a.title) == _normalize(b.title)
-            )
+            # Title match — P7: 同 (scope_label, normalized title) 才算重複；
+            # 跨 scope 同名 atom（如 global/decisions vs shared/decisions）不該誤判
+            key_a = (a.scope_label, _normalize(a.title)) if a.title else None
+            key_b = (b.scope_label, _normalize(b.title)) if b.title else None
+            title_match = bool(key_a and key_b and key_a == key_b)
 
             # Trigger overlap
             set_a = {t.lower() for t in a.trigger}
@@ -586,27 +699,26 @@ def restore_from_distant(atom_path: Path) -> Tuple[bool, str]:
         flags=re.MULTILINE,
     )
 
-    # Update Last-used to today
+    # Wave 2: Last-used / Confirmations / ReadHits 從 .md 移到 access.json，
+    # restore 後在 dest path 改寫 access 旁路檔（重置為 0、last_used 設今天）
     today_str = date.today().isoformat()
-    text = re.sub(
-        r"^(-\s+Last-used:\s*).*$",
-        rf"\g<1>{today_str}",
-        text,
-        count=1,
-        flags=re.MULTILINE,
-    )
-
-    # Reset confirmations
-    text = re.sub(
-        r"^(-\s+Confirmations:\s*).*$",
-        r"\g<1>0",
-        text,
-        count=1,
-        flags=re.MULTILINE,
-    )
 
     try:
-        dest.write_text(text, encoding="utf-8")
+        # S3.3: 走 funnel
+        _r = write_raw(dest, text, source=_AUDIT_SOURCE, op="audit_demote")
+        if not _r.ok:
+            raise OSError(_r.error)
+        # 同步 access 旁路檔重置（Wave 2）
+        try:
+            from lib.atom_access import write_access_field
+            write_access_field(dest, field="confirmations", value=0,
+                               source="tool:memory-audit")
+            write_access_field(dest, field="read_hits", value=0,
+                               source="tool:memory-audit")
+            write_access_field(dest, field="last_used", value=today_str,
+                               source="tool:memory-audit")
+        except (ImportError, OSError, ValueError):
+            pass
         atom_path.unlink()
         # Clean up empty year_month dir
         parent = atom_path.parent
@@ -652,11 +764,13 @@ def _append_evolution_entry(atom_path: Path, change: str, source: str = "memory-
                             lines.insert(j + 1, entry_line)
                             break
                     break
-        atom_path.write_text("\n".join(lines), encoding="utf-8")
+        # S3.3: 走 funnel
+        write_raw(atom_path, "\n".join(lines), source=_AUDIT_SOURCE, op="audit_evolution_insert")
     else:
         # No evolution log section; append one
         text += f"\n\n## 演化日誌\n\n| 日期 | 變更 | 來源 |\n|------|------|------|\n{entry_line}\n"
-        atom_path.write_text(text, encoding="utf-8")
+        # S3.3: 走 funnel
+        write_raw(atom_path, text, source=_AUDIT_SOURCE, op="audit_evolution_create")
 
 
 def compact_evolution_logs(
@@ -721,7 +835,8 @@ def compact_evolution_logs(
         else:
             new_lines.append(line)
 
-    atom_path.write_text("\n".join(new_lines), encoding="utf-8")
+    # S3.3: 走 funnel
+    write_raw(atom_path, "\n".join(new_lines), source=_AUDIT_SOURCE, op="audit_compact")
     return f"COMPACTED: {rel} — merged {merge_count} entries ({earliest}~{latest})"
 
 
@@ -789,10 +904,8 @@ def delete_atom(
     # 3. Scan Related references in other atoms → remove
     related_cleaned = 0
     for layer_name, mdir in layers:
-        for md_file in sorted(mdir.glob("*.md")):
-            if md_file.name == MEMORY_INDEX or md_file == atom_path:
-                continue
-            if any(md_file.name.startswith(p) for p in SKIP_PREFIXES):
+        for md_file in iter_atom_files(mdir):
+            if md_file == atom_path:
                 continue
             try:
                 text = md_file.read_text(encoding="utf-8-sig")
@@ -905,12 +1018,7 @@ def enforce_decay(args: argparse.Namespace) -> None:
     actions: List[str] = []
 
     for layer_name, mem_dir in layers:
-        for md_file in sorted(mem_dir.glob("*.md")):
-            if md_file.name == MEMORY_INDEX:
-                continue
-            if any(md_file.name.startswith(p) for p in SKIP_PREFIXES):
-                continue
-
+        for md_file in iter_atom_files(mem_dir):
             atom = parse_atom_file(md_file, layer_name)
             if not atom.last_used or not atom.confidence:
                 continue
@@ -1235,6 +1343,27 @@ def _normalize(s: str) -> str:
     return re.sub(r"\s+", " ", s.strip().lower())
 
 
+def _infer_scope_from_path(atom_path: Path) -> str:
+    """P7: 由路徑推斷 scope（fallback when frontmatter 缺 Scope:）。
+
+    對齊 tools/migrate-scope-field.py:infer_scope 與 lib/atom_spec.VALID_SCOPES。
+    支援 ~/.claude/memory/ 與 {project}/.claude/memory/ 兩種根層。
+    """
+    parts = atom_path.parts
+    # 找 memory/ 在 parts 的位置（global / project 共用此規則）
+    for i, p in enumerate(parts):
+        if p == "memory" and i + 1 < len(parts):
+            sub_parts = parts[i + 1:]  # memory/ 之下的 rel parts
+            if sub_parts and sub_parts[0] == "shared":
+                return "shared"
+            if len(sub_parts) >= 2 and sub_parts[0] == "roles":
+                return "role"
+            if len(sub_parts) >= 2 and sub_parts[0] == "personal":
+                return "personal"
+            return "global"
+    return "global"
+
+
 def _count_distant(memory_dir: Path) -> int:
     """Count atoms in _distant/."""
     distant_dir = memory_dir / DISTANT_DIR
@@ -1300,12 +1429,7 @@ def run_audit(args: argparse.Namespace) -> HealthReport:
                 )
 
         # Parse all atom files
-        for md_file in sorted(mem_dir.glob("*.md")):
-            if md_file.name == MEMORY_INDEX:
-                continue
-            if any(md_file.name.startswith(p) for p in SKIP_PREFIXES):
-                continue
-
+        for md_file in iter_atom_files(mem_dir):
             atom = parse_atom_file(md_file, layer_name)
             all_atoms.append(atom)
             report.total_atoms += 1
@@ -1426,9 +1550,7 @@ def main():
                                  project_dir=_project_dir_from_args(args))
         actions: List[str] = []
         for layer_name, mem_dir in layers:
-            for md_file in sorted(mem_dir.glob("*.md")):
-                if md_file.name == MEMORY_INDEX or any(md_file.name.startswith(p) for p in SKIP_PREFIXES):
-                    continue
+            for md_file in iter_atom_files(mem_dir):
                 result = compact_evolution_logs(md_file, dry_run=args.dry_run)
                 if result:
                     actions.append(result)

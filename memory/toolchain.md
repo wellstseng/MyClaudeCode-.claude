@@ -3,11 +3,9 @@
 - Scope: global
 - Confidence: [固]
 - Trigger: 工具鏈, 環境設定, MCPControl, MCP新增, npm全域, 螢幕截圖, Excel MCP, LanceDB, MSYS2, cp950, PowerShell截圖, 向量服務
-- Last-used: 2026-05-22
-- Confirmations: 187
 - Type: procedural
 - Tags: toolchain, environment, commands
-- Related: toolchain-ollama, decisions, feedback-global-install, hotfix-ilruntime-traps, unity-mcp-自動化工具鏈, failures, obsidian-sync-hook-全域同步-stdin-json-測試陷阱
+- Related: toolchain-ollama, decisions, feedback-global-install
 
 ## 知識
 
@@ -56,7 +54,7 @@
 - [固] **一律全域安裝 + 絕對路徑**：`npm i -g {pkg}` → 用 `node.exe` + 絕對路徑指向 `AppData/Roaming/npm/node_modules/{pkg}/dist/{entry}.js`
 - [固] **禁用 npx 啟動**：`cmd /c npx` 在 VSCode 擴充環境不穩定，MCP server 會無法啟動
 - [固] 入口查找：`package.json` 的 `bin` 欄位確認 entry point
-- [固] 範本：`"command": "C:\\Program Files\\nodejs\\node.exe", "args": ["C:\\Users\\wellstseng\\AppData\\Roaming\\npm\\node_modules\\{pkg}\\dist\\{entry}.js"]`
+- [固] 範本：`"command": "C:\\Program Files\\nodejs\\node.exe", "args": ["C:\\Users\\holylight\\AppData\\Roaming\\npm\\node_modules\\{pkg}\\dist\\{entry}.js"]`
 
 ### 環境特殊配置
 
@@ -69,3 +67,4 @@
 - 成功執行新工具指令後，評估是否值得記錄（跨 session 重用性 ≥ 2 次預期）
 - 環境問題 debug 時，優先查此 atom 再嘗試盲目探索
 - 版本資訊在確認後更新，不猜測
+

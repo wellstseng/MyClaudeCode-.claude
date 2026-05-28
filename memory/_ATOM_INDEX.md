@@ -1,32 +1,24 @@
 # Atom Trigger Index — Global
 
-> Machine-parsed by workflow-guardian hooks. Not @imported into context.
+> **Deprecated mirror.** Machine source: `_atom_index.json` (V5 P3b).
+> 本檔由 lib/atom_index_json.py 自動生成；勿手改。
 
 | Atom | Path | Trigger | Scope |
 |------|------|---------|-------|
-| preferences | memory/preferences.md | 偏好, 風格, 習慣, 語言, 回應, 執P, 執驗上P, 上GIT | global |
-| decisions | memory/decisions.md | 決策, 記憶系統, 原子記憶, guardian, hooks, MCP, 架構細節, vector service, context budget | global |
-| workflow-rules | memory/workflow-rules.md | 工作流程, 大型任務, 分階段, SOP, 任務拆分, 上版, GIT, Phase | global |
-| workflow-icld | memory/workflow-icld.md | ICLD, 閉環, Sprint, 功能拆解, 開發計畫, 大型新功能, 新系統規劃, 規格書 | global |
-| workflow-svn | memory/workflow-svn.md | svn, svn-update, TortoiseSVN, 衝突, conflict | global |
-| toolchain | memory/toolchain.md | 工具鏈, 環境設定, MCPControl, MCP新增, npm全域, 螢幕截圖, Excel MCP, LanceDB, MSYS2, cp950, PowerShell截圖, 向量服務 | global |
-| toolchain-ollama | memory/toolchain-ollama.md | ollama, dual-backend, rdchat, qwen3, embedding, 萃取品質, thinking, Open WebUI | global |
+| decisions-architecture | memory/decisions-architecture.md | 架構, hooks, pipeline, guardian, SessionStart, hot cache, extract-worker, vector service | global |
+| decisions | memory/decisions.md | 決策, 記憶系統, 原子記憶, 架構細節, context budget | global |
+| electron-uia-automation | memory/electron-uia-automation.md | Electron 自動化, VS Code 自動點擊, UIA Invoke, EVENT_E_NO_SUBSCRIBERS, PostMessage Chromium 失效, SendInput 偷塞字, AttachThreadInput, SetForegroundWindow 失敗, focus swap, ghost button, Claude Code 彈窗, GUI 工具 | global |
+| feedback-workflow-discipline | _AIDocs/Failures/feedback-workflow-discipline.md | handoff, 續接, 下 session, next-phase, 順手修補, drift 修補, 重複失敗, fix-escalation, 裁決, 決策推薦, plan 路徑, SessionStart hook, commit message, 上 GIT | global |
+| feedback-completion-gates | _AIDocs/Failures/feedback-completion-gates.md | 完成宣告, 收尾, pytest, run_verify, verify, smoke test, 研究先行, trial-and-error, 清理, 先清後建, 基線, 測試上傳, 上 SVN, known regression, xfail, 衍生暫存, 暫存檔, 清暫存, 收尾檢核 | global |
+| feedback-tooling-reliability | _AIDocs/Failures/feedback-tooling-reliability.md | codex, codex companion, codex CLI, gpt-5, bg subprocess, DEVNULL, ready flag, subprocess Popen, MCP, 安裝 MCP, 安裝 skill, silent failure, probe burst, 規則唯一來源 | global |
+| feedback-memory-structure | _AIDocs/Failures/feedback-memory-structure.md | 寫入記憶, atom 設計, atom 顆粒, 指標型, scope 敏感, GUID硬編碼, 環境相依, gitignore, git rm, memory path, _staging | global |
+| feedback-rigor-standards | _AIDocs/Failures/feedback-rigor-standards.md | 縝密, 漏掉, 沒看到, max thinking, high thinking, 外包思考, 規範, rigor, 前例, precedent, 既有 drift | global |
 | gdoc-harvester | memory/gdoc-harvester.md | harvester, Google Docs, Sheets, 收割, Playwright, cookie, export | global |
-| feedback-research | memory/feedback/feedback-research-first.md | 試錯, trial-and-error, API試錯, 框架不熟, 搜尋策略 | global |
-| fix-escalation | memory/feedback/feedback-fix-escalation.md | 重試, retry, escalation, 精確修正, fix-escalation, 修不好, 又壞了, 再次失敗 | global |
-| feedback-no-test-to-svn | memory/feedback/feedback-no-test-to-svn.md | 上SVN, svn commit, 測試碼不上傳, 新手作業, 不可上傳 | global |
-| feedback-global-install | memory/feedback/feedback-global-install.md | 安裝MCP, 安裝skill, install MCP, install skill, add MCP, 新增MCP, 新增skill | global |
-| feedback-memory-path | memory/feedback/feedback-memory-path.md | 寫入記憶, _staging, memory path, 寫atom, Write memory, 記憶路徑 | global |
-| feedback-scope-sensitive | memory/feedback/feedback-scope-sensitive-values.md | GUID硬編碼, 環境相依, 範圍敏感, fileID, 端口硬編碼, 硬編碼路徑 | global |
-| feedback-decision-no-tech-menu | memory/feedback/feedback-decision-no-tech-menu.md | 工具選型, 技術選單, 建議優選, 給使用者選, 技術選項 | global |
-| feedback-handoff | memory/feedback/feedback-handoff-self-sufficient.md | 下 session, 續接, 交接, 下次繼續, next-phase, handoff, 下個 claude, resume prompt | global |
-| feedback-no-outsource-rigor | memory/feedback/feedback-no-outsource-rigor.md | 縝密, 漏掉, 沒看到, max thinking, high thinking, 外包思考, 角色縝密, 我有沒有漏, rigor | global |
-| feedback-git-log-chinese | memory/feedback/feedback-git-log-chinese.md | commit message, commit msg, 上GIT, git commit, git log, git push |
-| feedback-fix-on-discovery | memory/feedback/feedback-fix-on-discovery.md | 不在範圍, 範圍外, 未來處理, 另開 session, out of scope, 順手發現, 不在本次範圍 |
-| feedback-humanist-decision-framing | memory/feedback-humanist-decision-framing.md | 裁決, 決策呈現, 選項, 多選題, 技術細節, 使用者認知負擔 |
-| svn-windows-中文-commit-log-編碼陷阱 | memory/svn-windows-中文-commit-log-編碼陷阱.md | SVN, commit log, 中文, UTF-8, CP950, Windows, 亂碼, encoding, BOM, commit message, svn:log |
-| obsidian-sync-hook-全域同步-stdin-json-測試陷阱 | memory/obsidian-sync-hook-全域同步-stdin-json-測試陷阱.md | obsidian-sync, obsidian, Obsidian 同步, _global, 全域 memory 同步, PostToolUse hook 測試, stdin JSON, echo 反斜線, MSYS bash, hook 測試陷阱 |
-| wells-workflow-feedback-driven-teaching | memory/wells-workflow-feedback-driven-teaching.md | 工作流洞見, 教AI, feedback, 行為校正, 糾正, teaching |
-| wells-workflow-brake-mechanism | memory/wells-workflow-brake-mechanism.md | 工作流洞見, 煞車, 重試, retry, 越改越爛, hook |
-| wells-workflow-handoff-quality | memory/wells-workflow-handoff-quality.md | 工作流洞見, handoff, 交接, 大型任務, 跨session |
-| wells-workflow-copilot-not-driver | memory/wells-workflow-copilot-not-driver.md | 工作流洞見, 副駕, copilot, 人機協作, 決策權 |
+| preferences | memory/preferences.md | 偏好, 風格, 習慣, 語言, 回應, 執P, 執驗上P, 上GIT | global |
+| toolchain-ollama | memory/toolchain-ollama.md | ollama, dual-backend, rdchat, qwen3, embedding, 萃取品質, thinking, Open WebUI | global |
+| toolchain | memory/toolchain.md | 工具鏈, 環境設定, MCPControl, MCP新增, npm全域, 螢幕截圖, Excel MCP, LanceDB, MSYS2, cp950, PowerShell截圖, 向量服務 | global |
+| workflow-icld | memory/workflow-icld.md | ICLD, 閉環, Sprint, 功能拆解, 開發計畫, 大型新功能, 新系統規劃, 規格書 | global |
+| workflow-rules | memory/workflow-rules.md | 工作流程, 大型任務, 分階段, SOP, 任務拆分, 上版, GIT, Phase | global |
+| workflow-svn | memory/workflow-svn.md | svn, svn-update, TortoiseSVN, 衝突, conflict | global |
+| memory-pipeline-silent-failure-2026-05 | _AIDocs/Failures/memory-pipeline-silent-failure-2026-05.md | memory-review, memory-health, confirmations, episodic, 晉升, 自我迭代, 衰減掃描, 覆轍偵測 | global |
+| cognitive-patterns | _AIDocs/Failures/cognitive-patterns.md | 過度工程, 代理指標, proxy metric, AI看不懂, AI在打轉, 品質回饋, 自我合理化, 編造規則, 籠統話術, 訂規保留, 設計慣例 | global |

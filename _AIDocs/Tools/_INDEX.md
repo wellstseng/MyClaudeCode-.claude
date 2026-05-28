@@ -1,7 +1,7 @@
 # Tools — 工具與領域知識索引
 
 > 跨專案工具操作知識、領域特定知識
-> 最近更新：2026-04-23
+> 最近更新：2026-05-28（V5 GA 同步 + 補回 unity-mcp-setup）
 
 ---
 
@@ -15,4 +15,5 @@
 | 4 | unity-prefab-component-guids.md | SGI Client UI Component Script GUIDs 對照表 | prefab GUID, component GUID, m_Script, ILUIWnd GUID, UIButtonCustom GUID, EnhancedScroller GUID, UI component registry |
 | 5 | unity-wndform-yaml-template.md | WndForm Prefab YAML 模板（RefDb, AutoGenUICode, Scroller stack） | WndForm template, prefab YAML, RefDb, AutoGenUICode, Scroller stack, Canvas template, prefab 建立 |
 | 6 | unity-prefab-workflow.md | Prefab 程式化建立 SOP（generate-ui-prefab 流程） | prefab SOP, 程式化建立 prefab, generate-ui-prefab, WndForm 建立, 元件 stack, Console 警告 |
-| 7 | unity-mcp-setup.md | Unity MCP 安裝/配置 SOP（CoplayDev/unity-mcp + ~/.claude.json 設定 + 踩坑） | Unity MCP 安裝, mcp__unity-mcp, CoplayDev/unity-mcp, MCPForUnity, 8080, Unity Editor 自動化 |
+| 7 | bm25-global-layer.md | V5 全域 atom BM25 檢索層（取代 Vector daemon 殺雞用牛刀） | BM25, 全域檢索, atom 注入, char-bigram, k1, b, vector global_layer, V5 P5a |
+| 8 | unity-mcp-setup.md | Unity MCP 安裝/配置 SOP（CoplayDev/unity-mcp + ~/.claude.json 設定 + 踩坑） | Unity MCP 安裝, mcp__unity-mcp, CoplayDev/unity-mcp, MCPForUnity, 8080, Unity Editor 自動化 |
