@@ -1,0 +1,65 @@
+{
+  "skill_name": "code-guide",
+  "queries": [
+    {
+      "query": "/code-guide Assets/Scripts/UI/Manager/UIManager.cs",
+      "should_trigger": true,
+      "note": "明確指令 + 檔案路徑"
+    },
+    {
+      "query": "幫我導讀戰鬥技能系統",
+      "should_trigger": true,
+      "note": "系統名措辭"
+    },
+    {
+      "query": "我要接手 DesignManager，先幫我建立心智模型",
+      "should_trigger": true,
+      "note": "接手 + 心智模型措辭"
+    },
+    {
+      "query": "產一份 SkillSystem 的導讀地圖",
+      "should_trigger": true,
+      "note": "導讀地圖措辭 + 類別名"
+    },
+    {
+      "query": "CardSystem 這包我看不懂，給我一份系統導讀",
+      "should_trigger": true,
+      "note": "看不懂 + 系統導讀"
+    },
+    {
+      "query": "新人下週要接手 UI 框架，幫他產一份看懂這個系統的導讀",
+      "should_trigger": true,
+      "note": "邊界：為他人產導讀也應觸發"
+    },
+    {
+      "query": "幫我 review 這次的 diff",
+      "should_trigger": false,
+      "note": "code-review 職責"
+    },
+    {
+      "query": "分析這份規格書 D:\\spec\\新賽季.docx",
+      "should_trigger": false,
+      "note": "analyze-spec 職責"
+    },
+    {
+      "query": "幫我修 UIManager 面板排序的 bug",
+      "should_trigger": false,
+      "note": "修碼任務，共享關鍵字 UIManager 但不是導讀"
+    },
+    {
+      "query": "把戰鬥系統的架構文件更新到 _AIDocs",
+      "should_trigger": false,
+      "note": "文件維護，不是產導讀"
+    },
+    {
+      "query": "幫我把這張表的資料導出成 JSON",
+      "should_trigger": false,
+      "note": "「導」字近似但無關"
+    },
+    {
+      "query": "這段程式碼為什麼會 NullReference？",
+      "should_trigger": false,
+      "note": "除錯問答，不需整份導讀地圖"
+    }
+  ]
+}
