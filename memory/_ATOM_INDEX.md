@@ -14,7 +14,7 @@
 | feedback-memory-structure | _AIDocs/Failures/feedback-memory-structure.md | 寫入記憶, atom 設計, atom 顆粒, 指標型, scope 敏感, GUID硬編碼, 環境相依, gitignore, git rm, memory path, _staging | global |
 | feedback-rigor-standards | _AIDocs/Failures/feedback-rigor-standards.md | 縝密, 漏掉, 沒看到, max thinking, high thinking, 外包思考, 規範, rigor, 前例, precedent, 既有 drift | global |
 | gdoc-harvester | memory/gdoc-harvester.md | harvester, Google Docs, Sheets, 收割, Playwright, cookie, export | global |
-| preferences | memory/preferences.md | 偏好, 風格, 習慣, 語言, 回應, 執P, 執驗上P, 上GIT | global |
+| preferences | memory/preferences.md | 偏好, 風格, 習慣, 語言, 回應, 執P, 執驗上P, 上GIT, Obsidian | global |
 | toolchain-ollama | memory/toolchain-ollama.md | ollama, dual-backend, rdchat, qwen3, embedding, 萃取品質, thinking, Open WebUI | global |
 | toolchain | memory/toolchain.md | 工具鏈, 環境設定, MCPControl, MCP新增, npm全域, 螢幕截圖, Excel MCP, LanceDB, MSYS2, cp950, PowerShell截圖, 向量服務 | global |
 | workflow-icld | memory/workflow-icld.md | ICLD, 閉環, Sprint, 功能拆解, 開發計畫, 大型新功能, 新系統規劃, 規格書 | global |
@@ -22,3 +22,9 @@
 | workflow-svn | memory/workflow-svn.md | svn, svn-update, TortoiseSVN, 衝突, conflict | global |
 | memory-pipeline-silent-failure-2026-05 | _AIDocs/Failures/memory-pipeline-silent-failure-2026-05.md | memory-review, memory-health, confirmations, episodic, 晉升, 自我迭代, 衰減掃描, 覆轍偵測 | global |
 | cognitive-patterns | _AIDocs/Failures/cognitive-patterns.md | 過度工程, 代理指標, proxy metric, AI看不懂, AI在打轉, 品質回饋, 自我合理化, 編造規則, 籠統話術, 訂規保留, 設計慣例 | global |
+| toolchain-batch-cmd-crlf-encoding | memory/toolchain-batch-cmd-crlf-encoding.md | batch, bat, cmd, 批次檔, 閃退, 亂碼, CRLF, LF, 換行, Write工具, adb push, chcp, BOM, 編碼 | global |
+| toolchain-svn-powershell-中文log編碼 | memory/toolchain-svn-powershell-中文log編碼.md | svn commit, svn log, 亂碼, 中文 commit, CP950, revprop, pre-revprop-change, --encoding, svn 編碼, commit message 亂碼 | global |
+| doc-程式人員ai協作指南 | memory/doc-程式人員ai協作指南.md | AI協作指南, AI 協作, 協作文件, WorkNote, 團隊指南, AI 最佳實踐, 新人 AI 教育 | global |
+| feedback-想一下即凍結落檔 | _AIDocs/Failures/feedback-想一下即凍結落檔.md | 想一下, 考慮, 我再看, 待決, 決策中 | global |
+| toolchain-win-cmd-cwd-exepath | memory/toolchain-win-cmd-cwd-exepath.md | NoDefaultCurrentDirectoryInExePath, not recognized as an internal or external command, cmd 找不到 bat, msvcbuild, bare name 執行 | global |
+| titan-dotnet-split | memory/titan-dotnet-split.md | titan_dotnet, 分家, src/csharp, titan_src, git-filter-repo, 標準 .NET 佈局, build-native, luasocket, 獨立 repo, 自足 | global |

@@ -176,7 +176,8 @@
         "回應",
         "執P",
         "執驗上P",
-        "上GIT"
+        "上GIT",
+        "Obsidian"
       ],
       "scope": "global"
     },
@@ -286,6 +287,99 @@
         "籠統話術",
         "訂規保留",
         "設計慣例"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "toolchain-batch-cmd-crlf-encoding",
+      "path": "memory/toolchain-batch-cmd-crlf-encoding.md",
+      "triggers": [
+        "batch",
+        "bat",
+        "cmd",
+        "批次檔",
+        "閃退",
+        "亂碼",
+        "CRLF",
+        "LF",
+        "換行",
+        "Write工具",
+        "adb push",
+        "chcp",
+        "BOM",
+        "編碼"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "toolchain-svn-powershell-中文log編碼",
+      "path": "memory/toolchain-svn-powershell-中文log編碼.md",
+      "triggers": [
+        "svn commit",
+        "svn log",
+        "亂碼",
+        "中文 commit",
+        "CP950",
+        "revprop",
+        "pre-revprop-change",
+        "--encoding",
+        "svn 編碼",
+        "commit message 亂碼"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "doc-程式人員ai協作指南",
+      "path": "memory/doc-程式人員ai協作指南.md",
+      "triggers": [
+        "AI協作指南",
+        "AI 協作",
+        "協作文件",
+        "WorkNote",
+        "團隊指南",
+        "AI 最佳實踐",
+        "新人 AI 教育"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "feedback-想一下即凍結落檔",
+      "path": "_AIDocs/Failures/feedback-想一下即凍結落檔.md",
+      "triggers": [
+        "想一下",
+        "考慮",
+        "我再看",
+        "待決",
+        "決策中"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "toolchain-win-cmd-cwd-exepath",
+      "path": "memory/toolchain-win-cmd-cwd-exepath.md",
+      "triggers": [
+        "NoDefaultCurrentDirectoryInExePath",
+        "not recognized as an internal or external command",
+        "cmd 找不到 bat",
+        "msvcbuild",
+        "bare name 執行"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "titan-dotnet-split",
+      "path": "memory/titan-dotnet-split.md",
+      "triggers": [
+        "titan_dotnet",
+        "分家",
+        "src/csharp",
+        "titan_src",
+        "git-filter-repo",
+        "標準 .NET 佈局",
+        "build-native",
+        "luasocket",
+        "獨立 repo",
+        "自足"
       ],
       "scope": "global"
     }
