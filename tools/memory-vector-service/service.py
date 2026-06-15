@@ -25,6 +25,8 @@ SERVICE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SERVICE_DIR))
 # V2.20: import wg_core for centralized path resolution
 sys.path.insert(0, str(Path.home() / ".claude" / "hooks"))
+# Add ~/.claude so `import lib.*` (e.g. lib.atom_locations) resolves
+sys.path.insert(0, str(Path.home() / ".claude"))
 
 from config import load_config, VECTORDB_DIR
 from indexer import build_index, create_embedder, get_index_status
