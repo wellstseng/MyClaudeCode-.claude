@@ -315,16 +315,20 @@
       "name": "toolchain-svn-powershell-中文log編碼",
       "path": "memory/toolchain-svn-powershell-中文log編碼.md",
       "triggers": [
+        "svn",
         "svn commit",
-        "svn log",
+        "中文log",
+        "中文訊息",
+        "commit message",
         "亂碼",
-        "中文 commit",
-        "CP950",
+        "-m",
+        "-F",
+        "git-bash",
+        "MSYS",
         "revprop",
-        "pre-revprop-change",
-        "--encoding",
-        "svn 編碼",
-        "commit message 亂碼"
+        "中文檔名",
+        "上傳SVN",
+        "PowerShell svn"
       ],
       "scope": "global"
     },
@@ -380,6 +384,121 @@
         "luasocket",
         "獨立 repo",
         "自足"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "dotnet-inline-cant-cross-delegate",
+      "path": "memory/dotnet-inline-cant-cross-delegate.md",
+      "triggers": [
+        "AggressiveInlining",
+        "MethodImpl",
+        "inline",
+        "delegate",
+        "event",
+        "介面 vs event",
+        "interface dispatch",
+        "摺進去",
+        "JIT 反組譯",
+        "收包效能",
+        "Slave_OnReceivePacket",
+        "DOTNET_JitDisasm",
+        "Stopwatch.GetTimestamp",
+        "委派邊界"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "dotnet-string-gethashcode-per-process-randomized",
+      "path": "memory/dotnet-string-gethashcode-per-process-randomized.md",
+      "triggers": [
+        "GetHashCode",
+        "hash 路由",
+        "hash 釘定",
+        "FNV",
+        "consistent hashing",
+        "後端路由"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "toolchain-ps51-getcontent-utf8-file-corruption",
+      "path": "memory/toolchain-ps51-getcontent-utf8-file-corruption.md",
+      "triggers": [
+        "Get-Content",
+        "Set-Content",
+        "UTF-8",
+        "中文檔案",
+        "PowerShell 改檔",
+        "編碼損毀",
+        "hot reload 改檔"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "dotnet-mysqldata-collation-id-相容",
+      "path": "memory/dotnet-mysqldata-collation-id-相容.md",
+      "triggers": [
+        "MySql.Data",
+        "MySQL",
+        "collation",
+        "KeyNotFoundException",
+        "SetFieldEncoding",
+        "net8 升級",
+        "connector"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "dotnet-sdk10-rid-restore-runtime-pack",
+      "path": "memory/dotnet-sdk10-rid-restore-runtime-pack.md",
+      "triggers": [
+        "offline build",
+        "nuget-offline",
+        "RID restore",
+        "runtime pack",
+        "NU1101",
+        "SelfContained",
+        "dotnet publish -r",
+        "fetch-nuget",
+        "離線建置"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "designexceltodata-優化實況與驗證流",
+      "path": "memory/designexceltodata-優化實況與驗證流.md",
+      "triggers": [
+        "DesignExcelToData",
+        "產檔器",
+        "Design產檔器",
+        "CLI批次",
+        "CliRunner",
+        "增量產出",
+        "EqualsWithoutHeader",
+        "FLAG_ForceGenOutput",
+        "GoldenMaster",
+        "GenReport",
+        "DataValidator",
+        "驗證規則",
+        "SrcInfoMap",
+        "GenerateOneExcel",
+        "CliLastRun"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "dotnet-xunit-getentryassembly-testhost",
+      "path": "memory/dotnet-xunit-getentryassembly-testhost.md",
+      "triggers": [
+        "GetEntryAssembly",
+        "testhost",
+        "xUnit",
+        "反射掃描",
+        "entry assembly",
+        "模組註冊測試",
+        "assembly scan",
+        "自動註冊"
       ],
       "scope": "global"
     }

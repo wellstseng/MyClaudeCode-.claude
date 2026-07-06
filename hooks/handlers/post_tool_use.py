@@ -29,6 +29,10 @@ from handlers._shared import (
 
 _CHANGELOG_TABLE_DATA_RE = re.compile(r"^\|\s*\d{4}-\d{2}-\d{2}\s*\|")
 
+# 已人工確認為長期藍圖、雖檔名含 "plan" 但應常駐 _AIDocs/ 的文件（lowercase basename）。
+# 命中者跳過「暫時性文件」勸告，免 guardian 對正典文件反覆誤報。
+_AIDOCS_PLAN_WHITELIST = {"csharp_port_plan.md"}
+
 
 def _maybe_auto_roll_changelog(file_path: str, config: Dict[str, Any]) -> None:
     """Detached roll when _CHANGELOG.md rows exceed threshold. Fail-open."""
@@ -166,7 +170,7 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
 
         if "/_AIDocs/" in normalized or "/_aidocs/" in normalized.lower():
             fname = normalized.rsplit("/", 1)[-1]
-            if is_plan_filename(fname):
+            if is_plan_filename(fname) and fname.lower() not in _AIDOCS_PLAN_WHITELIST:
                 state["_aidocs_advisory"] = (
                     f"⚠ {fname} 看起來是暫時性文件，"
                     f"建議放 memory/_staging/ 而非 _AIDocs/。"

@@ -118,3 +118,8 @@ Thumbs.db
 *~
 memory/mail-sorting.md
 sessions/
+
+# --- Session/Task/Codex runtime state (per-machine, auto-generated) ---
+history.jsonl
+tasks/
+.codex/

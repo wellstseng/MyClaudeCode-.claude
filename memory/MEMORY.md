@@ -19,6 +19,13 @@
 | doc-程式人員ai協作指南 | doc-程式人員AI協作指南 |
 | toolchain-win-cmd-cwd-exepath | toolchain-win-cmd-cwd-exepath |
 | titan-dotnet-split | titan-dotnet-split |
+| dotnet-inline-cant-cross-delegate | dotnet-inline-cant-cross-delegate |
+| dotnet-string-gethashcode-per-process-randomized | dotnet-string-gethashcode-per-process-randomized |
+| toolchain-ps51-getcontent-utf8-file-corruption | toolchain-ps51-getcontent-utf8-file-corruption |
+| dotnet-mysqldata-collation-id-相容 | dotnet-mysqldata-collation-id-相容 |
+| dotnet-sdk10-rid-restore-runtime-pack | dotnet-sdk10-rid-restore-runtime-pack |
+| designexceltodata-優化實況與驗證流 | designexceltodata-優化實況與驗證流 |
+| dotnet-xunit-getentryassembly-testhost | dotnet-xunit-getentryassembly-testhost |
 | feedback-* | 行為校正（6 atoms） → [`_AIDocs/Failures/`](../_AIDocs/Failures/) |
 | memory-pipeline-silent-failure-2026-05 | 記憶機制靜默失效（confirmations 零增 + episodic 停擺） → [`_AIDocs/Failures/memory-pipeline-silent-failure-2026-05.md`](../_AIDocs/Failures/memory-pipeline-silent-failure-2026-05.md) |
 | cognitive-patterns | 認知模式偏差（Cognitive Patterns） → [`_AIDocs/Failures/cognitive-patterns.md`](../_AIDocs/Failures/cognitive-patterns.md) |

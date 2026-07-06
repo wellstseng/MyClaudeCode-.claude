@@ -5,7 +5,7 @@
 - Trigger: 過度工程, 代理指標, proxy metric, AI看不懂, AI在打轉, 品質回饋, 自我合理化, 編造規則, 籠統話術, 訂規保留, 設計慣例
 - Last-used: 2026-05-28
 - Created-at: 2026-03-13
-- Related: decisions, feedback-rigor-standards
+- Related: decisions, feedback-rigor-standards, toolchain-batch-cmd-crlf-encoding, doc-程式人員ai協作指南
 
 ## 知識
 
