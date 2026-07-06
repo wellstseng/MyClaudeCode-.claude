@@ -63,6 +63,43 @@ V4 的三層 scope 機制不變：
 
 **Failures 內參考文件過濾**：`_AIDocs/Failures/` 容納非 atom 文件（如 `_INDEX.md` / `README.md`）。caller 用 `failures_atom_stems()` 從 `_atom_index.json` 抽出真正的 atom stems 過濾，避免把參考文件當 atom 索引。
 
+### 2.2 Realm 範疇分區（核心 vs 非核心，V5+ S3，2026-06-03）
+
+`~/.claude/memory/` 的全域 atom 在**每個專案**都被掃描注入。腦內世界 / codex / guardian-dashboard 這類**只在 ~/.claude 內才有用**的記憶，跨到外部專案工作時仍佔 context token——故補上「範疇（realm）」維度。
+
+**realm 與 scope 正交，由 index `path` 前綴推導（不存欄位、不寫 frontmatter、免 heal）：**
+
+| Realm | 判定（index `path`） | 物理位置 | 注入行為 |
+|---|---|---|---|
+| `core`（預設） | **不**以 `_AIDocs/_atoms/` 開頭 | `memory/{slug}.md`（feedback-* 在 `_AIDocs/Failures/`，屬 core） | 全專案注入（現狀不變） |
+| `local` | 以 `_AIDocs/_atoms/` 開頭 | `_AIDocs/_atoms/<domain>/{slug}.md` | **只在 cwd∈~/.claude 注入**；外部專案完全略過 |
+
+- **local atom 仍 `Scope=global`**——realm 與 scope 正交；沿用 feedback-* 同一招（物理在 `_AIDocs/` 下、靠 index `path` 被 `base_dir=CLAUDE_DIR` join 讀出注入），零新管線。`_AIDocs/_atoms/` 與 feedback 的 `_AIDocs/Failures/` 是不同前綴、零衝突。
+- **Domain**（V6 起為**多段階層路徑**，見下方 V6 塊）：Lv1 根 `World`（腦內世界）/ `Tools`（外部工具與環境踩坑）/ `MemDev`（記憶系統/Guardian「特定實例」開發踩坑）/ `OS`（作業系統·環境踩坑，V6 dogfood 新增）/ `Else`（catch-all fail-safe，取代舊 `Misc`）；深層自由分支（如 `OS/Windows/WSL`），未知 domain warn 不擋。
+- **注入閘門**：`hooks/handlers/session_start.py` 在**建候選快取處**（非注入迴圈）依 `_is_under_claude_dir(cwd)` 過濾掉 path 落 `_AIDocs/_atoms/` 的候選；外部專案零負擔。**例外（2026-06-18 解綁）**：`is_cross_project_local`（Lv1 根 ∈ `CROSS_PROJECT_LOCAL_DOMAINS`，如 `Continuity`）保留——storage 在 _atoms 但跨專案注入，解開「儲存位置綁死注入範圍」、對偶 feedback-*；py-only。compact/resume 複用舊 state 為已知低頻限制。
+- **分類器**（`classify_realm`，新 atom + drift sweep 共用）：**安全預設 core，僅高信心判 local**。核心保護清單（前綴 `decisions*`/`workflow-*`/`toolchain*`/`feedback-*`/`memory-pipeline-*`/`atom-*`＋exact `preferences`/`cognitive-patterns`/`goal-driven-verify-loopkarpathy-吸收`/`自己flag的維護動作直接做完不要反問`）**硬擋**永不 local（反覆被 sweep 誤搬的 core atom 列入 exact 集，py+js 鏡像）；詞庫**只用實例專屬名**（腦內世界/world.html/reconcile/gdoc/codex/electron-uia/guardian-dashboard…），**絕不用記憶系統通用詞**（會誤殺核心 atom）；只掃 name+triggers，**絕不靠 `_AIDocs/` 路徑前綴判 local**（feedback-* 就在 _AIDocs 卻是 core）。
+- **搬遷工具**：兩支職責分離，共用 `lib.atom_access.move_atom_pair`（`.md`+`.access.json` sidecar 原子搬，計數不歸零）。
+  - `tools/atom-set-realm.py`：`set <slug> --domain D` / `--to-core`（undo）。core⇄local **realm 維度**搬移；為 `_AIDocs/_atoms/` path 的**唯一寫者**（防翻轉 realm）；Scope 保持 global。
+  - `tools/atom-move.py`（V5 SoT-correct，2026-06-26 重寫）：`move <slug> --from <dir> --to <dir>` / `reconcile … --at`。memory 樹內**資料夾分類搬移**與**跨 root 層級搬移**。改 path 走 `_atom_index.json` 的 `upsert_atom`/`delete_atom`（自動重生 `_ATOM_INDEX.md` 鏡像），同根搬移**保留 scope**；index-root 自 target 上溯偵測（修 V4「子夾誤當 root」）；落 `_AIDocs/_atoms/`（→ 導回 atom-set-realm）或 `_AIDocs/Failures/`（title 路由）一律**拒絕**；搬後 `validate_index` 自驗。**歷史坑**：V4 殘留版只改 deprecated `_ATOM_INDEX.md`、不動 JSON SoT、不搬 sidecar，靜默損壞單中央索引（見 atom `atom-move-v5-sot-correct-化…`）。
+- **印象層 catalog 的 realm 拆分（V5+ S5，2026-06-04）**：realm 原則貫徹到 **index/catalog 層**。`sync-memory-index` 雙輸出——core atom → `MEMORY.md`（CLAUDE.md `@import`，全專案 always-load，fail-safe 退路）；local atom → 側檔 `memory/_local_catalog.md`（自含 H1 + domain 子表），僅核心環境由 `session_start.py` 共同尾段（`_is_under_claude_dir` gate）注入 `additionalContext`。MEMORY.md 末尾僅留一行指標。**修前**：MEMORY.md 全文（含本地範疇段，2026-06-04 時 ~722 字元）隨靜態 `@import` 漏進每個外部專案 always-load；**修後**：外部專案僅 core catalog（省下的本地段實務 ~180 tok/session；~450 為 CJK-aware 保守估），本地段只在 ~/.claude 注入。caption preserve 跨 `MEMORY.md`+`_local_catalog.md` 兩檔合併（migration 首跑本地描述仍在舊 MEMORY.md → 自動保留）。`_` 前綴側檔不被任何 scanner 當 atom（server.js / wg_atoms / is_atom_file 皆 skip `_*`）。
+- **V6：LLM-assisted recall + 關聯式分級階層 domain（V5+ S6 / Phase A–H，2026-06-04）**——詞庫封閉 allow-list 漏判的根治（wsl2 atom 漏進 core always-load 為觸發案例；任何詞庫未預見的新主題都漏到 core）：
+  - **LLM fallback**（[`tools/realm_llm_classify.py`](../tools/realm_llm_classify.py)，複用 atom-heal Ollama 樣板）掛 **SessionEnd sweep**（`hooks/wg_atoms.py:_sweep_realm_auto_migrate`），**server.js 寫入熱路徑不掛 LLM**。只對「unknown core」（非 protected、詞庫 miss）喚 LLM，`max_per_session` 限額。config：`workflow/config.json` `realm.llm_fallback{enabled,backend:ollama,max_per_session:5,min_confidence:0.7}`。**⚠ P3（2026-07-01）起 `enabled=false` 預設關 — 外科停 LLM，只跑 deterministic 詞庫（含 learned）保確定性 sweep；改回 true 才復原 LLM recall。**
+  - **Fail-safe 四態**（紅線：protected 永不喚 LLM、恆 core）：`error`(連不到 backend/逾時)→**defer 留原地**（防 Ollama 離線把全部 unknown-core 掃進 Else）；`core`→留；`local`≥`min_confidence`→搬 canon `domain_path`；`unsure`/低信心→`_AIDocs/_atoms/Else`（catch-all，`LOCAL_REALM_DEFAULT_DOMAIN`）。
+  - **關聯式分級階層 domain**：多段路徑 `_AIDocs/_atoms/<L1>/<L2>/…/`（Lv 小=範疇廣）。`normalize_domain_path` 逐段對同層既有兄弟 snap（大小寫無視精確 ∨ 前綴包含 len≥3 治 `Win`→`Windows` ∨ difflib≥0.85）+ `_clean_segment` 拒 path-traversal **+ 非 CJK/ASCII 字元段（2026-06-12 韓文「자동화」亂碼 domain 實案，跨文字系統穿透 snap → 字元集 guard 降 `Else`；py `_SEG_ALLOWED_RE` / js `cleanRealmSegment`·`classifyRealm` 出口鏡像，parity test_22）**。**增量深度閘（depth=volume）**：新分支封頂 `LOCAL_REALM_NEW_BRANCH_DEPTH=3`、只能比既有最深匹配前綴深 1 層（絕對天花板 `LOCAL_REALM_MAX_DEPTH=7`）→ 深度隨內容量長、不被 LLM 一次灌深（dogfood 揭露 LLM 深度飄移 Lv3~5、靠本閘 deterministic 落實）。
+  - **詞庫自學閉環**：LLM 判 local 後 validated `terms→domain_path` atomic append `memory/_meta/realm-lexicon-learned.json`（py-only；`classify_realm(extra_lexicon=)` 合併 base+learned、`extra_lexicon=None` 時行為與 base 完全相同→**js 維持 base-only 保 test_17 parity**）。`_validate_terms` 剔系統通用詞/過短/自身命中 protected 的詞（防 learned 反殺核心）→ 下次 deterministic 命中免 LLM。**Sink 端雙護欄（2026-06-12 詞庫污染雙實案後補，`append_learned_terms` 蓋所有 caller）**：① 泛用詞拒收（`is_generic_lexicon_term`，token 全落 `_LEXICON_GENERIC_TOKENS` 即拒——「寫程式/refactor/fix bug/verify」被學進詞庫曾致 core atom `goal-driven-verify-loop` 誤降 local）；② domain 段非法（亂碼/traversal）整條拒收；`classify_realm` 出口對已污染 learned 的亂碼 domain 再降 `Else`（test_26）；③ **保留詞拒收（2026-06-24，`_RESERVED_LEXICON_TERMS` exact-match）**：系統 trigger 標籤（`auto-capture`/`觸發詞`）、realm 自名（`memdev`/`world`/`tools`/`continuity`）、已知外部專案（`sgi`/`uba`）絕不收。**源頭阻斷**：SessionEnd sweep 對 `_is_unconfirmed_autocapture`（index trigger 含 `auto-capture` ∨ frontmatter Author=auto-captured∧[臨]）的未確認碎片**整體 `continue` defer——不搬、不喚 LLM 學詞**，根治「LLM 對碎片吐專案詞→詞庫自汙染」（2026-06-24 SGI 第三度污染實案）。
+  - **catalog 階層化**：`_local_catalog.md` always-load **只 Lv1 根+遞迴計數+drill 指標**（O(根數) 不隨 atom 量膨脹）；每層 `_INDEX.md` **按需生成**（有子層 ∨ atom≥2；單葉不生、`_` 前綴非 atom）。`sync-memory-index --write` 寫全部+清 stale、`--check` drift/stale→exit1、caption preserve 擴及 `_INDEX.md`；sweep 搬後補觸發 `--write`。
+  - **手動前端 `/refile` skill**（[`skills/refile/`](../skills/refile/)，pipeline）：拖入非 `_AIDocs/_atoms/` 的任意 `.md` → 三段護欄（① 已歸檔拒搬 ② **核心/設定檔辨識**：bootstrap/設定集 ∨ protected slug ∨ memory/ 內被 bootstrap 鏈引用→不搬+回報角色/關聯+提供中斷或升級 EnterPlanMode ③ 分類提議）→ 互動確認 → 移檔（既有 atom 走 `atom-set-realm`、loose `.md` 走 `atom_write`）→ doc-ref 掃描。deterministic 判定全在 `skills/refile/scripts/refile_classify.py`，復用同引擎（為 SessionEnd sweep 的手動鏡像）。
+  - **移檔後 doc-sync**（移檔非建檔特有）：`_scan_doc_refs` 掃 `_AIDocs/`(排除 atom 物理區)+根 README/TECH 查舊 path/檔名殘留引用 → sweep marker 附「需同步文件」/ `/refile` 互動列出。Related 用 slug、搬 path 不斷；風險僅人面向文件按 path/檔名引用。
+  - **⚠ server.js 改動（`applyLocalRouting` 多段 / `Else` / `cleanRealmSegment`）需重啟 MCP 生效**；sweep / CLI / `set_realm` py 端即時生效。
+
+**規則來源（single source of truth）**：
+- Python：[`lib/atom_locations.py`](../lib/atom_locations.py) — `LOCAL_ATOMS_DIR` / `LOCAL_ATOMS_REL` / `LOCAL_REALM_DOMAINS` / `is_local_realm_path` / `classify_realm` / `local_write_target` / `local_realm_domain` / `atom_index_row_kind`；**V6 新增**：`normalize_domain_path` / `local_realm_path_segments` / `local_realm_lv1_root` / `enumerate_local_paths` / `load_learned_lexicon` / `append_learned_terms` / `LOCAL_REALM_MAX_DEPTH` / `LOCAL_REALM_NEW_BRANCH_DEPTH` / `LOCAL_REALM_DEFAULT_DOMAIN`
+- V6 LLM 引擎：[`tools/realm_llm_classify.py`](../tools/realm_llm_classify.py) — `llm_classify_realm` / `_validate_terms`（僅 SessionEnd sweep + `/refile` 呼叫，永不掛 server.js 熱路徑）
+- V6 sweep + 手動前端：[`hooks/wg_atoms.py`](../hooks/wg_atoms.py) `_sweep_realm_auto_migrate` / `_scan_doc_refs`；[`skills/refile/`](../skills/refile/)（`scripts/refile_classify.py` deterministic 引擎）
+- JS mirror：[`tools/workflow-guardian-mcp/server.js`](../tools/workflow-guardian-mcp/server.js) — `LOCAL_ATOMS_*` 常數 / `classifyRealm`（base-only）/ `applyLocalRouting`（V6 多段 + `Else` + `cleanRealmSegment`，**需重啟 MCP**）/ `findAtomFileRecursive(LOCAL_ATOMS_DIR)` find-fallback
+
+**守門**：`lib/verify/verify_atom_io_equivalence.py` test_14（路徑/realm 常數 py↔js parity）+ test_15（local routing，Scope 仍 global）+ test_16（分類器零誤判：核心保護清單全 core）+ test_17（classifier py↔js parity）+ **test_18–22**（`normalize_domain_path` canon/深度閘、`local_realm_path_segments`、多段 routing、`extra_lexicon` 自學、`_clean_segment` py↔js parity 含非 CJK/ASCII 字元集 guard）+ **test_26**（詞庫污染雙護欄：泛用詞/亂碼 domain 拒收 + `classify_realm` 出口降 Else）；`lib/verify/verify_realm_injection_gate.py`（3 gate 單測，body 候選層）；`tools/verify/verify_realm_llm_classify.py`（**V6** LLM 分類器函式 9 test：canon/term 驗證/error/unsure/core/local→else）+ `hooks/verify/verify_realm_sweep.py`（**V6** SessionEnd sweep Fail-safe 四態決策 10 test：lexicon 搬 / protected 不喚 LLM / error→defer / core→留 / local→搬+學 / unsure·低信心→Else / max_per_session / already-local skip）；`tools/verify/verify_memory_index_caption_preserve.py`（core/local render + caption preserve）；`tools/verify/verify_local_catalog_split.py`（catalog 層範疇閘：core 不含任何 local（含 `OS/Windows/WSL` 深樹）、含 core+feedback；側檔 domain 階層分組；雙檔 + `_INDEX.md` 深樹 round-trip + stale 清理 `--check`）。詳見 atom `realm-範疇分區機制-v5`。
+
 ---
 
 ## 3. Atom Index — JSON SoT（V5 P3b，2026-05-27）
@@ -115,6 +152,20 @@ V5 引入 `_atom_index.json` 為唯一機器源。
 - 讀取點：僅 fallback 用（JSON 缺失時的 backup parser）
 - 不再被 MCP / hooks 主路徑讀取
 
+### 3.4 元資料外科編輯 `edit_metadata`（2026-06-02）
+
+atom 已建立後要動 frontmatter 的 `Trigger`/`Related`/`Tags`，不重建知識區的合法入口。實作 [`lib/atom_io.py:edit_metadata`](../lib/atom_io.py)，MCP 經 `atom_edit_meta` 暴露（§9 註）。
+
+| 契約項 | 規範 |
+|---|---|
+| 可改欄位 | 僅 `triggers` / `related` / `tags`（None 表不動該欄；至少傳一個）。知識區、信心 tag、計數類欄位皆不在範圍 |
+| byte-stable | per-label regex 只就地替換目標那一行（`count=1`），其餘 byte 原樣保留（含既有 EOL / BOM）；找不到欄位行 → 不靜默 no-op，回 error |
+| SoT 順序 | triggers 變更時 **先寫 `_atom_index.json`（機器唯一源）**，成功才續寫 frontmatter（衍生）；index 領先失敗即中止、不寫 frontmatter，避免不可復原 drift。部分失敗由 `tools/sync-atom-index.py --fix` 冪等復原 |
+| 走既有 funnel | triggers 段複用 `write_index`、frontmatter 段複用 `write_raw(op="meta-edit")`，皆入 `_meta/atom_io_audit.jsonl` |
+| source 規範 | 須在 `VALID_SOURCES`（預設 `mcp`）|
+
+取代：被 PreToolUse guard 擋的「直 Edit/Write atom .md」、以及會重建整檔知識區的「`atom_write` mode=replace」。
+
 ---
 
 ## 4. Commands → Skills 遷移（V5 P1，2026-05-27）
@@ -137,14 +188,19 @@ paths: "memory/**/*.md"           # glob 命中才 auto-load
 ---
 ```
 
-### 4.2 V5 全域 19 個 skills
+### 4.2 V5 遷移當時的 20 個 skills（歷史快照）
 
-| 處理方式 | skills（共 19）|
+> 此表為 2026-05-27 V5 遷移當下的快照。**現役 skill 數以 `skills/_skill_index.json` 為 SoT**（由 `tools/skill-index.py` 掃 `skills/*/SKILL.md` 維護；增刪改 skill 由 PostToolUse hook 自動同步、SessionStart `--check` 防呆）；後續另增 heal-review / refile / 外部 karpathy-guidelines 等，當前計數見各文件 `<!-- skill-count -->` marker。
+
+| 處理方式 | skills（共 20）|
 |---------|-------|
 | **直接遷移**（13） | atom-debug, browse-sprites, conflict, conflict-review, consciousness-stream, extract, fix-escalation, generate-episodic, harvest, journal, read-project, upgrade, vector |
 | **全域保留**（4） | codex-companion, continue, handoff, init-roles |
 | **合 1 個 /memory**（5→1） | memory-health / memory-peek / memory-undo / memory-review / memory-session-score → `skills/memory/SKILL.md` 用 `$0` 取 subcmd |
 | **改名為 debug 工具**（1） | changelog-roll → `changelog-debug`（避免與 PostToolUse hook 自動觸發混淆） |
+| **後續新增（非遷移）**（1） | skill-creator（meta-skill：寫/改/審 skill；2026-05-29 經 MR !3 合入） |
+
+> **post-audit 2026-07-01（P8a）**：`init-roles` / `conflict-review`（上表「全域保留」「直接遷移」中）於單人環境降 dormant，skill 版 archive 至 `skills/_archived/`（tools/ 版仍在）→ 現役 active **21**（marker 為準）。
 
 ### 4.3 已刪除（與內建衝突）
 
@@ -191,7 +247,7 @@ V4.1 的 16 個 `wg_*.py` + 2651 行 `workflow-guardian.py` dispatcher 整併為
 
 - `dispatcher.py`（~75 行）— 純路由，無業務邏輯
 - `handlers/_shared.py` — handler 共用 helper
-- `handlers/{session_start,user_prompt_submit,pre_tool_use,post_tool_use,stop,session_end,pre_compact}.py` — 7 個 event handler 各一檔
+- `handlers/{session_start,user_prompt_submit,pre_tool_use,post_tool_use,stop,session_end,pre_compact,post_compact,post_tool_batch,notification}.py` — event handler 各一檔（2026-06-01 選配 #4 加 `post_compact`/`post_tool_batch`：壓縮後 atom 內文重注入）
 - `workflow-guardian.py` — 20 行薄 shim（5 行可執行 code）轉發到 `dispatcher.main()`
 
 詳細演化過程：[DevHistory/v4-archive/README.md](DevHistory/v4-archive/README.md)。
@@ -210,13 +266,13 @@ V5 引入 in-memory BM25 替代全域層，**保留 vector 給專案層**（atom
   - BM25 參數：k1=1.2, b=0.75
 - **hooks/handlers/user_prompt_submit.py** — 注入流程：
   1. trigger match
-  2. BM25 全域層（≤2 trigger 命中時觸發；min_score=1.0；top_k=3）
+  2. BM25 全域層（≤2 trigger 命中時觸發；min_score=3.5；top_k=3）
   3. Vector fallback（僅當 BM25 + trigger 雙 0 命中 或 `vector_search.global_layer ≠ bm25`）
-- **workflow/config.json** — `vector_search.global_layer: "bm25"` + `bm25_min_score: 1.0` + `bm25_top_k: 3`
+- **workflow/config.json** — `vector_search.global_layer: "bm25"` + `bm25_min_score: 3.5`（P3 2026-07-01：1.0→3.5 濾雜訊召回）+ `bm25_top_k: 3`
 
 ### 6.2 Vector Service 角色（保留）
 
-- **全域層**：BM25 替代（17 atoms 規模）
+- **全域層**：BM25 替代（~30 core atoms 規模；SoT 共 67，含 local 37 僅 ~/.claude 注入）
 - **專案層**：仍走 vector（避免上百 atoms 規模的 BM25 效能退化）
 - **Episodic search**：仍走 vector（cross-session 知識）
 - **Cross-session dedup / 衝突偵測**：仍走 vector
@@ -255,7 +311,7 @@ hooks/codex_companion.py:
 | `tools/codex-companion/audit.py` | **新增**：one-shot subprocess（stdin JSON → assessor → state.write_assessment） |
 | `tools/codex-companion/service.py` | **刪除**：HTTP daemon 不再需要 |
 | `hooks/codex_companion.py` | **重寫**：移除 HTTP client（urllib / socket / _http_post / _ensure_service）；改為直接 `import state as companion_state` + `_spawn_audit_subprocess` |
-| `workflow/config.json` | 移除 `codex_companion.service_port`；新增 `codex_companion.subprocess_timeout: 90` |
+| `workflow/config.json` | 移除 `codex_companion.service_port`；~~新增 `codex_companion.subprocess_timeout: 90`~~（**P2 2026-07-01 拔除此死 config 鍵——subprocess spawn 從未實際消費**）|
 | `skills/codex-companion/SKILL.md` | 移除 service.py 啟動指令；只切換 config flag |
 
 ### 7.3 保留的設計
@@ -287,7 +343,7 @@ V5 抽出為 `memory/_meta/forbidden-phrases.json` 為 single source；`IDENTITY
 ## 9. MCP server.js 砍 4 內部 tool（V5 P2，2026-05-26）
 
 V4 暴露 7 個 tool：3 個合理（atom_write / atom_move / atom_promote）+ 4 個內部 IPC（workflow_signal / workflow_status / memory_queue_add / memory_queue_flush）。
-V5 砍 4 個 IPC tool，改由 Stop gate 自動偵測（hook 內化）。
+V5 砍 4 個 IPC tool，改由 Stop gate 自動偵測（hook 內化）。後續（2026-06-02）加回 `atom_edit_meta`（元資料外科編輯，§3.4）→ 現役 4 個業務 tool。改全域 server.js 須重啟 MCP server 生效。
 
 ---
 
@@ -302,10 +358,46 @@ V5 砍 4 個 IPC tool，改由 Stop gate 自動偵測（hook 內化）。
 
 ---
 
-## 11. 變更紀錄
+## 11. 知識區 block 渲染（表格 / 程式碼 fence，2026-05-29）
+
+`## 知識` 區預設逐條加 `- ` bullet。V5+ 起 `atom_write` 的 `knowledge` 陣列中，**單一元素去左空白後以 `|`（markdown 表格）或三反引號（程式碼 fence）開頭者，整段原樣輸出、不加 bullet、前後自動補空行**（GFM 渲染需要）；其餘元素（含多行巢狀 bullet）維持「首行加 `- `」原行為。
+
+- **用法**：表格/程式碼當「獨立 knowledge 元素」傳入；引言句放前一個元素。
+- **單一實作（2026-06-12 parity 方案 B）**：內容構造/拼接唯一邏輯 = `lib/atom_spec.py:render_knowledge_lines` / `build_atom_content` + `lib/atom_io.py:_build_append_content`。MCP server.js 的 create/replace 構造與 append 拼接改 **spawn `lib.atom_io_cli` 新 action `build`/`append`**；js `buildAtomContent`/`renderKnowledgeLines` 退役為 parity fixture（test_13 仍守 js 鏡像不漂移）。
+- **create + append 皆 block-aware**；append 對表格/fence 開頭自動補一空行隔開既有知識。
+- **守門**：`lib/verify/verify_atom_io_equivalence.py` test_11/12（py funnel）+ test_13（py↔js byte-parity，spawn node 經 `module.exports` 對拍）+ **test_24/25**（append CRLF byte-stability + CLI build/append 跨語言對拍 + server.js delegation source-guard）。
+- **下游零衝擊**：conflict-detector 只抽 `- ` 行（表格列被忽略，非誤判）、注入剝離整段保留、write-gate 不檢行格式、逐行 `[固]` parse 不匹配表格列。
+- **注意**：server.js 改動需重啟 MCP server 進程才生效；Python funnel（hooks/tools）下次呼叫即生效。
+
+## 12. 注入→使用→結果 閉環效用歸因（Phase 1+2，#1/#2，2026-06-01）
+
+讓記憶觸及 sub-agent，並用「真實效用」而非「曝光次數」校準信心。設計細節 SoT = 程式碼；本節為導覽。
+
+### 12.1 Sub-agent 記憶注入（Phase 1，#1）
+- sub-agent（`Agent`/`Task`）開全新 context、不觸發 `UserPromptSubmit`。唯一 parent→child 通道是工具 prompt 字串。
+- `PreToolUse` 對 Agent/Task 回 **`updatedInput`**（非 plan 草稿誤記的 `modifiedInput`；CC 版本相依，已 probe 實證採納）prepend 緊湊注入 blob（`wg_atoms.build_injection_blob`，top-k≤3，marker `[WG:SubagentMemory] ... atoms=a,b,c`）。
+- `PostToolUse` 從注入後 `tool_response.prompt` 無狀態回推注入清單 + 擷取輸出摘要 → `state["subagent_injections"]`（`post_tool_use._record_subagent_injection`）。
+
+### 12.2 效用閉環 (α,β)（Phase 2，#2）
+- **遙測 schema v3**（`<atom>.access.json`，`lib/atom_access.py` funnel）：加 `useful_hits`(α)/`used_fail`(β)，Laplace prior 1，v2→v3 冪等 migration。α/β 只存兩個 scalar、**不寫進 .md**（零索引膨脹，守 token 紅線）。
+- **注入記錄**：`state["turn_injected"]`（per-turn 覆寫，補 session 累積 `injected_atoms` 的 per-turn delta 遺失）+ Phase 1 `subagent_injections`。
+- **use 偵測（零成本詞彙重疊）**：`wg_atoms.detect_atom_use` 取 atom 稀有 token（識別碼/路徑/API + CJK bigram，去停用詞）與本 turn assistant 活動（`wg_evasion.get_current_turn_text`）求 containment/Jaccard；共享≥`rare_token_min` 或 containment≥`lexical_overlap_min` → used。不確定（差一）時才用 Ollama embedding cosine tiebreak（fail-safe、偶發）。
+- **success 偵測（3 值）**：`stop._detect_turn_outcome` 複用 `failing_tests`/`claims_completion`/`evasion_flag`/`wisdom_retry_count`。+1=完成宣告且乾淨；0=error/糾正/retry/evasion；**其餘 unknown=no-op（防雜訊污染關鍵守則）**。
+- **更新規則**：`stop._attribute_usefulness` 對 used 且 outcome 決定性者 → `record_usefulness`（success α++/fail β++，走 funnel）；per-turn 一次性（`turn_seq` 守門）。
+- **慢衰減**：`_self_iterate_atoms`（SessionEnd）α←1+λ(α−1); β←1+λ(β−1)，λ=0.97，重啟冷啟動。
+- **晉升閘改寫**：晉升 = 真實 Confirmations 主軌 **OR 效用 Wilson 下界**（升≥`promote_lb`=0.6 且 n≥`min_n`=3，z=1.96）；**ReadHits 退出晉升、降為純曝光計數**（取代 Phase 0 過渡）。降級候選（Wilson 下界≤`demote_lb`=0.35,n≥3）列 staging 報告供裁決、不自動降。
+- **py↔js 鏡像**：`wilson_lower_bound`/`usefulness_*`（`lib/atom_access.py`）↔ `wilsonLowerBound`/`usefulnessStats`（`server.js toolAtomPromote`），`SYNC:` 註解 + `memory/decisions.md` 對齊。**改 server.js 後須重啟 MCP server**。
+- **旋鈕**：`workflow/config.json` `usefulness.{lexical_overlap_min,rare_token_min,wilson_z,promote_lb,demote_lb,min_n,decay_lambda,embedding_tiebreak}`。
+- **守門**：`lib/verify/verify_usefulness_access_phase2.py`（18）+ `hooks/verify/verify_usefulness_loop_phase2.py`（21）+ `verify_promotion_gate_phase0.py`（效用驅動）+ `verify_subagent_injection_phase1.py`（21）。
+
+## 13. 變更紀錄
 
 | 日期 | 版本 | 變更 |
 |---|---|---|
+| 2026-06-03 | V5+ S1–S3 | **Realm 範疇分區（§2.2）**：core vs local 由 index path 前綴推導（不存欄位）；local 住 `_AIDocs/_atoms/<domain>/`、scope 仍 global、只在 cwd∈~/.claude 注入。注入閘門（session_start）+ 分類器（`classify_realm` 安全預設 core+核心保護硬擋）+ 搬遷工具 `atom-set-realm.py`（sidecar 原子搬、`_atoms/` path 唯一寫者）+ 8 顆既有 local atom 遷移 + MEMORY.md「本地範疇」段 + py↔js parity（test_14–17）+ `verify_realm_injection_gate.py` |
+| 2026-06-02 | V5+ | `edit_metadata` 元資料外科編輯入口（§3.4）+ MCP `atom_edit_meta`；memory-audit 晉升建議改對齊線上 usefulness Wilson 閘；atom-health-check 計數改讀 `.access.json` sidecar；funnel 寫入紀律延伸（health-check / sync-atom-index 裸 write_text → write_raw） |
+| 2026-06-01 | V5+ #1/#2 | Sub-agent 記憶注入（Phase 1）+ 注入→使用→結果 (α,β) 閉環效用歸因（Phase 2）；晉升改 Confirmations OR 效用 Wilson 下界、ReadHits 降純曝光 |
+| 2026-05-29 | V5+ | 知識區 block 渲染（表格/fence 原樣輸出）；py/js create+append block-aware + py↔js 對拍測試 + server.js module.exports |
 | 2026-05-27 | V5 GA candidate | Wave 4 完成：P5b / P6 / SPEC_ATOM_V5.md 定稿 |
 | 2026-05-27 | V5 Wave 3 | P3b _atom_index.json SoT + P1 commands→skills + P5a BM25 |
 | 2026-05-26 | V5 Wave 2 | P2 hook/MCP 重整 + P4b 禁語 JSON |

@@ -1,4 +1,4 @@
-"""atom_spec.py — 全系統「什麼是合法 atom」的唯一規則來源 (S1.2)
+"""atom_spec.py — 全系統「什麼是合法 atom」的唯一規則來源
 
 純資料 + 純函式，零 IO（除 resolve_scope_dir 需訪問 fs 標記）。
 被 memory-audit / atom-health-check / atom_io 共用 import，避免規則漂移。
@@ -35,7 +35,7 @@ SKIP_PREFIXES = ("SPEC_", "_")
 MEMORY_INDEX = "MEMORY.md"
 ATOM_INDEX = "_ATOM_INDEX.md"
 
-# Wave 2: Last-used / Confirmations / ReadHits 移到 <atom>.access.json，
+# Last-used / Confirmations / ReadHits 居 <atom>.access.json，
 # 故 atom .md 不再 require 這些欄位（OPTIONAL_METADATA 仍接受 legacy 欄位過渡）。
 REQUIRED_METADATA = frozenset({"Scope", "Confidence", "Trigger"})
 OPTIONAL_METADATA = frozenset({
@@ -145,6 +145,33 @@ def validate_atom_content(content: str) -> Optional[str]:
     return None
 
 
+def _is_block_knowledge(item: str) -> bool:
+    """knowledge 元素是否為原樣輸出 block（markdown 表格列，或三反引號 fence）。"""
+    s = item.lstrip()
+    return s.startswith("|") or s.startswith("```")
+
+
+def render_knowledge_lines(knowledge: Iterable[str]) -> List[str]:
+    """渲染 knowledge 為 ## 知識 區行清單（block-aware）。
+
+    - 一般元素：首行補 `- ` bullet（已 `- ` 開頭不重複），維持多行巢狀 bullet。
+    - block 元素（表格/fence）：整段原樣輸出，前後補空行（GFM 渲染需要）。
+    對拍 server.js renderKnowledgeLines —— 須 byte-identical。
+    """
+    out: List[str] = []
+    for k in knowledge:
+        if _is_block_knowledge(k):
+            if out and out[-1] != "":
+                out.append("")
+            out.extend(k.split("\n"))
+            out.append("")
+        else:
+            out.append(k if k.startswith("- ") else f"- {k}")
+    while out and out[-1] == "":
+        out.pop()
+    return out
+
+
 def build_atom_content(
     *,
     title: str,
@@ -183,7 +210,7 @@ def build_atom_content(
         lines.append(f"- Author: {author}")
     lines.append(f"- Confidence: {confidence}")
     lines.append(f"- Trigger: {', '.join(triggers_list)}")
-    # Wave 2: Last-used / Confirmations / ReadHits 移到 <atom>.access.json，不再寫入 .md 檔頭
+    # Last-used / Confirmations / ReadHits 居 <atom>.access.json，不再寫入 .md 檔頭
     if pending_review_by:
         lines.append(f"- Pending-review-by: {pending_review_by}")
     if merge_strategy and merge_strategy != "ai-assist":
@@ -192,8 +219,7 @@ def build_atom_content(
     if related_list:
         lines.append(f"- Related: {', '.join(related_list)}")
     lines.extend(["", "## 知識", ""])
-    for k in knowledge_list:
-        lines.append(k if k.startswith("- ") else f"- {k}")
+    lines.extend(render_knowledge_lines(knowledge_list))
     lines.extend(["", "## 行動", ""])
     if actions_list:
         for a in actions_list:

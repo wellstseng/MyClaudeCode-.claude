@@ -6,7 +6,7 @@ Stop: 偵測退避詞彙 → state["evasion_flag"]
 UPS: 讀 evasion_flag → 注入舉證要求，清旗標
 UPS: 使用者放行關鍵字 → 清 failing_tests
 
-V5 P4b: 禁語/放行/掃描報告/完成宣告四類 pattern 從
+禁語/放行/掃描報告/完成宣告四類 pattern 從
 memory/_meta/forbidden-phrases.json 載入；fail-open 退回硬編碼 fallback。
 """
 
@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Pattern
+from typing import Any, Dict, List, Optional, Pattern
 
 
 _TEST_CMD_RE = re.compile(
@@ -34,7 +34,7 @@ _FAILURE_PATTERNS = [
 ]
 
 
-# ─── V5 P4b: phrase loader (single source = memory/_meta/forbidden-phrases.json) ──
+# ─── phrase loader (single source = memory/_meta/forbidden-phrases.json) ──
 
 _PHRASES_JSON = Path.home() / ".claude" / "memory" / "_meta" / "forbidden-phrases.json"
 
@@ -70,6 +70,12 @@ _FALLBACK_COMPLETION_PATTERNS = [
     r"done", r"finished", r"all\s+set", r"wrapped\s+up",
     r"大功告成", r"搞定",
 ]
+# 進行式/否定修飾緊鄰完成詞 → 非真正終結宣告，排除（false-positive）。
+_FALLBACK_COMPLETION_EXCLUDE = [
+    r"(?:還沒|還未|尚未|尚待|未|沒有?|先確認|正在)[^，。！？\n]{0,8}(?:完成|做完|解決|收尾|搞定)",
+    r"(?:完成|做完|解決|收尾|搞定)[^，。！？\n]{0,6}(?:尚未|還沒|還未|未完|沒完|未滿足|沒做完|未達|待補|待修)",
+    r"待(?:補|修|辦|處理|確認|完善)",
+]
 
 
 def _load_phrases() -> Dict[str, List[str]]:
@@ -88,12 +94,17 @@ def _load_phrases() -> Dict[str, List[str]]:
                 evasion.append(p)
     dismiss = list(data.get("dismiss_keywords", {}).get("patterns", []) or [])
     scan_report = list(data.get("scan_report_markers", {}).get("patterns", []) or [])
-    completion = list(data.get("completion_claim", {}).get("patterns", []) or [])
+    completion_claim = data.get("completion_claim", {}) or {}
+    completion = list(completion_claim.get("patterns", []) or [])
+    completion_exclude = list(
+        (completion_claim.get("exclude_patterns", {}) or {}).get("patterns", []) or []
+    )
     return {
         "evasion": evasion or _FALLBACK_EVASION_PATTERNS,
         "dismiss": dismiss or _FALLBACK_DISMISS_PATTERNS,
         "scan_report": scan_report or _FALLBACK_SCAN_REPORT_PATTERNS,
         "completion": completion or _FALLBACK_COMPLETION_PATTERNS,
+        "completion_exclude": completion_exclude or _FALLBACK_COMPLETION_EXCLUDE,
     }
 
 
@@ -109,12 +120,16 @@ _phrases = _load_phrases() or {
     "dismiss": _FALLBACK_DISMISS_PATTERNS,
     "scan_report": _FALLBACK_SCAN_REPORT_PATTERNS,
     "completion": _FALLBACK_COMPLETION_PATTERNS,
+    "completion_exclude": _FALLBACK_COMPLETION_EXCLUDE,
 }
 
 _EVASION_RE = _compile_union(_phrases["evasion"])
 _DISMISS_RE = _compile_union(_phrases["dismiss"], re.IGNORECASE)
 _SCAN_REPORT_RE = _compile_union(_phrases["scan_report"], re.IGNORECASE)
 _COMPLETION_CLAIM_RE = _compile_union(_phrases["completion"], re.IGNORECASE)
+_COMPLETION_EXCLUDE_RE = _compile_union(
+    _phrases.get("completion_exclude") or _FALLBACK_COMPLETION_EXCLUDE, re.IGNORECASE
+)
 
 
 def is_test_command(cmd: str) -> bool:
@@ -140,9 +155,18 @@ def detect_test_failure(
 
 
 def claims_completion(text: str) -> bool:
+    """終結宣告偵測。命中完成詞後，若鄰近有進行式/否定修飾
+    （還沒/尚未/未…完成、完成…尚未 等）→ 非真正終結，排除。
+    偏 false-negative（少判完成→少誤阻）符合契約鬆綁方向。
+    """
     if not text:
         return False
-    return bool(_COMPLETION_CLAIM_RE.search(text[-2000:]))
+    tail = text[-2000:]
+    if not _COMPLETION_CLAIM_RE.search(tail):
+        return False
+    if _COMPLETION_EXCLUDE_RE.search(tail):
+        return False
+    return True
 
 
 def detect_evasion(text: str, recent_user_prompts: List[str]) -> Optional[Dict[str, str]]:
@@ -175,29 +199,120 @@ def has_scan_report(text: str) -> bool:
     return bool(_SCAN_REPORT_RE.search(text))
 
 
-def detect_missing_scan_report(
-    text: str,
-    modified_file_count: int,
-    recent_user_prompts: List[str],
-) -> bool:
-    """宣告完成但缺掃描報告 → 違約。
+_CORE_DIR_SEGMENTS = ("/hooks/", "/lib/", "/tools/", "/rules/")
+_ROOT_CONFIG_FILES = frozenset({
+    "claude.md", "identity.md", "user.md",
+    "settings.json", "settings.local.json",
+})
 
-    觸發條件（全部成立）：
-      1. text 含完成宣告詞
-      2. modified_file_count > 0（有實際動工才要求掃描）
-      3. text 不含任何 _SCAN_REPORT_RE 標記
-      4. 近 3 則 user prompt 無豁免關鍵字
+
+def is_core_file(path: str) -> bool:
+    """path 是否為系統核心檔（hooks/lib/tools/rules 目錄 或 根層契約/設定檔）。
+
+    ScanReport gate 用：動 core 檔才要求收尾檢核。判定寬鬆偏保守
+    （寧可對 core-like 路徑要求收尾）；純內容/文件（_AIDocs、memory atom .md）
+    不落在這些目錄段，正確被排除。
     """
-    if not text or modified_file_count <= 0:
+    if not path:
+        return False
+    p = path.replace("\\", "/").lower()
+    if any(seg in p for seg in _CORE_DIR_SEGMENTS):
+        return True
+    fname = p.rsplit("/", 1)[-1]
+    if fname in _ROOT_CONFIG_FILES:
+        return True
+    if fname.startswith("identity-") and fname.endswith(".md"):
+        return True
+    return False
+
+
+def _completion_gate_applies(
+    text: str,
+    modified_files: List[Dict[str, Any]],
+    recent_user_prompts: List[str],
+    min_files: int,
+) -> bool:
+    """收尾閘共用前置：宣告完成 +（動 core 檔 或 動 ≥min_files 檔）+ 無豁免關鍵字。
+
+    True＝已達「該交代收尾」門檻（尚未判定用何種方式滿足）。滿足方式（prose 標記
+    vs anti_evasion_report emit）由各 caller 疊上。純單檔/文件小改不達門檻。
+
+    達門檻條件（全部成立）：
+      1. text 含完成宣告詞（claims_completion）
+      2. modified_files 觸及 core 檔，或 unique 檔數 ≥ min_files
+      3. 近 3 則 user prompt 無豁免關鍵字
+    """
+    if not text or not modified_files:
         return False
     if not claims_completion(text):
-        return False
-    if has_scan_report(text):
         return False
     for p in (recent_user_prompts or [])[-3:]:
         if _DISMISS_RE.search(p or ""):
             return False
+    unique_paths = {(m or {}).get("path", "") for m in modified_files}
+    unique_paths.discard("")
+    touched_core = any(is_core_file(p) for p in unique_paths)
+    if not touched_core and len(unique_paths) < max(int(min_files), 1):
+        return False
     return True
+
+
+def detect_missing_scan_report(
+    text: str,
+    modified_files: List[Dict[str, Any]],
+    recent_user_prompts: List[str],
+    min_files: int = 2,
+) -> bool:
+    """宣告完成 +（動 core 檔 或 動 ≥min_files 檔）+ 缺 prose 收尾檢核標記 → 違約。
+
+    滿足方式＝回報尾端含 _SCAN_REPORT_RE 標記（has_scan_report）。保留供既有 prose
+    路徑 / 回歸測試；live 閘已改用 detect_missing_aec_emission（結構化 emit 滿足）。
+    """
+    if not _completion_gate_applies(text, modified_files, recent_user_prompts, min_files):
+        return False
+    return not has_scan_report(text)
+
+
+def detect_missing_aec_emission(
+    text: str,
+    modified_files: List[Dict[str, Any]],
+    recent_user_prompts: List[str],
+    min_files: int = 2,
+    emitted_this_turn: bool = False,
+) -> bool:
+    """鏡像 detect_missing_scan_report，唯滿足方式從 prose 標記換成「本回合是否 emit 過
+    anti_evasion_report」（emitted_this_turn 由 caller 以 turn_seq+session_id 雙鍵判定）。
+
+    回 True＝達門檻卻未 emit（block、逼補結構化收尾檢核）。門檻與豁免（core/min_files、
+    dismiss 逃生門）與 scan_report 版共用 _completion_gate_applies，不重演。
+    """
+    if not _completion_gate_applies(text, modified_files, recent_user_prompts, min_files):
+        return False
+    return not emitted_this_turn
+
+
+def _aec_blank(v: Optional[str]) -> bool:
+    """收尾檢核欄位是否「無內容」——空、或「無」（含結尾標點，如「無。」「無、」）。
+    太嚴（只認裸「無」）會把 routine 報告（模型慣寫「無。」）誤判 real-evasion → 洗 chat，
+    defeats HUD 目的；放寬只減誤升級，真退避是敘述文、絕不 normalize 成「無」。
+    MIRROR: lib/anti-evasion.js aecBlank — keep in sync。"""
+    s = (v or "").strip().rstrip("　 。．.,，、；;：:!！?？~～-—…")
+    return s == "" or s == "無"
+
+
+def aec_severity(a: str, b: str, c: str, d: str) -> str:
+    """tool-arg 內容 severity（Node lib/anti-evasion.js aecSeverity 同規則、single source of truth）。
+
+      - real-evasion：(b) AI 逃避通報非空≠「無」（真偷埋自report，最嚴重）
+      - notable：(a) 缺失修補清單有真修補行（b 空）
+      - routine：(a)(b) 皆「無」/空
+    (c) Token 警示 / (d) 衍生暫存為資訊性，不升級 severity（severity 只衡量「退避」訊號）。
+    """
+    if not _aec_blank(b):
+        return "real-evasion"
+    if not _aec_blank(a):
+        return "notable"
+    return "routine"
 
 
 def get_last_assistant_text(transcript_path: Optional[Path]) -> str:
@@ -225,6 +340,99 @@ def get_last_assistant_text(transcript_path: Optional[Path]) -> str:
         return last
     except (OSError, UnicodeDecodeError):
         return ""
+
+
+def _is_real_user_prompt(content: Any) -> bool:
+    """判斷一則 user 訊息是「真實 prompt」還是「tool_result 延續」。
+
+    含 tool_result block → 視為延續（非新 turn 起點）；str 或含 text block → 真實 prompt。
+    """
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, list):
+        has_text = False
+        for b in content:
+            if isinstance(b, dict):
+                if b.get("type") == "tool_result":
+                    return False
+                if b.get("type") == "text":
+                    has_text = True
+            elif isinstance(b, str):
+                has_text = True
+        return has_text
+    return False
+
+
+def _flatten_tool_input(inp: Any, cap: int = 2000) -> str:
+    """攤平 tool_use input 的所有字串值（file_path/command/content/old/new/pattern…）。"""
+    out: List[str] = []
+
+    def _walk(v: Any) -> None:
+        if isinstance(v, str):
+            out.append(v)
+        elif isinstance(v, dict):
+            for vv in v.values():
+                _walk(vv)
+        elif isinstance(v, list):
+            for vv in v:
+                _walk(vv)
+
+    _walk(inp)
+    return " ".join(out)[:cap]
+
+
+def get_current_turn_text(transcript_path: Optional[Path], *, max_chars: int = 8000) -> str:
+    """擷取「本 turn」assistant 活動文字（assistant text + tool_use input args）。
+
+    turn 邊界 = 最後一則真實 user prompt（非 tool_result 延續）之後的所有 assistant 訊息。
+    供 use 偵測比對 atom 稀有 token。fail-open 回 ""。
+    """
+    if not transcript_path:
+        return ""
+    try:
+        records: List[Dict[str, Any]] = []
+        with open(transcript_path, "r", encoding="utf-8") as f:
+            for raw in f:
+                try:
+                    obj = json.loads(raw)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if isinstance(obj, dict):
+                    records.append(obj)
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+    last_user_idx = -1
+    for i, obj in enumerate(records):
+        if obj.get("type") != "user":
+            continue
+        if _is_real_user_prompt(obj.get("message", {}).get("content")):
+            last_user_idx = i
+
+    parts: List[str] = []
+    total = 0
+    for obj in records[last_user_idx + 1:]:
+        if obj.get("type") != "assistant":
+            continue
+        content = obj.get("message", {}).get("content", [])
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            bt = block.get("type")
+            if bt == "text":
+                s = block.get("text", "") or ""
+            elif bt == "tool_use":
+                s = (block.get("name", "") or "") + " " + _flatten_tool_input(block.get("input", {}))
+            else:
+                continue
+            if s:
+                parts.append(s)
+                total += len(s)
+        if total >= max_chars:
+            break
+    return "\n".join(parts)[:max_chars]
 
 
 # ─── V5: Session Evaluator (was wg_session_evaluator) ────────────────────────
@@ -550,7 +758,7 @@ def _calculate_maturity_phase(config: Dict[str, Any]) -> Dict[str, Any]:
 def _detect_rut_patterns(
     state: Dict[str, Any], config: Dict[str, Any]
 ) -> Optional[str]:
-    """V2.17: Scan recent episodic atoms for repeated 覆轍信號."""
+    """Scan recent episodic atoms for repeated 覆轍信號."""
     window = config.get("self_iteration", {}).get("oscillation_window", 3)
 
     episodic_dirs = set()

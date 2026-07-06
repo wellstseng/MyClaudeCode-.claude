@@ -22,6 +22,9 @@ if _HOOKS_DIR not in sys.path:
 
 from wg_core import _now_iso
 
+# Windows: 外呼 git 時若不帶此 flag，無主控台的 hook 父行程會被配一個可見 console 視窗
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
 # ─── Defaults ───────────────────────────────────────────────────────────────
 
 _DEFAULT_EXCLUDES = [
@@ -135,6 +138,7 @@ def _git_dirty_files(project_root: str) -> Optional[set]:
             capture_output=True,
             text=True,
             timeout=3,
+            creationflags=_NO_WINDOW,
         )
         if result.returncode != 0:
             return None
@@ -176,7 +180,7 @@ def prune_committed_entries(state: dict, config: dict) -> int:
         src_norm = _normalize(pending[k]["source"])
         if src_norm not in dirty:
             del pending[k]
-            print(f"[v3.3] DocDrift auto-pruned (not dirty): {k}", file=sys.stderr)
+            print(f"DocDrift auto-pruned (not dirty): {k}", file=sys.stderr)
             pruned += 1
     return pruned
 
@@ -209,7 +213,7 @@ def check_source_drift(file_path: str, state: dict, config: dict) -> None:
                 "doc": doc,
                 "added_at": _now_iso(),
             }
-            print(f"[v3.3] DocDrift: {rel} \u2192 {doc}", file=sys.stderr)
+            print(f"DocDrift: {rel} \u2192 {doc}", file=sys.stderr)
 
 
 def resolve_doc_update(file_path: str, state: dict, config: dict) -> None:
@@ -234,7 +238,7 @@ def resolve_doc_update(file_path: str, state: dict, config: dict) -> None:
     ]
     for k in keys_to_remove:
         del pending[k]
-        print(f"[v3.3] DocDrift resolved: {k}", file=sys.stderr)
+        print(f"DocDrift resolved: {k}", file=sys.stderr)
 
 
 def build_drift_advisory(state: dict, config: dict) -> Optional[str]:

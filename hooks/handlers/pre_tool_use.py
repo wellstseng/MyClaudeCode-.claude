@@ -12,7 +12,13 @@ from typing import Any, Dict, Optional
 from wg_core import (
     output_json, output_nothing,
     check_memory_path_block, check_svn_test_block,
+    check_cross_realm_write, check_cross_realm_mcp_cmd,
+    _atom_debug_log,
 )
+from wg_atoms import build_injection_blob
+
+# sub-agent 注入 budget（緊湊，守 token 紅線；2-3 顆最高活化）
+_SUBAGENT_INJECT_BUDGET = 700
 
 
 _CONFIDENCE_FRONTMATTER_RE = re.compile(r"^- Confidence:\s*(\[[臨觀固]\])", re.MULTILINE)
@@ -124,6 +130,40 @@ def handle_pre_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> N
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
 
+    # ─── Sub-agent 記憶注入 ────────────────────────────────────
+    # sub-agent（Agent/Task）開全新 context、不觸發 UserPromptSubmit，吃不到 atom。
+    # 唯一 parent→child 通道是工具 prompt 字串 → 經 PreToolUse updatedInput prepend
+    # 緊湊記憶 blob。fail-open：任何錯誤都不擋 spawn。
+    if tool_name in ("Agent", "Task"):
+        try:
+            orig_prompt = tool_input.get("prompt", "") or ""
+            blob, injected = build_injection_blob(
+                orig_prompt, budget=_SUBAGENT_INJECT_BUDGET,
+            )
+            if blob and injected:
+                new_input = dict(tool_input)
+                new_input["prompt"] = f"{blob}\n\n{orig_prompt}"
+                _atom_debug_log(
+                    "SubagentInject",
+                    f"tool={tool_name} injected={injected} "
+                    f"blob_tokens=~{len(blob) // 4} prompt_head={orig_prompt[:60]!r}",
+                    config,
+                )
+                output_json({
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "updatedInput": new_input,
+                    }
+                })
+                return
+        except Exception as e:
+            try:
+                sys.stderr.write(f"sub-agent inject error: {e}\n")
+            except OSError:
+                pass
+        output_nothing()
+        return
+
     # Advisory：feedback-* 寫入舊位址提示（不擋）
     advisory = _check_feedback_routing_advisory(tool_name, tool_input)
     if advisory:
@@ -144,6 +184,23 @@ def handle_pre_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> N
         return
 
     deny_reason = check_memory_path_block(tool_name, tool_input)
+    if deny_reason:
+        output_json({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": deny_reason,
+            }
+        })
+        return
+
+    # 根層敏感檔 + Bash 全域 MCP 變更：
+    # 外部專案 session 寫核心層 / 全域 MCP add/remove → deny
+    _cwd = input_data.get("cwd", "") or ""
+    deny_reason = (
+        check_cross_realm_write(tool_name, tool_input, _cwd, config)
+        or check_cross_realm_mcp_cmd(tool_name, tool_input, _cwd, config)
+    )
     if deny_reason:
         output_json({
             "hookSpecificOutput": {

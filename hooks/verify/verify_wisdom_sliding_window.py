@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-test_wisdom_sliding_window.py — V2.12 sliding window 行為單元測試
+verify_wisdom_sliding_window.py — sliding window 行為單元測試
 
 驗證：
   1. first_approach_accuracy.recent: append + 維持 max len = window_size
@@ -94,7 +94,7 @@ def test_blind_spot_clears_when_rate_recovers(_tmp_reflection):
 
 def test_arch_sensitivity_elevates_below_34pct(_tmp_reflection):
     # 4 architecture sessions, 1 success → 25% < 34% → elevated
-    # V2.12 commit-2: arch tolerates 1 retry, so use retry_count=2 for failure
+    # arch tolerates 1 retry, so use retry_count=2 for failure
     we.reflect(_state(approach="plan", retry_count=0, mod_files=[{"path": "a.py"}]))
     for _ in range(3):
         we.reflect(_state(approach="plan", retry_count=2, mod_files=[{"path": "a.py"}]))

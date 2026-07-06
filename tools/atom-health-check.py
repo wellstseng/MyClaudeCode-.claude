@@ -24,10 +24,12 @@ from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 from pathlib import Path
 
-# Single source of truth (S1.2): lib/atom_spec.py
+# Single source of truth: lib/atom_spec.py
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib.atom_spec import is_atom_file, REQUIRED_METADATA  # noqa: E402
-from lib.atom_locations import iter_atom_files_multi  # noqa: E402
+from lib.atom_locations import iter_atom_files_multi, atom_search_roots  # noqa: E402
+from lib.atom_io import write_raw  # noqa: E402  走 funnel：EOL-preserving + audit（杜絕 bypass 裸寫）
+from lib.atom_access import read_access  # noqa: E402  計數欄居 sidecar <atom>.access.json
 
 MEMORY_ROOT = Path.home() / ".claude" / "memory"
 GLOBAL_MEMORY_ROOT = Path.home() / ".claude" / "memory"
@@ -294,7 +296,9 @@ def fix_reverse_refs(atoms: dict[str, Path], aliases: dict[str, str] | None = No
                 else:
                     text += f"\n- Related: {add_name}\n"
 
-        path_b.write_text(text, encoding="utf-8")
+        # 走 funnel：EOL-preserving _atomic_write + audit log
+        # （舊版裸 write_text 會在 Windows 翻整檔 EOL，且反向參照補全不留 audit）
+        write_raw(path_b, text, source="tool:atom-health-audit", op="reverse-ref-add")
         fixes.append({
             "target": atom_b,
             "added_ref": add_name,
@@ -309,8 +313,7 @@ def stale_check(atoms: dict[str, Path], days: int = 60) -> list[dict]:
     cutoff = datetime.now() - timedelta(days=days)
     stale = []
     for name, path in sorted(atoms.items()):
-        fm = parse_frontmatter(path)
-        last_used = fm.get("Last-used", "")
+        last_used = read_access(path).get("last_used") or ""
         if not last_used:
             continue
         try:
@@ -464,6 +467,7 @@ def full_report(atoms: dict[str, Path], aliases: dict[str, str] | None = None,
 
     for name, path in sorted(atoms.items()):
         fm = parse_frontmatter(path)
+        acc = read_access(path)  # 計數欄居 sidecar <atom>.access.json
         related = parse_related(fm)
         # V5+: atoms 可居 _AIDocs/Failures/，相對於 ~/.claude 計算
         try:
@@ -475,9 +479,9 @@ def full_report(atoms: dict[str, Path], aliases: dict[str, str] | None = None,
             "file": file_rel,
             "format": fm.get("_format", "unknown"),
             "confidence": fm.get("Confidence", "—"),
-            "last_used": fm.get("Last-used", "—"),
-            "confirmations": fm.get("Confirmations", "—"),
-            "readhits": fm.get("ReadHits", "—"),
+            "last_used": acc.get("last_used") or "—",
+            "confirmations": acc.get("confirmations", "—"),
+            "readhits": acc.get("read_hits", "—"),
             "related": related,
             "issues": [],
         }
@@ -488,17 +492,48 @@ def full_report(atoms: dict[str, Path], aliases: dict[str, str] | None = None,
             for k in REQUIRED_METADATA:
                 if not fm.get(k):
                     entry["issues"].append(f"missing {k}")
-            # Tracking fields (not in REQUIRED but expected for active atoms)
-            if not fm.get("Confirmations"):
-                entry["issues"].append("missing Confirmations")
-            if not fm.get("ReadHits"):
-                entry["issues"].append("missing ReadHits")
+            # Tracking fields live in sidecar <atom>.access.json.
+            # confirmations=0 is normal for a tracked atom; only a missing
+            # sidecar (never tracked → first_seen is None) warrants a warning.
+            if acc.get("first_seen") is None:
+                entry["issues"].append("no access.json (never tracked)")
         elif fm.get("_format") == "claude-native":
             entry["issues"].append("claude-native format (no Last-used/Confirmations/Related)")
 
         report["atoms"].append(entry)
 
     return report
+
+
+def single_atom_report(name: str, atoms: dict[str, Path],
+                       aliases: dict[str, str] | None = None) -> dict:
+    """Filter full-library health results down to a single atom NAME.
+
+    Runs the existing whole-library detectors (validate_refs / check_reverse_refs /
+    stale_check) unchanged, then filters their output to items involving NAME.
+    Output is --report --json compatible (same keys: broken_refs /
+    missing_reverse_refs / stale_atoms), so callers can reuse the same parser.
+    """
+    aliases = aliases or {}
+
+    # broken_refs: only refs whose SOURCE atom == NAME (NAME pointing at a missing ref)
+    broken = [b for b in validate_refs(atoms, aliases) if b["atom"] == name]
+
+    # missing_reverse_refs: any reverse-ref issue involving NAME on either side
+    reverse = [r for r in check_reverse_refs(atoms, aliases)
+               if r["atom_a"] == name or r["atom_b"] == name]
+
+    # stale_atoms: NAME if it is in the stale list, else empty
+    stale = [s for s in stale_check(atoms) if s["atom"] == name]
+
+    return {
+        "generated": datetime.now().isoformat(),
+        "atom": name,
+        "exists": name in atoms,
+        "broken_refs": broken,
+        "missing_reverse_refs": reverse,
+        "stale_atoms": stale,
+    }
 
 
 def print_text_report(report: dict):
@@ -584,6 +619,8 @@ def main():
     parser.add_argument("--shadow-dry-run", action="store_true",
                         help="Print full ratio distribution (≥0.3) instead of filtering by threshold")
     parser.add_argument("--report", action="store_true", help="Full health report")
+    parser.add_argument("--atom", type=str, default=None,
+                        help="Report health issues for a single atom only (broken_refs/missing_reverse_refs/stale_atoms filtered to NAME)")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
     parser.add_argument("--memory-root", type=str, default=None, help="Override memory root path")
     args = parser.parse_args()
@@ -602,8 +639,12 @@ def main():
     # scanning global, since MEMORY_ROOT will be global and project not in extras).
     try:
         if MEMORY_ROOT.resolve() != GLOBAL_MEMORY_ROOT.resolve():
-            if GLOBAL_MEMORY_ROOT.is_dir():
-                EXTRA_SCAN_ROOTS = [GLOBAL_MEMORY_ROOT]
+            # V5+: 全域 atom 不只居 memory/，亦含 _AIDocs/Failures/（feedback-* / cognitive-
+            # patterns）與 _AIDocs/_atoms/（local realm，可深層子目錄如 Tools/.../dotnet/）。
+            # 原本只放 global memory → 專案 atom 對這些他層 atom 的 up-ref 全被誤報 broken。
+            # 改用 atom_search_roots() 涵蓋三根，與 find_atoms 全域掃描範圍對齊；
+            # 真正不存在的 ref（任一根都找不到）仍正確回報。
+            EXTRA_SCAN_ROOTS = [r for r in atom_search_roots() if r.is_dir()]
     except OSError:
         pass
 
@@ -611,8 +652,33 @@ def main():
     aliases = parse_memory_index(MEMORY_ROOT)
 
     if not any([args.validate_refs, args.fix_refs, args.auto_fix_broken,
-                args.stale_check, args.shadow_check, args.report]):
+                args.stale_check, args.shadow_check, args.report, args.atom]):
         parser.print_help()
+        sys.exit(0)
+
+    if args.atom:
+        report = single_atom_report(args.atom, atoms, aliases)
+        if args.json:
+            print(json.dumps(report, indent=2, ensure_ascii=False))
+        else:
+            if not report["exists"]:
+                print(f"⚠️ atom '{args.atom}' not found in {MEMORY_ROOT}")
+            print(f"=== Atom Health: {args.atom} ===")
+            if report["broken_refs"]:
+                for b in report["broken_refs"]:
+                    print(f"❌ {b['atom']} → {b['missing_ref']} (not found)")
+            else:
+                print("✅ No broken references.")
+            if report["missing_reverse_refs"]:
+                for r in report["missing_reverse_refs"]:
+                    print(f"⚠️ {r['direction']}")
+            else:
+                print("✅ No missing reverse references.")
+            if report["stale_atoms"]:
+                for s in report["stale_atoms"]:
+                    print(f"🕐 {s['atom']} — {s['last_used']} ({s['days_ago']}d ago)")
+            else:
+                print("✅ Not stale.")
         sys.exit(0)
 
     if args.fix_refs:

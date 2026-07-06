@@ -1,7 +1,7 @@
-"""codex_companion.py — Codex Companion hook (V5 subprocess model).
+"""codex_companion.py — Codex Companion hook (subprocess model).
 
-V5 P5b 重構：HTTP daemon @ port 3850 廢止；改 in-process state + spawn
-`tools/codex-companion/audit.py` 短命子程序執行 codex assessment。
+in-process state + spawn `tools/codex-companion/audit.py` 短命子程序執行
+codex assessment（無常駐 daemon）。
 
 Events handled:
   SessionStart    → companion_state.ensure_state
@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -45,6 +46,16 @@ def _load_config() -> Dict[str, Any]:
         return {}
 
 
+# ─── Always-on error log（standalone：不依賴 wg_core，寫 stderr）─────────────
+
+
+def _log_err(source: str, exc: Exception) -> None:
+    try:
+        sys.stderr.write(f"[{source}] {type(exc).__name__}: {exc}\n")
+    except OSError:
+        pass
+
+
 # ─── Output helpers (same protocol as workflow-guardian) ──────────────────────
 
 
@@ -63,12 +74,13 @@ def _output_context(event_name: str, text: str) -> None:
 
 
 def _output_block(reason: str, session_id: str = "") -> None:
-    # Phase 5 觀測：每次 BLOCK 累加 behavior_gap_blocks
+    # 觀測：每次 BLOCK 累加 behavior_gap_blocks
     if session_id:
         try:
             import state as companion_state
             companion_state.increment_metric(session_id, "behavior_gap_blocks")
-        except Exception:
+        except Exception as e:
+            _log_err("codex:metric_block_count", e)
             pass
     _output_json({"decision": "block", "reason": reason})
 
@@ -81,6 +93,9 @@ def _output_nothing() -> None:
 
 _PLAN_TOOLS = {"ExitPlanMode", "EnterPlanMode"}
 _WRITE_TOOLS = {"Edit", "Write"}
+# 跨 session 交接檔：_staging/next-phase*.md 或檔名含 handoff（持久化 artifact，
+# /continue 接手端實際讀的就是它）。命中 → 對抗式 handoff 自檢（Q2）。
+_NEXT_PHASE_RE = re.compile(r"(?:next-phase|next_phase|handoff)[^/\\]*\.md$", re.IGNORECASE)
 
 
 def _detect_checkpoint(
@@ -90,9 +105,15 @@ def _detect_checkpoint(
 
     (1) ExitPlanMode/EnterPlanMode → plan_review
     (2) 結構性檔案 Edit/Write + soft_gate.architecture_review=true → architecture_review
+    (3) next-phase/handoff 檔 Edit/Write（soft_gate.handoff_review，預設開）→ handoff_review
+        ——跨 session 交接文件的對抗式自檢，把作者「自評」升級為獨立「他評」（補盲點）。
     """
     if tool_name in _PLAN_TOOLS:
         return "plan_review"
+    if (tool_name in _WRITE_TOOLS and file_path
+            and config.get("soft_gate", {}).get("handoff_review", True)
+            and _NEXT_PHASE_RE.search(file_path.replace("\\", "/"))):
+        return "handoff_review"
     if (tool_name in _WRITE_TOOLS and file_path
             and config.get("soft_gate", {}).get("architecture_review", False)):
         try:
@@ -104,7 +125,7 @@ def _detect_checkpoint(
     return None
 
 
-# ─── Audit subprocess spawn (V5: replaces /trigger HTTP) ─────────────────────
+# ─── Audit subprocess spawn ─────────────────────
 
 
 def _spawn_audit_subprocess(turn_data: Dict[str, Any]) -> None:
@@ -146,8 +167,9 @@ def _spawn_audit_subprocess(turn_data: Dict[str, Any]) -> None:
             )
         finally:
             proc.stdin.close()
-    except Exception:
+    except Exception as e:
         # Fail silently — companion is optional
+        _log_err("codex:assessor_spawn", e)
         if hasattr(log_fh, "close"):
             try:
                 log_fh.close()
@@ -190,7 +212,8 @@ def _get_last_assistant_tail(input_data: Dict[str, Any]) -> str:
                                 last = t
             if last:
                 return last[:2000]
-        except (OSError, UnicodeDecodeError):
+        except (OSError, UnicodeDecodeError) as e:
+            _log_err("codex:stop_text_transcript", e)
             pass
 
         try:
@@ -198,15 +221,15 @@ def _get_last_assistant_tail(input_data: Dict[str, Any]) -> str:
             tail = wg_evasion.get_last_assistant_text(Path(transcript_path))
             if tail:
                 return tail[:2000]
-        except Exception:
+        except Exception as e:
+            _log_err("codex:stop_text_fallback", e)
             pass
 
     return ""
 
 
 def _summarize_tool_response(tool_response: Any) -> tuple[str, bool]:
-    """Phase 1.1+1.2：
-    - 從 tool_response 取 stdout/stderr 截 300 字組摘要
+    """- 從 tool_response 取 stdout/stderr 截 300 字組摘要
     - 偵測失敗訊號 (error / exit_code != 0 / stderr / is_error) → prefix [FAILED]
     回傳 (summary, failed)
     """
@@ -298,8 +321,16 @@ def _summarize_files_examined(
     return text
 
 
+def _read_handoff_content(file_path: str, limit: int = 6000) -> str:
+    """讀 next-phase/handoff 檔全文供 codex 對抗式自檢（utf-8-sig 容 BOM）。失敗→''。"""
+    try:
+        return Path(file_path).read_text(encoding="utf-8-sig")[:limit]
+    except OSError:
+        return ""
+
+
 def _build_verification_signals(input_data: Dict[str, Any], tool_response: Any) -> Dict[str, Any]:
-    """Phase 1.5：給 codex 的最小化 verification_signals 包。"""
+    """給 codex 的最小化 verification_signals 包。"""
     sig: Dict[str, Any] = {
         "tool_name": input_data.get("tool_name", ""),
     }
@@ -343,15 +374,16 @@ def _mark_injected(path: Path, data: Dict[str, Any]) -> None:
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         tmp.replace(path)
-    except OSError:
+    except OSError as e:
+        _log_err("codex:assessment_mark_injected", e)
         pass
 
 
 def handle_user_prompt_submit(input_data: Dict[str, Any], config: Dict[str, Any]):
     """Inject pending per-turn Codex assessments as additionalContext.
 
-    Phase 1.8：drain 掃 companion-assessment-{sid}-t*.json，依 turn_index 排序。
-    Sprint 3 Phase 4.4：依 codex 回的 delivery 路由：
+    drain 掃 companion-assessment-{sid}-t*.json，依 turn_index 排序。
+    依 codex 回的 delivery 路由：
       delivery=ignore → 標 injected 略過注入（codex 自判此 turn 不打擾）
       delivery=inject → 注入文字並加 confidence + applies_until 標籤
     """
@@ -364,7 +396,7 @@ def handle_user_prompt_submit(input_data: Dict[str, Any], config: Dict[str, Any]
     if not paths:
         _output_nothing()
 
-    # 2026-04-28 改：靜默過濾門檻。預設 high；config 可調。
+    # 靜默過濾門檻。預設 high；config 可調。
     # 只有同時滿足 (severity >= max_inject_severity) AND
     # (status in {error, needs_followup}) AND (corrective_prompt 非空)
     # 的 advisory 才浮上來。其他自動標 injected 落盤但不展示。
@@ -377,7 +409,8 @@ def handle_user_prompt_submit(input_data: Dict[str, Any], config: Dict[str, Any]
     for path in paths:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError) as e:
+            _log_err("codex:assessment_read", e)
             continue
         if data.get("injected", False):
             continue
@@ -386,25 +419,30 @@ def handle_user_prompt_submit(input_data: Dict[str, Any], config: Dict[str, Any]
             _mark_injected(path, data)  # 錯誤 assessment 標掉避免堆積
             continue
 
-        # Sprint 3 Phase 4.4：delivery=ignore 直接標掉、不注入
+        # delivery=ignore 直接標掉、不注入
         delivery = str(assessment.get("delivery", "inject")).lower()
         if delivery == "ignore":
             _mark_injected(path, data)
             continue
 
-        # 2026-04-28：靜默過濾。低於門檻 / 非可行動狀態 / 無 corrective_prompt → 不注入
+        # 靜默過濾。低於門檻 / 非可行動狀態 / 無 corrective_prompt → 不注入
         sev = _SEV_ORDER.get(str(assessment.get("severity", "low")).lower(), 0)
         status = str(assessment.get("status", "ok")).lower()
         corrective = (assessment.get("corrective_prompt", "")
                       or assessment.get("recommended_action", ""))
-        if (sev < inject_threshold
+        # handoff_review 是 user 主動要求的跨 session 交接自檢 → 降門檻至 medium，不被預設 high
+        # 靜默吞掉（交接缺口即使中度也該讓本 session 當場補，避免下個 session 失真/跑錯）。
+        atype_eff = str(data.get("type", assessment.get("_assessment_type", ""))).lower()
+        eff_threshold = min(inject_threshold, 1) if atype_eff == "handoff_review" else inject_threshold
+        if (sev < eff_threshold
                 or status not in actionable_statuses
                 or not corrective):
             _mark_injected(path, data)
             try:
                 import state as companion_state
                 companion_state.increment_metric(session_id, "advisory_suppressed_silent")
-            except Exception:
+            except Exception as e:
+                _log_err("codex:metric_suppressed", e)
                 pass
             continue
 
@@ -422,10 +460,11 @@ def handle_user_prompt_submit(input_data: Dict[str, Any], config: Dict[str, Any]
         "plan_review": "Plan Review",
         "turn_audit": "Turn Audit",
         "architecture_review": "Architecture Review",
+        "handoff_review": "Handoff 自檢",
     }
 
     blocks: list[str] = []
-    notify_summaries: list[str] = []  # Phase 5.2：notify_next_turn 短訊收集
+    notify_summaries: list[str] = []  # notify_next_turn 短訊收集
     for turn_index, atype, path, data in pending:
         assessment = data.get("assessment", {})
         type_label = type_label_map.get(atype, "Review")
@@ -440,7 +479,7 @@ def handle_user_prompt_submit(input_data: Dict[str, Any], config: Dict[str, Any]
         evidence = assessment.get("evidence", "")
         corrective = assessment.get("corrective_prompt", "") or assessment.get("recommended_action", "")
 
-        # Phase 5.2：assessor 在失敗回退時會帶 notify_next_turn=True
+        # assessor 在失敗回退時會帶 notify_next_turn=True
         if assessment.get("notify_next_turn"):
             notify_summaries.append(f"t{turn_index} {summary or status}")
 
@@ -463,7 +502,7 @@ def handle_user_prompt_submit(input_data: Dict[str, Any], config: Dict[str, Any]
     if not blocks:
         _output_nothing()
 
-    # Phase 5.2：若任一 pending 帶 notify_next_turn，前置一段提醒短訊
+    # 若任一 pending 帶 notify_next_turn，前置一段提醒短訊
     if notify_summaries:
         reminder = (
             "[Codex Companion 提醒] 上輪審查未取得有效回應，本輪暫退回 heuristics-only。"
@@ -471,11 +510,12 @@ def handle_user_prompt_submit(input_data: Dict[str, Any], config: Dict[str, Any]
         )
         blocks.insert(0, reminder)
 
-    # Phase 5 觀測：累加注入次數（每實際送出 1 個 inject 即 +1）
+    # 觀測：累加注入次數（每實際送出 1 個 inject 即 +1）
     try:
         import state as companion_state
         companion_state.increment_metric(session_id, "quality_gap_advises", len(blocks))
-    except Exception:
+    except Exception as e:
+        _log_err("codex:metric_advises", e)
         pass
 
     context_text = "\n\n".join(blocks)
@@ -487,7 +527,7 @@ def handle_user_prompt_submit(input_data: Dict[str, Any], config: Dict[str, Any]
 
 
 def _within_audit_cap(session_id: str, max_audits: int) -> bool:
-    """V5 P5b: in-process counter via state.assessments_requested。
+    """in-process counter via state.assessments_requested。
 
     State 由 record_checkpoint 在 spawn audit 之前 +1。subprocess 失敗不會
     decrement → 保守路徑（under-runs not over-runs）。
@@ -500,7 +540,7 @@ def _within_audit_cap(session_id: str, max_audits: int) -> bool:
 def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]):
     """Accumulate events + spawn audit subprocess on checkpoint.
 
-    V5 P5b：直接寫 state（無 HTTP）；checkpoint 命中 → spawn audit.py。
+    直接寫 state；checkpoint 命中 → spawn audit.py。
     """
     import state as companion_state
 
@@ -540,29 +580,36 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]):
             st = companion_state.read_state(session_id) or {}
             verification = _build_verification_signals(input_data, tool_response)
             files_examined = _summarize_files_examined(st.get("tool_trace", []))
+            ctx: Dict[str, Any] = {
+                "trigger_tool": tool_name,
+                "trigger_file": file_path,
+                "tool_failed": failed,
+                "verification_signals": verification,
+                "files_examined": files_examined,
+            }
+            if checkpoint == "handoff_review" and file_path:
+                # 餵 handoff 全文給 codex 對抗式自檢（assessor 經 extra_context 取用）
+                ctx["handoff_content"] = _read_handoff_content(file_path)
+                ug = st.get("user_goal", "")
+                if ug:
+                    ctx["user_goal"] = ug
             _spawn_audit_subprocess({
                 "session_id": session_id,
                 "turn_index": int(st.get("turn_index", 0)),
                 "assessment_type": checkpoint,
                 "cwd": st.get("cwd", ""),
-                "context": {
-                    "trigger_tool": tool_name,
-                    "trigger_file": file_path,
-                    "tool_failed": failed,
-                    "verification_signals": verification,
-                    "files_examined": files_examined,
-                },
+                "context": ctx,
             })
 
     _output_nothing()
 
 
 def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]):
-    """Run heuristic soft gate + score-gated turn audit (V5 subprocess).
+    """Run heuristic soft gate + score-gated turn audit (subprocess).
 
-    Phase 1.3：last_assistant_tail 三層 fallback。
-    Sprint 3 Phase 3.2：score gate + dedup + max_audits cap。
-    V5 P5b：state ops in-process；audit 以 subprocess 啟動。
+    last_assistant_tail 三層 fallback。
+    score gate + dedup + max_audits cap。
+    state ops in-process；audit 以 subprocess 啟動。
     """
     import state as companion_state
 
@@ -572,7 +619,7 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]):
 
     last_assistant_tail = _get_last_assistant_tail(input_data)
 
-    # State：persist tail + increment turn_index（取代舊 /event POST）
+    # State：persist tail + increment turn_index
     if last_assistant_tail:
         companion_state.update_last_assistant_tail(session_id, last_assistant_tail)
     companion_state.increment_turn(session_id)
@@ -593,8 +640,8 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]):
     }
     turn_index_post = int(comp_state.get("turn_index", 0))
 
-    # ── Sprint 2：heuristic soft gate（BLOCK 權只屬 confident_completion）─
-    # 2026-04-28：silent_advisory 開啟時 heuristic 結果只計數 + 落盤觀測，
+    # ── heuristic soft gate（BLOCK 權只屬 confident_completion）─
+    # silent_advisory 開啟時 heuristic 結果只計數 + 落盤觀測，
     # 不 BLOCK，不打擾對話。BLOCK 路徑保留給未來「明確失敗訊號」用。
     soft_gate_config = config.get("soft_gate", {})
     silent_advisory = bool(config.get("silent_advisory", False))
@@ -610,7 +657,8 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]):
                             companion_state.increment_metric(
                                 session_id, "silent_advisory_suppressed"
                             )
-                        except Exception:
+                        except Exception as e:
+                            _log_err("codex:metric_silent_advisory", e)
                             pass
                     else:
                         detail = heuristics.format_for_context(results)
@@ -623,10 +671,11 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]):
                         except (KeyError, IndexError):
                             block_reason = template + "\n" + detail
                         _output_block(block_reason, session_id=session_id)
-        except Exception:
+        except Exception as e:
+            _log_err("codex:heuristics_gate", e)
             pass  # Heuristics failure → degrade gracefully
 
-    # ── Sprint 3 Phase 3.2：score gate / dedup / cap ─────────────────────
+    # ── score gate / dedup / cap ─────────────────────
     score_threshold = int(config.get("score_threshold", 4))
     max_audits = int(config.get("max_audits_per_session", 30))
 
@@ -634,13 +683,15 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]):
         sys.path.insert(0, str(COMPANION_DIR))
         import scorer
         score = scorer.compute_turn_score(merged_state, stop_text=last_assistant_tail)
-    except Exception:
+    except Exception as e:
+        _log_err("codex:turn_score", e)
         score = 99  # 算分失敗安全預設：不抑制觸發，避免漏審查
 
     if score < score_threshold:
         try:
             companion_state.increment_metric(session_id, "audits_skipped_by_score")
-        except Exception:
+        except Exception as e:
+            _log_err("codex:metric_skip_score", e)
             pass
         _output_nothing()
 
@@ -657,10 +708,11 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]):
     user_goal_hint = (guardian_state.get("user_goal_hint")
                       or guardian_state.get("user_intent") or "")[:500]
 
-    # Sprint 5.5 B1：實際送出 audit 前 +1（Phase 6 §四 C3 ratio 分母）
+    # 實際送出 audit 前 +1（audit ratio 分母）
     try:
         companion_state.increment_metric(session_id, "audits_total_attempted")
-    except Exception:
+    except Exception as e:
+        _log_err("codex:metric_audit_attempt", e)
         pass
 
     companion_state.record_checkpoint(session_id, "turn_audit")
@@ -686,17 +738,18 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]):
 
 
 def _flush_metrics_to_reflection(session_id: str) -> None:
-    """Phase 5 觀測：把本 session 的 codex_companion 計數附加到
+    """觀測：把本 session 的 codex_companion 計數附加到
     memory/wisdom/reflection_metrics.json 的 codex_companion.sessions 陣列。
 
     最多保留最近 100 筆，與 wisdom_engine 既有結構共存（top-level codex_companion
-    為新欄位，wisdom_engine 不讀，不破壞 V4.1 P4 路徑）。
+    為新欄位，wisdom_engine 不讀，不破壞既有路徑）。
     全 zero 的 session 跳過避免噪音。
     """
     try:
         import state as companion_state
         metrics = companion_state.read_metrics(session_id)
-    except Exception:
+    except Exception as e:
+        _log_err("codex:metrics_read", e)
         return
     if not metrics or not any(metrics.values()):
         return
@@ -721,7 +774,8 @@ def _flush_metrics_to_reflection(session_id: str) -> None:
         tmp = metrics_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(metrics_path)
-    except OSError:
+    except OSError as e:
+        _log_err("codex:metrics_flush_write", e)
         pass
 
 
