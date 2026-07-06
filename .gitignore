@@ -23,6 +23,7 @@ todos/
 # ─── Runtime cache files ─────────────────────────────────
 stats-cache.json
 .last-cleanup
+.last-update-result.json
 
 # ─── Workflow Guardian runtime state ─────────────────────
 # config.json IS tracked; state files are not

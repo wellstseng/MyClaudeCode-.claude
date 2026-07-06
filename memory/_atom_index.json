@@ -288,6 +288,36 @@
         "設計慣例"
       ],
       "scope": "global"
+    },
+    {
+      "name": "mac-缺-python-用-wrapper-指向-python3",
+      "path": "memory/mac-缺-python-用-wrapper-指向-python3.md",
+      "triggers": [
+        "python",
+        "python3",
+        "spawn python ENOENT",
+        "atom_write",
+        "funnel",
+        "vector service",
+        "xcode-select",
+        "AtomFunnelBlock",
+        "command not found python"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "catclaw-agent-routing-boundaries",
+      "path": "memory/catclaw-agent-routing-boundaries.md",
+      "triggers": [
+        "catclaw",
+        "project-agent",
+        "channel 綁定",
+        "boundProject",
+        "cron subagent",
+        "atom scope",
+        "掛載"
+      ],
+      "scope": "global"
     }
   ]
 }
