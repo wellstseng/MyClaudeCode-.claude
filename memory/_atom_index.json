@@ -318,6 +318,23 @@
         "掛載"
       ],
       "scope": "global"
+    },
+    {
+      "name": "upstream-merge-mac-適配工作流",
+      "path": "memory/upstream-merge-mac-適配工作流.md",
+      "triggers": [
+        "upstream merge",
+        "整併",
+        "fork 同步",
+        "merge upstream",
+        "衝突解",
+        "checkout --ours",
+        "settings 接線",
+        "python 3.9",
+        "write_text newline",
+        "測資可移植"
+      ],
+      "scope": "global"
     }
   ]
 }

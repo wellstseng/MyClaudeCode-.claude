@@ -1,6 +1,6 @@
 # Atom Trigger Index — Global
 
-> **Deprecated mirror.** Machine source: `_atom_index.json` (V5 P3b).
+> **Deprecated mirror.** Machine source: `_atom_index.json`.
 > 本檔由 lib/atom_index_json.py 自動生成；勿手改。
 
 | Atom | Path | Trigger | Scope |
@@ -24,3 +24,4 @@
 | cognitive-patterns | _AIDocs/Failures/cognitive-patterns.md | 過度工程, 代理指標, proxy metric, AI看不懂, AI在打轉, 品質回饋, 自我合理化, 編造規則, 籠統話術, 訂規保留, 設計慣例 | global |
 | mac-缺-python-用-wrapper-指向-python3 | memory/mac-缺-python-用-wrapper-指向-python3.md | python, python3, spawn python ENOENT, atom_write, funnel, vector service, xcode-select, AtomFunnelBlock, command not found python | global |
 | catclaw-agent-routing-boundaries | memory/catclaw-agent-routing-boundaries.md | catclaw, project-agent, channel 綁定, boundProject, cron subagent, atom scope, 掛載 | global |
+| upstream-merge-mac-適配工作流 | memory/upstream-merge-mac-適配工作流.md | upstream merge, 整併, fork 同步, merge upstream, 衝突解, checkout --ours, settings 接線, python 3.9, write_text newline, 測資可移植 | global |

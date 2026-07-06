@@ -16,6 +16,7 @@
 | workflow-svn | SVN 工作流規則 |
 | mac-缺-python-用-wrapper-指向-python3 | Mac 缺 python 用 wrapper 指向 python3 |
 | catclaw-agent-routing-boundaries | catclaw-agent-routing-boundaries |
+| upstream-merge-mac-適配工作流 | upstream-merge-mac-適配工作流 |
 | feedback-* | 行為校正（5 atoms） → [`_AIDocs/Failures/`](../_AIDocs/Failures/) |
 | memory-pipeline-silent-failure-2026-05 | 記憶機制靜默失效（confirmations 零增 + episodic 停擺） → [`_AIDocs/Failures/memory-pipeline-silent-failure-2026-05.md`](../_AIDocs/Failures/memory-pipeline-silent-failure-2026-05.md) |
 | cognitive-patterns | 認知模式偏差（Cognitive Patterns） → [`_AIDocs/Failures/cognitive-patterns.md`](../_AIDocs/Failures/cognitive-patterns.md) |
