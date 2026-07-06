@@ -84,7 +84,7 @@
         ]
       },
       {
-        "matcher": "Write|Edit|Bash",
+        "matcher": "Write|Edit|Bash|Agent|Task",
         "hooks": [
           {
             "type": "command",
@@ -96,7 +96,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|Read|Bash",
+        "matcher": "Edit|Write|Read|Bash|Agent|Task|mcp__workflow-guardian__anti_evasion_report",
         "hooks": [
           {
             "type": "command",
@@ -137,6 +137,28 @@
       }
     ],
     "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolBatch": [
       {
         "hooks": [
           {

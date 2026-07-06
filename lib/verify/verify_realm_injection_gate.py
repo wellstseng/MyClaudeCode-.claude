@@ -16,6 +16,9 @@ from pathlib import Path
 import pytest  # noqa: F401  (pytest 收集需要)
 
 CLAUDE = Path.home() / ".claude"
+# 外部專案測資必須 platform-aware：r"C:\..." 在 POSIX 是相對路徑，
+# resolve 後落回 cwd（pytest rootdir=~/.claude）之下 → 被誤判為內部
+EXTERNAL_PROJECT = r"C:\Projects\SomeApp" if sys.platform == "win32" else "/opt/Projects/SomeApp"
 for _p in (CLAUDE / "hooks", CLAUDE / "lib", CLAUDE):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
@@ -43,7 +46,7 @@ ATOMS = [
 
 
 def test_gate_external_project_filters_local():
-    out = _apply_gate(ATOMS, r"C:\Projects\SomeApp")
+    out = _apply_gate(ATOMS, EXTERNAL_PROJECT)
     names = {n for n, _, _ in out}
     assert "decisions" in names           # core 保留
     assert "feedback-x" in names          # _AIDocs/Failures/ core 保留（不誤殺）
@@ -70,7 +73,7 @@ def test_gate_under_claude_keeps_local():
 def test_is_under_claude_dir_predicate():
     assert _is_under_claude_dir(str(CLAUDE)) is True
     assert _is_under_claude_dir(str(CLAUDE / "tools")) is True
-    assert _is_under_claude_dir(r"C:\Projects\X") is False
+    assert _is_under_claude_dir(EXTERNAL_PROJECT) is False
     assert _is_under_claude_dir("") is False
     # 旁系路徑 ~/.claude-foo 必不算內部（parents 比對，非 startswith）
     assert _is_under_claude_dir(str(CLAUDE.parent / (CLAUDE.name + "-foo"))) is False
