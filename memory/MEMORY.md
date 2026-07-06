@@ -27,6 +27,7 @@
 | 品質完整性判定須讀完整內容-勿從截斷採樣斷言 | 品質完整性判定須讀完整內容-勿從截斷採樣斷言 |
 | 自己flag的維護動作直接做完不要反問 | 自己flag的維護動作直接做完不要反問 |
 | 記憶汙染與上下文腐化-注入萃取自檢 | 記憶汙染與上下文腐化-注入萃取自檢 |
+| merge-時-sot-索引檔-ours-策略誤清-catalog-post-mortem | merge-時-SoT-索引檔-ours-策略誤清-catalog-post-mortem |
 | feedback-* | 行為校正（10 atoms） → [`_AIDocs/Failures/`](../_AIDocs/Failures/) |
 | cognitive-patterns | 認知模式偏差（Cognitive Patterns） → [`_AIDocs/Failures/cognitive-patterns.md`](../_AIDocs/Failures/cognitive-patterns.md) |
 | memory-pipeline-silent-failure-2026-05 | 記憶機制靜默失效（confirmations 零增 + episodic 停擺） → [`_AIDocs/Failures/memory-pipeline-silent-failure-2026-05.md`](../_AIDocs/Failures/memory-pipeline-silent-failure-2026-05.md) |

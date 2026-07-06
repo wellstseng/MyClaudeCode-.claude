@@ -1326,6 +1326,23 @@
         "錯誤認知"
       ],
       "scope": "global"
+    },
+    {
+      "name": "merge-時-sot-索引檔-ours-策略誤清-catalog-post-mortem",
+      "path": "memory/merge-時-sot-索引檔-ours-策略誤清-catalog-post-mortem.md",
+      "triggers": [
+        "catalog 誤清",
+        "_INDEX.md 被刪",
+        "index 磁碟不一致",
+        "SoT 衝突解",
+        "_atom_index.json merge",
+        "sync-memory-index",
+        "atoms 隱形",
+        "衝突檔 ours",
+        "衍生索引",
+        "post-mortem"
+      ],
+      "scope": "global"
     }
   ]
 }
