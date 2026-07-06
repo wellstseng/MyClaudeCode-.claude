@@ -7,7 +7,7 @@ handlers/_shared.py — module-level state + 跨 handler 共用 helper
 - _call_project_hook（subprocess invoke project hook）
 - _cleanup_old_states（state 檔 TTL 清理）
 - _is_ephemeral_path（路徑過濾）
-- _maybe_spawn_user_extract_worker（V4.1 user extract worker spawn）
+- _maybe_spawn_user_extract_worker（user extract worker spawn）
 """
 
 import json
@@ -27,6 +27,9 @@ from wg_core import (
     write_state,
 )
 from wg_extraction import _is_lease_valid, _set_lease
+
+# Windows: 外呼 python/git 等 console 程式時若不帶此 flag，無主控台的 hook 父行程會被配一個可見 console 視窗
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 # ─── module-level regex / 常數 ───────────────────────────────────────────────
 
@@ -98,7 +101,7 @@ def _is_ephemeral_path(path: str) -> bool:
     return any(tok in norm_low for tok in _EPHEMERAL_DIR_TOKENS)
 
 
-# ─── Project delegate hook (V2.21) ───────────────────────────────────────────
+# ─── Project delegate hook ───────────────────────────────────────────
 
 
 def _call_project_hook(project_root: Path, action: str, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -117,6 +120,7 @@ def _call_project_hook(project_root: Path, action: str, context: Dict[str, Any])
             capture_output=True,
             text=True,
             timeout=5,
+            creationflags=_NO_WINDOW,
         )
         if result.returncode == 0 and result.stdout.strip():
             return json.loads(result.stdout)
@@ -168,8 +172,17 @@ def _cleanup_old_states() -> None:
         except OSError:
             pass
 
+    # codex companion 旁路檔（companion-state/assessment/metrics-*.json）原無
+    # 自帶清理，易累積。>7d 一律清（與上方 state 檔 catch-all 同標準；活躍 session <7d 不動）。
+    for f in WORKFLOW_DIR.glob("companion-*.json"):
+        try:
+            if now - f.stat().st_mtime > 7 * 86400:
+                f.unlink(missing_ok=True)
+        except OSError:
+            pass
 
-# ─── V4.1: User Extract Worker Spawning ──────────────────────────────────────
+
+# ─── User Extract Worker Spawning ──────────────────────────────────────
 
 
 def _maybe_spawn_user_extract_worker(
@@ -232,11 +245,11 @@ def _maybe_spawn_user_extract_worker(
         _set_lease(state, "user_extract_worker_pid", proc.pid)
         write_state(session_id, state)
         print(
-            f"[v4.1] user-extract-worker spawned (pid={proc.pid}, "
+            f"user-extract-worker spawned (pid={proc.pid}, "
             f"pending={len(pending)})",
             file=sys.stderr,
         )
         return True
     except Exception as e:
-        _atom_debug_error("V4.1:spawn_user_extract_worker", e)
+        _atom_debug_error("spawn_user_extract_worker", e)
         return False

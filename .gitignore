@@ -28,6 +28,9 @@ stats-cache.json
 # config.json IS tracked; state files are not
 workflow/state-*.json
 workflow/state-*.json.bak-*
+workflow/state-*.json.corrupt
+workflow/world-dev.json
+workflow/_*.log
 workflow/guardian-crash.log
 workflow/extract-worker.log
 workflow/hot_cache.json
@@ -35,7 +38,10 @@ workflow/vector_ready.flag
 workflow/.backend_long_die.json
 workflow/_merge_history.log
 workflow/last_review_marker.json
+workflow/realm_automove_pending.json
 workflow/mcp-version-cache.json
+workflow/aec-report/
+workflow/aec-decision/
 
 # ─── Per-user / per-machine state (Wave 5 untracked) ─────
 memory/project-registry.json
@@ -60,6 +66,10 @@ memory/_vectordb/service.pid
 memory/_vectordb/service.log
 
 # ─── ACT-R access logs (runtime, auto-generated) ──────────
+# 政策：所有 atom 遙測 sidecar（read_hits/confirmations/usefulness）一律不進版控——
+# per-machine 執行期資料，提交會 churn + 跨機衝突。下方 blanket 收斂全部位置
+# （含 _AIDocs/_atoms/ local realm、_AIDocs/Tools/；2026-06 補 S1/S2 realm 遷移破口）。
+**/*.access.json
 memory/*.access.json
 memory/**/*.access.json
 **/memory/*.access.json
@@ -68,6 +78,10 @@ _AIDocs/Failures/*.access.json
 
 # ─── Staging area (temp files, session prompts) ──────────
 memory/_staging/
+
+# ─── Auto-capture drafts (隔離區，未確認 [臨]，不入版控/索引/注入) ─────────
+memory/_drafts/
+**/memory/shared/_drafts/
 
 # ─── Episodic atoms (TTL 24d, auto-generated) ─────────────
 memory/episodic/
@@ -106,6 +120,7 @@ memory/_vectordb/eval-results-*.json
 
 # ─── Dashboard screenshots (local artifacts) ────────────
 dashboard-*.png
+world-*.png
 
 # ─── Python cache ────────────────────────────────────────
 __pycache__/

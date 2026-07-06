@@ -23,7 +23,10 @@
 | 16 | atom-injection-refactor-2026-04.md | REG-005 atom 注入機制重構收尾（A+B+C+D 4 層 + 觀察期 KEEP 判定 + 設計歸檔） | REG-005, atom, injection, summary-first, budget, hot-cold, related, 4-layer, KEEP, 觀察期 |
 | 17 | v4-archive/ | Wave 4 hooks/_v4_archive 19 檔對照證物（V4 hook 模組退役前最後一版） | v4-archive, hooks, 證物, V4 退役 |
 | 18 | v5-overhaul-2026-05/ | V5 升版完整紀錄（起因 + 4-Wave + Wave 5 全面汰舊 + GA Checklist 驗收 + Session α/β feedback-aidocs 遷移）— 取代原 audit atom | V5, GA, 升版, overhaul, Wave, 全面汰舊, BM25, JSON SoT, Codex subprocess, 114GB, feedback-aidocs, atom_locations |
+| 19 | auto-memory-writeback.md | 對談結束自動記憶 writeback 三 stage 開發脈絡（session_end flush 落點路由 + 失敗五區塊骨架 + Deep Post-Mortem Gate；含 edit-count proxy 拔除、獨立預算演化） | session_end flush, 失敗骨架, deep post-mortem, writeback, 落點路由, extract-worker, stop gate, edit-count proxy |
 
 > 2026-05-27 Wave 5 Session 2 已歸檔（移至 `memory/_distant/2026_05_v5_overhaul/`，git 不再追蹤）：`session-logs/` / `memory-cleanup-2026-04/` / `atomic-memory-evolution/` / `ab-test-gemma4/` / `atom-v4/` / `atom-v4-phases/` / `changelog-roll/` / `v41-handoffs/` / `v41-p4-simulation/` / `wg-docdrift/`
 
 > 2026-05-28 Session α/β（commits `082f791` / `89ccb2d` / `6772049`）：feedback-* atoms 5 個 + cognitive-patterns + memory-pipeline-silent-failure-2026-05 物理搬遷至 `_AIDocs/Failures/`，`lib/atom_locations.py` 為單一規則來源；sync-atom-index / vector indexer 多根掃描；SPEC_ATOM_V5 §2.1 章節記錄。完整紀錄詳見上方 v5-overhaul-2026-05/ 及主 [_AIDocs/_CHANGELOG.md](../_CHANGELOG.md) 對應條目。
+
+> 2026-06-03 Realm S3 Phase 5 雞肋稽核：本目錄為「按需閱讀、**不自動注入**」歷史歸檔區（注入成本＝0）。內容已結案/被 V5 超越但**仍被活引用為證物**者——`v4-layers.md`·`v4-conflict.md`（V4 設計，[Architecture.md](../Architecture.md) 引）、`version-migrations.md`（V2.18~21）、`ab-test-ollama.md`·`ab-test-gemma4.md`（核心 atom `toolchain-ollama` + [TECH.md](../../TECH.md) 引）、`vector-threshold-calibration-2026-04.md`（活躍檔 `atom-injection-refactor-2026-04.md` 當「前置」引）——**一律保留原位不再下沉**（歸檔區內再開歸檔零收益、且會斷同層相對連結）。已驗證 [`known-regressions.md`](../known-regressions.md) 仍準確；REG-006 三萃取管線（`quick-extract`/`extract-worker`/`user-extract-worker`）經查**確仍並存**，屬 open 合併研究項、非 stale。

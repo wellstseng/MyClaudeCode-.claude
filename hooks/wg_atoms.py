@@ -25,14 +25,15 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from wg_core import (
     CLAUDE_DIR, MEMORY_DIR, EPISODIC_DIR, WORKFLOW_DIR,
-    MEMORY_INDEX, ATOM_INDEX,
-    CONTEXT_BUDGET_DEFAULT,
+    MEMORY_INDEX, ATOM_INDEX, REALM_AUTOMOVE_MARKER,
+    CONTEXT_BUDGET_DEFAULT, TURN_BUDGET_LIMIT,
+    compute_token_budget,  # re-export：budget 單一來源在 wg_core，舊 caller 仍從本模組 import
     discover_all_project_memory_dirs, resolve_access_json, resolve_staging_dir,
     get_project_memory_dir, log_promotion_audit,
     _atom_debug_log, _atom_debug_error,
 )
 
-# V5 P3b: prefer _atom_index.json (machine source of truth)
+# prefer _atom_index.json (machine source of truth)
 sys.path.insert(0, str(CLAUDE_DIR / "lib"))
 try:
     from atom_index_json import load_atom_index_json, to_atom_entries, ATOM_INDEX_JSON
@@ -46,6 +47,20 @@ try:
 except ImportError:
     iter_atom_files_multi = None
 
+try:
+    from atom_locations import (
+        classify_realm, is_local_realm_path,
+        enumerate_local_paths, load_learned_lexicon, append_learned_terms,
+        LOCAL_REALM_DEFAULT_DOMAIN,
+    )
+except ImportError:
+    classify_realm = None
+    is_local_realm_path = None
+    enumerate_local_paths = None
+    load_learned_lexicon = None
+    append_learned_terms = None
+    LOCAL_REALM_DEFAULT_DOMAIN = "Else"
+
 
 # ─── Memory Index Parsing ────────────────────────────────────────────────────
 
@@ -57,9 +72,9 @@ AtomEntry = Tuple[str, str, List[str]]
 
 def parse_memory_index(memory_dir: Path) -> List[AtomEntry]:
     """Parse atom index, return list of (name, path, triggers).
-    V5 P3b: 優先 _atom_index.json，fallback _ATOM_INDEX.md → MEMORY.md。
+    優先 _atom_index.json，fallback _ATOM_INDEX.md → MEMORY.md。
     """
-    # V5 P3b: prefer JSON
+    # prefer JSON
     if load_atom_index_json is not None:
         json_path = memory_dir / ATOM_INDEX_JSON
         if json_path.exists():
@@ -106,6 +121,13 @@ def _parse_trigger_table(text: str) -> List[AtomEntry]:
                 in_table = True
                 continue
         else:
+            # 表內容忍（2026-05 silent-failure 真因防線 direction 1）：空行 skip 不結束表
+            #（寫入端意外留空行不該 silent 掉後續 atom）；重複表頭 skip（多區塊表不誤收
+            # 表頭為 atom）。僅「非空且非 |」的真內容才視為表結束。
+            if stripped == "":
+                continue
+            if stripped.startswith("| Atom") or stripped.startswith("|Atom"):
+                continue
             if stripped.startswith("|---") or stripped.startswith("| ---"):
                 continue
             if not stripped.startswith("|"):
@@ -213,6 +235,50 @@ def compute_activation(atom_name: str, atom_dir: Path) -> float:
     return math.log(total) if total > 0 else -10.0
 
 
+def compute_injection_rank(
+    atom_name: str, atom_dir: Path, config: Optional[Dict[str, Any]] = None,
+) -> float:
+    """注入排序鍵 = ACT-R activation − 分心懲罰（高曝光低效用者降權）。
+
+    憲法 Context Distraction 對策（_AIDocs/context-memory-governance.md）：read_hits 是
+    純曝光、不代表有用；對「已有足夠效用樣本(n≥min_n)但 Wilson 下界低」的 atom 課
+    penalty = w·log10(read_hits+1)·(1−lb)，降其注入優先序。
+    寧漏勿誤殺：n<min_n（新 atom / 樣本不足）一律不罰；關閉 / 資料缺失 → 退回純
+    activation（fail-open）。config usefulness.distraction_{enabled,weight} 旋鈕。
+    """
+    activation = compute_activation(atom_name, atom_dir)
+    if not config:
+        return activation  # 無 config（讀取失敗）→ fail-open 不罰
+    u = config.get("usefulness") or {}
+    if not u.get("distraction_enabled", True):
+        return activation
+    weight = float(u.get("distraction_weight", 0.5) or 0.0)
+    if weight <= 0:
+        return activation
+    # 核心策展 atom（decisions/workflow-*/preferences/toolchain/feedback-* ...）豁免
+    # distraction penalty。turn-global 歸因下高頻核心 atom 系統性累積無辜 β，penalty 反把最重的
+    # 懲罰打在最該注入的人工策展知識上（曝光越高罰越重＝頻率 artifact，與策展價值反相關）＝止血。
+    try:
+        from lib.atom_locations import is_core_protected_name
+        if is_core_protected_name(atom_name):
+            return activation
+    except Exception:
+        pass
+    try:
+        from lib.atom_access import read_access, usefulness_stats
+        acc = read_access(atom_dir / f"{atom_name}.md")
+        read_hits = int(acc.get("read_hits") or 0)
+        if read_hits <= 0:
+            return activation
+        st = usefulness_stats(acc, z=float(u.get("wilson_z", 1.96)))
+        if st.get("n", 0) < int(u.get("min_n", 3)):
+            return activation  # 樣本不足不罰（保守，防壓新 atom）
+        penalty = weight * math.log10(read_hits + 1) * (1.0 - st.get("lower_bound", 0.0))
+        return activation - penalty
+    except Exception:
+        return activation
+
+
 def _kw_match(kw: str, prompt_lower: str) -> bool:
     """Match a trigger keyword against prompt. ASCII uses word-boundary, CJK uses substring."""
     if kw.isascii():
@@ -220,16 +286,26 @@ def _kw_match(kw: str, prompt_lower: str) -> bool:
     return kw in prompt_lower
 
 
+def any_trigger_hit(keywords, prompt_lower: str) -> bool:
+    """keyword 清單 vs prompt 的單一比對原語（trigger match / AIDocs sweep 共用）。"""
+    return any(_kw_match(kw, prompt_lower) for kw in keywords)
+
+
+def count_trigger_hits(keywords, prompt_lower: str) -> int:
+    """命中數版本（跨專案掃描 ≥2 門檻用）。"""
+    return sum(1 for kw in keywords if _kw_match(kw, prompt_lower))
+
+
 def match_triggers(prompt: str, atoms: List[AtomEntry]) -> List[AtomEntry]:
     prompt_lower = prompt.lower()
     matched = []
     for name, rel_path, triggers in atoms:
-        if any(_kw_match(kw, prompt_lower) for kw in triggers):
+        if any_trigger_hit(triggers, prompt_lower):
             matched.append((name, rel_path, triggers))
     return matched
 
 
-# ─── BM25 Match (V5 P5a) ─────────────────────────────────────────────────────
+# ─── BM25 Match ─────────────────────────────────────────────────────
 # Hand-rolled BM25 over atom trigger lists. ~30 lines, no external dep.
 # Use case: global layer (~17 atoms) — replaces vector service round-trip
 # (200-500ms) with in-memory <10ms scoring.
@@ -322,16 +398,8 @@ def bm25_match(
 
 
 # ─── Token Budget & Atom Loading ─────────────────────────────────────────────
-
-
-def compute_token_budget(prompt: str) -> int:
-    plen = len(prompt)
-    if plen < 50:
-        return 1500
-    elif plen < 200:
-        return 3000
-    else:
-        return 5000
+# budget 常數/計算已集中 wg_core（見該檔「Token budget 單一來源」註解）；
+# compute_token_budget 由上方 import re-export。
 
 
 _STRIP_META_RE = re.compile(
@@ -465,7 +533,7 @@ def _strip_atom_for_injection_impression_only(content: str) -> str:
     return "\n\n".join(parts).strip()
 
 
-_TURN_BUDGET_LIMIT = 800
+_TURN_BUDGET_LIMIT = TURN_BUDGET_LIMIT  # 舊名 re-export（caller/verify 鎖定此名）
 
 
 def decide_atom_injection(
@@ -589,11 +657,282 @@ def load_atoms_within_budget(
     return lines, injected, used
 
 
+# ─── Sub-agent Injection Orchestrator ──────────────────────────
+# 可重用注入 orchestrator：parent → sub-agent 記憶注入（PreToolUse updatedInput）。
+# 包裝既有純函式（parse_memory_index / match_triggers / bm25_match /
+# load_atoms_within_budget / _strip_atom_for_injection）。全域層 only，
+# 不依賴 session state["atom_index"]。緊湊 top-k（印象式 strip）守 token 紅線。
+
+SUBAGENT_INJECT_MARKER = "[WG:SubagentMemory]"
+_SUBAGENT_TOP_K = 3
+
+
+def build_injection_blob(
+    prompt_str: str,
+    *,
+    budget: int,
+    already_injected: Optional[List[str]] = None,
+) -> Tuple[str, List[str]]:
+    """為 sub-agent prompt 組緊湊記憶注入 blob。
+
+    回傳 (blob_str, injected_names)。無匹配時回 ("", [])（caller 應保留原 prompt 不改）。
+    冪等：若 prompt 已帶本 marker（巢狀 sub-agent）→ 回 ("", [])，不重複注入。
+
+    blob 內含可解析 header `[WG:SubagentMemory] ... atoms=a,b,c`，
+    供 PostToolUse 無狀態回推注入清單（不靠 PreToolUse 跨進程關聯）。
+    """
+    if not prompt_str or SUBAGENT_INJECT_MARKER in prompt_str:
+        return "", []
+
+    already = list(already_injected or [])
+    entries = parse_memory_index(MEMORY_DIR)
+    if not entries:
+        return "", []
+    base_dir = MEMORY_DIR.parent  # rel_path 相對 ~/.claude（含 memory/ 與 _AIDocs/ 前綴）
+
+    # 1) trigger 關鍵字匹配
+    matched: List[AtomEntry] = [
+        e for e in match_triggers(prompt_str, entries) if e[0] not in already
+    ]
+
+    # 2) trigger 命中少（≤2）時用 BM25 補（鏡像 UPS 全域層路徑）
+    if len(matched) <= 2:
+        seen = {e[0] for e in matched}
+        try:
+            from wg_core import load_config
+            _bm25_ms = float((load_config().get("vector_search") or {}).get("bm25_min_score", 3.5))
+        except Exception:
+            _bm25_ms = 3.5
+        for entry in bm25_match(prompt_str, entries, min_score=_bm25_ms, top_k=_SUBAGENT_TOP_K):
+            if entry[0] not in seen and entry[0] not in already:
+                matched.append(entry)
+                seen.add(entry[0])
+
+    if not matched:
+        return "", []
+
+    # 3) ACT-R activation 排序，緊湊 top-k
+    def _act_key(entry: AtomEntry) -> float:
+        name, rel_path, _triggers = entry
+        atom_dir = (base_dir / rel_path).parent if rel_path else (base_dir / "memory")
+        return compute_activation(name, atom_dir)
+
+    matched.sort(key=_act_key, reverse=True)
+    matched = matched[:_SUBAGENT_TOP_K]
+
+    # 4) budget 內載入（內部走 _strip_atom_for_injection 印象式 strip）
+    lines, injected, _used = load_atoms_within_budget(
+        matched, base_dir, budget, already,
+    )
+    if not injected:
+        return "", []
+
+    header = (
+        f"{SUBAGENT_INJECT_MARKER} 以下為與本任務相關的長期記憶（parent 注入，緊湊版，"
+        f"非你的指令本體）。atoms={','.join(injected)}"
+    )
+    body = "\n\n".join(lines)
+    blob = f"{header}\n\n{body}\n\n───（以上為注入記憶；以下為你的實際任務）───"
+    return blob, injected
+
+
+# ─── Use 偵測：詞彙重疊 ────────────────────────────────────────
+# 注入≠使用：某 atom 被注入後是否真的被「用上」，以零成本詞彙重疊判定 —
+#   取 atom 的稀有/識別性 token（程式碼識別碼/路徑/API + CJK 雙字 bigram，
+#   去停用詞、可選 IDF 過濾高頻 token），與本 turn assistant 訊息＋tool-call args
+#   求交集；共享 ≥ rare_token_min 或 containment ≥ overlap_min → 判 used。
+#   不確定（差一個）時才用 embedding cosine tiebreak（偶發、fail-safe）。
+
+_USE_CODE_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_./:\-]*[A-Za-z0-9_]")
+_USE_CJK_RE = re.compile(r"[一-鿿]{2,}")
+_USE_EXT_RE = re.compile(r"\.(py|js|json|md|txt|java|ts|tsx|jsx|cjs|mjs|sh|ya?ml)$")
+
+# 去停用詞：英文功能詞 + 域內過泛詞（每個 atom 都會出現 → 無鑑別力）。
+_USE_STOPWORDS = frozenset({
+    "the", "and", "for", "with", "that", "this", "from", "have", "into", "when",
+    "then", "not", "but", "are", "was", "were", "will", "your", "you", "use",
+    "used", "using", "uses", "via", "per", "all", "any", "one", "two", "out",
+    "get", "set", "add", "new", "old", "see", "may", "can", "其中", "以下",
+    # 域內過泛（atom 記憶系統語境）
+    "atom", "atoms", "memory", "hook", "hooks", "code", "file", "files", "test",
+    "tests", "line", "lines", "state", "config", "data", "true", "false", "none",
+    "記憶", "注入", "系統", "原子", "如果", "因為", "所以", "可以", "需要", "問題",
+    "功能", "這個", "那個", "沒有", "規則", "處理",
+})
+
+
+def _use_pieces(span: str) -> List[str]:
+    """把一段 code-ish span 正規化成可比對 piece（path 段 + _/. 子詞），雙側一致。"""
+    out: List[str] = []
+    for raw in re.split(r"[/\s:,;()\[\]<>\"'`、，。]+", span.strip().lower()):
+        p = raw.strip("._-")
+        if not p:
+            continue
+        p = _USE_EXT_RE.sub("", p)
+        if not p:
+            continue
+        out.append(p)
+        for sub in re.split(r"[._]+", p):
+            if len(sub) >= 5:
+                out.append(sub)
+    return out
+
+
+def extract_distinctive_tokens(text: str) -> set:
+    """抽 text 的稀有/識別性 token 集合（雙側同一函式 → 比對一致）。
+
+    - code-ish：含 `_./-`/數字 或 長度≥7 的識別碼/路徑/API（含 path 段與 _ 子詞）
+    - CJK：雙字 bigram（去過泛雙字）
+    去停用詞、長度<4 丟棄。
+    """
+    if not text:
+        return set()
+    toks: set = set()
+    for span in _USE_CODE_RE.findall(text):
+        for p in _use_pieces(span):
+            if len(p) < 4 or p in _USE_STOPWORDS:
+                continue
+            code_like = bool(re.search(r"[_.\d/\-]", p))
+            if code_like or len(p) >= 7 or (5 <= len(p) <= 6):
+                toks.add(p)
+    for run in _USE_CJK_RE.findall(text):
+        for i in range(len(run) - 1):
+            bg = run[i:i + 2]
+            if bg not in _USE_STOPWORDS:
+                toks.add(bg)
+    return toks
+
+
+def build_atom_df(atom_texts: List[str]) -> Tuple[Counter, int]:
+    """跨 atom 語料的 document frequency（近似 IDF）：token→出現於幾顆 atom。
+
+    回傳 (df_counter, n_docs)。供 detect_atom_use 過濾「出現在過多 atom」的低鑑別 token。
+    """
+    df: Counter = Counter()
+    n = 0
+    for t in atom_texts:
+        n += 1
+        for tok in extract_distinctive_tokens(t):
+            df[tok] += 1
+    return df, n
+
+
+def resolve_atom_path(name: str) -> Optional[Path]:
+    """atom name → .md Path（全域層，含 _AIDocs/Failures feedback-*）。找不到回 None。
+
+    僅迭代檔路徑（不讀內容），供 Stop 端解析 sub-agent 注入清單的 atom 名 → 路徑。
+    """
+    target = f"{name}.md"
+    if iter_atom_files_multi is not None:
+        try:
+            for p in iter_atom_files_multi():
+                if p.name == target:
+                    return p
+        except Exception as e:
+            _atom_debug_error("usefulness:atom_lookup_multi", e)
+    cand = MEMORY_DIR / target
+    return cand if cand.exists() else None
+
+
+def detect_atom_use(
+    atom_content: str,
+    turn_text: str,
+    *,
+    rare_token_min: int = 2,
+    overlap_min: float = 0.18,
+    df_map: Optional[Counter] = None,
+    n_docs: int = 0,
+    max_df_ratio: float = 0.5,
+    embed_fn=None,
+    embed_min: float = 0.62,
+) -> Dict[str, Any]:
+    """判定 atom 是否在本 turn 被使用。回 {used, shared, containment, method}。
+
+    主判：稀有 token 交集 |shared| ≥ rare_token_min 或 containment ≥ overlap_min。
+    IDF 過濾：df_map/n_docs 提供時，丟棄 df/n_docs > max_df_ratio 的過泛 token。
+    Tiebreak：差一個（|shared| == rare_token_min-1 且 ≥1）時，若 embed_fn 提供 →
+      cosine ≥ embed_min 判 used（method=embed）。embed_fn 失敗回 None → 不影響主判。
+    """
+    rare = extract_distinctive_tokens(atom_content)
+    if df_map is not None and n_docs > 0 and max_df_ratio < 1.0:
+        cutoff = max_df_ratio * n_docs
+        rare = {t for t in rare if df_map.get(t, 0) <= cutoff}
+    if not rare:
+        return {"used": False, "shared": 0, "containment": 0.0, "method": "no_rare"}
+
+    turn_tokens = extract_distinctive_tokens(turn_text)
+    shared = rare & turn_tokens
+    n_shared = len(shared)
+    containment = n_shared / len(rare)
+
+    if n_shared >= rare_token_min or containment >= overlap_min:
+        return {"used": True, "shared": n_shared, "containment": round(containment, 3),
+                "method": "lexical"}
+
+    # tiebreak：差一個才動 embedding（偶發）
+    if embed_fn is not None and n_shared == max(0, rare_token_min - 1) and n_shared >= 1:
+        try:
+            cos = embed_fn(atom_content, turn_text)
+        except Exception as e:
+            _atom_debug_error("usefulness:embed_tiebreak", e)
+            cos = None
+        if cos is not None and cos >= embed_min:
+            return {"used": True, "shared": n_shared, "containment": round(containment, 3),
+                    "method": "embed", "cosine": round(float(cos), 3)}
+
+    return {"used": False, "shared": n_shared, "containment": round(containment, 3),
+            "method": "lexical"}
+
+
+def make_embed_tiebreak_fn(config: Dict[str, Any]):
+    """構造 fail-safe 的 embedding cosine tiebreak callable（或 None）。
+
+    僅當 config.usefulness.embedding_tiebreak 為真才回 callable；任何失敗（服務未起、
+    逾時、格式異常）回 None → detect_atom_use 視同無 tiebreak，不污染主判。
+    走既有 Ollama /api/embeddings（短逾時、截斷輸入），屬偶發呼叫（僅邊界 case）。
+    """
+    uconf = (config or {}).get("usefulness", {}) or {}
+    if not uconf.get("embedding_tiebreak", False):
+        return None
+    vs = (config or {}).get("vector_search", {}) or {}
+    base = vs.get("ollama_base_url", "http://127.0.0.1:11434")
+    model = vs.get("embedding_model", "qwen3-embedding")
+    timeout_s = float(uconf.get("embed_timeout_s", 1.5))
+
+    def _embed_one(text: str) -> Optional[List[float]]:
+        payload = json.dumps({"model": model, "prompt": text[:1500]}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{base.rstrip('/')}/api/embeddings", data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            obj = json.loads(resp.read().decode("utf-8"))
+        vec = obj.get("embedding")
+        return vec if isinstance(vec, list) and vec else None
+
+    def _cosine(a: str, b: str) -> Optional[float]:
+        try:
+            va, vb = _embed_one(a), _embed_one(b)
+            if not va or not vb or len(va) != len(vb):
+                return None
+            dot = sum(x * y for x, y in zip(va, vb))
+            na = math.sqrt(sum(x * x for x in va))
+            nb = math.sqrt(sum(y * y for y in vb))
+            if na == 0 or nb == 0:
+                return None
+            return dot / (na * nb)
+        except Exception as e:
+            _atom_debug_error("usefulness:embed_cosine", e)
+            return None
+
+    return _cosine
+
+
 def _truncate_context_by_activation(
     lines: List[str], limit: int = CONTEXT_BUDGET_DEFAULT,
     source_dirs: Optional[Dict[str, Path]] = None,
 ) -> List[str]:
-    """V2.11: Truncate additionalContext lines to fit within token budget."""
+    """Truncate additionalContext lines to fit within token budget."""
     full_text = "\n".join(lines)
     used = len(full_text) // 4
     if used <= limit:
@@ -633,8 +972,8 @@ def _truncate_context_by_activation(
             ep = mem_dir / "episodic"
             if ep.is_dir():
                 fallback_roots.append(ep)
-    except Exception:
-        pass
+    except Exception as e:
+        _atom_debug_error("usefulness:project_roots_discover", e)
 
     for ab in atom_blocks:
         atom_name = ab["name"]
@@ -818,6 +1157,12 @@ def parse_aidocs_index(project_root: Path) -> List[AiDocsEntry]:
                 in_table = True
                 continue
         else:
+            # 表內容忍（同 _parse_trigger_table，silent-failure direction 1）：空行 skip
+            # 不結束表；重複表頭 skip。僅「非空且非 |」真內容才視為表結束。
+            if stripped == "":
+                continue
+            if stripped.startswith("| #") or stripped.startswith("|#"):
+                continue
             if stripped.startswith("|---") or stripped.startswith("| ---"):
                 continue
             if not stripped.startswith("|"):
@@ -960,7 +1305,8 @@ def _get_vector_obs_logger() -> Optional[logging.Logger]:
             lg.addHandler(h)
         _vector_obs_logger = lg
         return lg
-    except Exception:
+    except Exception as e:
+        _atom_debug_error("vector_obs:logger_init", e)
         _vector_obs_logger_failed = True
         return None
 
@@ -988,8 +1334,8 @@ def _log_vector_obs(
         rec.update(extra)
     try:
         lg.info(json.dumps(rec, ensure_ascii=False))
-    except Exception:
-        pass
+    except Exception as e:
+        _atom_debug_error("vector_obs:write", e)
 
 
 def _search_episodic_context(
@@ -1225,24 +1571,356 @@ def _trigger_incremental_index(config: Dict[str, Any]) -> None:
         _atom_debug_error("注入:_trigger_incremental_index", e)
 
 
+# ─── V5+ Realm 維度：SessionEnd 自動歸類搬移 sweep ──────────────────────────
+
+
+def _load_tool_module(filename: str, mod_name: str):
+    """以 spec_from_file_location 載 tools/ 下單檔模組（self-sufficient sys.path）。失敗→None。"""
+    try:
+        import importlib.util
+        p = CLAUDE_DIR / "tools" / filename
+        spec = importlib.util.spec_from_file_location(mod_name, p)
+        if spec is None or spec.loader is None:
+            return None
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return m
+    except Exception as e:
+        _atom_debug_error(f"realm:load_{mod_name}", e)
+        return None
+
+
+def _read_atom_excerpt(rel_path: str, limit: int = 800) -> str:
+    """讀 atom 內文摘要供 LLM 判定（utf-8-sig 容 BOM）。失敗→''。"""
+    try:
+        return (CLAUDE_DIR / rel_path).read_text(encoding="utf-8-sig")[:limit]
+    except OSError:
+        return ""
+
+
+def _is_unconfirmed_autocapture(entry: Dict[str, Any]) -> bool:
+    """index entry 是否為『未確認的 auto-capture 萃取碎片』→ drift sweep defer（不搬、不喚 LLM 學詞）。
+
+    auto-captured 碎片本是未經人確認的 [臨] 萃取，sweep 卻當穩定 core atom
+    處理 → LLM 對其吐專案/標籤詞污染學習詞庫（外部專案知識被搬進根層 _atoms/、碎片被塞進
+    名為 "auto-capture" 的葉夾即此）。整體 defer 斷源頭，待人工確認 / 晉升（[臨]→[觀]）後才正常
+    sweep 歸檔。
+
+    判定（index-only 優先，零 file I/O）：triggers 含 'auto-capture'（extract-worker 預設標籤，
+    涵蓋現存全部污染）。次判（frontmatter，非熱路徑）：Author==auto-captured 且 Confidence==[臨]
+    ——catch『domain_tags 已填、trigger 非預設』但仍未確認的碎片；晉升後 Confidence 變 → 不再 defer。
+    """
+    for t in (entry.get("triggers") or []):
+        if "auto-capture" in str(t).lower():
+            return True
+    author = conf = ""
+    for line in _read_atom_excerpt(entry.get("path") or "", limit=400).splitlines():
+        s = line.strip()
+        if s.startswith("- Author:"):
+            author = s.split(":", 1)[1].strip().lower()
+        elif s.startswith("- Confidence:"):
+            conf = s.split(":", 1)[1].strip()
+        if author and conf:
+            break
+    return author == "auto-captured" and conf == "[臨]"
+
+
+def _autocapture_unconfirmed_from_text(text: str) -> bool:
+    """body 全文判『未確認 auto-capture 碎片』（晉升掃描面用，零額外 file I/O）。
+
+    規則與 _is_unconfirmed_autocapture **同一條**，只是輸入適配器不同（index entry vs 已載入
+    body 全文）：① `- Trigger:` 行含 'auto-capture'（index triggers 即由此行建，已實證 byte-mirror
+    → 等價）；② Author==auto-captured 且 Confidence==[臨]。兩者皆 catch 未經人確認的 [臨] 萃取碎片。
+    改動判定規則時兩函式須同步（adapter 並存、規則單源）。
+    """
+    trig = author = conf = ""
+    for line in text.splitlines():
+        s = line.strip()
+        if not trig and s.startswith("- Trigger:"):
+            trig = s.split(":", 1)[1].lower()
+        elif not author and s.startswith("- Author:"):
+            author = s.split(":", 1)[1].strip().lower()
+        elif not conf and s.startswith("- Confidence:"):
+            conf = s.split(":", 1)[1].strip()
+        if trig and author and conf:
+            break
+    if "auto-capture" in trig:
+        return True
+    return author == "auto-captured" and conf == "[臨]"
+
+
+def _trigger_sync_memory_index() -> None:
+    """搬移後 fire-and-forget 重產 MEMORY.md / _local_catalog.md / per-level _INDEX.md。
+
+    set_realm 只改 _atom_index.json，不重產 catalog；故搬移後須補觸發（對拍 server.js 行為）。
+    """
+    try:
+        import subprocess
+        # Windows: 不帶 CREATE_NO_WINDOW 會讓 fire-and-forget 子行程另開可見 console 視窗
+        _no_window = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        subprocess.Popen(
+            [sys.executable, str(CLAUDE_DIR / "tools" / "sync-memory-index.py"), "--write"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=str(CLAUDE_DIR),
+            creationflags=_no_window,
+        )
+    except Exception as e:
+        _atom_debug_error("realm:sync_index", e)
+
+
+def select_forget_candidates(archive_candidates, config):
+    """Phase D selective forgetting：從封存候選篩出可隔離者（憲法 Forgetting 對策）。
+
+    規則：score < isolate_threshold 且 atom 名不在核心保護清單
+    （LOCAL_REALM_CORE_PROTECTED_EXACT）。純函式、可測。
+    """
+    fcfg = ((config or {}).get("self_iteration") or {}).get("forget") or {}
+    threshold = float(fcfg.get("isolate_threshold", 0.3))
+    try:
+        from lib.atom_locations import LOCAL_REALM_CORE_PROTECTED_EXACT as _protected
+    except Exception:
+        _protected = frozenset()
+    out = []
+    for c in (archive_candidates or []):
+        if float(c.get("score", 1.0)) >= threshold:
+            continue
+        if c.get("atom") in _protected:
+            continue
+        out.append(c)
+    return out
+
+
+def apply_selective_forget(archive_candidates, config, *, atoms_dir=None,
+                           staging_dir=None):
+    """Phase D selective forgetting：stale+低用+非保護 atom 隔離到 `_distant/`。
+
+    `_distant/` 已被 sync-atom-index EXCLUDED_DIR_PARTS 排除 → 搬入即不入索引/不注入、
+    且可逆（搬回即復原），無需手改 index row。**預設 dry-run**（forget.enabled=false
+    或 dry_run=true）→ 只寫候選清單到 _staging、不搬。憲法 selective forgetting 對策。
+    回 {mode, candidates, forgotten, skipped}。
+    """
+    atoms_dir = atoms_dir or MEMORY_DIR
+    fcfg = ((config or {}).get("self_iteration") or {}).get("forget") or {}
+    cands = select_forget_candidates(archive_candidates, config)
+    if staging_dir is not None and cands:  # 候選清單寫 _staging（always；bare count → 可行動）
+        try:
+            staging_dir.mkdir(parents=True, exist_ok=True)
+            lines = ["# Selective-Forget 候選（stale + 低用 + 非核心保護）", ""]
+            lines += [f"- {c.get('atom')} (score={c.get('score')}, "
+                      f"last_used={c.get('last_used')})" for c in cands]
+            (staging_dir / "forget-candidates.md").write_text(
+                "\n".join(lines) + "\n", encoding="utf-8")
+        except OSError as e:
+            _atom_debug_error("forget:write_candidates", e)
+    cand_names = [c.get("atom") for c in cands]
+    if not bool(fcfg.get("enabled", False)) or bool(fcfg.get("dry_run", True)):
+        return {"mode": "dry_run", "candidates": cand_names, "forgotten": [], "skipped": []}
+    import shutil
+    distant = atoms_dir / "_distant"
+    forgotten, skipped = [], []
+    for c in cands:
+        slug = c.get("atom")
+        md = atoms_dir / f"{slug}.md"
+        if not md.exists():
+            skipped.append(slug)
+            continue
+        try:
+            distant.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(md), str(distant / md.name))
+            acc = atoms_dir / f"{slug}.access.json"
+            if acc.exists():
+                shutil.move(str(acc), str(distant / acc.name))
+            forgotten.append(slug)
+        except OSError as e:
+            _atom_debug_error("forget:isolate", e)
+            skipped.append(slug)
+    if forgotten:
+        _trigger_sync_memory_index()  # 重產索引/catalog（_distant 已排除，移除其列）
+    return {"mode": "isolated", "candidates": cand_names,
+            "forgotten": forgotten, "skipped": skipped}
+
+
+def _scan_doc_refs(moved: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+    """搬移後掃**人面向說明文件**是否仍含舊 path/檔名引用（移檔非建檔特有；user 補充）。
+
+    回 {slug: [需同步的 rel 文件...]}。只掃 _AIDocs/（排除 atom 物理區 Failures/_atoms，
+    那裡的 slug 引用是 atom-atom Related、搬 path 不斷）＋根層 README/TECH。advisory only。
+    """
+    docs: List[Path] = []
+    aidocs = CLAUDE_DIR / "_AIDocs"
+    if aidocs.is_dir():
+        for p in aidocs.rglob("*.md"):
+            rel = p.relative_to(CLAUDE_DIR).as_posix()
+            if rel.startswith("_AIDocs/Failures/") or rel.startswith("_AIDocs/_atoms/"):
+                continue
+            docs.append(p)
+    for fn in ("README.md", "TECH.md"):
+        p = CLAUDE_DIR / fn
+        if p.exists():
+            docs.append(p)
+    cache = {}
+    for p in docs:
+        try:
+            cache[p] = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+    refs: Dict[str, List[str]] = {}
+    for m in moved:
+        slug, frm = m.get("slug", ""), m.get("from", "")
+        fname = frm.rsplit("/", 1)[-1] if frm else f"{slug}.md"
+        hits = sorted({
+            p.relative_to(CLAUDE_DIR).as_posix()
+            for p, txt in cache.items() if (frm and frm in txt) or fname in txt
+        })
+        if hits:
+            refs[slug] = hits
+    return refs
+
+
+def _sweep_realm_auto_migrate(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """SessionEnd：掃全域 core atom，自動歸 local（drift 補捉）。非熱路徑。
+
+    兩段判定：① 詞庫（deterministic，含 py-only learned 補 recall）命中 local → 搬；
+    ② 詞庫 miss 的「unknown core」（非 protected）→ 喚 LLM（計畫 Fail-safe 表）：
+      error（基礎設施失敗）→ defer 留原地（**防 Ollama 離線把全部掃進 Else**）；
+      core → 留；local≥門檻 → 搬 canon domain + 學詞；unsure/低信心 → Else。
+    安全網：核心保護硬擋（protected）永不喚 LLM、永不搬；set_realm 原子搬（含 .access.json）/
+      可 undo（--to-core）；max_per_session 限額；搬移寫 marker（含 via + doc-ref）不靜默。
+    回 list of {slug, domain, from, to, via}（空 = 無搬移）。
+    """
+    if classify_realm is None or is_local_realm_path is None or load_atom_index_json is None:
+        return []
+    realm_cfg = config.get("realm", {})
+    if not realm_cfg.get("auto_migrate", True):
+        return []
+
+    llm_cfg = realm_cfg.get("llm_fallback", {})
+    llm_enabled = bool(llm_cfg.get("enabled", False))
+    max_llm = int(llm_cfg.get("max_per_session", 5))
+    min_conf = float(llm_cfg.get("min_confidence", 0.7))
+    learned = load_learned_lexicon() if load_learned_lexicon else {}
+    default_dom = LOCAL_REALM_DEFAULT_DOMAIN
+
+    moved: List[Dict[str, Any]] = []
+    learned_add: Dict[str, str] = {}
+    llm_calls = 0
+    try:
+        mod = _load_tool_module("atom-set-realm.py", "atom_set_realm")
+        if mod is None:
+            return []
+        llm_mod = _load_tool_module("realm_llm_classify.py", "realm_llm_classify") if llm_enabled else None
+        existing_paths = list(enumerate_local_paths(MEMORY_DIR)) if enumerate_local_paths else []
+
+        data = load_atom_index_json(MEMORY_DIR)
+        for a in data.get("atoms", []):
+            name = a.get("name", "")
+            path = a.get("path", "")
+            if not name or is_local_realm_path(path):
+                continue  # 已 local，跳過（idempotent）
+            if _is_unconfirmed_autocapture(a):
+                continue  # P2: 未確認 auto-capture 碎片 → defer（不搬、不喚 LLM 學詞，斷詞庫污染源）
+            rc = classify_realm(name, a.get("triggers", []), extra_lexicon=learned or None)
+
+            target_dom: Optional[str] = None
+            via: Optional[str] = None
+            if rc.get("realm") == "local":
+                target_dom, via = rc.get("domain"), "lex"
+            elif rc.get("protected"):
+                continue  # 核心保護硬擋：永不喚 LLM、永不搬
+            elif llm_mod is not None and llm_calls < max_llm:
+                llm_calls += 1
+                lr = llm_mod.llm_classify_realm(
+                    name, a.get("triggers", []), _read_atom_excerpt(path), existing_paths, config)
+                realm = lr.get("realm")
+                if realm in ("error", "core"):
+                    continue  # 基礎設施失敗→defer / LLM 確信核心→留
+                if realm == "local" and lr.get("confidence", 0.0) >= min_conf:
+                    target_dom, via = lr.get("domain_path") or default_dom, "LLM"
+                    for t in lr.get("terms", []):
+                        learned_add[t] = target_dom
+                    if target_dom:  # 新分支同 session 後續可複用
+                        existing_paths = sorted(set(existing_paths) | {target_dom})
+                else:  # unsure / 低信心 local → catch-all
+                    target_dom, via = default_dom, "Else"
+            else:
+                continue  # LLM 未啟用 / 額度用罄 → 留 core（defer）
+
+            if not target_dom:
+                continue
+            res = mod.set_realm(name, domain=target_dom)
+            if res.get("ok") and not res.get("noop"):
+                moved.append({
+                    "slug": name, "domain": target_dom, "via": via,
+                    "from": res.get("from"), "to": res.get("to"),
+                })
+    except Exception as e:
+        _atom_debug_error("realm:auto_sweep", e)
+
+    # 收尾：學詞回寫 → marker（含 via + doc-ref）→ 補觸發 catalog 重產
+    if learned_add and append_learned_terms:
+        try:
+            append_learned_terms(learned_add)
+        except Exception as e:
+            _atom_debug_error("realm:learned_append", e)
+
+    if moved:
+        doc_refs = {}
+        try:
+            doc_refs = _scan_doc_refs(moved)
+        except Exception as e:
+            _atom_debug_error("realm:doc_ref_scan", e)
+        try:
+            REALM_AUTOMOVE_MARKER.parent.mkdir(parents=True, exist_ok=True)
+            existing: List[Dict[str, Any]] = []
+            if REALM_AUTOMOVE_MARKER.exists():
+                try:
+                    prev = json.loads(REALM_AUTOMOVE_MARKER.read_text(encoding="utf-8"))
+                    if isinstance(prev, list):
+                        existing = prev
+                except (OSError, json.JSONDecodeError):
+                    existing = []
+            payload = list(moved)
+            if doc_refs:  # 附在首筆，SessionStart 統一呈現
+                payload[0] = {**payload[0], "doc_refs": doc_refs}
+            existing.extend(payload)
+            REALM_AUTOMOVE_MARKER.write_text(
+                json.dumps(existing, ensure_ascii=False), encoding="utf-8")
+        except OSError as e:
+            _atom_debug_error("realm:automove_marker", e)
+        _trigger_sync_memory_index()
+    return moved
+
+
 # ─── Self-Iteration: atom 晉升 (was wg_iteration._self_iterate_atoms) ────────
 
 
 def _self_iterate_atoms(
     state: Dict[str, Any], config: Dict[str, Any]
 ) -> Dict[str, Any]:
-    """V2.16: Automated atom decay scoring + [臨]→[觀] auto-promotion.
+    """Atom decay scoring + 效用驅動 [臨]→[觀] auto-promotion.
 
     Runs at SessionEnd. Scans all atom files, calculates health scores,
-    auto-promotes [臨] items in mature atoms, reports archive candidates.
+    auto-promotes [臨] items in mature atoms, reports archive/demote candidates.
+
+    效用驅動：
+      - 慢衰減：每顆 atom α←1+λ(α−1); β←1+λ(β−1)（λ≈0.97），把效用證據往 prior 拉。
+      - 晉升閘改由「真實 Confirmations 主軌 + 效用 Wilson 下界」驅動；
+        ReadHits 降為純曝光計數，不再單獨觸發晉升。
+      - Wilson 下界 ≤ demote_lb 且 n≥min_n → 列降級候選（不自動降，留裁決）。
     """
     si_config = config.get("self_iteration", {})
+    u_config = config.get("usefulness", {}) or {}
     decay_half_life = si_config.get("decay_half_life_days", 30)
     promote_conf_threshold = si_config.get("promote_confirmations_threshold", 4)
-    promote_min_conf = si_config.get("promote_min_confirmations", 20)
     archive_threshold = si_config.get("archive_score_threshold", 0.3)
+    # 效用旋鈕（py↔js 鏡像：server.js）
+    decay_lambda = float(u_config.get("decay_lambda", 0.97))
+    promote_lb = float(u_config.get("promote_lb", 0.6))
+    demote_lb = float(u_config.get("demote_lb", 0.35))
+    min_n = int(u_config.get("min_n", 3))
+    wilson_z = float(u_config.get("wilson_z", 1.96))
 
-    results = {"promoted": [], "archive_candidates": [], "scanned": 0}
+    results = {"promoted": [], "archive_candidates": [],
+               "demote_candidates": [], "scanned": 0}
     today = datetime.now()
 
     # V5+: 全域 atom 搜尋（memory + _AIDocs/Failures/）統一委派 lib.atom_locations。
@@ -1263,15 +1941,34 @@ def _self_iterate_atoms(
         results["scanned"] += 1
 
         try:
-            from lib.atom_access import read_access
+            from lib.atom_access import (
+                read_access, decay_usefulness,
+                usefulness_stats, usefulness_promote_eligible,
+                usefulness_demote_candidate,
+            )
             acc = read_access(md_file)
+            # Step 6 慢衰減（SessionEnd）：把 (α,β) 往 prior 拉，回填衰減後值供晉升判定
+            try:
+                na, nb = decay_usefulness(
+                    md_file, lam=decay_lambda, source="hook:atom-decay")
+                acc["useful_hits"], acc["used_fail"] = na, nb
+            except (OSError, ValueError):
+                pass
         except (ImportError, OSError):
             acc = {}
+            usefulness_stats = None  # type: ignore
+            usefulness_promote_eligible = None  # type: ignore
+            usefulness_demote_candidate = None  # type: ignore
         last_used_raw = acc.get("last_used")
         confirmations = int(acc.get("confirmations") or 0)
         readhits = int(acc.get("read_hits") or 0)
+        u_stats = usefulness_stats(acc, z=wilson_z) if usefulness_stats else {"n": 0}
+        has_use_evidence = u_stats.get("n", 0) > 0
 
-        if not last_used_raw or (confirmations == 0 and readhits == 0):
+        # 無任何活動訊號（注入/確認/效用）→ 跳過
+        if not last_used_raw or (
+            confirmations == 0 and readhits == 0 and not has_use_evidence
+        ):
             continue
         try:
             last_used = datetime.strptime(last_used_raw, "%Y-%m-%d")
@@ -1291,7 +1988,22 @@ def _self_iterate_atoms(
                 "confirmations": confirmations,
             })
 
-        if confirmations >= promote_conf_threshold or readhits >= promote_min_conf:
+        # 晉升 = 真實 Confirmations 主軌 OR 效用 Wilson 下界（升≥promote_lb 且 n≥min_n）。
+        # ReadHits 降為純曝光，不再參與晉升。
+        # py↔js 鏡像：server.js toolAtomPromote usefulness gate。
+        util_eligible = bool(
+            usefulness_promote_eligible
+            and usefulness_promote_eligible(
+                acc, promote_lb=promote_lb, min_n=min_n, z=wilson_z)
+        )
+        promote_method = "confirmations" if confirmations >= promote_conf_threshold else "usefulness"
+        # INV-PROMOTION-GATE-ON-SCAN-FACE：未確認 auto-capture 碎片不得自動晉升（與 realm sweep
+        # 路徑 _sweep_realm_auto_migrate:1768 同源規則：碎片是未經人確認的 [臨] 萃取，confirmations
+        # 達標也不算數，待人工確認/晉升後才算）。斷『佔位符碎片被當穩定 atom 自動晉升』漏洞——
+        # 該過濾原僅在 realm sweep，晉升掃描面缺，故碎片曾被算晉升。手動 atom_promote（js）為
+        # 人工確認路徑、不受此限。
+        if (confirmations >= promote_conf_threshold or util_eligible) \
+                and not _autocapture_unconfirmed_from_text(text):
             lines = text.split("\n")
             promoted_in_file = []
             changed = False
@@ -1330,29 +2042,63 @@ def _self_iterate_atoms(
                     "atom": md_file.stem,
                     "items": promoted_in_file,
                     "confirmations": confirmations,
+                    "method": promote_method,
+                    "lower_bound": round(u_stats.get("lower_bound", 0.0), 3),
                 })
                 log_promotion_audit(
                     "auto_observe", md_file.stem,
                     items=len(promoted_in_file),
                     confirmations=confirmations,
                     header_promoted=header_promoted,
+                    method=promote_method,
+                    lower_bound=round(u_stats.get("lower_bound", 0.0), 3),
                 )
 
-    if results["archive_candidates"]:
+        # 效用 Wilson 下界 ≤ demote_lb 且 n≥min_n、且仍有非[臨]條目 → 降級候選
+        # （不自動降，屬敏感裁決；列入 staging 報告供管理職審視）。
+        if (usefulness_demote_candidate
+                and usefulness_demote_candidate(
+                    acc, demote_lb=demote_lb, min_n=min_n, z=wilson_z)
+                and re.search(r"^- \[(觀|固)\]", text, re.MULTILINE)):
+            results["demote_candidates"].append({
+                "atom": md_file.stem,
+                "lower_bound": round(u_stats.get("lower_bound", 0.0), 3),
+                "alpha": u_stats.get("alpha"),
+                "beta": u_stats.get("beta"),
+                "n": u_stats.get("n"),
+            })
+
+    if results["archive_candidates"] or results["demote_candidates"]:
         cwd = state.get("session", {}).get("cwd", "")
         staging = resolve_staging_dir(cwd)
         staging.mkdir(exist_ok=True)
         out_lines = [
-            f"# Archive Candidates ({today.strftime('%Y-%m-%d')})\n",
-            f"Score < {archive_threshold} — 考慮封存或刪除：\n",
+            f"# Archive / Demote Candidates ({today.strftime('%Y-%m-%d')})\n",
         ]
-        for c in results["archive_candidates"]:
+        if results["archive_candidates"]:
+            out_lines.append(f"## 封存候選（score < {archive_threshold}）\n")
+            for c in results["archive_candidates"]:
+                out_lines.append(
+                    f"- **{c['atom']}** — score={c['score']}, "
+                    f"last_used={c['last_used']}, confirmations={c['confirmations']}"
+                )
+        if results["demote_candidates"]:
             out_lines.append(
-                f"- **{c['atom']}** — score={c['score']}, "
-                f"last_used={c['last_used']}, confirmations={c['confirmations']}"
-            )
+                f"\n## 降級候選（效用 Wilson 下界 ≤ {demote_lb}，n≥{min_n}；需裁決）\n")
+            for c in results["demote_candidates"]:
+                out_lines.append(
+                    f"- **{c['atom']}** — lower_bound={c['lower_bound']}, "
+                    f"α={c['alpha']}, β={c['beta']}, n={c['n']}"
+                )
         (staging / "archive-candidates.md").write_text(
             "\n".join(out_lines), encoding="utf-8"
         )
+
+        # Phase D — selective forgetting（預設 dry-run：只寫候選；enabled+!dry_run 才隔離 _distant/）
+        try:
+            results["forget"] = apply_selective_forget(
+                results["archive_candidates"], config, staging_dir=staging)
+        except Exception as e:
+            _atom_debug_error("forget:apply", e)
 
     return results

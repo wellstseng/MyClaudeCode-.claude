@@ -34,7 +34,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-# S3.3: route memory-audit atom writes through funnel
+# route memory-audit atom writes through funnel
 _CLAUDE_DIR = Path.home() / ".claude"
 if str(_CLAUDE_DIR) not in sys.path:
     sys.path.insert(0, str(_CLAUDE_DIR))
@@ -42,7 +42,7 @@ from lib.atom_io import write_raw  # noqa: E402
 
 _AUDIT_SOURCE = "tool:memory-audit"
 
-# ─── Single source of truth: lib/atom_spec.py（S1.2 規則收束） ────────────────
+# ─── Single source of truth: lib/atom_spec.py（規則收束） ────────────────
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib.atom_spec import (
     SKIP_DIRS, SKIP_PREFIXES, REQUIRED_METADATA, OPTIONAL_METADATA,
@@ -54,16 +54,20 @@ from lib.atom_locations import (
     GLOBAL_MEMORY_DIR, FAILURES_DIR,
     failures_atom_stems, iter_atom_files_multi,
 )
+# 晉升判定權威來源（server.js 的 py 鏡像）：confirmations 主軌 + usefulness Wilson 下界軌。
+# ReadHits 已退役（純曝光、不參與晉升）。
+from lib.atom_access import read_access, usefulness_promote_eligible
 
 # ─── Audit-specific constants（atom_spec 不需共享的） ────────────────────────
 
 STALENESS_THRESHOLDS: Dict[str, int] = {"[固]": 90, "[觀]": 60, "[臨]": 30}
-# v2.1 Sprint 3: Type-based decay multiplier (procedural ages slower, episodic faster)
+# Type-based decay multiplier (procedural ages slower, episodic faster)
 TYPE_DECAY_MULTIPLIER: Dict[str, float] = {"semantic": 1.0, "episodic": 0.8, "procedural": 1.5}
-# SYNC: memory/decisions.md — dual-track promotion thresholds (suggest only, not gate)
+# SYNC: server.js atom_promote — confirmations 主軌（suggest only, not gate）。
+# ReadHits 已退役（純曝光、不參與晉升）；usefulness 軌走 lib.atom_access（自帶 lb/min_n 預設）。
 PROMOTION_THRESHOLDS = {
-    "[臨]": {"confirmations": 4, "readhits": 20},
-    "[觀]": {"confirmations": 10, "readhits": 50},
+    "[臨]": {"confirmations": 4},
+    "[觀]": {"confirmations": 10},
 }
 DISTANT_DIR = "_distant"
 VALID_TYPES = {"semantic", "episodic", "procedural"}
@@ -95,7 +99,7 @@ class AtomMetadata:
     layer_name: str
     title: str = ""
     scope: str = ""
-    scope_label: str = ""  # P7: dedup 用（frontmatter 優先，缺則由路徑推斷；對齊 lib/atom_spec.VALID_SCOPES）
+    scope_label: str = ""  # dedup 用（frontmatter 優先，缺則由路徑推斷；對齊 lib/atom_spec.VALID_SCOPES）
     confidence: str = ""
     trigger: List[str] = field(default_factory=list)
     last_used: Optional[date] = None
@@ -108,7 +112,8 @@ class AtomMetadata:
     evolution_entries: int = 0
     raw_metadata: Dict[str, str] = field(default_factory=dict)
     is_claude_native: bool = False    # True if --- YAML frontmatter (Claude auto-memory)
-    # v2.1 fields (all optional, graceful fallback)
+    had_bad_eol: bool = False         # Fix B: 原始檔含 \r\r\n（雙CR）損壞行尾 → emit warning
+    # Optional fields (all with graceful fallback)
     atom_type: str = "semantic"       # semantic/episodic/procedural
     created: Optional[date] = None
     ttl: Optional[str] = None         # e.g. "30d"
@@ -183,9 +188,17 @@ def parse_atom_file(path: Path, layer_name: str) -> AtomMetadata:
     """
     atom = AtomMetadata(file_path=path, layer_name=layer_name)
     try:
-        text = path.read_text(encoding="utf-8-sig")  # handles BOM
+        # 讀 raw bytes 自行 decode（utf-8-sig 仍處理 BOM）：read_text 會做 universal-newline
+        # 翻譯，會在偵測前就把 \r\r\n 吃掉 → Fix B 的雙CR偵測必須看原始位元組。
+        text = path.read_bytes().decode("utf-8-sig")
     except (OSError, UnicodeDecodeError):
         return atom
+
+    # Fix B: 偵測並修復 \r\r\n（雙CR）損壞行尾。
+    # 不正規化的話 splitlines 會把雙CR拆成假空行 → metadata 迴圈遇假空行 break
+    # → 只讀到第一個欄位 → 後續必填欄誤判缺失。先記旗標（emit warning），再正規化。
+    atom.had_bad_eol = "\r\r\n" in text
+    text = text.replace("\r\r\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
 
     lines = text.splitlines()
     atom.line_count = len(lines)
@@ -223,7 +236,7 @@ def parse_atom_file(path: Path, layer_name: str) -> AtomMetadata:
 
     # Extract structured fields
     atom.scope = atom.raw_metadata.get("Scope", "")
-    # P7: scope_label — frontmatter 優先，缺則路徑推斷（對齊 tools/migrate-scope-field.py:infer_scope）
+    # scope_label — frontmatter 優先，缺則路徑推斷（對齊 tools/migrate-scope-field.py:infer_scope）
     atom.scope_label = atom.scope or _infer_scope_from_path(path)
     raw_conf = atom.raw_metadata.get("Confidence", "")
     cm = CONFIDENCE_EXTRACT.search(raw_conf)
@@ -232,7 +245,7 @@ def parse_atom_file(path: Path, layer_name: str) -> AtomMetadata:
     raw_trigger = atom.raw_metadata.get("Trigger", "")
     atom.trigger = [t.strip() for t in re.split(r"[,，]", raw_trigger) if t.strip()]
 
-    # Wave 2: Last-used / Confirmations / ReadHits 從 <atom>.access.json 讀
+    # Last-used / Confirmations / ReadHits 從 <atom>.access.json 讀
     # （legacy 過渡：若 .md 仍有 frontmatter 欄則作為 fallback，access 優先）
     try:
         from lib.atom_access import read_access
@@ -265,7 +278,7 @@ def parse_atom_file(path: Path, layer_name: str) -> AtomMetadata:
     atom.privacy = atom.raw_metadata.get("Privacy", "public")
     atom.source = atom.raw_metadata.get("Source", "")
 
-    # v2.1 fields — graceful fallback to defaults
+    # Optional fields — graceful fallback to defaults
     atom.atom_type = atom.raw_metadata.get("Type", "semantic").strip().lower()
     if atom.atom_type not in VALID_TYPES:
         atom.atom_type = "semantic"
@@ -392,6 +405,10 @@ def validate_format(atom: AtomMetadata) -> List[Issue]:
     if atom.is_claude_native:
         return issues
 
+    # Fix B: 行尾損壞（\r\r\n）— 修而不掩，emit warning 讓使用者知曉並修原始檔
+    if atom.had_bad_eol:
+        issues.append(Issue(rel, "warning", "format", "行尾損壞（\\r\\r\\n 雙CR）— 已容錯解析，建議修復原始檔行尾"))
+
     # Title
     if not atom.title:
         issues.append(Issue(rel, "error", "format", "缺少 # 標題"))
@@ -463,28 +480,30 @@ def check_staleness(atom: AtomMetadata, today: date) -> Optional[Suggestion]:
 
 
 def suggest_promotions(atom: AtomMetadata) -> Optional[Suggestion]:
-    """Suggest promotion based on dual-track thresholds (v3)."""
+    """Suggest promotion aligned with server.js atom_promote (authoritative).
+
+    真閘只有兩軌（ReadHits 純曝光、已退役、不參與）：
+      - confirmations 主軌：≥ 閾值（[臨]→[觀]=4、[觀]→[固]=10）
+      - usefulness 軌：Wilson 下界 lb≥0.6 且 n≥3（委派 lib.atom_access，不抄公式）
+    """
     thresholds = PROMOTION_THRESHOLDS.get(atom.confidence)
     if thresholds is None:
         return None
 
     conf_ok = atom.confirmations >= thresholds["confirmations"]
-    rh_ok = getattr(atom, "readhits", 0) >= thresholds["readhits"]
-    if not conf_ok and not rh_ok:
+    util_ok = usefulness_promote_eligible(read_access(atom.file_path))
+    if not conf_ok and not util_ok:
         return None
 
-    method = "Conf" if conf_ok else "ReadHits"
-    val = atom.confirmations if conf_ok else getattr(atom, "readhits", 0)
-    req = thresholds["confirmations"] if conf_ok else thresholds["readhits"]
+    if conf_ok:
+        reason = f"Conf={atom.confirmations}（閾值 {thresholds['confirmations']}）"
+    else:
+        reason = "Usefulness Wilson 下界達標（lb≥0.6, n≥3）"
     rel = _rel_path(atom.file_path)
     if atom.confidence == "[臨]":
-        return Suggestion(
-            rel, "[臨]", "[觀]", f"{method}={val}（閾值 {req}）"
-        )
+        return Suggestion(rel, "[臨]", "[觀]", reason)
     elif atom.confidence == "[觀]":
-        return Suggestion(
-            rel, "[觀]", "[固]", f"{method}={val}（閾值 {req}）"
-        )
+        return Suggestion(rel, "[觀]", "[固]", reason)
     return None
 
 
@@ -508,6 +527,14 @@ def validate_index(index_path: Path, memory_dir: Path, index_entries: List[Index
                     actual_files.add(fp.name)
     except OSError:
         pass
+
+    # V5+: atom 實體可居子目錄（專案 shared/<domain>/）或跨層（_AIDocs/Failures、_atoms/）。
+    # actual_files 走扁平 iterdir() → 子目錄 atom 不在其中，index→file 存在性會誤報
+    # 「索引指向不存在的檔案」。補一份遞迴 stem 集作 fallback（委派 iter_atom_files：
+    # global=memory+Failures+_atoms，非 global=rglob 單根，與其餘掃描同源）。
+    # 僅用於 index→file 存在性；file→index 方向仍用扁平 actual_files，避免子目錄
+    # auto-capture atom 全被誤報「未在索引中列出」的洪水。
+    tree_stems: Set[str] = {p.stem for p in iter_atom_files(memory_dir)}
 
     # Check index → file
     indexed_files: Set[str] = set()
@@ -533,7 +560,8 @@ def validate_index(index_path: Path, memory_dir: Path, index_entries: List[Index
         indexed_files.add(file_name)
 
         full_path = memory_dir / file_name
-        if not full_path.exists():
+        entry_stem = file_name[:-3] if file_name.endswith(".md") else file_name
+        if not full_path.exists() and entry_stem not in tree_stems:
             # Try relative to parent of memory_dir
             alt_path = memory_dir.parent / entry.path
             # V5+: feedback-* / cognitive-patterns 居 _AIDocs/Failures/
@@ -566,7 +594,7 @@ def detect_duplicates(all_atoms: List[AtomMetadata]) -> List[DuplicatePair]:
             if a.file_path.parent == b.file_path.parent:
                 continue
 
-            # Title match — P7: 同 (scope_label, normalized title) 才算重複；
+            # Title match — 同 (scope_label, normalized title) 才算重複；
             # 跨 scope 同名 atom（如 global/decisions vs shared/decisions）不該誤判
             key_a = (a.scope_label, _normalize(a.title)) if a.title else None
             key_b = (b.scope_label, _normalize(b.title)) if b.title else None
@@ -659,16 +687,16 @@ def restore_from_distant(atom_path: Path) -> Tuple[bool, str]:
         flags=re.MULTILINE,
     )
 
-    # Wave 2: Last-used / Confirmations / ReadHits 從 .md 移到 access.json，
+    # Last-used / Confirmations / ReadHits 存於 access.json（非 .md），
     # restore 後在 dest path 改寫 access 旁路檔（重置為 0、last_used 設今天）
     today_str = date.today().isoformat()
 
     try:
-        # S3.3: 走 funnel
+        # 走 funnel
         _r = write_raw(dest, text, source=_AUDIT_SOURCE, op="audit_demote")
         if not _r.ok:
             raise OSError(_r.error)
-        # 同步 access 旁路檔重置（Wave 2）
+        # 同步 access 旁路檔重置
         try:
             from lib.atom_access import write_access_field
             write_access_field(dest, field="confirmations", value=0,
@@ -724,19 +752,19 @@ def _append_evolution_entry(atom_path: Path, change: str, source: str = "memory-
                             lines.insert(j + 1, entry_line)
                             break
                     break
-        # S3.3: 走 funnel
+        # 走 funnel
         write_raw(atom_path, "\n".join(lines), source=_AUDIT_SOURCE, op="audit_evolution_insert")
     else:
         # No evolution log section; append one
         text += f"\n\n## 演化日誌\n\n| 日期 | 變更 | 來源 |\n|------|------|------|\n{entry_line}\n"
-        # S3.3: 走 funnel
+        # 走 funnel
         write_raw(atom_path, text, source=_AUDIT_SOURCE, op="audit_evolution_create")
 
 
 def compact_evolution_logs(
     atom_path: Path, max_entries: int = 10, dry_run: bool = False
 ) -> Optional[str]:
-    """Compact evolution log: merge oldest entries into a summary if > max_entries (v2.1 Sprint 3)."""
+    """Compact evolution log: merge oldest entries into a summary if > max_entries."""
     try:
         text = atom_path.read_text(encoding="utf-8-sig")
     except (OSError, UnicodeDecodeError):
@@ -795,7 +823,7 @@ def compact_evolution_logs(
         else:
             new_lines.append(line)
 
-    # S3.3: 走 funnel
+    # 走 funnel
     write_raw(atom_path, "\n".join(new_lines), source=_AUDIT_SOURCE, op="audit_compact")
     return f"COMPACTED: {rel} — merged {merge_count} entries ({earliest}~{latest})"
 
@@ -803,7 +831,7 @@ def compact_evolution_logs(
 def delete_atom(
     atom_name: str, layer: str = "global", purge: bool = False, dry_run: bool = False
 ) -> Tuple[bool, str]:
-    """Delete an atom with full chain propagation (v2.1 Sprint 2).
+    """Delete an atom with full chain propagation.
 
     Steps:
     1. Locate atom file
@@ -1075,7 +1103,7 @@ AUDIT_LOG_PATH = CLAUDE_DIR / "memory" / "_vectordb" / "audit.log"
 
 
 def _write_audit_entry(entry: Dict[str, Any]) -> None:
-    """Append a JSONL entry to audit.log (v2.1 Sprint 3)."""
+    """Append a JSONL entry to audit.log."""
     entry["ts"] = datetime.now().isoformat(timespec="seconds")
     AUDIT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -1086,7 +1114,7 @@ def _write_audit_entry(entry: Dict[str, Any]) -> None:
 
 
 def parse_audit_log() -> Dict[str, Any]:
-    """Parse audit.log JSONL and aggregate statistics (v2.1 Sprint 3)."""
+    """Parse audit.log JSONL and aggregate statistics."""
     stats: Dict[str, Any] = {
         "total_entries": 0,
         "by_action": {},
@@ -1138,11 +1166,11 @@ def discover_layers(
 ) -> List[Tuple[str, Path]]:
     """Discover all memory layers.
 
-    V2.21: project_dir 若提供，優先列在 global 之前（專案層優先）。
+    project_dir 若提供，優先列在 global 之前（專案層優先）。
     """
     layers: List[Tuple[str, Path]] = []
 
-    # V2.21: 專案自治層（{project_root}/.claude/memory/）
+    # 專案自治層（{project_root}/.claude/memory/）
     # global_only=True 時跳過專案層
     if not global_only and project_dir and project_dir.is_dir() and (project_dir / MEMORY_INDEX).exists():
         layers.append(("project", project_dir))
@@ -1238,7 +1266,7 @@ def generate_markdown_report(report: HealthReport) -> str:
             lines.append(f"| {d.file_a} | {d.file_b} | {triggers} | {'Yes' if d.title_match else 'No'} |")
         lines.append("")
 
-    # Audit Trail Summary (v2.1 Sprint 3)
+    # Audit Trail Summary
     if report.audit_stats and report.audit_stats.get("total_entries", 0) > 0:
         stats = report.audit_stats
         lines.append("## Audit Trail Summary")
@@ -1304,7 +1332,7 @@ def _normalize(s: str) -> str:
 
 
 def _infer_scope_from_path(atom_path: Path) -> str:
-    """P7: 由路徑推斷 scope（fallback when frontmatter 缺 Scope:）。
+    """由路徑推斷 scope（fallback when frontmatter 缺 Scope:）。
 
     對齊 tools/migrate-scope-field.py:infer_scope 與 lib/atom_spec.VALID_SCOPES。
     支援 ~/.claude/memory/ 與 {project}/.claude/memory/ 兩種根層。
@@ -1416,7 +1444,7 @@ def run_audit(args: argparse.Namespace) -> HealthReport:
     # Detect cross-layer duplicates
     report.duplicates.extend(detect_duplicates(all_atoms))
 
-    # Audit trail statistics (v2.1 Sprint 3)
+    # Audit trail statistics
     report.audit_stats = parse_audit_log()
 
     return report
@@ -1432,21 +1460,21 @@ def main():
     parser.add_argument("--global-only", action="store_true", help="只掃描全域層")
     parser.add_argument("--project", type=str, default=None, help="指定專案名稱過濾（舊路徑過濾）")
     parser.add_argument("--project-dir", type=str, default=None,
-                        help="V2.21 專案記憶目錄（{project_root}/.claude/memory/），列在全域層之前")
+                        help="專案記憶目錄（{project_root}/.claude/memory/），列在全域層之前")
     parser.add_argument("--json", action="store_true", help="JSON 格式輸出")
     parser.add_argument("--verbose", action="store_true", help="含逐 atom 詳細資訊")
 
-    # Decay enforce (v2.1)
+    # Decay enforce
     parser.add_argument("--enforce", action="store_true",
                         help="自動淘汰：[臨]>30d 移入 _distant/，[觀]>60d 標記 pending-review")
     parser.add_argument("--dry-run", action="store_true",
                         help="搭配 --enforce/--compact-logs，只報告不執行")
 
-    # Evolution log compaction (v2.1 Sprint 3)
+    # Evolution log compaction
     parser.add_argument("--compact-logs", action="store_true",
                         help="壓縮演化日誌：超過 10 筆合併為摘要")
 
-    # Delete propagation (v2.1 Sprint 2)
+    # Delete propagation
     parser.add_argument("--delete", type=str, metavar="ATOM_NAME",
                         help="刪除 atom（移入 _distant/），全鏈清除 LanceDB + Related 引用 + MEMORY.md 索引")
     parser.add_argument("--purge", type=str, metavar="ATOM_NAME",
@@ -1461,7 +1489,7 @@ def main():
 
     args = parser.parse_args()
 
-    # Handle delete/purge (v2.1 Sprint 2)
+    # Handle delete/purge
     if args.delete or args.purge:
         atom_name = args.delete or args.purge
         purge = bool(args.purge)
@@ -1499,12 +1527,12 @@ def main():
         print(msg)
         sys.exit(0 if ok else 1)
 
-    # Enforce decay (v2.1)
+    # Enforce decay
     if args.enforce:
         enforce_decay(args)
         return
 
-    # Compact evolution logs (v2.1 Sprint 3)
+    # Compact evolution logs
     if args.compact_logs:
         layers = discover_layers(global_only=args.global_only, project_filter=args.project,
                                  project_dir=_project_dir_from_args(args))

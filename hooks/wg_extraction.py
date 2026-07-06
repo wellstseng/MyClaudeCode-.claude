@@ -104,12 +104,29 @@ def _count_new_assistant_chars(transcript_path, byte_offset: int) -> int:
                         t = block.get("text", "")
                         if t and len(t) > 30:
                             total += len(t)
-    except (OSError, UnicodeDecodeError):
+    except (OSError, UnicodeDecodeError) as e:
+        _atom_debug_error("extraction:count_assistant_chars", e)
         pass
     return total
 
 
 # ─── Worker Spawning ─────────────────────────────────────────────────────────
+
+
+def _gui_python() -> str:
+    """回傳 GUI-subsystem pythonw（無 console 視窗）；找不到退回 sys.executable。
+
+    坑：hermes venv 的 pythonw 是 **console-subsystem**（uv venv trampoline 會 re-exec
+    成 base python.exe），spawn 出來會閃黑窗；且 `CREATE_NO_WINDOW | DETACHED_PROCESS`
+    組合在 console 子行程上不保證壓窗。故改用穩定的 uv default-shim GUI pythonw
+    （`AppData\\Local\\Python\\bin\\pythonw.exe`，路徑無版本號→ uv 升級不破）。
+    與 settings.json hook interpreter 同源；見 atom
+    windows-cc-hook-閃-console-pythonw-修-layer-1勿只補巢狀-creationflags。"""
+    if sys.platform == "win32":
+        cand = Path.home() / "AppData" / "Local" / "Python" / "bin" / "pythonw.exe"
+        if cand.exists():
+            return str(cand)
+    return sys.executable
 
 
 def _spawn_extract_worker(ctx_dict: dict) -> int:
@@ -131,7 +148,7 @@ def _spawn_extract_worker(ctx_dict: dict) -> int:
         try:
             json_ctx = json.dumps(ctx_dict, ensure_ascii=False)
             proc = _sp.Popen(
-                [sys.executable, str(worker_path)],
+                [_gui_python(), str(worker_path)],
                 stdin=_sp.PIPE,
                 stdout=_sp.DEVNULL,
                 stderr=worker_log_fh,
@@ -209,7 +226,7 @@ def _maybe_spawn_per_turn_extraction(
         state["last_per_turn_extraction_at"] = _now_iso()
         write_state(session_id, state)
         print(
-            f"[v2.12] per-turn extract-worker spawned (pid={pid}, offset={prev_offset}, new_chars={new_chars})",
+            f"per-turn extract-worker spawned (pid={pid}, offset={prev_offset}, new_chars={new_chars})",
             file=sys.stderr,
         )
 
@@ -452,7 +469,8 @@ def write_hot_cache(data: dict) -> None:
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         os.replace(str(tmp_path), str(HOT_CACHE_PATH))
-    except OSError:
+    except OSError as e:
+        _atom_debug_error("extraction:hot_cache_write", e)
         if tmp_path.exists():
             try:
                 tmp_path.unlink()
@@ -470,7 +488,8 @@ def read_hot_cache(session_id: str) -> Optional[dict]:
     try:
         with open(HOT_CACHE_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as e:
+        _atom_debug_error("extraction:hot_cache_read", e)
         return None
     finally:
         _release_lock(lock_fh, lock_mod, LOCK_PATH)
@@ -512,7 +531,8 @@ def mark_injected(session_id: str) -> bool:
             json.dump(data, f, ensure_ascii=False, indent=2)
         os.replace(str(tmp_path), str(HOT_CACHE_PATH))
         return True
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as e:
+        _atom_debug_error("extraction:hot_cache_mark_injected", e)
         return False
     finally:
         _release_lock(lock_fh, lock_mod, LOCK_PATH)

@@ -2,7 +2,7 @@
 
 - Scope: global
 - Confidence: [固]
-- Trigger: hook system, hooks.json, pre_tool_use, post_tool_use, session_start, session_end, hook event, hook 事件, lifecycle hook, 生命週期, hook 開發, permission_request, PromptRequest, hook timeout, updatedInput
+- Trigger: hook system, hooks.json, pre_tool_use, post_tool_use, session_start, session_end, hook event, hook 事件, lifecycle hook, 生命週期, hook 開發, permission_request, PromptRequest, hook timeout, updatedInput, sub-agent injection, Agent tool, tool_response, hot reload
 - Last-used: 2026-04-01
 - Confirmations: 1
 - Related: cc-harness-overview, cc-tool-system, cc-permission-system, cc-skills-plugins
@@ -16,6 +16,10 @@
 - [固] permission_denied, stop_failure
 - [固] subagent_start, subagent_stop
 - [固] task_created, task_completed
+- [固] **2026-06-01 實測補正（反編譯實跑 binary 字串表 + Zod schema，非上游 dated source）**：真實事件名為 **camelCase**（非上列 snake_case）。實跑 v2.1.159 roster：`PreToolUse`/`PostToolUse`/`PostToolUseFailure`/**`PostToolBatch`**/`UserPromptSubmit`/`UserPromptExpansion`/`SessionStart`/`SessionEnd`/`Setup`/`PreCompact`/**`PostCompact`**/`Notification`/`MessageDisplay`/`SubagentStart`/`SubagentStop`/`TaskCreated`/`TaskCompleted`/`Stop`/`StopFailure`/`InstructionsLoaded`/`ConfigChange`/`CwdChanged`/`FileChanged`/`WorktreeCreate`/`WorktreeRemove`/`Elicitation` 等。
+- [固] **版本分裂陷阱**：`PostCompact`/`PostToolBatch` 等較新事件**僅存在於新版**——實測 VSCode 擴充套件 `claude.exe` **v2.1.159 有**；終端 native install **v2.1.37 grep 0 次（不存在）**。未知事件的 hook 設定會被**靜默忽略**（不報錯）。為新事件設 hook 前先確認執行環境版本。
+- [固] `PostToolBatch`：一批（含並行）工具全解析後觸發**一次**（`PostToolUse` 為 per-tool），於下個 model request 前；payload `tool_calls[]`，**支援 additionalContext 注入且可 block**，無 matcher。
+- [固] `SessionStart.source` enum = `startup|resume|clear|`**`compact`**；`PreCompact`/`PostCompact` matcher = `trigger`(`manual`/`auto`)；`PostCompact` payload = `trigger`+`compact_summary`；`InstructionsLoaded.load_reason` 含 `compact`（→ 壓縮時 CLAUDE.md/@import 重載，atom 索引不丟）。壓縮完成路徑（`compact_end`）實測觸發 **PostCompact**（`bPH`）。
 
 ### Hook 定義格式（.claude/hooks.json）
 - [固] 條件觸發：`if: { tool: "BashTool", input_contains: "npm publish" }`
@@ -36,6 +40,9 @@
 ### Hook 修改工具輸入（updatedInput）
 - [固] Hook 可回傳 updatedInput 改寫工具輸入（如 `--force` → `--force-with-lease`）
 - [固] 透明度代價：Claude 不知道實際執行與其意圖的差異
+- [固] **欄位名是 `updatedInput`（非 `modifiedInput`）**，置於 `hookSpecificOutput`（與 `permissionDecision` 同層）；值為**完整 tool_input 物件**（取代原 input，須保留所有原鍵、只改目標欄）。2026-06-01 對 **Agent/Task 工具實測採納**：PreToolUse prepend 記憶 blob 到 sub-agent 的 `prompt`，sub-agent 實際收到（以 PostToolUse `tool_response.prompt` 為 ground truth 驗證，非靠 sub-agent 自評——LLM 對自身完整 prompt 內省不可靠）。
+- [固] settings.json hooks 設定**檔案變更即熱重載**：同一 session 內新增/改 matcher 即生效，無需重啟 CC（與「Memoized Hook Loading：檔案變更驅動快取失效」一致）。
+- [固] Agent/Task 的 PostToolUse `tool_response` 含 `agentId` / `agentType` / `content`(list[{type,text}]) / `prompt`(**注入後的完整 prompt**) / `status` / `totalTokens` / `usage`；頂層另有 `tool_use_id` / `transcript_path` / `cwd` → 可**無狀態**回推 PreToolUse 注入內容並做歸因（避開 Pre→Post 跨進程關聯與 parallel agent race）。
 
 ### PromptRequest 協議（Hook 向使用者提問）
 - [固] Hook 輸出 PromptRequest JSON → Claude Code 呈現選項 → 使用者選擇 → PromptResponse 寫回 stdin
@@ -55,6 +62,10 @@
 - [固] PostToolUse 的 additionalContext 是**即時生效**的（同一 turn 內 Claude 可見，不需等下一輪）
 - [固] Async hook 完成後 systemMessage 自動注入下一輪（additionalContext 同理，但 Stop 不適用）
 - [固] Stop hook 不支援 additionalContext，只有 block + reason + systemMessage
+- [固] **2026-06-01 實測：支援 `hookSpecificOutput.additionalContext` 注入的事件**（Zod schema 實證）：`UserPromptSubmit`(required) / `PostToolUse` / **`PostToolBatch`** / `SessionStart` / `SubagentStart` / `PostToolUseFailure` / `UserPromptExpansion` / `Notification` / `Setup`。
+- [固] **⚠ `PostCompact` 不支援 additionalContext（無法注入）**——只收 `trigger`+`compact_summary`。故「壓縮後重注入記憶」**不能靠 PostCompact**，須改用 `SessionStart(compact)` 或 **`PostToolBatch`**。本核心選配 #4 採「PostCompact stash → 下個 PostToolBatch 一次性注入」閉合 mid-turn auto-compact 失憶缺口（`plans/deep-wobbling-bentley.md`、`hooks/handlers/post_compact.py`+`post_tool_batch.py`）。
+- [固] **2026-06-01 Phase-0 實測結論（`/compact` 探針，事後已移除）**：full 手動 `/compact` 觸發序 = `PreCompact` →（壓縮約 2 min）→ **`SessionStart(source=compact)`** → `PostCompact`，即 `SessionStart(compact)` **確實觸發**（早於 PostCompact），故 [session_start.py:230-249](../../hooks/handlers/session_start.py#L230-L249) 的 compact 分支**非死碼，保留**。⚠ 但 `SessionStart(compact)` **不保證觸發**：另觀察到一次近瞬時（1 s）manual compact 僅 `PreCompact`+`PostCompact`、無 SessionStart（疑 no-op / auto-compact 路徑），故壓縮後**內文**復原**不可依賴 SessionStart(compact)**。
+- [固] **兩路復原互補不重複**：`SessionStart(compact)` 分支僅「列出壓縮前 atom 名稱」（資訊性 ~30 tok）並清空 `injected_atoms`；完整 atom **內文**的壓縮後復原由 `PostCompact`（讀 PreCompact 快照 `pre_compact_injected_atoms` → stash blob）→ `PostToolBatch`（下一批工具後一次性 `additionalContext` 注入 → 清 flag → 名單 merge 回 `injected_atoms`）負責（選配 #4）。**E2E 實證**：full `/compact` 後 PostToolBatch 成功復原 5 atom 內文（workflow-rules / feedback-completion-gates / preferences / feedback-tooling-reliability / decisions）。snapshot 設計正是為了抵禦 SessionStart(compact) 早於 PostCompact 清空 `injected_atoms` 的順序。
 
 ## 行動
 

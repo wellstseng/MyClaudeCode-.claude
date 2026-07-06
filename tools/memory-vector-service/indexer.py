@@ -20,8 +20,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-# V2.20: import wg_core for centralized path logic
+# import wg_core for centralized path logic
 sys.path.insert(0, str(Path.home() / ".claude" / "hooks"))
+# lib.* 需 ~/.claude 在 sys.path，否則 L28 `from lib.atom_locations`
+# 直接 ModuleNotFoundError → service.py fire-and-forget spawn 秒崩 → 不寫 vector_ready.flag
+# → 6 個 consumer 全 no_flag short-circuit（語意召回/episodic/衝突偵測靜默死）
+sys.path.insert(0, str(Path.home() / ".claude"))
 from ollama_client import get_client
 from wg_core import CLAUDE_DIR, MEMORY_DIR, discover_memory_layers
 # V5+ Session β: Failures layer 注入 + stems filter（對拍 lib/atom_locations）
@@ -678,7 +682,7 @@ def cleanup_stale_chunks(
     config: Dict[str, Any],
     verbose: bool = False,
 ) -> Dict[str, Any]:
-    """V5 P5a: Delete chunks for atoms that no longer exist on disk.
+    """Delete chunks for atoms that no longer exist on disk.
 
     Iterates DB rows, builds set of orphan (layer, atom_name) tuples
     by comparing against current discover_atoms() result. Deletes those rows.
@@ -806,7 +810,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--incremental", action="store_true")
     ap.add_argument("--cleanup-stale", action="store_true",
-                    help="V5 P5a: delete chunks for atoms no longer on disk")
+                    help="delete chunks for atoms no longer on disk")
     ap.add_argument("--verbose", action="store_true", default=True)
     args = ap.parse_args()
 

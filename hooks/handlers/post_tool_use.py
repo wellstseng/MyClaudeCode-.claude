@@ -5,6 +5,7 @@ handlers/post_tool_use.py — PostToolUse hook handler
 偵測測試失敗、_CHANGELOG 自動 roll、staging 命名、路徑強制、docdrift、hot cache mid-turn 注入。
 """
 
+import json
 import re
 import subprocess
 import sys
@@ -13,10 +14,11 @@ from typing import Any, Dict
 
 from wg_core import (
     _ensure_state, _now_iso, write_state, output_json, output_nothing,
+    _atom_debug_error, WORKFLOW_DIR,
 )
 from wg_episodic import _check_output_quality
 from wg_extraction import _is_lease_valid  # noqa: F401
-from wg_evasion import is_test_command, detect_test_failure
+from wg_evasion import is_test_command, detect_test_failure, aec_severity
 from wg_atoms import _trigger_incremental_index
 from wg_extraction import is_plan_filename
 from handlers._shared import (
@@ -32,6 +34,67 @@ _CHANGELOG_TABLE_DATA_RE = re.compile(r"^\|\s*\d{4}-\d{2}-\d{2}\s*\|")
 # 已人工確認為長期藍圖、雖檔名含 "plan" 但應常駐 _AIDocs/ 的文件（lowercase basename）。
 # 命中者跳過「暫時性文件」勸告，免 guardian 對正典文件反覆誤報。
 _AIDOCS_PLAN_WHITELIST = {"csharp_port_plan.md"}
+
+# git/svn commit 指令偵測（供 ScanReport 閘「本 turn 已 commit → 豁免收尾檢核」）。
+# 限 commit 出現在首個管線/串接段之前，故 `git log | grep commit` 不誤中。
+_VCS_COMMIT_RE = re.compile(r"\b(?:git|svn)\b[^|&;\n]*?\bcommit\b", re.IGNORECASE)
+
+# 從 sub-agent prompt 的注入 header 回推 atom 清單。
+#   header 形如：[WG:SubagentMemory] …… atoms=a,b,c
+_SUBAGENT_ATOMS_RE = re.compile(r"\[WG:SubagentMemory\][^\n]*?atoms=([^\n]+)")
+_SUBAGENT_INJ_CAP = 50          # state 中保留最近 N 筆 spawn 記錄
+_SUBAGENT_SUMMARY_CAP = 400     # agent 輸出摘要字元上限
+
+
+def _extract_agent_output_summary(tool_response: Dict[str, Any], cap: int = _SUBAGENT_SUMMARY_CAP) -> str:
+    """從 Agent tool_response.content 擷取文字摘要。content 為 [{type,text}, ...]。"""
+    content = tool_response.get("content", "")
+    text = ""
+    if isinstance(content, list):
+        parts = []
+        for blk in content:
+            if isinstance(blk, dict) and blk.get("type") == "text":
+                parts.append(str(blk.get("text", "")))
+            elif isinstance(blk, str):
+                parts.append(blk)
+        text = "\n".join(parts)
+    elif isinstance(content, str):
+        text = content
+    text = text.strip().replace("\r", " ")
+    return text[:cap]
+
+
+def _record_subagent_injection(state: Dict[str, Any], input_data: Dict[str, Any]) -> bool:
+    """記錄某次 sub-agent spawn 注入了哪些 atom + 輸出摘要。回 True 表示有寫入。
+
+    無狀態回推：注入清單來自 tool_response.prompt（注入後完整 prompt）的 blob marker；
+    無 marker（本次未注入）→ 不記錄、回 False。
+    """
+    tr = input_data.get("tool_response", {})
+    if not isinstance(tr, dict):
+        return False
+    prompt = tr.get("prompt", "") or input_data.get("tool_input", {}).get("prompt", "") or ""
+    m = _SUBAGENT_ATOMS_RE.search(prompt)
+    if not m:
+        return False
+    atoms = [a.strip() for a in m.group(1).split(",") if a.strip()]
+    if not atoms:
+        return False
+
+    rec = {
+        "agent_id": tr.get("agentId", "") or "",
+        "agent_type": tr.get("agentType", "") or "",
+        "atoms": atoms,
+        "status": tr.get("status", "") or "",
+        "output_summary": _extract_agent_output_summary(tr),
+        "tool_use_id": input_data.get("tool_use_id", "") or "",
+        "at": _now_iso(),
+    }
+    injections = state.setdefault("subagent_injections", [])
+    injections.append(rec)
+    if len(injections) > _SUBAGENT_INJ_CAP:
+        state["subagent_injections"] = injections[-_SUBAGENT_INJ_CAP:]
+    return True
 
 
 def _maybe_auto_roll_changelog(file_path: str, config: Dict[str, Any]) -> None:
@@ -73,8 +136,125 @@ def _maybe_auto_roll_changelog(file_path: str, config: Dict[str, Any]) -> None:
              f"--keep={threshold}", "--quiet"],
             **bg_kwargs,
         )
-    except Exception:
+    except Exception as e:
+        _atom_debug_error("post_tool_use:changelog_auto_roll", e)
         pass
+
+
+def _maybe_sync_skill_index(file_path: str, config: Dict[str, Any]) -> None:
+    """Detached `skill-index.py --write` when a skills/*/SKILL.md is added/edited.
+
+    skill 計數 SoT 自動同步：重生 _skill_index.json + 重寫文件 marker。Bash 刪除等
+    本 hook 漏接的情況由 SessionStart --check 防呆。Fail-open。"""
+    try:
+        normalized = file_path.replace("\\", "/")
+        if "/skills/" not in normalized or not normalized.endswith("/SKILL.md"):
+            return
+        cfg = (config or {}).get("skill_index", {}) or {}
+        if not cfg.get("enabled", True):
+            return
+        tool_path = Path(__file__).resolve().parent.parent.parent / "tools" / "skill-index.py"
+        if not tool_path.exists():
+            return
+        bg_kwargs: dict = {
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+        }
+        if sys.platform == "win32":
+            bg_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        else:
+            bg_kwargs["start_new_session"] = True
+        subprocess.Popen([sys.executable, str(tool_path), "--write"], **bg_kwargs)
+    except Exception as e:
+        _atom_debug_error("post_tool_use:skill_index_sync", e)
+        pass
+
+
+# ─── Anti-Evasion HUD：one-writer 寫入者（MCP tool 只 emit、此處獨佔寫 state/檔）──
+
+
+def _write_aec_report_file(session_id: str, turn_seq: int, report: Dict[str, Any]) -> None:
+    """落 per-turn 報告檔 workflow/aec-report/<sid>-t<turn>.json（atomic tmp→rename）。
+
+    供 HUD 唯讀輪詢最新卡 + 歷史格瀏覽；港口持有者 glob 子夾供頁、與哪個 session 的 MCP
+    跑了 tool 無關（Python 寫 disk，跨 instance 安全）。命名比照 codex-companion
+    _assessment_turn_path。Fail-open。"""
+    try:
+        d = WORKFLOW_DIR / "aec-report"
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / f"{session_id}-t{turn_seq}.json"
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(p)
+    except OSError as e:
+        _atom_debug_error("post_tool_use:aec_report_write", e)
+
+
+def _hud_beat_fresh(port: int, threshold_s: int) -> bool:
+    """GET /api/aec/beat-status → age_s < threshold？不可達 / 舊碼(404) / 逾時 → False（窗死）。"""
+    try:
+        import urllib.request
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/aec/beat-status", timeout=0.6
+        ) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        return int(data.get("age_s", 10 ** 9)) < threshold_s
+    except Exception:
+        return False
+
+
+def _find_edge() -> str:
+    """定位 msedge 執行檔（僅 Windows 主環境；找不到回 ""）。"""
+    if sys.platform == "win32":
+        for c in (
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        ):
+            if Path(c).exists():
+                return c
+    return ""
+
+
+def _spawn_hud_edge(port: int) -> None:
+    """no-shell spawn Edge --app 開 HUD（config gate 已過）。全庫唯一 browser 外呼，
+    刻意 shell=False（AV 安全，比照 server.js 純 Node 設計）。Fail-open。"""
+    edge = _find_edge()
+    if not edge:
+        return
+    url = f"http://127.0.0.1:{port}/aec/hud"
+    bg: dict = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    if sys.platform == "win32":
+        bg["creationflags"] = subprocess.CREATE_NO_WINDOW
+    else:
+        bg["start_new_session"] = True
+    try:
+        subprocess.Popen([edge, f"--app={url}"], shell=False, **bg)
+    except (OSError, ValueError) as e:
+        _atom_debug_error("post_tool_use:aec_spawn_edge", e)
+
+
+def _maybe_spawn_hud(sev: str, state: Dict[str, Any], config: Dict[str, Any]) -> None:
+    """窗活著（心跳新）→ 會輪詢渲染、無需 fallback。窗死：config.aec.hud_autospawn 才嘗試
+    spawn Edge（預設關）；且 sev∈{notable,real-evasion} → 標 aec_hud_fallback 供 Stop 大聲
+    補 chat（可觀測性鐵律：push 不到窗不得 fail-silent）。routine 窗死只落 disk（無退避訊號、
+    可事後由歷史格瀏覽，非違反可觀測性）。Fail-open。"""
+    try:
+        aec_cfg = (config or {}).get("aec", {}) or {}
+        port = int((config or {}).get("dashboard_port", 3848))
+        threshold = int(aec_cfg.get("hud_stale_s", 30))
+        if _hud_beat_fresh(port, threshold):
+            return
+        if aec_cfg.get("hud_autospawn", False):
+            _spawn_hud_edge(port)
+        if sev in ("notable", "real-evasion"):
+            state["aec_hud_fallback"] = True
+    except Exception as e:
+        _atom_debug_error("post_tool_use:aec_maybe_spawn_hud", e)
 
 
 def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
@@ -88,8 +268,20 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
     tool_input = input_data.get("tool_input", {})
     file_path = tool_input.get("file_path", "")
 
+    # ─── sub-agent 注入歸因記錄 ───────────────────────────────
+    # PostToolUse 對 Agent/Task 自足：tool_response 含 agentId / content / prompt
+    # （注入後的完整 prompt）。從 blob marker 回推注入清單 + 擷取輸出摘要，
+    # keyed by agentId 寫入 state，供注入→使用→結果歸因。
+    if tool_name in ("Agent", "Task"):
+        try:
+            if _record_subagent_injection(state, input_data):
+                write_state(session_id, state)
+        except Exception as e:
+            print(f"sub-agent inject record error: {e}", file=sys.stderr)
+
     if tool_name in ("Edit", "Write") and file_path:
         _maybe_auto_roll_changelog(file_path, config)
+        _maybe_sync_skill_index(file_path, config)
 
     if (
         tool_name in ("Edit", "Write")
@@ -99,6 +291,7 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         state.setdefault("modified_files", []).append({
             "path": file_path,
             "tool": tool_name,
+            "session_id": session_id,
             "at": _now_iso(),
         })
         state["sync_pending"] = True
@@ -110,7 +303,7 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             try:
                 wisdom_track_retry(state, file_path)
             except Exception as e:
-                print(f"[v2.8] Wisdom retry track error: {e}", file=sys.stderr)
+                print(f"Wisdom retry track error: {e}", file=sys.stderr)
 
         try:
             qf = _check_output_quality(file_path, session_id, config)
@@ -119,12 +312,12 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                     "rewritten_files", []
                 ).append(qf)
                 print(
-                    f"[v2.7] Quality feedback: {file_path} was also modified "
+                    f"Quality feedback: {file_path} was also modified "
                     f"in session {qf['original_session']}",
                     file=sys.stderr,
                 )
         except Exception as e:
-            print(f"[v2.7] Quality check error: {e}", file=sys.stderr)
+            print(f"Quality check error: {e}", file=sys.stderr)
 
         write_state(session_id, state)
 
@@ -141,7 +334,7 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                     f"建議重新命名：mv → next-phase.md"
                 )
                 print(
-                    f"[v2.16] Staging name gate: {staging_fname}", file=sys.stderr
+                    f"Staging name gate: {staging_fname}", file=sys.stderr
                 )
 
         _claude_projects_pat = "/.claude/projects/"
@@ -159,12 +352,12 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                     _correct_base = f"{_proj_root_norm}/.claude/memory/"
                     state["_path_enforcement_advisory"] = (
                         f"🚫 **路徑錯誤** — 寫入了舊個人層路徑 `~/.claude/projects/*/memory/`。\n"
-                        f"V2.21 規則：專案記憶必須寫到 `{_correct_base}`。\n"
+                        f"規則：專案記憶必須寫到 `{_correct_base}`。\n"
                         f"正確路徑：`{_correct_base}{_rel_part}`\n"
                         f"請立即搬移檔案並刪除錯誤路徑的副本。"
                     )
                     print(
-                        f"[v2.22] Path enforcement BLOCKED: {normalized} → should be {_correct_base}{_rel_part}",
+                        f"Path enforcement BLOCKED: {normalized} → should be {_correct_base}{_rel_part}",
                         file=sys.stderr,
                     )
 
@@ -176,7 +369,7 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                     f"建議放 memory/_staging/ 而非 _AIDocs/。"
                     f"判斷基準：實作完成後是否仍有長期參考價值？"
                 )
-                print(f"[v2.15] AIDocs gate triggered: {fname}", file=sys.stderr)
+                print(f"AIDocs gate triggered: {fname}", file=sys.stderr)
 
         if DOCDRIFT_AVAILABLE and config.get("docdrift", {}).get("enabled", True):
             try:
@@ -186,7 +379,7 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                     check_source_drift(file_path, state, config)
                 write_state(session_id, state)
             except Exception as e:
-                print(f"[v3.3] DocDrift error: {e}", file=sys.stderr)
+                print(f"DocDrift error: {e}", file=sys.stderr)
 
     elif tool_name == "Read" and file_path:
         accessed = state.setdefault("accessed_files", [])
@@ -199,6 +392,12 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         if re.search(r"\b(git\s+(log|blame|show|diff)|svn\s+(log|blame|diff))\b", command):
             vcs = state.setdefault("vcs_queries", [])
             vcs.append({"command": command[:200], "at": _now_iso()})
+            write_state(session_id, state)
+
+        # 本 turn 有跑 git/svn commit → 記 turn_seq，供 ScanReport 閘豁免收尾檢核
+        # （工作已寫進 VCS 歷史＝可稽核、與「藏」相反，anti-evasion 目的消解）。
+        if _VCS_COMMIT_RE.search(command):
+            state["last_commit_turn_seq"] = int(state.get("turn_seq", 0))
             write_state(session_id, state)
 
         if is_test_command(command):
@@ -233,11 +432,33 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                     state["failing_tests"] = after
                     write_state(session_id, state)
 
+    elif tool_name.endswith("anti_evasion_report"):
+        # MCP 結構化收尾 emit（one-writer spine）：MCP tool 只回 chip、不碰 state；
+        # 由此 PostToolUse 分支獨佔寫 state + 落 per-turn 報告檔 + 判 HUD fallback。
+        # session_id 用原始 input_data["session_id"]（與 modified_files 的 session_id 戳
+        # 同源）＝sibling 隔離關鍵：Stop 閘以 turn_seq+session_id 雙鍵讀，隔壁 session 的
+        # emit 不誤放行本 session。turn_seq 由 UserPromptSubmit 每真 prompt +1。
+        a, b, c, d = (str(tool_input.get(k, "") or "") for k in ("a", "b", "c", "d"))
+        turn_seq = int(state.get("turn_seq", 0))
+        sev = aec_severity(a, b, c, d)
+        report = {
+            "session_id": session_id,
+            "turn_seq": turn_seq,
+            "a": a, "b": b, "c": c, "d": d,
+            "severity": sev,
+            "at": _now_iso(),
+        }
+        state["anti_evasion_report"] = report
+        _write_aec_report_file(session_id, turn_seq, report)
+        _maybe_spawn_hud(sev, state, config)
+        write_state(session_id, state)
+
     if DOCDRIFT_AVAILABLE and config.get("docdrift", {}).get("enabled", True):
         try:
             if prune_committed_entries(state, config) > 0:
                 write_state(session_id, state)
-        except Exception:
+        except Exception as e:
+            _atom_debug_error("post_tool_use:docdrift_prune", e)
             pass
 
     advisories = []
@@ -259,7 +480,8 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             if hot_data:
                 advisories.append(format_injection_line(hot_data, context="mid-turn"))
                 mark_injected(session_id)
-        except Exception:
+        except Exception as e:
+            _atom_debug_error("post_tool_use:hot_cache_inject", e)
             pass
 
     if advisories:

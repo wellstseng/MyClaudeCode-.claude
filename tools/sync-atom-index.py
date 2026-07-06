@@ -1,7 +1,7 @@
 """
-sync-atom-index.py — Atom frontmatter Trigger ↔ _atom_index.json 同步工具（V5 P6c）
+sync-atom-index.py — Atom frontmatter Trigger ↔ _atom_index.json 同步工具
 
-設計依據：V5 Wave 3 P3b（_AIDocs/V5-upgrade-plan.md）
+索引模型：
 - `_atom_index.json` 為機器真相源（schema v1.0；lib.atom_index_json）
 - `_ATOM_INDEX.md` 為自動生成 mirror（lib.atom_index_json.regenerate_atom_index_md）
 - frontmatter Trigger 為註記，drift 時以 JSON 為主對齊
@@ -41,12 +41,13 @@ from lib.atom_locations import (  # noqa: E402  V5+ 多根掃描 + Failures filt
     atom_search_roots,
     iter_atom_files_multi,
 )
+from lib.atom_io import write_raw  # noqa: E402  走 funnel：EOL-preserving + audit（杜絕 bypass 裸寫）
 
 MEMORY_DIR = Path.home() / ".claude" / "memory"
 CLAUDE_ROOT = MEMORY_DIR.parent
 
 EXCLUDED_DIR_PARTS = {"_reference", "_archived", "_pending_review", "_staging",
-                      "templates", "wisdom", "_drafts", "episodic"}
+                      "templates", "wisdom", "_drafts", "episodic", "_distant"}
 EXCLUDED_FILE_NAMES = {"MEMORY.md", "_ATOM_INDEX.md"}
 
 TRIGGER_LINE_RE = re.compile(r"^- Trigger:\s*(.+)$", re.MULTILINE)
@@ -220,7 +221,9 @@ def fix_frontmatter_from_index(atoms_by_path: Dict[str, AtomFile],
         text = atom.path.read_text(encoding="utf-8-sig")
         new_text, n = TRIGGER_LINE_RE.subn(new_line, text, count=1)
         if n == 1 and new_text != text:
-            atom.path.write_text(new_text, encoding="utf-8")
+            # 走 funnel：EOL-preserving _atomic_write + audit log
+            # （舊版裸 write_text 會在 Windows 翻整檔 EOL，且寫入不留 audit）
+            write_raw(atom.path, new_text, source="tool:sync-atom-index", op="trigger-align")
             changed.append(atom.rel_path)
     return changed
 

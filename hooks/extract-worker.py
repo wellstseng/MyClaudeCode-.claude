@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Extraction worker for V2.13 response capture.
+"""Extraction worker for response capture.
 
 Spawned by workflow-guardian.py as a detached subprocess.
 Three modes:
@@ -12,6 +12,7 @@ Survives hook timeout — runs ~60s on GTX 1050 Ti.
 """
 
 import json
+import re
 import sys
 import time
 import urllib.request
@@ -30,16 +31,18 @@ from wg_core import (
     cwd_to_project_slug,
     get_transcript_path,
     resolve_failures_dir,
+    find_project_root,
     CLAUDE_DIR,
     MEMORY_DIR,
 )
 from wg_extraction import classify_extracted_item
 
-# S3.0: route failure atom writes through atom_io funnel
+# route failure atom writes through atom_io funnel
 _LIB_PARENT = str(Path.home() / ".claude")
 if _LIB_PARENT not in sys.path:
     sys.path.insert(0, _LIB_PARENT)
-from lib.atom_io import write_raw  # noqa: E402
+from lib.atom_io import build_atom_content, write_raw  # noqa: E402
+from lib.atom_spec import slugify  # noqa: E402
 
 WORKFLOW_DIR = CLAUDE_DIR / "workflow"
 
@@ -116,7 +119,8 @@ def _extract_all_assistant_texts(
                 if total >= max_chars:
                     break
             final_offset = f.tell()
-    except (OSError, UnicodeDecodeError):
+    except (OSError, UnicodeDecodeError) as e:
+        _atom_debug_error("extract_worker:transcript_read", e)
         pass
     return texts, final_offset
 
@@ -200,7 +204,7 @@ VALID_FAILURE_TYPES = ("env", "assumption", "silent", "cognitive")
 def _build_prompt(intent: str, text: str, existing_items: List[dict] = None) -> str:
     template = _PROMPT_TEMPLATES.get(intent, _PROMPT_TEMPLATES["build"])
     prompt = template.replace("{text}", text[:4000])
-    # V2.14: Removed pre-filter dedup injection (was ~200 tok/call).
+    # Removed pre-filter dedup injection (was ~200 tok/call).
     # Post-filter _dedup_items() at threshold=0.65 is sufficient to catch duplicates.
     return prompt
 
@@ -343,7 +347,7 @@ def run_extraction(ctx: Dict[str, Any]) -> Dict[str, Any]:
         max_chars = 4000
         max_items = pt.get("max_items", 3)
     else:
-        # V2.14: SessionEnd skips already-extracted bytes with overlap for context
+        # SessionEnd skips already-extracted bytes with overlap for context
         prev_offset = ctx.get("byte_offset", 0)
         overlap = 1000  # chars of overlap to maintain context continuity
         byte_offset = max(0, prev_offset - overlap)
@@ -383,11 +387,11 @@ def run_extraction(ctx: Dict[str, Any]) -> Dict[str, Any]:
     if not items:
         return _empty_result()
 
-    # V2.22: Content-type gate — filter out plan/draft items (route to _staging)
+    # Content-type gate — filter out plan/draft items (route to _staging)
     plan_items = [it for it in items if classify_extracted_item(it) == "plan"]
     items = [it for it in items if classify_extracted_item(it) != "plan"]
     if plan_items:
-        print(f"[v2.22] Filtered {len(plan_items)} plan-type items from extraction", file=sys.stderr)
+        print(f"Filtered {len(plan_items)} plan-type items from extraction", file=sys.stderr)
     if not items and not is_failure:
         return _empty_result()
 
@@ -400,7 +404,7 @@ def run_extraction(ctx: Dict[str, Any]) -> Dict[str, Any]:
     aggregation = _check_trigger_overlap(items)
 
     # Cross-session vector search (skip in per_turn and failure if configured)
-    # V2.14: lazy mode — only search items that overlap with existing knowledge_queue,
+    # lazy mode — only search items that overlap with existing knowledge_queue,
     # since brand-new items (confirmations=1) are unlikely to have cross-session hits.
     observations = []
     if not (is_per_turn and pt.get("skip_cross_session", True)) and not is_failure:
@@ -436,7 +440,8 @@ def _write_state_atomic(state_path: Path, state: dict) -> bool:
             json.dump(state, f, ensure_ascii=False, indent=2)
         tmp.replace(state_path)
         return True
-    except OSError:
+    except OSError as e:
+        _atom_debug_error("extract_worker:state_write", e)
         if tmp.exists():
             try:
                 tmp.unlink()
@@ -471,7 +476,7 @@ def _per_turn_writeback(ctx: dict, result: dict) -> None:
     state["extract_worker_pid"] = 0  # clear lease (worker done)
     state["last_updated"] = _now_iso()
     _write_state_atomic(state_path, state)
-    # Note: ack_then_clear (imported from lib/) is available for V4.1
+    # Note: ack_then_clear (imported from lib/) is available for
     # user-extract-worker.py to pop from pending_user_extract after
     # successful atom_write. Not called here — per_turn appends to
     # knowledge_queue for later session_end processing.
@@ -492,8 +497,153 @@ def _per_turn_writeback(ctx: dict, result: dict) -> None:
                 "summary": summary[:200],
                 "token_estimate": max(len(summary) // 4, 10),
             })
-    except Exception:
+    except Exception as e:
+        _atom_debug_error("extract_worker:hot_cache_writeback", e)
         pass  # hot cache 是增強功能，失敗不影響主流程
+
+
+# ─── Session-end writeback: flush knowledge → [臨] atoms ──────────────────────
+#
+# 補長期缺口：session_end 深度萃取算完即丟、knowledge_queue 從未落地成 atom
+# （見上方 _per_turn_writeback 註解「per_turn appends to knowledge_queue for later
+# session_end processing」——那個 processing 從沒實作）。此處補完：把本 session
+# 累積的 queue + session_end 全文萃取，過品質閘後寫成 global personal [臨] atom，
+# 全自動、不問使用者。只清「寫成功」的 queue 項，失敗者留待下次重試。
+
+_FLUSH_MIN_LEN = 12  # 過短碎句不值得建 atom（內聯常數，非旋鈕）
+
+
+def _flush_route(cwd, _find_root=None):
+    """決定自動萃取 atom 草稿的落點。
+
+    專案 session（cwd 有 project root 且非 ~/.claude）→ scope=shared（只在該專案
+    注入），~/.claude / 無 root / 空 cwd → scope=global。避免專案專屬知識污染 global core。
+    auto-capture [臨] 草稿一律隔離到 `_drafts/auto-capture/` 子層（dedup_dir）——
+    `sync-atom-index` EXCLUDED_DIR_PARTS 排除 `_drafts` → 不入索引、不注入、不計數，根治
+    content-as-filename 碎片污染 memory/ 根。scope 仍決定 _drafts 掛在
+    global（memory/）或專案 shared 樹下。_find_root 供測試注入。
+    回 (scope, project_cwd, draft_dir)。"""
+    finder = _find_root or find_project_root
+    root = finder(cwd) if cwd else None
+    rootp = Path(root) if root else None
+    try:
+        is_project = bool(rootp) and rootp.resolve() != CLAUDE_DIR.resolve()
+    except OSError:
+        is_project = False
+    draft = Path("_drafts") / "auto-capture"
+    if is_project:
+        return "shared", cwd, rootp / ".claude" / "memory" / "shared" / draft
+    return "global", None, MEMORY_DIR / draft
+
+
+def _flush_item_to_atom(content: str, triggers: list, *,
+                        scope: str = "global", project_cwd=None,
+                        dedup_dir=MEMORY_DIR) -> str:
+    """把一條萃取知識寫成 [臨] auto-capture 草稿，隔離落 dedup_dir（`_drafts/auto-capture/`，
+    見 _flush_route）。
+
+    auto-capture 草稿**不再走 write_atom 入索引/注入**（避免大量
+    content-as-filename 碎片污染 memory/ 根層）。改 build_atom_content + write_raw 直寫
+    dedup_dir（`_drafts/` 被 sync-atom-index 排除 → 不入索引、不注入、不計數）。草稿待人工
+    檢視/手動晉升；真有值的知識在工作中已正規記錄（changelog / atom_write）。
+    content 推 slug、路徑去重 + -N 防撞。Returns 'wrote' | 'deduped' | 'failed'。
+    """
+    content = content.strip()
+    triggers = [t.strip() for t in (triggers or []) if t and str(t).strip()] or ["auto-capture"]
+    slug = slugify(content[:60]) or "auto-capture"
+
+    try:
+        dedup_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        _atom_debug_error("session_end_writeback:draft_mkdir", e)
+        return "failed"
+
+    if (dedup_dir / f"{slug}.md").exists():
+        try:
+            if content[:80] in (dedup_dir / f"{slug}.md").read_text(encoding="utf-8-sig"):
+                return "deduped"
+        except (OSError, UnicodeDecodeError):
+            pass
+        for i in range(2, 10):
+            if not (dedup_dir / f"{slug}-{i}.md").exists():
+                slug = f"{slug}-{i}"
+                break
+
+    try:
+        atom_text = build_atom_content(
+            title=slug,
+            scope=scope,
+            confidence="[臨]",
+            triggers=triggers,
+            knowledge=[f"- [臨] {content}"],
+            author="auto-captured",
+        )
+        res = write_raw(dedup_dir / f"{slug}.md", atom_text,
+                        source="hook:extract-worker", op="auto_capture_draft")
+    except Exception as e:
+        _atom_debug_error("session_end_writeback:write_draft", e)
+        return "failed"
+    if res.ok:
+        return "wrote"
+    _atom_debug_error("session_end_writeback:write_draft", Exception(res.error or ""))
+    return "failed"
+
+
+def _session_end_writeback(ctx: dict, result: dict) -> None:
+    """Flush session_end 萃取 + 累積 knowledge_queue → [臨] atoms（全自動）。
+
+    順序：先 fresh（session_end 全文萃取的精選 top-N，品質較高）再 queue（per_turn
+    累積）。達 max_atoms 上限即停，未處理的 queue 項留在 queue 下次再 flush（不丟）。
+    """
+    config = ctx.get("config", {})
+    sef = config.get("response_capture", {}).get("session_end_flush", {})
+    if not sef.get("enabled", True):
+        return
+
+    session_id = ctx.get("session_id", "")
+    queue = ctx.get("knowledge_queue", []) or []
+    fresh = result.get("extracted_items", []) or []
+    max_atoms = sef.get("max_atoms", 8)
+    # 依 session cwd 決定落點——專案 session → 專案層 shared、不污染 global core。
+    flush_scope, flush_pcwd, dedup_dir = _flush_route(ctx.get("cwd", ""))
+
+    # fresh 先（origin='fresh'，不在 queue 不需清）；queue 後（記原 index 供 ack-clear）
+    tagged = [("fresh", -1, it) for it in fresh] + \
+             [("queue", i, it) for i, it in enumerate(queue)]
+
+    written_q_indices = []
+    n_written = 0
+    seen: List[str] = []
+    for origin, qidx, it in tagged:
+        if n_written >= max_atoms:
+            break
+        content = (it.get("content") or "").strip()
+        if len(content) < _FLUSH_MIN_LEN or classify_extracted_item(it) == "plan":
+            continue
+        if any(_word_overlap_score(content, s) >= 0.65 for s in seen):
+            if origin == "queue":
+                written_q_indices.append(qidx)  # 已被本批其他項涵蓋 → 視為已捕捉、可清
+            continue
+        status = _flush_item_to_atom(
+            content, it.get("domain_tags", []),
+            scope=flush_scope, project_cwd=flush_pcwd, dedup_dir=dedup_dir)
+        if status in ("wrote", "deduped"):
+            seen.append(content)
+            if status == "wrote":
+                n_written += 1
+            if origin == "queue":
+                written_q_indices.append(qidx)
+        # failed → 不清，留 queue 下次重試
+
+    if written_q_indices and session_id:
+        ack_then_clear(WORKFLOW_DIR / f"state-{session_id}.json",
+                       "knowledge_queue", written_q_indices)
+
+    _atom_debug_log(
+        "session_end_writeback",
+        f"flushed {n_written} atoms → {flush_scope}, cleared {len(written_q_indices)} queue items",
+        config,
+    )
 
 
 # ─── Failure writeback ────────────────────────────────────────────────────────
@@ -511,6 +661,60 @@ _FAILURE_TITLES = {
     "silent": "靜默失敗（Silent Failures）",
     "cognitive": "認知模式偏差（Cognitive Patterns）",
 }
+
+# ── 失敗深記：多區塊骨架 ──────────────────────────────────────────────
+#
+# 舊版失敗只寫一行「- [臨] {content}」——根因/設計脈絡全丟。改成五區塊骨架：
+# 始末/根因/設計原理/運作邏輯/防再犯。腳本（小模型）一律自動寫能填的部分（始末＝
+# LLM 敘事、根因＝從「（根因: …）」拆出），其餘空段留「待補」標記給 Claude 在
+# 高 effort 時用 atom_write 深寫補完（見 handlers/stop.py Deep Post-Mortem Gate）。
+
+_FAILURE_SKELETON_SECTIONS = ("始末", "根因", "設計原理", "運作邏輯", "防再犯")
+_FAILURE_TODO_MARK = "_(待補：深寫時由 Claude 補完)_"
+_ROOT_CAUSE_RE = re.compile(r"[（(]\s*根因\s*[:：]\s*(.+?)\s*[）)]\s*$")
+
+
+def _split_root_cause(content: str) -> tuple:
+    """從 LLM content「{敘事}…（根因: X）」尾端拆出根因。無「（根因: …）」則
+    回 (原文, "")。Returns (narrative, root_cause)。"""
+    content = (content or "").strip()
+    m = _ROOT_CAUSE_RE.search(content)
+    if m:
+        narrative = content[:m.start()].strip()
+        return (narrative or content), m.group(1).strip()
+    return content, ""
+
+
+def _build_failure_skeleton(content: str, tags: list, now: str) -> str:
+    """組多區塊失敗骨架。始末填 LLM 敘事；能拆出根因就填，其餘留待補。"""
+    narrative, root = _split_root_cause(content)
+    tag_str = "  " + " ".join(f"#{t}" for t in tags) if tags else ""
+    # 標題取觸發場景（→ 前段）首 40 字，純供人眼掃讀
+    title = (narrative.split("→")[0].strip() or narrative)[:40]
+    return "\n".join([
+        f"### [臨] {title}{tag_str}  ({now})",
+        "",
+        f"- **始末**：{narrative}",
+        f"- **根因**：{root or _FAILURE_TODO_MARK}",
+        f"- **設計原理**：{_FAILURE_TODO_MARK}",
+        f"- **運作邏輯**：{_FAILURE_TODO_MARK}",
+        f"- **防再犯**：{_FAILURE_TODO_MARK}",
+    ])
+
+
+def _failure_dedup_hit(existing_text: str, content: str) -> bool:
+    """與既有失敗檔比對是否已記過同一條（新骨架的始末行 + 舊單行格式皆涵蓋）。"""
+    for line in existing_text.split("\n"):
+        ls = line.strip()
+        if "**始末**" in ls:
+            cmp_line = ls.split("：", 1)[-1] if "：" in ls else ls
+        elif ls.startswith("- ["):  # 舊版 - [臨] 單行格式 backward-compat
+            cmp_line = ls
+        else:
+            continue
+        if _word_overlap_score(content, cmp_line) >= 0.65:
+            return True
+    return False
 
 
 def _failure_writeback(ctx: dict, items: list) -> None:
@@ -533,23 +737,17 @@ def _failure_writeback(ctx: dict, items: list) -> None:
         if not content or len(content) < 10:
             continue
 
-        # Dedup：與目標檔案既有條目比對
-        if target.exists():
-            existing = target.read_text(encoding="utf-8-sig")
-            skip = False
-            for line in existing.split("\n"):
-                if line.startswith("- [") and _word_overlap_score(content, line) >= 0.65:
-                    skip = True
-                    break
-            if skip:
-                continue
+        # Dedup：與目標檔案既有條目比對（新骨架始末行 + 舊單行格式）
+        if target.exists() and _failure_dedup_hit(
+            target.read_text(encoding="utf-8-sig"), content
+        ):
+            continue
 
-        # 組裝條目
-        tag_str = f"  #{' #'.join(tags)}" if tags else ""
+        # 組多區塊骨架（始末/根因/設計原理/運作邏輯/防再犯）
         now = datetime.now().strftime("%Y-%m-%d")
-        entry_line = f"- [臨] {content}{tag_str}  ({now})"
+        entry_block = _build_failure_skeleton(content, tags, now)
 
-        # S3.0: 走 atom_io.write_raw funnel（保留原 marker fallback 行為，
+        # 走 atom_io.write_raw funnel（保留原 marker fallback 行為，
         # 但統一經過 audit log + PreToolUse 強制門禁放行）
         if target.exists():
             text = target.read_text(encoding="utf-8-sig")
@@ -557,17 +755,17 @@ def _failure_writeback(ctx: dict, items: list) -> None:
             for marker in ("## 行動", "## 演化日誌"):
                 idx = text.find(marker)
                 if idx > 0:
-                    text = text[:idx] + entry_line + "\n\n" + text[idx:]
+                    text = text[:idx] + entry_block + "\n\n" + text[idx:]
                     inserted = True
                     break
             if not inserted:
-                text += "\n" + entry_line + "\n"
+                text += "\n" + entry_block + "\n"
             res = write_raw(target, text, source="hook:extract-worker", op="failure_append")
             if not res.ok:
                 _atom_debug_log("failure_writeback", f"funnel reject: {res.error}", config)
                 continue
         else:
-            _create_failure_atom(target, ftype, entry_line)
+            _create_failure_atom(target, ftype, entry_block)
         written += 1
 
     if written:
@@ -578,10 +776,10 @@ def _failure_writeback(ctx: dict, items: list) -> None:
         )
 
 
-def _create_failure_atom(path: Path, ftype: str, first_entry: str) -> None:
-    """建立最小 failure atom 檔（專案層首次寫入用）。
+def _create_failure_atom(path: Path, ftype: str, first_block: str) -> None:
+    """建立最小 failure atom 檔（專案層首次寫入用）。first_block 為多區塊骨架。
 
-    S3.0: 走 atom_io.write_raw funnel（failures 子族不符 V4 build_atom_content
+    走 atom_io.write_raw funnel（failures 子族不符 V4 build_atom_content
     規範 — 用 Type/Created 而非 Trigger/Last-used，故走 raw escape hatch）。
     """
     content = (
@@ -590,7 +788,7 @@ def _create_failure_atom(path: Path, ftype: str, first_entry: str) -> None:
         f"- Confidence: [臨]\n"
         f"- Type: procedural\n"
         f"- Created: {datetime.now().strftime('%Y-%m-%d')}\n\n"
-        f"## 知識\n\n{first_entry}\n\n"
+        f"## 知識\n\n{first_block}\n\n"
         f"## 行動\n\n- 同全域 failures 共通行動規則\n"
     )
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -638,6 +836,8 @@ def main():
                 _failure_writeback(ctx, items)
         elif mode == "per_turn":
             _per_turn_writeback(ctx, result)
+        else:  # session_end (default) — flush queue + fresh extraction → [臨] atoms
+            _session_end_writeback(ctx, result)
 
         sys.stdout.write(json.dumps(result, ensure_ascii=False))
     except Exception as e:
@@ -699,5 +899,6 @@ if __name__ == "__main__":
             _legacy_main()
         else:
             main()
-    except Exception:
+    except Exception as e:
+        _atom_debug_error("extract_worker:entry", e)
         pass  # Silent failure — never block Claude Code

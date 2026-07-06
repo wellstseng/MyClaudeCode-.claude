@@ -56,7 +56,7 @@
     "auto_start_service": true,
     "auto_index_on_change": true,
     "global_layer": "bm25",
-    "bm25_min_score": 1.0,
+    "bm25_min_score": 3.5,
     "bm25_top_k": 3
   },
   "write_gate": {
@@ -81,11 +81,41 @@
   },
   "self_iteration": {
     "decay_half_life_days": 30,
+    "promote_confirmations_threshold": 4,
     "promote_min_confirmations": 20,
     "archive_score_threshold": 0.3,
     "oscillation_window": 3,
     "oscillation_threshold": 2,
-    "review_interval": 6
+    "review_interval": 6,
+    "forget": {
+      "_doc": "Task 2 Phase D selective forgetting：stale+低用+非核心保護的封存候選隔離到 memory/_distant/（被 sync-atom-index 排除→不注入、可逆）。預設 dry-run（enabled=false ∨ dry_run=true）只寫 _staging/forget-candidates.md 不搬。真隔離需 enabled=true ∧ dry_run=false。憲法 Forgetting 對策。",
+      "enabled": false,
+      "dry_run": true,
+      "isolate_threshold": 0.3
+    }
+  },
+  "usefulness": {
+    "_doc": "Phase 2 (#2) 注入→使用→結果 閉環效用：Beta-Bernoulli (α,β) + Wilson 下界 + 慢衰減。py↔js 鏡像門檻 (promote_lb/min_n/wilson_z) 與 lib/atom_access.py、server.js SYNC。",
+    "enabled": true,
+    "lexical_overlap_min": 0.18,
+    "rare_token_min": 2,
+    "wilson_z": 1.96,
+    "promote_lb": 0.6,
+    "demote_lb": 0.35,
+    "min_n": 3,
+    "decay_lambda": 0.97,
+    "distraction_enabled": true,
+    "distraction_weight": 0.5,
+    "embedding_tiebreak": true,
+    "embed_timeout_s": 1.5
+  },
+  "injection": {
+    "_doc": "Task 2 Phase C 注入端 relevance gate（context governance 落地）。related_gate 只裁切 related-edge spreading（非 prompt 命中、純連結擴散＝最易成 distractor），主迴圈 trigger/bm25/vector 命中者完全不碰，故不誤殺 prompt 相關或新 atom。憲法 Context Confusion 對策。",
+    "related_gate": {
+      "enabled": true,
+      "skip_demoted": true,
+      "max_related": 6
+    }
   },
   "hot_cache": {
     "enabled": true,
@@ -102,7 +132,8 @@
     "session_end_timeout_seconds": 10,
     "classification_default": "[臨]",
     "per_turn": {
-      "enabled": true,
+      "_disabled_2026_07_01": "調整式拔除：auto-capture 草稿為 write-only 死路（0 下游消費；DedupStage 實跑 0/16）。停產。失敗萃取(failure_extraction)與 episodic 生成保留。回滾：改回 true。",
+      "enabled": false,
       "min_new_chars": 500,
       "max_items": 3,
       "skip_cross_session": true,
@@ -115,6 +146,11 @@
       "strong_keywords": ["又錯了", "沒修好", "還是壞", "修復失敗", "一樣的問題", "又壞了", "怎麼又", "再次失敗"],
       "weak_keywords": ["錯了", "不對", "壞了", "失敗", "沒用", "沒效", "不行", "bug", "broken", "failed", "still broken", "same error", "為什麼還", "怎麼還", "反覆", "踩坑", "又踩", "沒生效", "白做了"],
       "weak_min_match": 3
+    },
+    "session_end_flush": {
+      "_disabled_2026_07_01": "調整式拔除：見 per_turn._disabled_2026_07_01。停 session_end 草稿 flush。回滾：改回 true。",
+      "enabled": false,
+      "max_atoms": 8
     }
   },
   "userExtraction": {
@@ -122,16 +158,25 @@
     "mode": "production",
     "tokenBudget": 240
   },
+  "parallel_agents": {
+    "enabled": true,
+    "min_score": 2,
+    "cooldown_turns": 3,
+    "min_prompt_chars": 15
+  },
   "changelog_auto_roll": {
     "enabled": true,
     "threshold": 8
+  },
+  "skill_index": {
+    "_doc": "skills/ 計數 SoT 同步（tools/skill-index.py）。enabled=true 時：PostToolUse 偵測 skills/*/SKILL.md 增刪改 → 自動 --write 重生 _skill_index.json + 重寫文件 <!-- skill-count --> marker；SessionStart --check 防呆（實檔數≠json count → advisory）。一鍵關 = enabled:false。",
+    "enabled": true
   },
   "codex_companion": {
     "enabled": true,
     "codex_binary": "C:/Users/holylight/AppData/Roaming/npm/codex.cmd",
     "model": "",
     "assessment_timeout": 60,
-    "subprocess_timeout": 90,
     "score_threshold": 7,
     "max_audits_per_session": 30,
     "silent_advisory": true,
@@ -139,9 +184,22 @@
     "soft_gate": {
       "completion_evidence": true,
       "architecture_review": false,
+      "handoff_review": true,
       "block_severity_threshold": "high"
     },
     "block_template": "Codex Companion 軟閘：偵測到高風險缺漏。\n{detail}\n請補充驗證或修正後再收尾。"
+  },
+  "lang_guard": {
+    "_doc": "P8b 英文回應漂移攔截（hooks/lang_guard.py，standalone Stop hook）。量測 assistant 終版訊息英文語言字元佔比（先剝 code fence/inline/URL/link 目標，政策B只管 user-facing 對話輸出），超門檻→systemMessage 提醒繁中（可見+注入下一輪，模型自我修正）。stateless 每輪自校正、無 flag。一鍵關=enabled:false；english_ratio_threshold=英文佔比門檻(0~1，英文字母/(英文字母+CJK))；min_lang_chars=低於此語言字元數不判(濾短訊如 Done.)。",
+    "enabled": true,
+    "english_ratio_threshold": 0.5,
+    "min_lang_chars": 40
+  },
+  "version_guard": {
+    "_doc": "版本操作脈絡殘留 warn hook（hooks/version_guard.py，standalone PostToolUse）。Write/Edit 後掃剛寫入的 ~/.claude 內檔，命中高精度版本 pattern（V5 Pxx/Sprint/Wave/方案代號/[vN]·[phaseN] 前綴/[Fxx] 錨）→ warn-only(systemMessage+stderr)，不阻斷。寧漏報不誤報：模糊 pattern（裸 Phase N/日期/v2.x/變更敘事）刻意不收。正位檔(DevHistory/_CHANGELOG/TECH/Architecture/SPEC/plans/verify/_staging)+功能 token(_migrate_v/SCHEMA_VERSION/protocolVersion)豁免。規則 rules/core.md「版本與文件治理」；pattern single source＝atom feedback-live-…。一鍵關=enabled:false 或 mode:off；min_matches=命中幾項才提醒。",
+    "enabled": true,
+    "mode": "warn",
+    "min_matches": 1
   },
   "docdrift": {
     "enabled": true,
@@ -164,5 +222,62 @@
     ],
     "keyword_match_threshold": 2,
     "max_pending_display": 5
+  },
+  "heal": {
+    "enabled": true,
+    "backend": "ollama",
+    "max_concurrent": 1,
+    "agent_timeout_ms": 180000,
+    "run_full_verify": false,
+    "_comment": "記憶自癒(腦內世界 P3)：backend=ollama 本地免費序列；改 cloud + max_concurrent>1 可雲端並行(需接 adapter)"
+  },
+  "realm": {
+    "auto_migrate": true,
+    "llm_fallback": {
+      "enabled": false,
+      "backend": "ollama",
+      "max_per_session": 5,
+      "min_confidence": 0.7,
+      "_comment": "SessionEnd sweep 對詞庫 miss 的 unknown-core atom 喚本地 LLM 判 realm+階層 domain。基礎設施失敗→defer 留原地(不誤降級)；unsure/低信心→Else；local≥min_confidence→搬+學詞。protected 永不喚 LLM。enabled=false 則只跑 deterministic 詞庫(含 learned)。"
+    }
+  },
+  "world_dev": {
+    "_doc": "腦內世界環境演化引擎旋鈕（宣告鏡像）。引擎在前端 world.html(ENGINE 常數)為運行時源，純前端免重啟；mode 經 world-dev.json 持久、?fast=1 / 指令台 worlddev 覆寫。改此處需同步 world.html ENGINE。",
+    "mode": "slow",
+    "direction_gate": 35,
+    "consensus_min": 3,
+    "style2_unlock": 60,
+    "done_at": 80,
+    "modes": {
+      "slow": { "env_chance": 0.01, "pair_chance": 0.05, "dev_step": 1.2 },
+      "fast": { "env_chance": 0.55, "pair_chance": 0.75, "dev_step": 6.0 }
+    }
+  },
+  "auto_handoff": {
+    "_doc": "Auto-Handoff 自動無損交接（plans/wise-wobbling-gem.md）。PreCompact 壓縮前自動備六區塊 stub 到 _staging（核心保底，不依賴 token 量測）；PostToolBatch 壓縮後注入提示叫模型補全主觀區塊。token_warn 系列為 Phase 2 Stop 預警旗標。enabled=false 一鍵全關回現狀。token 量測主路徑讀 transcript message.usage 真實 token；context_window_tokens 為分母『預設/下限』（1M，貼合常跑 1M Opus），實際視窗自我校準：usage 曾破 200k → 數學上必為 1M 自動升頂（200k 視窗逼近前 harness 已先壓縮、摸不到 200k）。context_base_overhead_tokens 僅 fallback char-proxy（無 usage 時）用。",
+    "enabled": true,
+    "precompact_stub": true,
+    "postbatch_emit": true,
+    "token_warn": true,
+    "token_warn_ratio": 0.85,
+    "context_window_tokens": 1000000,
+    "context_base_overhead_tokens": 15000,
+    "sessionend_fallback": true,
+    "stub_filename": "next-phase-auto.md"
+  },
+  "deep_postmortem": {
+    "_doc": "Stage 3：高 effort 失敗（wisdom_retry_count>=2 / fix_escalation_triggered，AND 真失敗訊號 failing_tests/evasion/未宣告完成）時，Stop gate 注入指令要 Claude 用 atom_write 補完整 post-mortem（始末/根因/設計原理/運作邏輯/防再犯）。effort 只採 retry/fix_esc（均於 track_retry 層 error-gate，僅測試/lint 失敗未解時才計），不採同檔 edit 次數。deep_postmortem_done 一次性即獨立預算＝1，不共用 stop_gate_max_blocks（曾共用會被 Sync+TestFail 吃光預算而餓死）。enabled=false 一鍵關。",
+    "enabled": true
+  },
+  "aec": {
+    "_doc": "Anti-Evasion HUD：hud_autospawn=true → notable/real-evasion 報告且窗死時自動 spawn Edge --app HUD 窗（否則 fallback 回 chat）。hud_stale_s=心跳新鮮度門檻秒（預設 30）。",
+    "hud_autospawn": false
+  },
+  "guard": {
+    "cross_realm_write": {
+      "_doc": "外部專案 session（cwd∉~/.claude）寫入核心層 ~/.claude/{skills,tools,hooks,lib,rules}/ → PreToolUse deny。核心開發 session 不受影響。allowlist 為路徑子字串白名單。",
+      "enabled": true,
+      "allowlist": []
+    }
   }
 }
