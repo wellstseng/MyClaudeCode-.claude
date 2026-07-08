@@ -2,6 +2,26 @@
   "version": "1.0",
   "atoms": [
     {
+      "name": "anti-evasion-hud-設計脊柱與強化前必讀",
+      "path": "_AIDocs/_atoms/MemDev/anti-evasion-hud-設計脊柱與強化前必讀.md",
+      "triggers": [
+        "anti-evasion",
+        "AEC",
+        "AEC HUD",
+        "收尾檢核 HUD",
+        "anti_evasion_report",
+        "one-writer",
+        "sibling 隔離",
+        "aec_severity",
+        "autospawn",
+        "彈窗",
+        "強化 AEC",
+        "改 AEC HUD",
+        "記憶系統開發"
+      ],
+      "scope": "global"
+    },
+    {
       "name": "atom-heal-l2-broken-ref-誤判-prefix-rename-為-remove",
       "path": "_AIDocs/_atoms/MemDev/atom-heal-l2-broken-ref-誤判-prefix-rename-為-remove.md",
       "triggers": [
@@ -33,7 +53,7 @@
     },
     {
       "name": "atom-table-support",
-      "path": "memory/atom-table-support.md",
+      "path": "_AIDocs/_atoms/MemDev/atom-table-support.md",
       "triggers": [
         "atom_write",
         "表格",
@@ -49,7 +69,7 @@
     },
     {
       "name": "atom-usefulness-loop",
-      "path": "memory/atom-usefulness-loop.md",
+      "path": "_AIDocs/_atoms/MemDev/atom-usefulness-loop.md",
       "triggers": [
         "效用閉環",
         "usefulness",
@@ -68,7 +88,7 @@
     },
     {
       "name": "atom-元資料編輯與晉升閘真相",
-      "path": "memory/atom-元資料編輯與晉升閘真相.md",
+      "path": "_AIDocs/_atoms/MemDev/atom-元資料編輯與晉升閘真相.md",
       "triggers": [
         "edit_metadata",
         "atom 元資料編輯",
@@ -292,7 +312,7 @@
     },
     {
       "name": "electron-uia-automation",
-      "path": "memory/electron-uia-automation.md",
+      "path": "_AIDocs/_atoms/Tools/electron-uia-automation.md",
       "triggers": [
         "Electron 自動化",
         "VS Code 自動點擊",
@@ -534,7 +554,7 @@
     },
     {
       "name": "gdoc-harvester",
-      "path": "memory/gdoc-harvester.md",
+      "path": "_AIDocs/_atoms/Tools/gdoc-harvester.md",
       "triggers": [
         "harvester",
         "Google Docs",
@@ -732,6 +752,37 @@
       "scope": "global"
     },
     {
+      "name": "merge-時-sot-索引檔-ours-策略誤清-catalog-post-mortem",
+      "path": "memory/merge-時-sot-索引檔-ours-策略誤清-catalog-post-mortem.md",
+      "triggers": [
+        "catalog 誤清",
+        "_INDEX.md 被刪",
+        "index 磁碟不一致",
+        "SoT 衝突解",
+        "_atom_index.json merge",
+        "sync-memory-index",
+        "atoms 隱形",
+        "衝突檔 ours",
+        "衍生索引",
+        "post-mortem"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "otel-遙測評估結論-不實作-兩目標指標皆測不到",
+      "path": "_AIDocs/_atoms/MemDev/otel-遙測評估結論-不實作-兩目標指標皆測不到.md",
+      "triggers": [
+        "OTEL",
+        "OpenTelemetry",
+        "遙測",
+        "telemetry",
+        "hook 延遲量測",
+        "token 稅量測",
+        "CLAUDE_CODE_ENABLE_TELEMETRY"
+      ],
+      "scope": "global"
+    },
+    {
       "name": "post-mortem-write-raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用",
       "path": "_AIDocs/_atoms/MemDev/post-mortem-write-raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用.md",
       "triggers": [
@@ -779,6 +830,20 @@
         "執P",
         "執驗上P",
         "上GIT"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "pythonw-下-stdout-為-none-排程腳本秒死陷阱",
+      "path": "_AIDocs/_atoms/OS/pythonw-下-stdout-為-none-排程腳本秒死陷阱.md",
+      "triggers": [
+        "pythonw",
+        "Task Scheduler",
+        "排程",
+        "schtasks",
+        "sys.stdout None",
+        "reconfigure",
+        "排程器靜默失敗"
       ],
       "scope": "global"
     },
@@ -1138,6 +1203,21 @@
       "scope": "global"
     },
     {
+      "name": "啟動鏈自動覆寫陷阱-user-init每session拷貝來源檔必先驗證管線仍成立",
+      "path": "_AIDocs/_atoms/MemDev/啟動鏈自動覆寫陷阱-user-init每session拷貝來源檔必先驗證管線仍成立.md",
+      "triggers": [
+        "user-init",
+        "IDENTITY.md 被覆寫",
+        "啟動鏈",
+        "SessionStart 覆寫",
+        "雙檔 pipeline",
+        "檔案自動覆蓋",
+        "stub 覆寫",
+        "契約檔損毀"
+      ],
+      "scope": "global"
+    },
+    {
       "name": "專案等級-mcpskillhookslog-不放全域根層",
       "path": "_AIDocs/_atoms/MemDev/專案等級-mcpskillhookslog-不放全域根層.md",
       "triggers": [
@@ -1185,6 +1265,22 @@
         "循環相依",
         "live MCP 測試汙染",
         "byte-identical 搬移"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "模型行為移植-fable行為契約必載檔",
+      "path": "_AIDocs/_atoms/MemDev/模型行為移植-fable行為契約必載檔.md",
+      "triggers": [
+        "模型切換",
+        "Opus",
+        "Fable",
+        "行為契約",
+        "自動推進",
+        "抓重點",
+        "IDENTITY 擴充",
+        "行為移植",
+        "model behavior"
       ],
       "scope": "global"
     },
@@ -1324,23 +1420,6 @@
         "context poisoning",
         "錯誤發展",
         "錯誤認知"
-      ],
-      "scope": "global"
-    },
-    {
-      "name": "merge-時-sot-索引檔-ours-策略誤清-catalog-post-mortem",
-      "path": "memory/merge-時-sot-索引檔-ours-策略誤清-catalog-post-mortem.md",
-      "triggers": [
-        "catalog 誤清",
-        "_INDEX.md 被刪",
-        "index 磁碟不一致",
-        "SoT 衝突解",
-        "_atom_index.json merge",
-        "sync-memory-index",
-        "atoms 隱形",
-        "衝突檔 ours",
-        "衍生索引",
-        "post-mortem"
       ],
       "scope": "global"
     }

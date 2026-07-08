@@ -3,9 +3,9 @@
 - Scope: global
 - Author: holylight
 - Confidence: [臨]
-- Trigger: 更新atom, 維護, 同步, 反問, 要不要我, 該做就做, 推進, 收尾, follow-through
+- Trigger: 反問, 要不要我, 該做就做, follow-through
 - Created-at: 2026-06-17
-- Related: feedback-workflow-discipline, feedback-completion-gates
+- Related: feedback-workflow-discipline, feedback-completion-gates, 模型行為移植-fable行為契約必載檔
 
 ## 知識
 

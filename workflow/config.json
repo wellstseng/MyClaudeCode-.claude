@@ -3,9 +3,6 @@
   "enabled": true,
   "stop_gate_max_blocks": 2,
   "min_files_to_block": 2,
-  "remind_after_turns": 3,
-  "max_reminders": 3,
-  "stale_threshold_hours": 24,
   "dashboard_port": 3848,
   "sync_keywords": [
     "同步",
@@ -14,13 +11,6 @@
     "提交",
     "結束",
     "收工"
-  ],
-  "completion_indicators": [
-    "已同步",
-    "同步完成",
-    "已更新",
-    "已提交",
-    "committed"
   ],
   "vector_search": {
     "enabled": true,
@@ -107,7 +97,14 @@
     "distraction_enabled": true,
     "distraction_weight": 0.5,
     "embedding_tiebreak": true,
-    "embed_timeout_s": 1.5
+    "embed_timeout_s": 3.0,
+    "unknown_watch": {
+      "_doc": "效用歸因遙測：SessionEnd 統計 _detect_turn_outcome 的 unknown 比率（落 workflow/outcome_stats.jsonl），連續 window 個 session > threshold → 下個 SessionStart 浮 advisory。防完成語 regex 與模型輸出習慣失配 → α/β 晉升軌靜默停滯。turn 數 < min_turns 的 session 不計。",
+      "enabled": true,
+      "threshold": 0.7,
+      "window": 3,
+      "min_turns": 3
+    }
   },
   "injection": {
     "_doc": "Task 2 Phase C 注入端 relevance gate（context governance 落地）。related_gate 只裁切 related-edge spreading（非 prompt 命中、純連結擴散＝最易成 distractor），主迴圈 trigger/bm25/vector 命中者完全不碰，故不誤殺 prompt 相關或新 atom。憲法 Context Confusion 對策。",
@@ -215,7 +212,6 @@
       "hooks/handlers/*.py": ["Architecture.md"],
       "hooks/workflow-guardian.py": ["Architecture.md"],
       "hooks/extract-worker.py": ["Architecture.md"],
-      "hooks/quick-extract.py": ["Architecture.md"],
       "hooks/wisdom_engine.py": ["Architecture.md"],
       "skills/*/SKILL.md": ["DocIndex-System.md"],
       "rules/*.md": ["DocIndex-System.md"],
@@ -277,7 +273,7 @@
   },
   "aec": {
     "_doc": "Anti-Evasion HUD：hud_autospawn=true → notable/real-evasion 報告且窗死時自動 spawn Edge --app HUD 窗（否則 fallback 回 chat）。hud_stale_s=心跳新鮮度門檻秒（預設 30）。",
-    "hud_autospawn": false
+    "hud_autospawn": true
   },
   "guard": {
     "cross_realm_write": {

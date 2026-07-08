@@ -1,6 +1,7 @@
 ---
 name: upgrade
 description: 原子記憶環境升級：檢查並執行 V4/V5 schema migration
+disable-model-invocation: true
 ---
 
 # /upgrade — 原子記憶環境升級
@@ -66,7 +67,7 @@ $ARGUMENTS
 | `CLAUDE.md` | diff 行數 + 版本標記 | **替換**（新版通常更精簡） |
 | `IDENTITY.md` | diff 內容差異 | **⚠ 個人化確認**（見下方流程） |
 | `USER.md` | diff 內容差異 | **⚠ 個人化確認**（見下方流程） |
-| `USER.template.md` | 有無 | 新增或替換 |
+| `templates/USER.template.md` | 有無 | 新增或替換 |
 | `settings.json` | 逐欄比對 hooks/permissions/matcher | **手動合併**（最敏感） |
 | `workflow/config.json` | 比對 decay + additional_atom_dirs | 一致則不動，差異則合併 |
 

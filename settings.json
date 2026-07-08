@@ -179,12 +179,6 @@
           },
           {
             "type": "command",
-            "command": "python3 -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/quick-extract.py'),run_name='__main__')\"",
-            "timeout": 30,
-            "async": true
-          },
-          {
-            "type": "command",
             "command": "python3 -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/codex_companion.py'),run_name='__main__')\"",
             "timeout": 10
           },

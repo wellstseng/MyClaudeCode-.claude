@@ -53,9 +53,8 @@ except ImportError:
 #   compute_token_budget(prompt) — 每輪 additionalContext 總額（隨 prompt 長度 1000/2000/3000）
 #   CONTEXT_BUDGET_DEFAULT       — _truncate_context_by_activation 的 fallback 上限
 #   TURN_BUDGET_LIMIT            — atom 注入段 per-turn 硬頂（wg_atoms re-export 舊名 _TURN_BUDGET_LIMIT）
-# 兩個 token 估算器口徑不同，勿混用、勿合併（合併會改變注入行為）：
-#   wg_core._estimate_tokens  — CJK-aware（中文 ~1.5 tok/字），量 transcript/handoff/debug 摘要
-#   wg_atoms._estimate_tokens — flat len//4，atom 注入預算口徑（verify_atom_injection_budget 鎖定）
+# token 估算器單一口徑：wg_core._estimate_tokens — CJK-aware（中文 ~1.5 tok/字 + ASCII word），
+# transcript/handoff/debug 摘要與 atom 注入預算共用（wg_atoms import 複用）
 CONTEXT_BUDGET_DEFAULT = 3000
 TURN_BUDGET_LIMIT = 500   # atom 注入段 per-turn 硬頂，控每輪 token 稅
 
@@ -76,11 +75,7 @@ DEFAULTS = {
     "enabled": True,
     "stop_gate_max_blocks": 2,
     "min_files_to_block": 2,
-    "remind_after_turns": 3,
-    "max_reminders": 3,
-    "stale_threshold_hours": 24,
     "sync_keywords": ["同步", "sync", "commit", "提交", "結束", "收工"],
-    "completion_indicators": ["已同步", "同步完成", "已更新", "已提交", "committed"],
     "session_context": {
         "enabled": True,
         "max_episodic": 3,
@@ -150,6 +145,39 @@ def _estimate_tokens(text: str) -> int:
     cjk = sum(1 for c in text if '一' <= c <= '鿿' or '　' <= c <= '〿')
     ascii_part = len(text) - cjk
     return int(cjk * 1.5 + ascii_part * 0.25)
+
+
+# harness 注入標籤（IDE 開檔/選取、system-reminder、skill 展開）——成對或未閉合
+# （截斷）皆吃到閉合標或字串尾。用於把「使用者訊息」清成「使用者實際打的字」。
+_HARNESS_TAG_RE = re.compile(
+    r"<(system-reminder|ide_opened_file|ide_selection|ide_diagnostics|"
+    r"command-name|command-message|command-args|local-command-stdout)\b[^>]*>"
+    r".*?(?:</\1>|\Z)",
+    re.DOTALL | re.IGNORECASE,
+)
+# hook 注入殘渣行（[Guardian:*] / [Atom:*] / [Session:Context] / [JIT:*] 等
+# additionalContext 前綴）——整行剔除。
+_HOOK_RESIDUE_LINE_RE = re.compile(
+    r"^\[(?:Guardian|Atom|JIT|Session|Parallel|Workflow Guardian|WG|Role|AIDocs|"
+    r"Context budget)[^\]]*\].*$",
+    re.MULTILINE,
+)
+
+
+def sanitize_harness_noise(text: str) -> str:
+    """剔除 harness 標籤區塊與 hook 注入殘渣行，回收使用者/模型的實際文字。
+
+    用途：topic tracker 的 first_prompt_summary / keyword 訊號、episodic 摘要等
+    「給人看或給 LLM 吃」的文字源頭。純文字處理、fail-open（異常回原文）。
+    """
+    if not text:
+        return ""
+    try:
+        cleaned = _HARNESS_TAG_RE.sub(" ", text)
+        cleaned = _HOOK_RESIDUE_LINE_RE.sub(" ", cleaned)
+        return re.sub(r"\s+", " ", cleaned).strip()
+    except Exception:
+        return text
 
 
 def rotate_log_if_oversized(log_path: Path, max_mb: int = 10, keep: int = 3) -> bool:
@@ -651,7 +679,6 @@ def new_state(session_id: str, cwd: str, source: str) -> Dict[str, Any]:
         "knowledge_queue": [],
         "sync_pending": False,
         "stop_blocked_count": 0,
-        "remind_count": 0,
         "topic_tracker": {
             "intent_distribution": {},
             "prompt_count": 0,
@@ -791,6 +818,29 @@ def log_promotion_audit(action: str, atom: str, **fields: Any) -> None:
         _atom_debug_error("promotion:audit_append", e)
 
 
+# ─── Guard Trigger Log（可觀測性：各護欄觸發計數 JSONL）─────────────────────
+
+GUARD_LOG_DIR = Path.home() / ".claude" / "Logs"
+
+
+def append_guard_log(guard: str, payload: Dict[str, Any]) -> None:
+    """護欄觸發事件落一行 JSONL 到 Logs/guard-<guard>.jsonl（含時間戳+觸發摘要）。
+
+    用途：量測誤攔率——evasion / docdrift / lang 等 fail-open 護欄過去只進
+    stderr（不可稽核），本 log 供事後統計觸發頻率與內容分布。
+    每護欄獨立檔＝多 Stop hook 並行時無同檔競寫。fail-open。"""
+    try:
+        GUARD_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        log_path = GUARD_LOG_DIR / f"guard-{guard}.jsonl"
+        rotate_log_if_oversized(log_path, max_mb=5, keep=2)
+        entry = {"at": _now_iso()}
+        entry.update(payload)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as e:
+        _atom_debug_error(f"guard_log:{guard}", e)
+
+
 # ─── Atom Debug Log ──────────────────────────────────────────────────────────
 
 
@@ -846,7 +896,7 @@ _TEST_PATH_RE = re.compile(
 
 _WHITELIST_BASENAMES = frozenset({
     "MEMORY.md", "_ATOM_INDEX.md", "_CHANGELOG.md", "_CHANGELOG_ARCHIVE.md",
-    "_roles.md", "hot_cache.json", "atom_io_audit.jsonl",
+    "_roles.md", "atom_io_audit.jsonl",
     "_promotion_audit.jsonl", "project-registry.json", "session_score.json",
     "DESIGN.md", "role.md",
 })
@@ -925,7 +975,7 @@ def check_memory_path_block(
             "正確做法：(1) 全域記憶 → 用 MCP `atom_write` (scope=global) 寫到 "
             "~/.claude/memory/；(2) 專案記憶 → 用 MCP `atom_write` "
             "(scope=shared/role/personal) 寫到 {project_root}/.claude/memory/。\n"
-            "詳見 memory/feedback/feedback-memory-structure.md。"
+            "詳見 _AIDocs/Failures/feedback-memory-system-doc-sync.md。"
         )
 
     if _DOUBLE_CLAUDE_RE.search(fp_str):

@@ -10,14 +10,10 @@ wg_atoms.py — Atom 索引解析 / Trigger / Intent / Vector search / Activatio
 
 import json
 import logging
-import logging.handlers
 import math
 import re
 import sys
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -28,9 +24,11 @@ from wg_core import (
     MEMORY_INDEX, ATOM_INDEX, REALM_AUTOMOVE_MARKER,
     CONTEXT_BUDGET_DEFAULT, TURN_BUDGET_LIMIT,
     compute_token_budget,  # re-export：budget 單一來源在 wg_core，舊 caller 仍從本模組 import
+    _estimate_tokens,  # CJK-aware 估算器（單一口徑，中文 ~1.5 tok/字）
     discover_all_project_memory_dirs, resolve_access_json, resolve_staging_dir,
     get_project_memory_dir, log_promotion_audit,
     _atom_debug_log, _atom_debug_error,
+    sanitize_harness_noise,
 )
 
 # prefer _atom_index.json (machine source of truth)
@@ -420,10 +418,6 @@ _FRONTMATTER_KEEP_RE = re.compile(
 _KNOWLEDGE_CAP_TOKENS_DEFAULT = 200
 
 
-def _estimate_tokens(text: str) -> int:
-    return len(text) // 4
-
-
 def _extract_named_section(
     content: str, section_title: str, max_tokens: Optional[int] = None,
 ) -> Optional[str]:
@@ -446,7 +440,9 @@ def _extract_named_section(
 
     header = f"## {section_title}\n"
     marker = f"\n\n…（已截斷，原 {full_tokens} tokens）"
-    target_chars = max_tokens * 4 - len(header) - len(marker)
+    # 依實際 token/char 密度換算截斷字元數（CJK 密度高、chars/token 低）
+    chars_per_token = len(full) / full_tokens if full_tokens else 4.0
+    target_chars = int(max_tokens * chars_per_token) - len(header) - len(marker)
     if target_chars < 50:
         target_chars = 50
     truncated = body[:target_chars]
@@ -891,6 +887,8 @@ def make_embed_tiebreak_fn(config: Dict[str, Any]):
     逾時、格式異常）回 None → detect_atom_use 視同無 tiebreak，不污染主判。
     走既有 Ollama /api/embeddings（短逾時、截斷輸入），屬偶發呼叫（僅邊界 case）。
     """
+    import urllib.request
+
     uconf = (config or {}).get("usefulness", {}) or {}
     if not uconf.get("embedding_tiebreak", False):
         return None
@@ -1254,11 +1252,15 @@ def _update_topic_tracker(
     dist[intent] = dist.get(intent, 0) + 1
     tracker["prompt_count"] = tracker.get("prompt_count", 0) + 1
 
-    if not tracker.get("first_prompt_summary"):
-        tracker["first_prompt_summary"] = prompt[:200]
+    # harness 標籤/hook 殘渣先剔——first_prompt_summary 會進 episodic 摘要與
+    # handoff 提示，殘留 <ide_opened_file> 等雜訊會污染跨 session 記憶。
+    # 首 prompt 若剔完全空（純 IDE 事件），留空讓下一個真 prompt 補位。
+    clean_prompt = sanitize_harness_noise(prompt)
+    if not tracker.get("first_prompt_summary") and clean_prompt:
+        tracker["first_prompt_summary"] = clean_prompt[:200]
 
     existing_kw = set(tracker.get("keyword_signals", []))
-    words = re.findall(r"[a-zA-Z一-鿿]{4,}", prompt)
+    words = re.findall(r"[a-zA-Z一-鿿]{4,}", clean_prompt)
     for w in words:
         wl = w.lower()
         if wl not in _TOPIC_STOP_WORDS and wl not in existing_kw:
@@ -1276,7 +1278,6 @@ def _update_topic_tracker(
 
 # ─── Vector Observation Log + Semantic Search (was wg_intent) ───────────────
 
-_RANKED_FLOOR = 0.55
 _VECTOR_OBS_LOG = CLAUDE_DIR / "Logs" / "vector-observation.log"
 _vector_obs_logger: Optional[logging.Logger] = None
 _vector_obs_logger_failed: bool = False
@@ -1289,6 +1290,8 @@ def _get_vector_obs_logger() -> Optional[logging.Logger]:
     if _vector_obs_logger_failed:
         return None
     try:
+        import logging.handlers
+
         _VECTOR_OBS_LOG.parent.mkdir(parents=True, exist_ok=True)
         lg = logging.getLogger("wg.vector_obs")
         lg.setLevel(logging.INFO)
@@ -1338,10 +1341,71 @@ def _log_vector_obs(
         _atom_debug_error("vector_obs:write", e)
 
 
+_REKICK_MARKER = WORKFLOW_DIR / "vector_rekick.marker"
+_REKICK_COOLDOWN_S = 120.0
+
+
+def _ensure_vector_ready(
+    session_id: Optional[str],
+    *,
+    flag_path: Optional[Path] = None,
+    marker_path: Optional[Path] = None,
+    spawn: bool = True,
+    wait_s: float = 0.3,
+) -> Tuple[bool, bool]:
+    """flag 缺失時的 UPS 端自癒。回 (ready, kicked)。
+
+    fire-and-forget spawn starter.py（cooldown 防同 session 連環 spawn），再短等
+    ≤wait_s 一次性補救「服務活著只是 flag 遺失」類（starter 首次 health 成功即回寫
+    flag，毫秒級）；真冷啟動秒級以上，本輪照舊 fallback、下一 prompt 收割。
+    """
+    flag = flag_path or (WORKFLOW_DIR / "vector_ready.flag")
+    if flag.exists():
+        return True, False
+    marker = marker_path or _REKICK_MARKER
+    kicked = False
+    try:
+        stale = (
+            not marker.exists()
+            or time.time() - marker.stat().st_mtime > _REKICK_COOLDOWN_S
+        )
+        if stale and spawn:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(str(time.time()), encoding="utf-8")
+            import subprocess
+            starter = CLAUDE_DIR / "tools" / "memory-vector-service" / "starter.py"
+            kw: Dict[str, Any] = {
+                "stdin": subprocess.DEVNULL,
+                "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.DEVNULL,
+            }
+            if sys.platform == "win32":
+                kw["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+            else:
+                kw["start_new_session"] = True
+            subprocess.Popen(
+                [sys.executable, str(starter),
+                 "--phase", "ups_rekick", "--session-id", session_id or ""],
+                **kw,
+            )
+            kicked = True
+    except Exception as e:
+        _atom_debug_error("vector:rekick", e)
+    deadline = time.time() + wait_s
+    while time.time() < deadline:
+        time.sleep(0.1)
+        if flag.exists():
+            return True, kicked
+    return False, kicked
+
+
 def _search_episodic_context(
     prompt: str, config: Dict[str, Any], session_id: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """Query /search/episodic for related past sessions. First-prompt only."""
+    import urllib.parse
+    import urllib.request
+
     vs_config = config.get("vector_search", {})
     if not vs_config.get("enabled", True):
         _log_vector_obs(session_id, "_search_episodic_context", "disabled", 0, True)
@@ -1350,8 +1414,10 @@ def _search_episodic_context(
     if not sc_config.get("enabled", True):
         _log_vector_obs(session_id, "_search_episodic_context", "disabled", 0, True)
         return []
-    if not (WORKFLOW_DIR / "vector_ready.flag").exists():
-        _log_vector_obs(session_id, "_search_episodic_context", "no_flag", 0, True)
+    _ready, _kicked = _ensure_vector_ready(session_id)
+    if not _ready:
+        _log_vector_obs(session_id, "_search_episodic_context", "no_flag", 0, True,
+                        extra={"rekicked": _kicked})
         return []
 
     port = vs_config.get("service_port", 3849)
@@ -1480,14 +1546,19 @@ def _semantic_search(
     session_id: Optional[str] = None,
 ) -> List[Tuple[str, str, List[str], List[Dict]]]:
     """Query Memory Vector Service with intent-aware ranked search."""
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
     vs_config = config.get("vector_search", {})
     if not vs_config.get("enabled", True):
         _log_vector_obs(session_id, "_semantic_search", "disabled", 0, True,
                         extra={"intent": intent})
         return []
-    if not (WORKFLOW_DIR / "vector_ready.flag").exists():
+    _ready, _kicked = _ensure_vector_ready(session_id)
+    if not _ready:
         _log_vector_obs(session_id, "_semantic_search", "no_flag", 0, True,
-                        extra={"intent": intent})
+                        extra={"intent": intent, "rekicked": _kicked})
         return []
     port = vs_config.get("service_port", 3849)
     top_k = vs_config.get("search_top_k", 5)
@@ -1505,7 +1576,7 @@ def _semantic_search(
         use_sections = True
         params_dict = _add_identity({
             "q": prompt, "top_k": top_k,
-            "min_score": min(min_score, _RANKED_FLOOR),
+            "min_score": min_score,
             "intent": intent,
             "max_sections": 3,
         })
@@ -1520,7 +1591,7 @@ def _semantic_search(
                 use_sections = False
                 params_dict = _add_identity({
                     "q": prompt, "top_k": top_k,
-                    "min_score": min(min_score, _RANKED_FLOOR),
+                    "min_score": min_score,
                     "intent": intent,
                 })
                 params = urllib.parse.urlencode(params_dict)
@@ -1555,6 +1626,8 @@ def _semantic_search(
 
 def _trigger_incremental_index(config: Dict[str, Any]) -> None:
     """Non-blocking request to re-index changed atoms."""
+    import urllib.request
+
     vs_config = config.get("vector_search", {})
     if not vs_config.get("auto_index_on_change", True):
         return

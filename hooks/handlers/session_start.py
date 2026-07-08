@@ -227,6 +227,71 @@ def _refresh_vector_flag(
     return "kept"
 
 
+def _prune_aec_files(max_age_days: int = 7) -> int:
+    """清 workflow/aec-report/ 與 aec-decision/ 中 mtime 超過 max_age_days 的 .json（TTL GC）。
+
+    兩者皆 per-turn 執行期狀態檔（Python 寫報告 / Node 寫決策），寫了不清會無限累積。
+    在 SessionStart 順手掃一次（比照上方 log rotation 的開機打掃時機）。glob *.json 自然略過
+    atomic write 的 .tmp 過渡檔。fail-open：目錄不存在 / 單檔被別進程刪或鎖 → 略過不炸。
+    回傳刪除檔數（供測試 / 觀測）。"""
+    cutoff = (datetime.now() - timedelta(days=max_age_days)).timestamp()
+    pruned = 0
+    for sub in ("aec-report", "aec-decision"):
+        try:
+            entries = list((WORKFLOW_DIR / sub).glob("*.json"))
+        except Exception:
+            continue
+        for p in entries:
+            try:
+                if p.stat().st_mtime < cutoff:
+                    p.unlink()
+                    pruned += 1
+            except Exception:
+                continue
+    return pruned
+
+
+HEALTH_RUN_STALE_DAYS = 10  # 週排程 + 3 天寬限；超過 = 排程器本身死了
+
+
+def _health_advisory(last_run_path) -> list:
+    """週健檢死人開關 → advisory 行（無異常回 []，不佔 context）。
+
+    三種浮出：last-run 缺檔（從未跑/被清）、at 逾 HEALTH_RUN_STALE_DAYS 天
+    （Task Scheduler 停擺）、上次健檢 red>0（有待處理項未看）。自身壞掉走
+    _atom_debug_error，不阻斷 SessionStart。
+    """
+    try:
+        if not last_run_path.exists():
+            return [
+                "[Guardian:HealthCheck] ⚠ 週健檢 last-run 不存在——排程未註冊或"
+                "檔案被清。手動跑 python tools/health-weekly.py 並確認 schtasks"
+                " Claude-Memory-WeeklyHealth 存在。"
+            ]
+        d = json.loads(last_run_path.read_text(encoding="utf-8"))
+        at = datetime.fromisoformat(d.get("at", ""))
+        age = (datetime.now() - at).days
+        out = []
+        if age > HEALTH_RUN_STALE_DAYS:
+            out.append(
+                f"[Guardian:HealthCheck] ⚠ 週健檢已 {age} 天未跑（上次 "
+                f"{at:%Y-%m-%d}）——Task Scheduler 疑停擺，檢查 schtasks "
+                "Claude-Memory-WeeklyHealth。"
+            )
+        if int(d.get("red", 0)) > 0:
+            out.append(
+                f"[Guardian:HealthCheck] 🔴 上次健檢有 {d['red']} 項需處理 → "
+                f"Read {d.get('report', 'workflow/health-reports/')}"
+            )
+        return out
+    except Exception as e:
+        _atom_debug_error("session_start:health_advisory", e)
+        return [
+            "[Guardian:HealthCheck] ⚠ health-last-run.json 不可解析——健檢狀態"
+            "未知，手動跑 python tools/health-weekly.py。"
+        ]
+
+
 def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
     session_id = input_data.get("session_id", "unknown")
     cwd = input_data.get("cwd", "")
@@ -238,6 +303,7 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         rotate_log_if_oversized(WORKFLOW_DIR / "guardian-crash.log", max_mb=10)
         rotate_log_if_oversized(WORKFLOW_DIR / "extract-worker.log", max_mb=10)
         rotate_log_if_oversized(CLAUDE_DIR / "Logs" / "codex-companion.log", max_mb=10)
+        _prune_aec_files(max_age_days=7)  # AEC 報告/決策檔 7 天 TTL（防執行期狀態檔無限累積）
     except Exception as e:
         _atom_debug_error("session_start:log_rotation", e)
 
@@ -463,6 +529,13 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                     )
         except Exception as e:
             _atom_debug_error("session_start:skill_index_validate", e)
+
+        # ── 週健檢死人開關 ──────────────────────────────────
+        # tools/health-weekly.py（Task Scheduler 每週跑）落 health-last-run.json。
+        # 缺檔/逾期 = 排程器本身死了；red>0 = 上次健檢有待處理項。兩者都必須
+        # 在 session 內浮出（fail-open 必告知）——「靜默死 27 天」的最後防線。
+        lines.extend(_health_advisory(WORKFLOW_DIR / "health-last-run.json"))
+
         if v4_user:
             lines.append(
                 f"[Role] user={v4_user} roles={','.join(v4_roles) or 'programmer'} mgmt={v4_mgmt}"
@@ -553,6 +626,23 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
     except Exception as e:
         print(f"[realm] automove notice error: {e}", file=sys.stderr)
 
+    # 效用歸因遙測 advisory：上個 session 判定 unknown 比率連續偏高（讀後清 marker）
+    try:
+        _ow_marker = WORKFLOW_DIR / "outcome-unknown-advisory.json"
+        if _ow_marker.exists():
+            try:
+                _ow = json.loads(_ow_marker.read_text(encoding="utf-8"))
+                if _ow.get("msg"):
+                    lines.append(_ow["msg"])
+            except (OSError, json.JSONDecodeError):
+                pass
+            try:
+                _ow_marker.unlink()
+            except OSError:
+                pass
+    except Exception as e:
+        print(f"Outcome-watch notice error: {e}", file=sys.stderr)
+
     try:
         review_reminder = _check_periodic_review_due(config)
         if review_reminder:
@@ -622,6 +712,24 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
     except Exception:
         pass
 
+    # 可觀測性：IDENTITY.md 完整性哨兵——被覆寫成 stub / 缺核心契約段時浮出告警
+    # （完整版備份在 templates/IDENTITY.template.md；檢查本身出錯不阻斷）
+    try:
+        _identity = CLAUDE_DIR / "IDENTITY.md"
+        _id_ok = False
+        _id_size = 0
+        if _identity.exists():
+            _id_size = _identity.stat().st_size
+            _id_text = _identity.read_text(encoding="utf-8", errors="ignore")
+            _id_ok = "自主行為契約" in _id_text and _id_size >= 2000
+        if not _id_ok:
+            lines.append(
+                f"[Guardian:Identity⚠] IDENTITY.md 疑似損毀/被覆寫（現 {_id_size} bytes），"
+                "完整版在 templates/IDENTITY.template.md，請比對回復。"
+            )
+    except Exception:
+        pass
+
     write_state(session_id, state)
 
     try:
@@ -642,103 +750,11 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         }
     }, ensure_ascii=False))
 
-    # ── V3/1.5C: Vector service — fire-and-forget bg subprocess ────────────
+    # ── Vector service：fire-and-forget 啟動器（自癒/觀測邏輯在 starter.py）──
     if (config.get("vector_search", {}).get("auto_start_service", True)
             and not state.get("_skip_vector_init")):
         try:
-            vs_port = config.get("vector_search", {}).get("service_port", 3849)
-            vs_script = str(CLAUDE_DIR / "tools" / "memory-vector-service" / "service.py")
-            flag_path = str(WORKFLOW_DIR / "vector_ready.flag")
-            probe_log_path = str(CLAUDE_DIR / "Logs" / "vector-observation-probe.log")
-            _bg_code = f"""
-import urllib.request, urllib.error, urllib.parse, subprocess, sys, time, os, json, re
-from pathlib import Path
-
-port = {vs_port}
-base = f"http://127.0.0.1:{{port}}"
-
-try:
-    urllib.request.urlopen(f"{{base}}/health", timeout=2)
-except Exception:
-    import socket
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.bind(("127.0.0.1", port))
-        sock.close()
-        kw = {{"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}}
-        if sys.platform == "win32":
-            kw["creationflags"] = 0x08000000
-        else:
-            kw["start_new_session"] = True
-        subprocess.Popen([sys.executable, {repr(vs_script)}], **kw)
-    except OSError:
-        sock.close()
-
-ready = False
-for _ in range(30):
-    try:
-        urllib.request.urlopen(f"{{base}}/health", timeout=2)
-        ready = True
-        break
-    except Exception:
-        time.sleep(0.5)
-
-if ready:
-    try:
-        Path({repr(flag_path)}).write_text("ready", encoding="utf-8")
-    except Exception:
-        pass
-
-if ready:
-    try:
-        urllib.request.urlopen(f"{{base}}/search?q=warmup&top_k=1&min_score=0.99", timeout=15)
-    except Exception:
-        pass
-
-probe_q = "workflow guardian SessionStart 機制"
-vec_count = -1
-fallback_used = not ready
-if ready:
-    try:
-        params = urllib.parse.urlencode({{"q": probe_q, "top_k": 5, "min_score": 0.5}})
-        with urllib.request.urlopen(f"{{base}}/search/ranked?{{params}}", timeout=10) as r:
-            data = json.loads(r.read())
-            vec_count = len(data) if isinstance(data, list) else 0
-    except Exception:
-        vec_count = -1
-        fallback_used = True
-
-kw_count = 0
-mem_dir = Path({repr(str(CLAUDE_DIR / "memory"))})
-try:
-    pattern = re.compile("workflow|guardian|SessionStart", re.IGNORECASE)
-    for md in mem_dir.rglob("*.md"):
-        try:
-            if pattern.search(md.read_text(encoding="utf-8", errors="ignore")):
-                kw_count += 1
-        except Exception:
-            pass
-except Exception:
-    pass
-
-try:
-    log_p = Path({repr(probe_log_path)})
-    log_p.parent.mkdir(parents=True, exist_ok=True)
-    rec = {{
-        "ts": time.time(),
-        "session_id": {repr(session_id)},
-        "fn": "session_start_probe",
-        "flag_state": "ready" if ready else "no_flag",
-        "result_count": vec_count,
-        "fallback_used": fallback_used,
-        "kw_count": kw_count,
-        "probe_q": probe_q,
-    }}
-    with open(str(log_p), "a", encoding="utf-8") as f:
-        f.write(json.dumps(rec, ensure_ascii=False) + "\\n")
-except Exception:
-    pass
-"""
+            starter = CLAUDE_DIR / "tools" / "memory-vector-service" / "starter.py"
             _bg_kwargs: dict = {
                 "stdin": subprocess.DEVNULL,
                 "stdout": subprocess.DEVNULL,
@@ -749,7 +765,8 @@ except Exception:
             else:
                 _bg_kwargs["start_new_session"] = True
             subprocess.Popen(
-                [sys.executable, "-c", _bg_code],
+                [sys.executable, str(starter),
+                 "--phase", "sessionstart", "--session-id", session_id or ""],
                 **_bg_kwargs,
             )
         except Exception as e:
