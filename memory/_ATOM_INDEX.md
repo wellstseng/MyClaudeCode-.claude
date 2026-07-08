@@ -102,3 +102,4 @@
 | wells-workflow-feedback-driven-teaching | memory/wells-workflow-feedback-driven-teaching.md | 工作流洞見, 教AI, feedback, 行為校正, 糾正, teaching | global |
 | wells-workflow-handoff-quality | memory/wells-workflow-handoff-quality.md | 工作流洞見, handoff, 交接, 大型任務, 跨session | global |
 | svn-windows-中文-commit-log-編碼陷阱 | _AIDocs/_atoms/Tools/自動化流程與協議/dotnet/svn-windows-中文-commit-log-編碼陷阱.md | SVN, commit log, 中文, UTF-8, CP950, Windows, 亂碼, encoding, BOM, commit message, svn:log | global |
+| feedback-已驗證的重複操作直接做完勿反覆確認 | _AIDocs/Failures/feedback-已驗證的重複操作直接做完勿反覆確認.md | 重複操作, 升級, upstream 合版, 落地, 確認, checkpoint, 別多問, 效率, AskUserQuestion | global |

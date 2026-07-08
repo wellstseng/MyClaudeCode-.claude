@@ -43,7 +43,7 @@
 | wells-workflow-copilot-not-driver | wells-workflow-copilot-not-driver |
 | wells-workflow-feedback-driven-teaching | wells-workflow-feedback-driven-teaching |
 | wells-workflow-handoff-quality | wells-workflow-handoff-quality |
-| feedback-* | 行為校正（9 atoms） → [`_AIDocs/Failures/`](../_AIDocs/Failures/) |
+| feedback-* | 行為校正（10 atoms） → [`_AIDocs/Failures/`](../_AIDocs/Failures/) |
 | memory-pipeline-silent-failure-2026-05 | 記憶機制靜默失效（confirmations 零增 + episodic 停擺） → [`_AIDocs/Failures/memory-pipeline-silent-failure-2026-05.md`](../_AIDocs/Failures/memory-pipeline-silent-failure-2026-05.md) |
 | cognitive-patterns | 認知模式偏差（Cognitive Patterns） → [`_AIDocs/Failures/cognitive-patterns.md`](../_AIDocs/Failures/cognitive-patterns.md) |
 

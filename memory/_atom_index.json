@@ -1668,6 +1668,22 @@
         "svn:log"
       ],
       "scope": "global"
+    },
+    {
+      "name": "feedback-已驗證的重複操作直接做完勿反覆確認",
+      "path": "_AIDocs/Failures/feedback-已驗證的重複操作直接做完勿反覆確認.md",
+      "triggers": [
+        "重複操作",
+        "升級",
+        "upstream 合版",
+        "落地",
+        "確認",
+        "checkpoint",
+        "別多問",
+        "效率",
+        "AskUserQuestion"
+      ],
+      "scope": "global"
     }
   ]
 }
