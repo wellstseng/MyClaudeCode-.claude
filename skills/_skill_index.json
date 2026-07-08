@@ -1,7 +1,7 @@
 {
   "_doc": "skills/ 計數 SoT 機器鏡像。由 tools/skill-index.py 生成，勿手改。SoT=skills/*/SKILL.md。改 skill 後 PostToolUse hook 自動 --write。",
   "generated_from": "skills/*/SKILL.md",
-  "count": 21,
+  "count": 23,
   "skills": [
     {
       "name": "atom-debug",
@@ -17,6 +17,11 @@
       "name": "changelog-debug",
       "dir": "changelog-debug",
       "description": "Hook 觸發失靈時手動滾動 _CHANGELOG.md（正常情況自動觸發，這是 debug 用）"
+    },
+    {
+      "name": "code-guide",
+      "dir": "code-guide",
+      "description": "程式碼系統導讀產生器：輸入檔案路徑/類別名/系統名，AI 讀完原始碼後產出 8 區塊導讀地圖（心智模型、資料模型、入口與主流程、不變量、輔助層、閱讀順序、實機觀察、文件時效），協助開發者快速建立心智模型後再進入精讀。"
     },
     {
       "name": "codex-companion",
@@ -97,6 +102,11 @@
       "name": "skill-creator",
       "dir": "skill-creator",
       "description": "建立、改造、稽核 Claude Code skill 的標準作業。確保每個 skill 遵循 Anthropic Progressive Disclosure 三層架構與 5 大設計模式，避免 agent 腦補亂寫。**任何要寫新 skill、改既有 skill、或評估 skill 品質的場合都該觸發。**"
+    },
+    {
+      "name": "unity-mcp-orchestrator",
+      "dir": "unity-mcp-skill",
+      "description": "Orchestrate Unity Editor via MCP (Model Context Protocol) tools and resources. Use when working with Unity projects through MCP for Unity - creating/modifying GameObjects, editing scripts, managing scenes, running tests, or any Unity Editor automation. Provides best practices, tool schemas, and workflow patterns for effective Unity-MCP integration."
     },
     {
       "name": "upgrade",

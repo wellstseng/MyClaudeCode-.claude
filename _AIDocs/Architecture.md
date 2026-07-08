@@ -83,7 +83,7 @@
 | `ensure-mcp.py` | MCP server 可用性確認 |
 | `webfetch-guard.sh` | WebFetch 安全護欄 |
 
-## Skills（V5 全域 <!-- skill-count -->21<!-- /skill-count --> 個 active，2026-05-27 起；記憶系統 skill + 1 外部〔karpathy-guidelines〕；unity-mcp-skill 2026-06-12 已搬遷專案層；**init-roles / conflict-review 於 P8a 2026-07-01 單人環境降 dormant → `skills/_archived/`**，故不計入 21）
+## Skills（V5 全域 <!-- skill-count -->23<!-- /skill-count --> 個 active，2026-05-27 起；記憶系統 skill + 1 外部〔karpathy-guidelines〕；unity-mcp-skill 2026-06-12 已搬遷專案層；**init-roles / conflict-review 於 P8a 2026-07-01 單人環境降 dormant → `skills/_archived/`**，故不計入 21）
 
 V5 Wave 3 把 V4 的 `commands/*.md` 遷到 `.claude/skills/{name}/SKILL.md`（對齊 Anthropic 官方「commands merged into skills」）。Legacy `commands/` **2026-05-27 已刪除**（原 7 天緩衝經對拍 100% identical 驗證後提前廢止）。
 

@@ -14,7 +14,7 @@
 | feedback-memory-structure | _AIDocs/Failures/feedback-memory-structure.md | 寫入記憶, atom 設計, atom 顆粒, 指標型, scope 敏感, GUID硬編碼, 環境相依, gitignore, git rm, memory path, _staging | global |
 | feedback-rigor-standards | _AIDocs/Failures/feedback-rigor-standards.md | 縝密, 漏掉, 沒看到, max thinking, high thinking, 外包思考, 規範, rigor, 前例, precedent, 既有 drift | global |
 | gdoc-harvester | _AIDocs/_atoms/Tools/gdoc-harvester.md | harvester, Google Docs, Sheets, 收割, Playwright, cookie, export | global |
-| preferences | memory/preferences.md | 偏好, 風格, 習慣, 語言, 回應, 執P, 執驗上P, 上GIT | global |
+| preferences | memory/preferences.md | 偏好, 風格, 習慣, 語言, 回應, 執P, 執驗上P, 上GIT, Obsidian | global |
 | toolchain-ollama | memory/toolchain-ollama.md | ollama, dual-backend, rdchat, qwen3, embedding, 萃取品質, thinking, Open WebUI | global |
 | toolchain | memory/toolchain.md | 工具鏈, 環境設定, MCPControl, MCP新增, npm全域, 螢幕截圖, Excel MCP, LanceDB, MSYS2, cp950, PowerShell截圖, 向量服務 | global |
 | workflow-icld | memory/workflow-icld.md | ICLD, 閉環, Sprint, 功能拆解, 開發計畫, 大型新功能, 新系統規劃, 規格書 | global |
@@ -90,7 +90,7 @@
 | obsidian-sync-hook-全域同步-stdin-json-測試陷阱 | memory/obsidian-sync-hook-全域同步-stdin-json-測試陷阱.md | obsidian-sync, obsidian, Obsidian 同步, _global, 全域 memory 同步, PostToolUse hook 測試, stdin JSON, echo 反斜線, MSYS bash, hook 測試陷阱 | global |
 | project-ecosystem | memory/project-ecosystem.md | 專案, SGI, TSLG, TCSM, Orbit, Titan, Server, 監控, 專案狀態, 生態 | global |
 | redmine-config | memory/redmine-config.md | Redmine, sgi, API, query, 日報, 週報, redmine-70 | global |
-| svn-windows-中文-commit-log-編碼陷阱 | memory/svn-windows-中文-commit-log-編碼陷阱.md | SVN, commit log, 中文, UTF-8, CP950, Windows, 亂碼, encoding, BOM, commit message, svn:log | global |
+| svn-windows-中文-commit-log-編碼陷阱 | _AIDocs/_atoms/Tools/自動化流程與協議/dotnet/svn-windows-中文-commit-log-編碼陷阱.md | SVN, commit log, 中文, UTF-8, CP950, Windows, 亂碼, encoding, BOM, commit message, svn:log | global |
 | team-roster | memory/team-roster.md | 團隊, 名冊, 成員, SVN帳號, Discord ID, Redmine ID, 暱稱 | global |
 | titan-dotnet-split | memory/titan-dotnet-split.md | titan_dotnet, 分家, src/csharp, titan_src, git-filter-repo, 標準 .NET 佈局, build-native, luasocket, 獨立 repo, 自足 | global |
 | toolchain-batch-cmd-crlf-encoding | memory/toolchain-batch-cmd-crlf-encoding.md | batch, bat, cmd, 批次檔, 閃退, 亂碼, CRLF, LF, 換行, Write工具, adb push, chcp, BOM, 編碼 | global |

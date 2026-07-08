@@ -37,7 +37,6 @@
 | obsidian-sync-hook-全域同步-stdin-json-測試陷阱 | obsidian-sync hook 全域同步 + stdin-JSON 測試陷阱 |
 | project-ecosystem | 專案生態 |
 | redmine-config | Redmine 工具設定 |
-| svn-windows-中文-commit-log-編碼陷阱 | SVN Windows 中文 Commit Log 編碼陷阱 |
 | team-roster | 程式團隊名冊 |
 | titan-dotnet-split | titan-dotnet-split |
 | toolchain-batch-cmd-crlf-encoding | toolchain-batch-cmd-crlf-encoding |

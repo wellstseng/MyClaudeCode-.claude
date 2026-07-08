@@ -6,7 +6,7 @@
 - Trigger: 工作流程, 大型任務, 分階段, SOP, 任務拆分, 上版, GIT, Phase
 - Created: 2026-03-06
 - Tags: workflow, vcs
-- Related: decisions, workflow-svn, workflow-icld, feedback-handoff-self-sufficient, feedback-git-log-chinese, feedback-fix-on-discovery, memory-pipeline-silent-failure-2026-05, collaboration-protocol, wells-workflow-handoff-quality
+- Related: decisions, workflow-svn, workflow-icld, feedback-handoff-self-sufficient, feedback-git-log-chinese, feedback-fix-on-discovery, memory-pipeline-silent-failure-2026-05, collaboration-protocol, wells-workflow-handoff-quality, atom-table-support, atom-usefulness-loop, workflow-parallel-agents, 併發-session-共用工作樹-收尾選擇性-staging-勿-git-add-a, feedback-memory-system-doc-sync, a執p-自執驗上p-自動完工協議, git-已push-commit-勿改寫-雙-push-url-gitlab-main-force-保護致遠端分叉
 
 ## 知識
 

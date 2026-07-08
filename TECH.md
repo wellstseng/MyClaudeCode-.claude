@@ -93,7 +93,7 @@ LLM 的 context window 是**工作記憶**，缺的是**長期記憶**。原子�
 │   ├── unity-desktop/
 │   └── workflow-guardian-mcp/server.js             ← MCP @ stdio，4 tool（atom_write/move/promote/edit_meta）
 │
-├── skills/                                         ← <!-- skill-count -->21<!-- /skill-count --> 個 skill（19 遷移自 commands/ + skill-creator/heal-review/refile + 外部 karpathy-guidelines）
+├── skills/                                         ← <!-- skill-count -->23<!-- /skill-count --> 個 skill（19 遷移自 commands/ + skill-creator/heal-review/refile + 外部 karpathy-guidelines）
 │   ├── atom-debug / browse-sprites / changelog-debug
 │   ├── conflict / consciousness-stream / continue
 │   ├── codex-companion / extract / fix-escalation
@@ -107,7 +107,7 @@ LLM 的 context window 是**工作記憶**，缺的是**長期記憶**。原子�
 │
 ├── memory/                                         ← 全域記憶層
 │   ├── MEMORY.md                                   ← AI 一覽索引（人類可讀）
-│   ├── _atom_index.json                            ← V5 JSON SoT（<!-- atom-breakdown -->97 atoms：core 45 + feedback 10 + 失敗模式 2 + local 40〔World4/Tools10/MemDev20/OS3/Continuity2/Vision1〕<!-- /atom-breakdown -->）
+│   ├── _atom_index.json                            ← V5 JSON SoT（<!-- atom-breakdown -->97 atoms：core 44 + feedback 10 + 失敗模式 2 + local 41〔World4/Tools11/MemDev20/OS3/Continuity2/Vision1〕<!-- /atom-breakdown -->）
 │   ├── _ATOM_INDEX.md                              ← deprecated mirror（自動生成）
 │   ├── _meta/forbidden-phrases.json                ← V5 禁語單一真相
 │   ├── preferences.md / decisions*.md / workflow-*.md / toolchain*.md
@@ -682,7 +682,7 @@ flowchart TD
 | **V5 BM25** | [hooks/wg_atoms.py](hooks/wg_atoms.py) `bm25_match` | 全域層替代 Vector（~80 行手刻） |
 | **V5 JSON SoT** | [lib/atom_index_json.py](lib/atom_index_json.py) | 取代 `_ATOM_INDEX.md` table parser |
 | **V5 Codex Subprocess** | [hooks/codex_companion.py](hooks/codex_companion.py) + `tools/codex-companion/audit.py` | daemon → subprocess（無 port 3850；P2 拔 `subprocess_timeout` 死 config 鍵）|
-| **V5 Skill 體系** | [skills/](skills/) <!-- skill-count -->21<!-- /skill-count --> 個 + frontmatter | 19 遷移自 legacy commands/ + skill-creator/heal-review/refile + 外部 karpathy-guidelines |
+| **V5 Skill 體系** | [skills/](skills/) <!-- skill-count -->23<!-- /skill-count --> 個 + frontmatter | 19 遷移自 legacy commands/ + skill-creator/heal-review/refile + 外部 karpathy-guidelines |
 | **V5 MCP（4 tool）** | [tools/workflow-guardian-mcp/server.js](tools/workflow-guardian-mcp/server.js) | atom_write / atom_move / atom_promote / atom_edit_meta（砍 4 內部 IPC）|
 | **V5 禁語 JSON** | `memory/_meta/forbidden-phrases.json` | IDENTITY.md + wg_evasion.py single source |
 | **V5 Log Rotation** | [hooks/wg_core.py](hooks/wg_core.py) | guardian-crash.log / extract-worker.log 自動輪轉 |

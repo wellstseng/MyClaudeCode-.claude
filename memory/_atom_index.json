@@ -176,7 +176,8 @@
         "回應",
         "執P",
         "執驗上P",
-        "上GIT"
+        "上GIT",
+        "Obsidian"
       ],
       "scope": "global"
     },
@@ -1518,7 +1519,7 @@
     },
     {
       "name": "svn-windows-中文-commit-log-編碼陷阱",
-      "path": "memory/svn-windows-中文-commit-log-編碼陷阱.md",
+      "path": "_AIDocs/_atoms/Tools/自動化流程與協議/dotnet/svn-windows-中文-commit-log-編碼陷阱.md",
       "triggers": [
         "SVN",
         "commit log",
