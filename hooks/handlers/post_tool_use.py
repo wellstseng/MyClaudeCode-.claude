@@ -1,7 +1,8 @@
 """
 handlers/post_tool_use.py — PostToolUse hook handler
 
-追蹤 modified_files / accessed_files / vcs_queries；
+追蹤 modified_files / vcs_queries（accessed_files 由 Stop 端從 transcript 尾段
+一次回收，matcher 不含 Read——省去每次讀檔一個 hook 行程）；
 偵測測試失敗、_CHANGELOG 自動 roll、staging 命名、路徑強制、docdrift、hot cache mid-turn 注入。
 """
 
@@ -10,7 +11,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from wg_core import (
     _ensure_state, _now_iso, write_state, output_json, output_nothing,
@@ -18,14 +19,15 @@ from wg_core import (
 )
 from wg_episodic import _check_output_quality
 from wg_extraction import _is_lease_valid  # noqa: F401
-from wg_evasion import is_test_command, detect_test_failure, aec_severity
+from wg_evasion import (
+    is_test_command, detect_test_failure, aec_severity, crosscheck_aec_severity,
+)
 from wg_atoms import _trigger_incremental_index
 from wg_extraction import is_plan_filename
 from handlers._shared import (
     _is_ephemeral_path,
     WISDOM_AVAILABLE, wisdom_track_retry,
     DOCDRIFT_AVAILABLE, check_source_drift, resolve_doc_update, prune_committed_entries,
-    read_hot_cache, mark_injected, format_injection_line,
 )
 
 
@@ -191,6 +193,35 @@ def _write_aec_report_file(session_id: str, turn_seq: int, report: Dict[str, Any
         _atom_debug_error("post_tool_use:aec_report_write", e)
 
 
+def _collect_aec_evidence(
+    state: Dict[str, Any], session_id: str
+) -> List[Dict[str, Any]]:
+    """收集本 session「上次 AEC emit 之後」的 hook 實測退避證據，供 (b) 欄
+    cross-check（模型自評 vs hook 實測，不信自評）。
+
+    來源：state["evasion_events"]（Stop 端 detect_evasion 命中即存，不受
+    evasion_flag 被 UPS 注入後清空影響）+ 現行未清的 evasion_flag。
+    窗口用 >=：同 turn 內 Stop（記事件）永遠在 emit 之後，事件 turn_seq ==
+    上份報告 turn_seq 者必然是 emit 後才發生，屬下一份報告的證據。"""
+    prev = state.get("anti_evasion_report") or {}
+    prev_turn = (
+        int(prev.get("turn_seq", -1))
+        if prev.get("session_id") == session_id else -1
+    )
+    evidence = [
+        e for e in (state.get("evasion_events") or [])
+        if int(e.get("turn_seq", 0)) >= prev_turn
+    ]
+    ev = state.get("evasion_flag")
+    if ev and not any(x.get("at") == ev.get("at") for x in evidence):
+        evidence.append({
+            "phrase": ev.get("phrase", ""),
+            "turn_seq": int(state.get("turn_seq", 0)),
+            "at": ev.get("at", ""),
+        })
+    return evidence
+
+
 def _hud_beat_fresh(port: int, threshold_s: int) -> bool:
     """GET /api/aec/beat-status → age_s < threshold？不可達 / 舊碼(404) / 逾時 → False（窗死）。"""
     try:
@@ -249,7 +280,8 @@ def _maybe_spawn_hud(sev: str, state: Dict[str, Any], config: Dict[str, Any]) ->
         threshold = int(aec_cfg.get("hud_stale_s", 30))
         if _hud_beat_fresh(port, threshold):
             return
-        if aec_cfg.get("hud_autospawn", False):
+        # B：只有 notable/real-evasion 才彈窗（routine 靜默入 disk、不打擾）。
+        if aec_cfg.get("hud_autospawn", False) and sev in ("notable", "real-evasion"):
             _spawn_hud_edge(port)
         if sev in ("notable", "real-evasion"):
             state["aec_hud_fallback"] = True
@@ -267,6 +299,14 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
     file_path = tool_input.get("file_path", "")
+
+    # ─── 救援日誌：工具呼叫命中已注入 atom 的高特異 token → rescue-log ───
+    try:
+        from wg_rescue import check_rescue_hits
+        if check_rescue_hits(state, session_id, tool_name, tool_input):
+            write_state(session_id, state)
+    except Exception as e:
+        print(f"rescue check error: {e}", file=sys.stderr)
 
     # ─── sub-agent 注入歸因記錄 ───────────────────────────────
     # PostToolUse 對 Agent/Task 自足：tool_response 含 agentId / content / prompt
@@ -381,12 +421,6 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             except Exception as e:
                 print(f"DocDrift error: {e}", file=sys.stderr)
 
-    elif tool_name == "Read" and file_path:
-        accessed = state.setdefault("accessed_files", [])
-        if not any(a["path"] == file_path for a in accessed):
-            accessed.append({"path": file_path, "at": _now_iso()})
-            write_state(session_id, state)
-
     elif tool_name == "Bash":
         command = tool_input.get("command", "")
         if re.search(r"\b(git\s+(log|blame|show|diff)|svn\s+(log|blame|diff))\b", command):
@@ -441,6 +475,11 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         a, b, c, d = (str(tool_input.get(k, "") or "") for k in ("a", "b", "c", "d"))
         turn_seq = int(state.get("turn_seq", 0))
         sev = aec_severity(a, b, c, d)
+        # (b) 欄 cross-check：hook 實測到退避但模型自評「無」→ 升 real-evasion +
+        # 附 hook 證據（升級只發生在 Python one-writer；Node chip 純內容判定，
+        # 顯示可能不同步——report 檔 + Stop fallback 為準）。
+        evidence = _collect_aec_evidence(state, session_id)
+        sev, upgraded = crosscheck_aec_severity(sev, b, evidence)
         report = {
             "session_id": session_id,
             "turn_seq": turn_seq,
@@ -448,6 +487,9 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             "severity": sev,
             "at": _now_iso(),
         }
+        if upgraded:
+            report["severity_upgraded_by"] = "hook:evasion-crosscheck"
+            report["hook_evidence"] = evidence[-5:]
         state["anti_evasion_report"] = report
         _write_aec_report_file(session_id, turn_seq, report)
         _maybe_spawn_hud(sev, state, config)
@@ -473,16 +515,6 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             if val:
                 advisories.append(f"{prefix} {val}")
                 del state[key]
-
-    if read_hot_cache:
-        try:
-            hot_data = read_hot_cache(session_id)
-            if hot_data:
-                advisories.append(format_injection_line(hot_data, context="mid-turn"))
-                mark_injected(session_id)
-        except Exception as e:
-            _atom_debug_error("post_tool_use:hot_cache_inject", e)
-            pass
 
     if advisories:
         write_state(session_id, state)

@@ -116,24 +116,6 @@
       "scope": "global"
     },
     {
-      "name": "feedback-memory-structure",
-      "path": "_AIDocs/Failures/feedback-memory-structure.md",
-      "triggers": [
-        "寫入記憶",
-        "atom 設計",
-        "atom 顆粒",
-        "指標型",
-        "scope 敏感",
-        "GUID硬編碼",
-        "環境相依",
-        "gitignore",
-        "git rm",
-        "memory path",
-        "_staging"
-      ],
-      "scope": "global"
-    },
-    {
       "name": "feedback-rigor-standards",
       "path": "_AIDocs/Failures/feedback-rigor-standards.md",
       "triggers": [
@@ -156,12 +138,9 @@
       "path": "_AIDocs/_atoms/Tools/gdoc-harvester.md",
       "triggers": [
         "harvester",
-        "Google Docs",
-        "Sheets",
         "收割",
-        "Playwright",
-        "cookie",
-        "export"
+        "Google Docs",
+        "Google Sheets"
       ],
       "scope": "global"
     },
@@ -170,14 +149,9 @@
       "path": "memory/preferences.md",
       "triggers": [
         "偏好",
-        "風格",
-        "習慣",
-        "語言",
-        "回應",
         "執P",
         "執驗上P",
-        "上GIT",
-        "Obsidian"
+        "上GIT"
       ],
       "scope": "global"
     },
@@ -220,13 +194,9 @@
       "path": "memory/workflow-icld.md",
       "triggers": [
         "ICLD",
-        "閉環",
         "Sprint",
-        "功能拆解",
-        "開發計畫",
-        "大型新功能",
-        "新系統規劃",
-        "規格書"
+        "閉環",
+        "功能拆解"
       ],
       "scope": "global"
     },
@@ -251,9 +221,7 @@
       "triggers": [
         "svn",
         "svn-update",
-        "TortoiseSVN",
-        "衝突",
-        "conflict"
+        "TortoiseSVN"
       ],
       "scope": "global"
     },
@@ -286,7 +254,12 @@
         "編造規則",
         "籠統話術",
         "訂規保留",
-        "設計慣例"
+        "設計慣例",
+        "截斷",
+        "採樣",
+        "完整內容",
+        "品質判定",
+        "excerpt"
       ],
       "scope": "global"
     },
@@ -328,7 +301,7 @@
     },
     {
       "name": "atom-table-support",
-      "path": "memory/atom-table-support.md",
+      "path": "_AIDocs/_atoms/MemDev/atom-table-support.md",
       "triggers": [
         "atom_write",
         "表格",
@@ -355,7 +328,15 @@
         "改 server.js",
         "memory system",
         "文件同步",
-        "doc sync"
+        "doc sync",
+        "寫入記憶",
+        "atom 設計",
+        "atom 顆粒",
+        "指標型",
+        "GUID硬編碼",
+        "環境相依",
+        "gitignore",
+        "memory path"
       ],
       "scope": "global"
     },
@@ -378,7 +359,7 @@
     },
     {
       "name": "atom-usefulness-loop",
-      "path": "memory/atom-usefulness-loop.md",
+      "path": "_AIDocs/_atoms/MemDev/atom-usefulness-loop.md",
       "triggers": [
         "效用閉環",
         "usefulness",
@@ -431,7 +412,7 @@
     },
     {
       "name": "atom-元資料編輯與晉升閘真相",
-      "path": "memory/atom-元資料編輯與晉升閘真相.md",
+      "path": "_AIDocs/_atoms/MemDev/atom-元資料編輯與晉升閘真相.md",
       "triggers": [
         "edit_metadata",
         "atom 元資料編輯",
@@ -628,17 +609,10 @@
       "name": "goal-driven-verify-loopkarpathy-吸收",
       "path": "memory/goal-driven-verify-loopkarpathy-吸收.md",
       "triggers": [
-        "寫程式",
-        "寫扣",
-        "實作",
-        "refactor",
-        "重構",
-        "fix bug",
-        "修 bug",
-        "add validation",
         "成功標準",
-        "verify",
-        "驗收"
+        "驗收",
+        "verify loop",
+        "goal-driven"
       ],
       "scope": "global"
     },
@@ -783,14 +757,9 @@
       "name": "自己flag的維護動作直接做完不要反問",
       "path": "memory/自己flag的維護動作直接做完不要反問.md",
       "triggers": [
-        "更新atom",
-        "維護",
-        "同步",
         "反問",
         "要不要我",
         "該做就做",
-        "推進",
-        "收尾",
         "follow-through"
       ],
       "scope": "global"
@@ -882,7 +851,11 @@
         "anchoring",
         "context poisoning",
         "錯誤發展",
-        "錯誤認知"
+        "錯誤認知",
+        "記憶汙染",
+        "知識汙染",
+        "上下文腐化",
+        "selective forgetting"
       ],
       "scope": "global"
     },
@@ -937,31 +910,6 @@
       "scope": "global"
     },
     {
-      "name": "記憶汙染與上下文腐化-注入萃取自檢",
-      "path": "memory/記憶汙染與上下文腐化-注入萃取自檢.md",
-      "triggers": [
-        "上下文腐化",
-        "context rot",
-        "記憶汙染",
-        "知識汙染",
-        "累積知識",
-        "焦點模糊",
-        "回應偏門",
-        "越做越小",
-        "多session",
-        "接續",
-        "大型專案",
-        "注入",
-        "萃取",
-        "context engineering",
-        "memory governance",
-        "selective forgetting",
-        "上下文工程",
-        "偏離目標"
-      ],
-      "scope": "global"
-    },
-    {
       "name": "escalation-hook-在-edit-count-proxy-上-false-fire-的辨識無真實失敗迴圈時不盲從不編造",
       "path": "memory/escalation-hook-在-edit-count-proxy-上-false-fire-的辨識無真實失敗迴圈時不盲從不編造.md",
       "triggers": [
@@ -993,7 +941,12 @@
         "WriteResult",
         "腳本寫 atom",
         "funnel 寫入",
-        "一次性整理腳本"
+        "一次性整理腳本",
+        "代理訊號",
+        "fail-soft",
+        "未檢回傳值",
+        "批次寫入驗收",
+        "post-mortem"
       ],
       "scope": "global"
     },
@@ -1041,68 +994,6 @@
         "vision-doc",
         "平台發想",
         "記憶系統當核心缺什麼"
-      ],
-      "scope": "global"
-    },
-    {
-      "name": "品質完整性判定須讀完整內容-勿從截斷採樣斷言",
-      "path": "memory/品質完整性判定須讀完整內容-勿從截斷採樣斷言.md",
-      "triggers": [
-        "斷言品質",
-        "沒垃圾",
-        "沒讀完整",
-        "excerpt",
-        "截斷",
-        "採樣",
-        "完整內容",
-        "品質判定",
-        "完整性",
-        "重複偵測",
-        "去蕪",
-        "從根源驗證",
-        "post-mortem",
-        "盲點"
-      ],
-      "scope": "global"
-    },
-    {
-      "name": "post-mortem-write-raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用",
-      "path": "_AIDocs/_atoms/MemDev/post-mortem-write-raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用.md",
-      "triggers": [
-        "write_raw",
-        "atom_io",
-        "VALID_SOURCES",
-        "WriteResult",
-        "ok=False",
-        "靜默失敗",
-        "未檢回傳值",
-        "funnel",
-        "fail-soft",
-        "invalid source",
-        "代理訊號",
-        "post-mortem",
-        "批次寫入驗收",
-        "sync-atom-index"
-      ],
-      "scope": "global"
-    },
-    {
-      "name": "dedup-stage-牢籠去蕪設計-信任模型隔離與substring-only首版",
-      "path": "_AIDocs/_atoms/MemDev/dedup-stage-牢籠去蕪設計-信任模型隔離與substring-only首版.md",
-      "triggers": [
-        "dedup",
-        "去蕪",
-        "DedupStage",
-        "draft",
-        "草稿",
-        "_drafts",
-        "截斷",
-        "truncate",
-        "soft-delete",
-        "牢籠",
-        "taxonomy",
-        "近重複",
-        "sweep"
       ],
       "scope": "global"
     },
@@ -1278,6 +1169,85 @@
         "上GIT",
         "main 保護",
         "force 保護"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "anti-evasion-hud-設計脊柱與強化前必讀",
+      "path": "_AIDocs/_atoms/MemDev/anti-evasion-hud-設計脊柱與強化前必讀.md",
+      "triggers": [
+        "anti-evasion",
+        "AEC",
+        "AEC HUD",
+        "收尾檢核 HUD",
+        "anti_evasion_report",
+        "one-writer",
+        "sibling 隔離",
+        "aec_severity",
+        "autospawn",
+        "彈窗",
+        "強化 AEC",
+        "改 AEC HUD",
+        "記憶系統開發"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "模型行為移植-fable行為契約必載檔",
+      "path": "_AIDocs/_atoms/MemDev/模型行為移植-fable行為契約必載檔.md",
+      "triggers": [
+        "模型切換",
+        "Opus",
+        "Fable",
+        "行為契約",
+        "自動推進",
+        "抓重點",
+        "IDENTITY 擴充",
+        "行為移植",
+        "model behavior"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "啟動鏈自動覆寫陷阱-user-init每session拷貝來源檔必先驗證管線仍成立",
+      "path": "_AIDocs/_atoms/MemDev/啟動鏈自動覆寫陷阱-user-init每session拷貝來源檔必先驗證管線仍成立.md",
+      "triggers": [
+        "user-init",
+        "IDENTITY.md 被覆寫",
+        "啟動鏈",
+        "SessionStart 覆寫",
+        "雙檔 pipeline",
+        "檔案自動覆蓋",
+        "stub 覆寫",
+        "契約檔損毀"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "otel-遙測評估結論-不實作-兩目標指標皆測不到",
+      "path": "_AIDocs/_atoms/MemDev/otel-遙測評估結論-不實作-兩目標指標皆測不到.md",
+      "triggers": [
+        "OTEL",
+        "OpenTelemetry",
+        "遙測",
+        "telemetry",
+        "hook 延遲量測",
+        "token 稅量測",
+        "CLAUDE_CODE_ENABLE_TELEMETRY"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "pythonw-下-stdout-為-none-排程腳本秒死陷阱",
+      "path": "_AIDocs/_atoms/OS/pythonw-下-stdout-為-none-排程腳本秒死陷阱.md",
+      "triggers": [
+        "pythonw",
+        "Task Scheduler",
+        "排程",
+        "schtasks",
+        "sys.stdout None",
+        "reconfigure",
+        "排程器靜默失敗"
       ],
       "scope": "global"
     },
@@ -1518,24 +1488,6 @@
       "scope": "global"
     },
     {
-      "name": "svn-windows-中文-commit-log-編碼陷阱",
-      "path": "_AIDocs/_atoms/Tools/自動化流程與協議/dotnet/svn-windows-中文-commit-log-編碼陷阱.md",
-      "triggers": [
-        "SVN",
-        "commit log",
-        "中文",
-        "UTF-8",
-        "CP950",
-        "Windows",
-        "亂碼",
-        "encoding",
-        "BOM",
-        "commit message",
-        "svn:log"
-      ],
-      "scope": "global"
-    },
-    {
       "name": "team-roster",
       "path": "memory/team-roster.md",
       "triggers": [
@@ -1696,6 +1648,24 @@
         "交接",
         "大型任務",
         "跨session"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "svn-windows-中文-commit-log-編碼陷阱",
+      "path": "_AIDocs/_atoms/Tools/自動化流程與協議/dotnet/svn-windows-中文-commit-log-編碼陷阱.md",
+      "triggers": [
+        "SVN",
+        "commit log",
+        "中文",
+        "UTF-8",
+        "CP950",
+        "Windows",
+        "亂碼",
+        "encoding",
+        "BOM",
+        "commit message",
+        "svn:log"
       ],
       "scope": "global"
     }

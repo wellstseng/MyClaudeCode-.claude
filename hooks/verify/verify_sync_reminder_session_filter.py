@@ -51,7 +51,6 @@ def driven(monkeypatch):
     monkeypatch.setattr(st, "write_state", lambda *a, **k: None)
     monkeypatch.setattr(st, "_attribute_usefulness", lambda *a, **k: None)
     monkeypatch.setattr(st, "_should_deep_postmortem", lambda *a, **k: False)
-    monkeypatch.setattr(st, "_maybe_spawn_per_turn_extraction", lambda *a, **k: None)
     monkeypatch.setattr(st, "_maybe_spawn_user_extract_worker", lambda *a, **k: None)
 
     def drive(modified_files, capsys, uncommitted="echo", **extra):
@@ -89,10 +88,10 @@ def _mf(path, session_id=_SID):
 # ─── SyncReminder 閘 session-filter ─────────────────────────────────
 
 def test_sync_own_uncommitted_triggers(driven, capsys):
-    """只有 own uncommitted → 觸發同步提醒，列 own 路徑。"""
+    """只有 own uncommitted → 觸發同步提醒（訊息只示數量，清單不進 chat）。"""
     out = driven([_mf(_CORE, session_id=_SID)], capsys)
     assert "[Guardian:SyncReminder]" in out
-    assert _CORE in out
+    assert "偵測到 1 個" in out
 
 
 def test_sync_foreign_only_not_triggered(driven, capsys):
@@ -102,13 +101,13 @@ def test_sync_foreign_only_not_triggered(driven, capsys):
 
 
 def test_sync_mixed_lists_own_only(driven, capsys):
-    """混合：本 session 改 doc + 他 session 改 core → 只列 own(doc)、不列 foreign(core)。"""
+    """混合：本 session 改 doc + 他 session 改 core → 只計 own（數量=1），foreign 不入計。"""
     out = driven(
         [_mf(_DOC, session_id=_SID), _mf(_CORE, session_id="other")],
         capsys,
     )
     assert "[Guardian:SyncReminder]" in out
-    assert _DOC in out
+    assert "偵測到 1 個" in out
     assert _CORE not in out
 
 

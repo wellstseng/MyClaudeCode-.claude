@@ -35,6 +35,8 @@ workflow/guardian-crash.log
 workflow/extract-worker.log
 workflow/hot_cache.json
 workflow/vector_ready.flag
+workflow/vector_rekick.marker
+workflow/vector_starting.lock
 workflow/.backend_long_die.json
 workflow/_merge_history.log
 workflow/last_review_marker.json
@@ -42,12 +44,18 @@ workflow/realm_automove_pending.json
 workflow/mcp-version-cache.json
 workflow/aec-report/
 workflow/aec-decision/
+workflow/ups-sentinel/
+workflow/outcome_stats.jsonl
+workflow/outcome-unknown-advisory.json
+workflow/health-reports/
+workflow/health-last-run.json
 
 # ─── Per-user / per-machine state (Wave 5 untracked) ─────
 memory/project-registry.json
 memory/wisdom/reflection_metrics.json
 memory/wisdom/causal_graph.json
 memory/_meta/atom_io_audit.jsonl
+memory/_promotion_audit.jsonl
 policy-limits.json
 
 # ─── Codex Companion runtime state ────────────────────────
@@ -96,7 +104,6 @@ USER-*.md
 !prompts/user-decision-*.md
 IDENTITY.md
 IDENTITY-*.md
-settings.local.json
 
 # ─── User-specific atoms (hardware, local env) ────────────
 memory/hardware.md
@@ -134,7 +141,7 @@ Thumbs.db
 memory/mail-sorting.md
 sessions/
 
-# --- Session/Task/Codex runtime state (per-machine, auto-generated) ---
+# --- Session/Task/Codex runtime state (wellstseng local) ---
 history.jsonl
 tasks/
 .codex/

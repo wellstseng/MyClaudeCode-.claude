@@ -12,7 +12,7 @@
 | `UserPromptSubmit` | 使用者送出訊息 | RECALL 記憶檢索 + intent 分類（含 handoff）+ Context Budget 監控 + Wisdom 情境分類 + Failures 偵測 + Evasion 注入 |
 | `PreToolUse` (Write/Edit) | Write/Edit 工具呼叫前 | (1) Atom Format Gate：阻擋 `/.claude/memory/*.md` 不符原子格式的寫入；(2) Atom Confidence Gate：新建 atom 的 frontmatter `Confidence:` 與內文 `- [固]/- [觀]` 標籤必須全為 `[臨]`，鏡射 MCP `atom_write` mode=create 規則（[server.js:1109-1117](../tools/workflow-guardian-mcp/server.js)）封堵 Write tool 繞過路徑；(3) **Memory Path Block**：阻擋寫入 `~/.claude/projects/{slug}/memory/`（原子記憶專案自治層覆寫此路徑），對應 atom `feedback-memory-path`；(4) **Cross-Realm Write Block**（方案甲 2026-06-12，v1.1 同日擴充）：外部專案 session（cwd∉~/.claude）寫入核心層 `~/.claude/{skills,tools,hooks,lib,rules}/` **或根層敏感檔（settings.json/CLAUDE.md/IDENTITY*.md/USER*.md）** → deny 並指路專案層 `.claude/skills|tools/`（SGI 跨層污染教訓；config `guard.cross_realm_write` 可關/設 allowlist；核心開發 session 不受影響） |
 | `PreToolUse` (Bash) | Bash 工具呼叫前 | (1) **SVN Test Block**：阻擋 `svn commit/ci` 含 `tests?/` `__tests__/` 路徑或 `*Test.<ext>` 檔案（r10854 教訓），對應 atom `feedback-no-test-to-svn`；(2) **Cross-Realm MCP Block**（guard v1.1 2026-06-12）：外部專案 session 的 `claude mcp add -s user` / `claude mcp remove` 未限定 project\|local scope → deny（防全域 ~/.claude.json 被專案 session 污染），指路 `-s project` |
-| `PostToolUse` (Edit/Write/Bash) | 工具呼叫後 | 追蹤修改檔案 + 增量索引 + Read Tracking + Test-Fail 偵測（Bash）+ _CHANGELOG auto-roll |
+| `PostToolUse` (Edit/Write/Bash) | 工具呼叫後 | 追蹤修改檔案 + 增量索引 + Test-Fail 偵測（Bash）+ _CHANGELOG auto-roll（Read 不在 matcher——accessed_files 由 Stop 從 transcript 尾段一次回收，省 per-Read hook 行程） |
 | `PreCompact` | Context 壓縮前 | 快照 state + 快照 `injected_atoms`（`pre_compact_injected_atoms`，供壓縮後內文復原，不受 SessionStart(compact) 清空順序影響）+ **Auto-Handoff Layer 2**：壓縮前自動寫六區塊 stub 到 `_staging`（核心保底，不依賴 token 量測） |
 | `PostCompact` | Context 壓縮後 | 依 PreCompact 快照 stash 已注入 atom 的緊湊內文 + 設 `pending_reinjection` flag（**本身不注入**，PostCompact 不支援 additionalContext） |
 | `PostToolBatch` | 一批（含並行）工具全解析後，每批一次 | idle 時極輕 early-exit；見 flag 時一次性 `additionalContext` 重注入壓縮前 atom 內文 + 清 flag + 名單 merge 回 `injected_atoms`（閉 mid-turn auto-compact 失憶缺口，選配 #4）；**Auto-Handoff Layer 3**：與 `pending_reinjection` blob 合流注入 stub 補全提示 |
@@ -28,16 +28,16 @@
 | `workflow-guardian.py` | 20 行薄 shim 轉發 `dispatcher.main()`（保留 V4.1 entry path 相容） |
 | `dispatcher.py` | ~75 行純路由：讀 stdin event → 找 handler → 呼叫 |
 | `handlers/_shared.py` | 跨 handler 共用常數/helper（MEMORY_MD 標頭、project hook caller、cleanup_old_states 等） |
-| `handlers/session_start.py` | SessionStart：init state + 去重 + V4 role bootstrap + AIDocs bridge + Wisdom + MCP health + log rotation + Vector service bg subprocess |
-| `handlers/user_prompt_submit.py` | UPS orchestrator（2026-06-12 熱點重構 790→195 行）：串聯 ups_* 四段 + 收尾（blind-spot / fix escalation / evasion 舉證 / handoff / topic / sync reminder / turn_injected / debug 摘要 / budget 截斷輸出） |
+| `handlers/session_start.py` | SessionStart：init state + 去重 + V4 role bootstrap + AIDocs bridge + Wisdom + MCP health + log rotation + Vector service bg subprocess + **週健檢死人開關**（`_health_advisory` 讀 `workflow/health-last-run.json`：缺檔/逾 10 天/red>0 → advisory 浮出，健康時零 context） |
+| `handlers/user_prompt_submit.py` | UPS orchestrator（2026-06-12 熱點重構 790→195 行）：串聯 ups_* 四段 + 收尾（blind-spot / fix escalation / evasion 舉證 / handoff / topic / sync context（僅 sync 關鍵字觸發；週期性 `[Guardian] Reminder` 已退役 → statusline 常駐顯示）/ turn_injected / debug 摘要 / budget 截斷輸出）＋ **UPS 被 kill 哨兵**（開頭 arm `workflow/ups-sentinel/<sid>.json`、正常結尾 clear；見殘留＝上輪注入被 harness timeout 砍 → 告警）＋ AEC (d) 刪除決策後驗 |
 | `handlers/ups_gates.py` | UPS detect 段：evasion 追蹤 + V4.1 decision gate + confirmed extractions + long_die + Hot Cache + Atom-Write Guard |
 | `handlers/ups_context.py` | UPS context build 段：session context（episodic + proactive）+ wisdom 分類 + parallel 建議 + AIDocs keyword + JIT internal-pipeline |
 | `handlers/ups_search.py` | UPS search pipeline 段：index 組裝 + 跨專案 alias + trigger → BM25 全域層 → Vector fallback + supersedes + ACT-R 排序（含**分心懲罰** `compute_injection_rank`，Memory Governance A） |
 | `handlers/ups_inject.py` | UPS injection assemble 段：hot/cold + per-turn budget（ok/fallback/skip）+ related spread（含 **relevance gate** `_filter_related_by_relevance` 最小集裁切，Memory Governance C）+ ReadHits++/效用晉升提示 |
 | `handlers/pre_tool_use.py` | PreToolUse：Write/Edit atom format gate + memory path block + Bash SVN test block |
-| `handlers/post_tool_use.py` | PostToolUse：file tracking + 增量索引 + read tracking + test-fail 偵測 + changelog auto-roll |
-| `handlers/stop.py` | Stop：sync 閘門 + Fix Escalation + TestFailGate + Evasion Detection + **Deep Post-Mortem Gate**（`_should_deep_postmortem`：(effort：retry≥2 ∨ fix_escalation_triggered) **AND** (真失敗：failing_tests ∨ evasion_flag ∨ 未宣告完成) → 指示 Claude 深寫 post-mortem；effort 已由 track_retry 以 failing_tests error-gate（不採同檔 edit 次數＝正常重度迭代不誤觸）；`deep_postmortem_done` 一次性＝**獨立預算 1（P5 起不與 Sync/Scan/TestFail 共用 `stop_gate_max_blocks`，止餓死）**）+ Auto-Handoff Layer 1（token 預警 piggyback 既有 block） |
-| `handlers/session_end.py` | SessionEnd：Episodic 生成 + 回應萃取 + 衝突偵測 + Wisdom 反思 + **selective forgetting**（`apply_selective_forget` 隔離 `_distant/`，預設 dry-run，Memory Governance D）+ docdrift advisory + Auto-Handoff Layer 4（SessionEnd 兜底寫客觀 stub） |
+| `handlers/post_tool_use.py` | PostToolUse：file tracking + 增量索引 + test-fail 偵測 + changelog auto-roll（read tracking 移 Stop 端回收） |
+| `handlers/stop.py` | Stop：sync 閘門 + Fix Escalation + TestFailGate + Evasion Detection + **Deep Post-Mortem Gate**（`_should_deep_postmortem`：(effort：retry≥2 ∨ fix_escalation_triggered) **AND** (真失敗：failing_tests ∨ evasion_flag ∨ 未宣告完成) → 指示 Claude 深寫 post-mortem；effort 已由 track_retry 以 failing_tests error-gate（不採同檔 edit 次數＝正常重度迭代不誤觸）；`deep_postmortem_done` 一次性＝**獨立預算 1（P5 起不與 Sync/Scan/TestFail 共用 `stop_gate_max_blocks`，止餓死）**）+ Auto-Handoff Layer 1（token 預警 piggyback 既有 block）+ outcome 三值計數（`outcome_stats`，隨 α/β 歸因 once-per-turn，供 unknown 比率遙測）；**transcript 單次 tail-read**（`read_transcript_tail` 2MB 尾窗，last_text / token 預警 / turn 文字 / accessed_files 回收全共用，取代逐消費者全檔讀；Stop hook timeout 得以 20→10）+ `_detect_uncommitted_files` 按 VCS root 分組 batch status（零 per-file subprocess） |
+| `handlers/session_end.py` | SessionEnd：Episodic 生成 + 回應萃取 + 衝突偵測 + Wisdom 反思 + **selective forgetting**（`apply_selective_forget` 隔離 `_distant/`，預設 dry-run，Memory Governance D）+ docdrift advisory + Auto-Handoff Layer 4（SessionEnd 兜底寫客觀 stub）+ **outcome unknown 比率遙測**（`flush_outcome_stats` → `workflow/outcome_stats.jsonl` 滾動 50 筆；連續 `window` session > `threshold` → 寫 marker → 下個 SessionStart 注入 advisory 後清除。防完成語 regex 與模型輸出失配 → α/β 晉升軌靜默停滯；config `usefulness.unknown_watch`） |
 | `handlers/pre_compact.py` | PreCompact：state snapshot + `injected_atoms` 快照 + Auto-Handoff Layer 2（壓縮前自動寫六區塊 stub） |
 | `handlers/post_compact.py` | PostCompact：依快照複用 `wg_atoms.load_atoms_within_budget` stash 壓縮前 atom 緊湊內文 + `pending_reinjection` flag（不注入；選配 #4） |
 | `handlers/post_tool_batch.py` | PostToolBatch：idle early-exit；見 flag 一次性 `additionalContext` 重注入 + 清 flag + 名單 merge 回 `injected_atoms`（選配 #4）+ Auto-Handoff Layer 3（合流注入 stub 補全提示） |
@@ -45,7 +45,7 @@
 | `wg_core.py` | 路徑唯一真相 + config/state IO + **token budget 單一來源**（CONTEXT_BUDGET_DEFAULT / TURN_BUDGET_LIMIT / compute_token_budget，2026-06-12 集中；兩估算器口徑見該檔註解）+ log rotation + PreToolUse guards（合 wg_paths + wg_pretool_guards） |
 | `wg_atoms.py` | atom index 解析 + trigger 匹配（any_trigger_hit/count_trigger_hits 共用原語）+ **BM25 全域層** + ACT-R + vector search + atom 晉升（合 wg_intent + wg_iteration atom 晉升部分） |
 | `wg_extraction.py` | per-turn 萃取 + worker + failure + hot cache + user-extract + content classify（合 wg_user_extract + wg_hot_cache + wg_content_classify） |
-| `wg_episodic.py` | episodic 生成 + 衝突偵測 + 品質回饋 |
+| `wg_episodic.py` | episodic 生成 + 衝突偵測 + 品質回饋（摘要經 `sanitize_harness_noise` 剔 harness 標籤/hook 殘渣；知識段只收 LLM 萃取項 + 覆轍信號，統計歸摘要/閱讀軌跡） |
 | `wg_evasion.py` | Evasion Guard + Test-Fail + ScanReport + 4 套自評整合（合 wg_session_evaluator + wg_iteration 自評部分） |
 | `wg_docdrift.py` | src → _AIDocs 映射 drift 偵測 |
 | `wg_roles.py` | V4 sub-layer 探勘 shim（V4 角色機制） |
@@ -83,9 +83,23 @@
 | `ensure-mcp.py` | MCP server 可用性確認 |
 | `webfetch-guard.sh` | WebFetch 安全護欄 |
 
-## Skills（V5 全域 <!-- skill-count -->23<!-- /skill-count --> 個 active，2026-05-27 起；記憶系統 skill + 1 外部〔karpathy-guidelines〕；unity-mcp-skill 2026-06-12 已搬遷專案層；**init-roles / conflict-review 於 P8a 2026-07-01 單人環境降 dormant → `skills/_archived/`**，故不計入 21）
+### 常駐可觀測層（statusline + 週健檢）
+
+零 token 的使用者可見層，把「純資訊性 chat 注入」移出 context：
+
+| 元件 | 機制 |
+|------|------|
+| `tools/statusline.py` | settings.json `statusLine` 指入（refreshInterval 10s + 每則訊息事件驅動）。stdin 吃 CC status JSON（session_id/model/context_window），純 stdlib 讀 `state-<sid>.json`（改檔/讀檔/知識佇列數）+ `vector_ready.flag` + `aec-report/<sid>-t*.json` 最大 turn severity → 一行 ANSI 狀態列。fail-open 必告知：state 壞 → `WG:?`；任何錯誤仍印一行 |
+| `tools/health-weekly.py` | Windows Task Scheduler `Claude-Memory-WeeklyHealth`（週一 09:00，StartWhenAvailable 補跑）驅動，無 CC session 依賴。唯讀聚合：memory-audit + atom-health-check + 兩索引 --check + vector + **注入效果**（memory-effect-report --json：token 稅/零效用證據 → 黃）+ **管線鮮度**（有 session 但 promotion audit/episodic 停 14 天 → 紅）→ `workflow/health-reports/`（留 12 份）+ `health-last-run.json`。SessionStart `_health_advisory` 為死人開關：排程器本身死了也會在 session 浮出 |
+| `tools/memory-effect-report.py` | 注入效果報表（唯讀）：access.json 曝光+α/β Wilson 下界 + `Logs/rescue-log.jsonl` 使用證據 → 三清單（top 有用 / 高曝光零使用 token 稅附 trigger 收斂建議 / 零曝光死重候選）+ 30 天週趨勢。入口：`/memory health` step 4 + 週健檢 5b。詳見 TECH §5.10 |
+
+取捨：CC 原生 CronCreate 為雲端 agent、碰不到本機 `~/.claude`，故健檢採 Task Scheduler。OTEL export 評估不做（兩目標指標 per-hook 延遲/注入 token 稅皆不在匯出面，見 atom [[otel-遙測評估結論-不實作-兩目標指標皆測不到]]）。
+
+## Skills（V5 全域 <!-- skill-count -->21<!-- /skill-count --> 個 active，2026-05-27 起；記憶系統 skill + 1 外部〔karpathy-guidelines〕；unity-mcp-skill 2026-06-12 已搬遷專案層；**init-roles / conflict-review 於 P8a 2026-07-01 單人環境降 dormant → `skills/_archived/`**，故不計入 21）
 
 V5 Wave 3 把 V4 的 `commands/*.md` 遷到 `.claude/skills/{name}/SKILL.md`（對齊 Anthropic 官方「commands merged into skills」）。Legacy `commands/` **2026-05-27 已刪除**（原 7 天緩衝經對拍 100% identical 驗證後提前廢止）。
+
+**invocation 硬化**：9 個重炮/儀式/debug 型 skill 設 frontmatter `disable-model-invocation: true`（atom-debug / changelog-debug / codex-companion / continue / extract / fix-escalation / generate-episodic / heal-review / upgrade）——模型不可呼叫（含自然語言請求）、description 不佔 context，僅使用者 `/slash` 可觸發；codex-companion 另有反逃避意涵（模型不得自關監督器）。保留模型可呼叫的例外依據：consciousness-stream（rules/core.md「用識流…」映射由模型代打）、handoff（`wg_handoff.py` 注入「建議主動 /handoff」）、skill-creator / karpathy-guidelines（設計上要自動觸發）、其餘工具型（browse-sprites / harvest / journal / memory / conflict / read-project / refile / vector）自然語言觸發利大於誤觸。
 
 | Skill | 檔案 | 用途 |
 |-------|------|------|
@@ -125,8 +139,8 @@ V5 Wave 3 把 V4 的 `commands/*.md` 遷到 `.claude/skills/{name}/SKILL.md`（�
 |---|---|---|
 | PostToolUse (Bash) | 測試指令（pytest/tsc/node --check/jest/go test/cargo test）→ 解析 stdout+stderr | 失敗最後 20 行寫 `state["failing_tests"][]`；同 cmd 重跑成功 → 清舊紀錄 |
 | Stop | `failing_tests` 非空 + last assistant text 命中完成宣告 regex | `output_block` 硬阻擋，要求 (a)修復 (b)標為 regression (c)降級任務 |
-| Stop | last assistant text 命中退避 regex（不在本範圍/既有 drift/pre-existing/留給未來/非本次；**時間性延後**：下次/下回/之後/晚點/稍後/有空/有時間 + 再 + 處理/修/補/做/看/弄；未來處理/待後續/另行處理/留給使用者） | 寫 `state["evasion_flag"]` |
-| Stop | **ScanReport Gate（Anti-Evasion HUD）**：宣告完成 + **本 session 自己 Edit/Write 的** `modified_files` 觸及 core 檔（hooks/lib/tools/rules/根層契約設定）或達 `min_files_to_block` + **本回合未 emit `anti_evasion_report`** + 無使用者豁免 + **本 turn 未跑 git/svn commit** | `output_block` 硬阻擋，要求呼叫 MCP tool `anti_evasion_report(a,b,c,d)`（(a) 缺失修補 (b) 逃避通報 (c) token 警示 (d) 衍生暫存；內容走 HUD、chat 只留折疊 chip）。滿足判定用 **turn_seq+session_id 雙鍵**（sibling 隔離：共用工作樹/merged state 下隔壁 session 的 emit 不誤放行本 session）。每 session 只觸發一次（`scan_report_warned`）。他 session 改的 core 檔（`session_id` 不符）不誤觸發——只數 `own_mod_files`（legacy fail-open）。**純 VCS commit turn 豁免**（`last_commit_turn_seq==turn_seq`；工作已可稽核、綁「真的 commit」非「本 turn 沒 Edit」）。**one-writer**：MCP tool 只回 chip、不碰 state；Python `post_tool_use` 獨佔寫 state+落 per-turn `aec-report/<sid>-t<turn>.json`。HUD 不可達+notable → Stop 大聲 fallback 回 chat（不 fail-silent） |
+| Stop | last assistant text 命中退避 regex（不在本範圍/既有 drift/pre-existing/留給未來/非本次；**時間性延後**：下次/下回/之後/晚點/稍後/有空/有時間 + 再 + 處理/修/補/做/看/弄；未來處理/待後續/另行處理/留給使用者） | 寫 `state["evasion_flag"]` + `evasion_events` 證據暫存（供 AEC (b) cross-check，不受 UPS 清旗影響）+ 觸發落 `Logs/guard-evasion.jsonl`（誤攔率可量測；docdrift/lang_guard 同款 `guard-*.jsonl`） |
+| Stop | **ScanReport Gate（Anti-Evasion HUD）**：宣告完成 + **本 session 自己 Edit/Write 的** `modified_files` 觸及 core 檔（hooks/lib/tools/rules/根層契約設定）或達 `min_files_to_block` + **本回合未 emit `anti_evasion_report`** + 無使用者豁免 + **本 turn 未跑 git/svn commit** | `output_block` 硬阻擋，要求呼叫 MCP tool `anti_evasion_report(a,b,c,d)`（(a) 缺失修補 (b) 逃避通報 (c) token 警示 (d) 衍生暫存；內容走 HUD、chat 只留折疊 chip）。滿足判定用 **turn_seq+session_id 雙鍵**（sibling 隔離：共用工作樹/merged state 下隔壁 session 的 emit 不誤放行本 session）。每 session 只觸發一次（`scan_report_warned`）。他 session 改的 core 檔（`session_id` 不符）不誤觸發——只數 `own_mod_files`（legacy fail-open）。**純 VCS commit turn 豁免**（`last_commit_turn_seq==turn_seq`；工作已可稽核、綁「真的 commit」非「本 turn 沒 Edit」）。**one-writer**：MCP tool 只回 chip、不碰 state；Python `post_tool_use` 獨佔寫 state+落 per-turn `aec-report/<sid>-t<turn>.json`。**(b) 欄 cross-check**：emit 時 hook 實測退避證據（`evasion_events`/`evasion_flag`，窗口＝上次 emit 之後）非空而 (b)=「無」→ one-writer 升 severity=real-evasion + report 附 `hook_evidence`（不信模型自評；Node chip 純內容判定無 state 可查，以 report 檔/Stop fallback 為準）。**(d) 刪除決策後驗**：HUD delete 決策注入後，下輪 UPS `exists()` 實查——檔案仍在 → 重注入一次（`reinjected`），再仍在 → 告警後結案（`verified`，不無限 nag）。HUD 不可達+notable → Stop 大聲 fallback 回 chat（不 fail-silent；cross-check 升級時附 hook 證據） |
 | UserPromptSubmit | `evasion_flag` 非空 | 注入 `[Guardian:Evasion]` 舉證要求，注入後清旗 |
 | UserPromptSubmit | prompt 命中放行詞（「先這樣/跳過/known regression」） | 清 `failing_tests`；近 3 則 user prompt 有放行詞 → skip evasion flag |
 
@@ -162,6 +176,18 @@ PostToolUse hook 偵測 `_CHANGELOG.md` 寫入 → 行數 >`config.changelog_aut
 | settings.json 權限 + 工具鏈 | [DevHistory/settings-config.md](DevHistory/settings-config.md) | permissions, 權限, tools |
 
 資料層：`MEMORY.md` 索引（always-loaded）+ atom 檔（按需）+ LanceDB vector + episodic + wisdom + 專案自治層。
+
+### 召回可靠性 + 效果實證（E 組）
+
+| 機制 | 一句話 |
+|------|--------|
+| Vector 啟動器自癒（`tools/memory-vector-service/starter.py`） | SessionStart/UPS 共用：service stderr 落 `Logs/vector-service.log`、hang 死 kill-restart、等待窗 120s + spawn lock；UPS 端 flag 缺失 re-kick（`wg_atoms._ensure_vector_ready`，cooldown 120s）——服務中途死下一 prompt 自癒 |
+| 救援日誌（`hooks/wg_rescue.py`） | 注入 atom 抽高特異 token（確定性、寧缺勿濫）→ 後續工具呼叫命中落 `Logs/rescue-log.jsonl`＝「記憶真被用上」直接證據 |
+| 效果報表（`tools/memory-effect-report.py`） | 三清單：top 有用 / token 稅 / 死重候選 + 30 天趨勢 |
+| 專案層 vector enrichment（`ups_search`） | trigger 命中後仍跑 vector 但只取專案層命中；無專案層 atom 跳過 |
+| 原生記憶橋接（`tools/native-memory-bridge.py`） | 核心 atom 索引指標行鏡像進 `projects/<slug>/memory/`（harness 清單格式，掃描不誤納） |
+
+詳見 TECH §5.10；驗證 `verify_{vector_starter,rescue_log,effect_report,project_enrichment,native_bridge}.py`。
 
 ### Atom 寫入單點收束（funnel，S1–S4，2026-05-04）
 
@@ -238,7 +264,7 @@ PostToolUse hook 偵測 `_CHANGELOG.md` 寫入 → 行數 >`config.changelog_aut
 
 - **realm 由 index `path` 前綴推導**（不存欄位、與 scope 正交）：path 落 `_AIDocs/_atoms/<domain>/`（World/Tools/MemDev）⇒ local（**仍 `Scope=global`**）；否則 core。沿用 feedback-* 同一招（物理在 `_AIDocs/` 下、靠 index path 注入），零新管線。
 - **注入閘門**：`hooks/handlers/session_start.py` 建候選快取處依 `wg_core._is_under_claude_dir(cwd)` 濾掉 local 候選；外部專案完全略過、core（含 `_AIDocs/Failures/*`）不誤殺。
-- **分類器 `classify_realm`**（lib + server.js mirror）：安全預設 core、核心保護清單硬擋、詞庫只用實例專屬名（不用記憶系統通用詞）、只掃 name+triggers。**詞庫污染根治（2026-06-24，SGI 第三度污染後）**：① sink 端第三護欄 `_RESERVED_LEXICON_TERMS` exact 拒收系統 trigger 標籤/realm 自名/已知外部專案名（sgi/uba）；② SessionEnd sweep 對未確認 auto-capture 碎片（`_is_unconfirmed_autocapture`：trigger 含 auto-capture ∨ Author=auto-captured∧[臨]）整體 defer 不搬不喚 LLM，斷詞庫自汙染源；③ 核心保護 exact 集補 `自己flag…`（Author=holylight/[臨] 故 P2 不護→反覆誤搬後列硬擋）。
+- **分類器 `classify_realm`**（lib + server.js mirror）：安全預設 core、核心保護清單硬擋、詞庫只用實例專屬名（不用記憶系統通用詞）、只掃 name+triggers。**詞庫/保護清單/權重單一來源 `memory/_meta/realm-lexicon.json`**——py/js 兩端模組載入時讀同檔（缺失/損毀 fallback 內建最小保護清單＋stderr 告警），取代兩份手抄常數。**詞庫污染根治（2026-06-24，SGI 第三度污染後）**：① sink 端第三護欄 `_RESERVED_LEXICON_TERMS` exact 拒收系統 trigger 標籤/realm 自名/已知外部專案名（sgi/uba）；② SessionEnd sweep 對未確認 auto-capture 碎片（`_is_unconfirmed_autocapture`：trigger 含 auto-capture ∨ Author=auto-captured∧[臨]）整體 defer 不搬不喚 LLM，斷詞庫自汙染源；③ 核心保護 exact 集補 `自己flag…`（Author=holylight/[臨] 故 P2 不護→反覆誤搬後列硬擋）。
 - **搬遷工具 `tools/atom-set-realm.py`**：`_AIDocs/_atoms/` path 唯一寫者，連 `.access.json` sidecar 原子搬、Scope 保 global、`--to-core` 可逆；**不**走 `atom-move`。
 - **印象層（catalog 層 realm，2026-06-04）**：`sync-memory-index` 雙輸出——core atom → `MEMORY.md`（CLAUDE.md `@import`，全專案，fail-safe 退路）；local atom → 側檔 `memory/_local_catalog.md`（依 domain 分組），僅核心環境由 `session_start.py` 共同尾段（`_is_under_claude_dir` gate）注入。MEMORY.md 末尾僅留一行指標 → **外部專案 always-load 不再含本地範疇段（`_local_catalog.md` 546 字元，實務 ~180 tok；CJK-aware 保守估 ~330）**，補完 realm 在 index 層的一致性。fail-safe：hook 掛掉/缺檔僅損核心環境本地「目錄顯示」（atom 仍 trigger 注入），外部專案不受影響。
 - **find-fallback**：server.js promote/edit_meta/find 對物理在 memory/ 外的 atom 加 `findAtomFileRecursive(LOCAL_ATOMS_DIR)`（鏡像 feedback fallback），否則 scope=global 的 local atom 會 `Atom not found`。
