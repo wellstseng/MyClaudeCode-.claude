@@ -7,7 +7,7 @@
 - Last-used: 2026-05-22
 - Confirmations: 0
 - Created-at: 2026-05-22
-- Related: collaboration-protocol, preferences
+- Related: collaboration-protocol, preferences, feedback-已驗證的重複操作直接做完勿反覆確認, wells-design-principles-明碼優先-職責分離-防呆擋非法
 
 ## 知識
 

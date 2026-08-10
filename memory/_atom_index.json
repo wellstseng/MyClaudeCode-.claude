@@ -1684,6 +1684,173 @@
         "AskUserQuestion"
       ],
       "scope": "global"
+    },
+    {
+      "name": "vscode-csdevkit-鎖目錄擋-git-mv-逐子項繞過",
+      "path": "memory/vscode-csdevkit-鎖目錄擋-git-mv-逐子項繞過.md",
+      "triggers": [
+        "git mv",
+        "Permission denied",
+        "csdevkit",
+        "C# Dev Kit",
+        "rename directory",
+        "目錄鎖",
+        "搬遷",
+        "build-server"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "aec-b欄如實載明hook標記退避語不以自評覆蓋",
+      "path": "memory/aec-b欄如實載明hook標記退避語不以自評覆蓋.md",
+      "triggers": [
+        "anti_evasion_report",
+        "收尾檢核",
+        "退避語",
+        "AEC",
+        "cross-check",
+        "real-evasion"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "orbit-hotfix-lua-direction",
+      "path": "memory/orbit-hotfix-lua-direction.md",
+      "triggers": [
+        "Orbit",
+        "熱修",
+        "熱更",
+        "hotfix",
+        "Lua導入",
+        "LuaJIT",
+        "郁方",
+        "團隊簡報",
+        "shim-less",
+        "titangoo",
+        "指標注入"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "worktree-session-驗證前先同步目標分支",
+      "path": "memory/worktree-session-驗證前先同步目標分支.md",
+      "triggers": [
+        "worktree",
+        "落後",
+        "ff-only",
+        "孤兒目錄",
+        "stale branch",
+        "驗證前同步",
+        "merge --ff-only",
+        "ahead behind"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "titan-lua-socket-rpc機制-兩版同構",
+      "path": "memory/titan-lua-socket-rpc機制-兩版同構.md",
+      "triggers": [
+        "titan",
+        "gate",
+        "proxy",
+        "goo_rpc",
+        "goo_gate",
+        "lua socket",
+        "lua連線",
+        "entities.lua",
+        "rpc機制",
+        "fire-and-forget",
+        "channel pull",
+        "titan_net_id"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "dotnet-interface-devirt-pgo",
+      "path": "memory/dotnet-interface-devirt-pgo.md",
+      "triggers": [
+        "guarded devirtualization",
+        "devirt",
+        "Dynamic PGO",
+        "TieredPGO",
+        "介面派發",
+        "interface dispatch",
+        "callvirt",
+        "monomorphic",
+        "AggressiveInlining",
+        "sealed",
+        "JitDisasm",
+        "OSR",
+        "MethodTable guard",
+        "收包 dispatch",
+        "INodePacketHandler"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "wells-design-principles-明碼優先-職責分離-防呆擋非法",
+      "path": "memory/wells-design-principles-明碼優先-職責分離-防呆擋非法.md",
+      "triggers": [
+        "設計原則",
+        "明碼",
+        "反直覺",
+        "隱性語意",
+        "哨兵值",
+        "職責分離",
+        "反射掃描",
+        "magic value",
+        "註冊表",
+        "防呆",
+        "開發文化",
+        "design principle"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "coremodule-entry-assembly-拓撲前提地雷-orbit-tslg同dna",
+      "path": "memory/coremodule-entry-assembly-拓撲前提地雷-orbit-tslg同dna.md",
+      "triggers": [
+        "GetEntryAssembly",
+        "反射掃描",
+        "模組註冊",
+        "DataModule",
+        "assembly 拆分",
+        "殼專案",
+        "GetModule null",
+        "Orbit CoreModule",
+        "tslg-servercore",
+        "靜默失敗",
+        "HandlerHelper"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "feedback-核心檔結構性改寫先確認方案再動手",
+      "path": "_AIDocs/Failures/feedback-核心檔結構性改寫先確認方案再動手.md",
+      "triggers": [
+        "核心檔",
+        "註冊表",
+        "改寫",
+        "restructure",
+        "先確認",
+        "方案選擇",
+        "DataType",
+        "Defines",
+        "架構級變更"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "wells-review-report-format-分類條列-簡扼說明改動",
+      "path": "memory/wells-review-report-format-分類條列-簡扼說明改動.md",
+      "triggers": [
+        "檢查回報",
+        "code review 回報",
+        "審查報告",
+        "檢查報告格式",
+        "review report"
+      ],
+      "scope": "global"
     }
   ]
 }

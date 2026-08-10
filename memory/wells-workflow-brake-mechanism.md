@@ -7,7 +7,7 @@
 - Last-used: 2026-05-22
 - Confirmations: 0
 - Created-at: 2026-05-22
-- Related: feedback-fix-escalation, failures, decisions
+- Related: feedback-fix-escalation, failures, decisions, feedback-已驗證的重複操作直接做完勿反覆確認
 
 ## 知識
 

@@ -5,7 +5,7 @@
 - Confidence: [固]
 - Trigger: 工具鏈, 環境設定, MCPControl, MCP新增, npm全域, 螢幕截圖, Excel MCP, LanceDB, MSYS2, cp950, PowerShell截圖, 向量服務
 - Created-at: 2026-06-12
-- Related: toolchain-ollama, decisions, feedback-global-install, failures, hotfix-ilruntime-traps, obsidian-sync-hook-全域同步-stdin-json-測試陷阱, unity-mcp-自動化工具鏈, toolchain-batch-cmd-crlf-encoding, dotnet-inline-cant-cross-delegate, dotnet-mysqldata-collation-id-相容, guardian-dashboard-孤兒佔埠與新碼重啟, headless-chrome-svg轉png-windows踩坑, wsl2-0x80070569-gpo鎖診斷繞法vhdx救援移除, cc-能力查證反編譯實跑-binary, codex-log-bloat-analytics, windows-python-write-text-缺-newline-把-lf-翻-crlf-整檔假-diff, bash-呼叫-msbuild-用-dash-參數
+- Related: toolchain-ollama, decisions, feedback-global-install, failures, hotfix-ilruntime-traps, obsidian-sync-hook-全域同步-stdin-json-測試陷阱, unity-mcp-自動化工具鏈, toolchain-batch-cmd-crlf-encoding, dotnet-inline-cant-cross-delegate, dotnet-mysqldata-collation-id-相容, guardian-dashboard-孤兒佔埠與新碼重啟, headless-chrome-svg轉png-windows踩坑, wsl2-0x80070569-gpo鎖診斷繞法vhdx救援移除, cc-能力查證反編譯實跑-binary, codex-log-bloat-analytics, windows-python-write-text-缺-newline-把-lf-翻-crlf-整檔假-diff, bash-呼叫-msbuild-用-dash-參數, vscode-csdevkit-鎖目錄擋-git-mv-逐子項繞過
 
 ## 知識
 
@@ -42,6 +42,8 @@
 - ### 環境特殊配置
 - [固] ChromaDB 已棄用，改用 LanceDB（i7-3770 不支援 AVX2）
 - [固] workflow-guardian.py stdout/stderr 強制 UTF-8（Windows 預設 cp950 會導致中文亂碼）
+- [固] Git Bash(MSYS) 背景啟動 Windows exe 後 `kill $PID` 常只殺掉 bash wrapper，exe 本體繼活鎖住輸出 DLL（症狀：下次 build MSB3027/MSB3021 檔案被鎖，2026-07-11 tslg E2E 實踩）。E2E 收尾一律用 PowerShell `Stop-Process -Name <exe> -Force` 或 `taskkill /IM <exe> /F` 確認殺透，不信任 bash kill
+- [臨] Bash tool 的 cwd 跨呼叫持續：cd 進 ~/.claude（本身是 git repo）跑維護腳本後，後續 git remote/status/push 全命中 ~/.claude repo 而非專案 repo（2026-07-15 實例：收尾 push 前一步才發現 remote 是 claude-skyes 不是專案）——跨 repo 收尾的 git 操作一律 git -C <絕對路徑> 或先 pwd 驗證。
 
 ## 行動
 

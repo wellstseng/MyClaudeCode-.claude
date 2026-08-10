@@ -103,3 +103,13 @@
 | wells-workflow-handoff-quality | memory/wells-workflow-handoff-quality.md | 工作流洞見, handoff, 交接, 大型任務, 跨session | global |
 | svn-windows-中文-commit-log-編碼陷阱 | _AIDocs/_atoms/Tools/自動化流程與協議/dotnet/svn-windows-中文-commit-log-編碼陷阱.md | SVN, commit log, 中文, UTF-8, CP950, Windows, 亂碼, encoding, BOM, commit message, svn:log | global |
 | feedback-已驗證的重複操作直接做完勿反覆確認 | _AIDocs/Failures/feedback-已驗證的重複操作直接做完勿反覆確認.md | 重複操作, 升級, upstream 合版, 落地, 確認, checkpoint, 別多問, 效率, AskUserQuestion | global |
+| vscode-csdevkit-鎖目錄擋-git-mv-逐子項繞過 | memory/vscode-csdevkit-鎖目錄擋-git-mv-逐子項繞過.md | git mv, Permission denied, csdevkit, C# Dev Kit, rename directory, 目錄鎖, 搬遷, build-server | global |
+| aec-b欄如實載明hook標記退避語不以自評覆蓋 | memory/aec-b欄如實載明hook標記退避語不以自評覆蓋.md | anti_evasion_report, 收尾檢核, 退避語, AEC, cross-check, real-evasion | global |
+| orbit-hotfix-lua-direction | memory/orbit-hotfix-lua-direction.md | Orbit, 熱修, 熱更, hotfix, Lua導入, LuaJIT, 郁方, 團隊簡報, shim-less, titangoo, 指標注入 | global |
+| worktree-session-驗證前先同步目標分支 | memory/worktree-session-驗證前先同步目標分支.md | worktree, 落後, ff-only, 孤兒目錄, stale branch, 驗證前同步, merge --ff-only, ahead behind | global |
+| titan-lua-socket-rpc機制-兩版同構 | memory/titan-lua-socket-rpc機制-兩版同構.md | titan, gate, proxy, goo_rpc, goo_gate, lua socket, lua連線, entities.lua, rpc機制, fire-and-forget, channel pull, titan_net_id | global |
+| dotnet-interface-devirt-pgo | memory/dotnet-interface-devirt-pgo.md | guarded devirtualization, devirt, Dynamic PGO, TieredPGO, 介面派發, interface dispatch, callvirt, monomorphic, AggressiveInlining, sealed, JitDisasm, OSR, MethodTable guard, 收包 dispatch, INodePacketHandler | global |
+| wells-design-principles-明碼優先-職責分離-防呆擋非法 | memory/wells-design-principles-明碼優先-職責分離-防呆擋非法.md | 設計原則, 明碼, 反直覺, 隱性語意, 哨兵值, 職責分離, 反射掃描, magic value, 註冊表, 防呆, 開發文化, design principle | global |
+| coremodule-entry-assembly-拓撲前提地雷-orbit-tslg同dna | memory/coremodule-entry-assembly-拓撲前提地雷-orbit-tslg同dna.md | GetEntryAssembly, 反射掃描, 模組註冊, DataModule, assembly 拆分, 殼專案, GetModule null, Orbit CoreModule, tslg-servercore, 靜默失敗, HandlerHelper | global |
+| feedback-核心檔結構性改寫先確認方案再動手 | _AIDocs/Failures/feedback-核心檔結構性改寫先確認方案再動手.md | 核心檔, 註冊表, 改寫, restructure, 先確認, 方案選擇, DataType, Defines, 架構級變更 | global |
+| wells-review-report-format-分類條列-簡扼說明改動 | memory/wells-review-report-format-分類條列-簡扼說明改動.md | 檢查回報, code review 回報, 審查報告, 檢查報告格式, review report | global |

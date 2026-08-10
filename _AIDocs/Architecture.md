@@ -95,7 +95,7 @@
 
 取捨：CC 原生 CronCreate 為雲端 agent、碰不到本機 `~/.claude`，故健檢採 Task Scheduler。OTEL export 評估不做（兩目標指標 per-hook 延遲/注入 token 稅皆不在匯出面，見 atom [[otel-遙測評估結論-不實作-兩目標指標皆測不到]]）。
 
-## Skills（V5 全域 <!-- skill-count -->21<!-- /skill-count --> 個 active，2026-05-27 起；記憶系統 skill + 1 外部〔karpathy-guidelines〕；unity-mcp-skill 2026-06-12 已搬遷專案層；**init-roles / conflict-review 於 P8a 2026-07-01 單人環境降 dormant → `skills/_archived/`**，故不計入 21）
+## Skills（V5 全域 <!-- skill-count -->23<!-- /skill-count --> 個 active，2026-05-27 起；記憶系統 skill + 1 外部〔karpathy-guidelines〕；unity-mcp-skill 2026-06-12 已搬遷專案層；**init-roles / conflict-review 於 P8a 2026-07-01 單人環境降 dormant → `skills/_archived/`**，故不計入 21）
 
 V5 Wave 3 把 V4 的 `commands/*.md` 遷到 `.claude/skills/{name}/SKILL.md`（對齊 Anthropic 官方「commands merged into skills」）。Legacy `commands/` **2026-05-27 已刪除**（原 7 天緩衝經對拍 100% identical 驗證後提前廢止）。
 

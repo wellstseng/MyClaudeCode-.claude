@@ -5,7 +5,7 @@
 - Confidence: [臨]
 - Trigger: 上GIT, git add, staging, 收尾, git status, 併發 session, concurrent session, commit, disjoint 批次, 多 session
 - Created-at: 2026-07-01
-- Related: workflow-rules, feedback-completion-gates, 原子記憶審查總結-好機制被小故障卡死非過重-拔前先實證
+- Related: workflow-rules, feedback-completion-gates, 原子記憶審查總結-好機制被小故障卡死非過重-拔前先實證, worktree-session-驗證前先同步目標分支
 
 ## 知識
 

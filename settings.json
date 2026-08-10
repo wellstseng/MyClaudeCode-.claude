@@ -226,6 +226,6 @@
   "autoUpdatesChannel": "latest",
   "skipDangerousModePermissionPrompt": true,
   "skipWorkflowUsageWarning": true,
-  "effortLevel": "max",
+  "effortLevel": "high",
   "model": "claude-fable-5[1m]"
 }
