@@ -149,9 +149,14 @@
       "path": "memory/preferences.md",
       "triggers": [
         "偏好",
+        "風格",
+        "習慣",
+        "語言",
+        "回應",
         "執P",
         "執驗上P",
-        "上GIT"
+        "上GIT",
+        "Obsidian"
       ],
       "scope": "global"
     },
@@ -221,7 +226,9 @@
       "triggers": [
         "svn",
         "svn-update",
-        "TortoiseSVN"
+        "TortoiseSVN",
+        "衝突",
+        "conflict"
       ],
       "scope": "global"
     },
@@ -254,12 +261,7 @@
         "編造規則",
         "籠統話術",
         "訂規保留",
-        "設計慣例",
-        "截斷",
-        "採樣",
-        "完整內容",
-        "品質判定",
-        "excerpt"
+        "設計慣例"
       ],
       "scope": "global"
     },
@@ -451,64 +453,6 @@
       "scope": "global"
     },
     {
-      "name": "腦內世界-v3-自癒與-command-bus-架構",
-      "path": "_AIDocs/_atoms/World/腦內世界-v3-自癒與-command-bus-架構.md",
-      "triggers": [
-        "腦內世界",
-        "atom-heal",
-        "記憶自癒",
-        "command bus",
-        "world.html",
-        "jobRunner",
-        "_heal_review",
-        "heal-review"
-      ],
-      "scope": "global"
-    },
-    {
-      "name": "reconcile-render-動畫狀態歸屬陷阱",
-      "path": "_AIDocs/_atoms/World/reconcile-render-動畫狀態歸屬陷阱.md",
-      "triggers": [
-        "reconcile",
-        "render",
-        "world.html",
-        "每隔一段時間跳",
-        "彈回原位",
-        "snap back",
-        "動畫狀態",
-        "POLL_MS",
-        "wander",
-        "漫步",
-        "model 重建",
-        "requestAnimationFrame",
-        "_wox",
-        "el._x",
-        "畫面跳刷新"
-      ],
-      "scope": "global"
-    },
-    {
-      "name": "腦內世界-環境演化-放置式架構",
-      "path": "_AIDocs/_atoms/World/腦內世界-環境演化-放置式架構.md",
-      "triggers": [
-        "腦內世界",
-        "環境演化",
-        "world-dev",
-        "world.html",
-        "放置",
-        "env-layer",
-        "風格演化",
-        "零影響隔離",
-        "活動驅動耦合",
-        "contributeEnv",
-        "affinity",
-        "蓋房子",
-        "maybeBuild",
-        "原子興趣"
-      ],
-      "scope": "global"
-    },
-    {
       "name": "realm-範疇分區機制-v5",
       "path": "_AIDocs/_atoms/MemDev/MemoryIndex/realm-範疇分區機制-v5.md",
       "triggers": [
@@ -650,37 +594,6 @@
       "scope": "global"
     },
     {
-      "name": "realm-遷移-llm-domain-跨文字系統亂碼-snap-防線穿透",
-      "path": "_AIDocs/_atoms/MemDev/realm-遷移-llm-domain-跨文字系統亂碼-snap-防線穿透.md",
-      "triggers": [
-        "realm 遷移",
-        "domain 亂碼",
-        "자동화",
-        "韓文 domain",
-        "normalize_domain_path",
-        "詞庫污染",
-        "realm sweep",
-        "LLM 分類器",
-        "homoglyph"
-      ],
-      "scope": "global"
-    },
-    {
-      "name": "powershell7-寫檔預設無bom會剝源碼檔bom",
-      "path": "_AIDocs/_atoms/Tools/自動化流程與協議/dotnet/powershell7-寫檔預設無bom會剝源碼檔bom.md",
-      "triggers": [
-        "Set-Content",
-        "Out-File",
-        "BOM",
-        "utf8",
-        "編碼",
-        "批次替換",
-        "PowerShell 寫檔",
-        "亂碼"
-      ],
-      "scope": "global"
-    },
-    {
       "name": "harness原生memory與atom索引marker撞名辨識",
       "path": "_AIDocs/_atoms/MemDev/harness原生memory與atom索引marker撞名辨識.md",
       "triggers": [
@@ -732,28 +645,6 @@
       "scope": "global"
     },
     {
-      "name": "腦內世界生物對話系統真相-模型觸發方針背景",
-      "path": "_AIDocs/_atoms/World/腦內世界生物對話系統真相-模型觸發方針背景.md",
-      "triggers": [
-        "腦內世界",
-        "world.html",
-        "生物對話",
-        "creature-chat",
-        "CHAT_MODEL",
-        "接觸觸發",
-        "checkDialogue",
-        "runConversation",
-        "對話並發",
-        "chatBusy",
-        "並發池",
-        "activeChats",
-        "MAX_CHATS",
-        "背景電子腦",
-        "env 蓋房子"
-      ],
-      "scope": "global"
-    },
-    {
       "name": "自己flag的維護動作直接做完不要反問",
       "path": "memory/自己flag的維護動作直接做完不要反問.md",
       "triggers": [
@@ -795,22 +686,6 @@
         "dash flag",
         "bash 編譯",
         "/t:Build"
-      ],
-      "scope": "global"
-    },
-    {
-      "name": "skill-計數單一來源-skill-index",
-      "path": "_AIDocs/_atoms/MemDev/skill-計數單一來源-skill-index.md",
-      "triggers": [
-        "skill 計數",
-        "skill count",
-        "skill-index",
-        "_skill_index.json",
-        "skill-count marker",
-        "出文件 skill 數",
-        "增刪 skill",
-        "skill 漂移",
-        "skill drift"
       ],
       "scope": "global"
     },
@@ -977,7 +852,17 @@
         "_unclassified",
         "shared 扁平落根",
         "project delegate hook",
-        "專案記憶分類"
+        "專案記憶分類",
+        "atom_write append 失敗",
+        "Atom not found",
+        "locate_existing_atom",
+        "落點 vs 定位",
+        "subdir atom",
+        "subdir",
+        "scope 沿用",
+        "atom-move scope",
+        "memory/projects 分區",
+        "trigger 長度"
       ],
       "scope": "global"
     },
@@ -1108,22 +993,6 @@
         "codex",
         "併發執P",
         "MCP 重啟"
-      ],
-      "scope": "global"
-    },
-    {
-      "name": "atom-heal-l2-broken-ref-誤判-prefix-rename-為-remove",
-      "path": "_AIDocs/_atoms/MemDev/atom-heal-l2-broken-ref-誤判-prefix-rename-為-remove.md",
-      "triggers": [
-        "atom-heal",
-        "broken_ref",
-        "L2 自癒",
-        "repoint",
-        "死連結",
-        "prefix rename",
-        "needs_human",
-        "atom rename 反向連結",
-        "記憶自癒誤判"
       ],
       "scope": "global"
     },
@@ -1849,6 +1718,243 @@
         "審查報告",
         "檢查報告格式",
         "review report"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "winforms-多選資料夾-net-8-無-multiselect-須走-ifileopendialog",
+      "path": "memory/winforms-多選資料夾-net-8-無-multiselect-須走-ifileopendialog.md",
+      "triggers": [
+        "FolderBrowserDialog",
+        "Multiselect",
+        "多選資料夾",
+        "IFileOpenDialog",
+        "WinForms",
+        "net8.0-windows",
+        "資料夾選擇"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "winget-升不動-powershell-msi-與-msix-通道分裂",
+      "path": "memory/winget-升不動-powershell-msi-與-msix-通道分裂.md",
+      "triggers": [
+        "winget",
+        "pwsh",
+        "PowerShell 升級",
+        "powershell update",
+        "msix",
+        "exit 43",
+        "UPDATE_NOT_APPLICABLE",
+        "winget upgrade",
+        "winget list",
+        "Package Cache",
+        "Windows PowerShell 5.1"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "atom-edit-meta與atom-heal對專案層atom的缺口與繞法",
+      "path": "_AIDocs/_atoms/MemDev/atom-edit-meta與atom-heal對專案層atom的缺口與繞法.md",
+      "triggers": [
+        "atom_edit_meta",
+        "atom-heal",
+        "broken_refs",
+        "專案層 atom",
+        "trigger 編輯",
+        "file not under",
+        "L2 自癒",
+        "死連結修復",
+        "sync-atom-index",
+        "--fix",
+        "--memory-dir",
+        "mirror 重生"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "codex-handoff自檢誤報文件截斷-真因是輸入靜默截斷非模型幻覺",
+      "path": "_AIDocs/_atoms/MemDev/codex-handoff自檢誤報文件截斷-真因是輸入靜默截斷非模型幻覺.md",
+      "triggers": [
+        "codex 誤報",
+        "handoff 自檢",
+        "文件截斷",
+        "誤報截斷",
+        "審查者輸入",
+        "6000字",
+        "_read_handoff_content",
+        "頭尾採樣",
+        "codex companion 截斷"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "guardian-警告訊息辨識度-emoji-前綴分流",
+      "path": "_AIDocs/_atoms/MemDev/guardian-警告訊息辨識度-emoji-前綴分流.md",
+      "triggers": [
+        "警告辨識度",
+        "systemMessage",
+        "emoji 前綴",
+        "⛔",
+        "⚠️",
+        "Guardian 警告",
+        "CoordWarn",
+        "PreActionNotice",
+        "警告樣式",
+        "字體放大"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "pan-hermes不移植部件與vscode-text-block不落盤實測",
+      "path": "_AIDocs/_atoms/MemDev/pan-hermes不移植部件與vscode-text-block不落盤實測.md",
+      "triggers": [
+        "PAN",
+        "預告閘門",
+        "pre_action_notice",
+        "Hermes",
+        "技轉",
+        "text_blocks",
+        "transcript 不落盤",
+        "翻 deny",
+        "lenient_first_miss",
+        "continuation 豁免",
+        "偵測率",
+        "PowerShell 納管"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "usefulness晉升軌兩級同門檻-同日連跳觀到固的假晉升",
+      "path": "_AIDocs/_atoms/MemDev/usefulness晉升軌兩級同門檻-同日連跳觀到固的假晉升.md",
+      "triggers": [
+        "atom_promote",
+        "晉升",
+        "Promotion Suggestions",
+        "usefulness",
+        "Wilson",
+        "臨觀固",
+        "memory health",
+        "連跳"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "佛法三缺口工程化-失念壞滅緣了義",
+      "path": "_AIDocs/_atoms/MemDev/佛法三缺口工程化-失念壞滅緣了義.md",
+      "triggers": [
+        "失念",
+        "recall-miss",
+        "壞滅緣",
+        "Depends 欄位",
+        "Evidence 欄位",
+        "證據等級",
+        "fast-refute",
+        "佛法",
+        "唯識"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "取用端稽核與瘦身規範-atomaudit與3kb預算",
+      "path": "_AIDocs/_atoms/MemDev/取用端稽核與瘦身規範-atomaudit與3kb預算.md",
+      "triggers": [
+        "AtomAudit",
+        "取用端稽核",
+        "injection_log",
+        "瘦身",
+        "knowledge budget",
+        "大小預算",
+        "Status 行",
+        "cold 注入",
+        "budget skip",
+        "一行路標"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "專案工作驗收裁判的分級啟動與殺閘設計",
+      "path": "_AIDocs/_atoms/MemDev/專案工作驗收裁判的分級啟動與殺閘設計.md",
+      "triggers": [
+        "驗收裁判",
+        "acceptance_review",
+        "驗收規格",
+        "enforce 閘",
+        "殺閘",
+        "回測",
+        "AI 驗證 AI",
+        "regression hint",
+        "驗收清單"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "檢索融合與回歸集調參-rrf-min-score-定案",
+      "path": "_AIDocs/_atoms/MemDev/檢索融合與回歸集調參-rrf-min-score-定案.md",
+      "triggers": [
+        "RRF",
+        "融合檢索",
+        "min_score 調參",
+        "memory-eval",
+        "回歸集",
+        "誤注入率",
+        "Recall@3",
+        "檢索品質"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "禁語-hook-不開引用豁免誤報噪音-vs-契約破洞不對稱",
+      "path": "_AIDocs/_atoms/MemDev/禁語-hook-不開引用豁免誤報噪音-vs-契約破洞不對稱.md",
+      "triggers": [
+        "禁語",
+        "退避語",
+        "evasion hook",
+        "wg_evasion",
+        "誤報",
+        "false positive",
+        "引用豁免",
+        "detect_evasion",
+        "forbidden-phrases"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "衝突偵測-block-資格閘-複驗一致-分區感知-待審出路",
+      "path": "_AIDocs/_atoms/MemDev/衝突偵測-block-資格閘-複驗一致-分區感知-待審出路.md",
+      "triggers": [
+        "conflict detector",
+        "衝突偵測",
+        "CONTRADICT",
+        "write-check",
+        "_pending_review",
+        "待審",
+        "conflict-review",
+        "/conflict pending",
+        "跨專案誤報",
+        "偵測不穩定",
+        "skip_conflict_check",
+        "分區感知"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "跨session協調-衝突預警機制與cc原生現況",
+      "path": "_AIDocs/_atoms/MemDev/跨session協調-衝突預警機制與cc原生現況.md",
+      "triggers": [
+        "跨 session 溝通",
+        "session 協調",
+        "衝突預警",
+        "CoordWarn",
+        "wg_coordination",
+        "session_message",
+        "收件匣",
+        "coordination",
+        "多 session 併行",
+        "session 互踩",
+        "add -A 預警",
+        "late-collision",
+        "Agent Teams"
       ],
       "scope": "global"
     }

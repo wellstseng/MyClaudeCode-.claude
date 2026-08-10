@@ -52,6 +52,43 @@ except ImportError:
     check_long_die_status = lambda: None  # noqa: E731
 
 
+def _check_se_sentinel_residual(lines: List[str], min_age_s: float = 60.0) -> None:
+    """SessionEnd 哨兵殘留（session_end._se_sentinel_arm 留下、未被正常收尾拆除）
+    → 告警一行 + 清除。只認 mtime 超過 min_age_s 者：並行 session 的 SessionEnd
+    可能正在跑（<30s 窗），剛 arm 的哨兵不是殘留，不得誤清誤報。"""
+    import time as _time
+    se_dir = wg_core_workflow_dir() / "se-sentinel"
+    if not se_dir.is_dir():
+        return
+    now = _time.time()
+    residual = []
+    for p in sorted(se_dir.glob("*.json")):
+        try:
+            if now - p.stat().st_mtime > min_age_s:
+                residual.append(p)
+        except OSError:
+            continue
+    if not residual:
+        return
+    sids = ", ".join(p.stem[:12] + "…" for p in residual[:3])
+    lines.append(
+        f"[Guardian:SE-Sentinel] 偵測到 {len(residual)} 個 SessionEnd "
+        f"未跑完的殘留哨兵（{sids}）——上次收尾（episodic 生成/晉升掃描/"
+        "realm sweep 等）可能中斷未完成。"
+    )
+    for p in residual:
+        try:
+            p.unlink()
+        except OSError:
+            pass
+
+
+def wg_core_workflow_dir() -> Path:
+    """取 wg_core.WORKFLOW_DIR 的即時值（測試 monkeypatch wg_core 後仍生效）。"""
+    import wg_core
+    return wg_core.WORKFLOW_DIR
+
+
 def _collect_v4_role_atoms(
     project_mem_dir: Optional[Path], user: str, roles: List[str],
 ) -> List[Tuple[str, str, List[str]]]:
@@ -228,26 +265,33 @@ def _refresh_vector_flag(
 
 
 def _prune_aec_files(max_age_days: int = 7) -> int:
-    """清 workflow/aec-report/ 與 aec-decision/ 中 mtime 超過 max_age_days 的 .json（TTL GC）。
+    """清 workflow/ 下 per-turn 執行期狀態檔的 TTL GC（mtime 超過 max_age_days）。
 
-    兩者皆 per-turn 執行期狀態檔（Python 寫報告 / Node 寫決策），寫了不清會無限累積。
-    在 SessionStart 順手掃一次（比照上方 log rotation 的開機打掃時機）。glob *.json 自然略過
-    atomic write 的 .tmp 過渡檔。fail-open：目錄不存在 / 單檔被別進程刪或鎖 → 略過不炸。
-    回傳刪除檔數（供測試 / 觀測）。"""
+    對象：aec-report/ 與 aec-decision/（*.json，Python 寫報告 / Node 寫決策）、
+    pan-pass/ 與 pan-deny/（*.flag / *.json，PAN 預告閘門 armed marker 與 deny 計數）。
+    寫了不清會無限累積。在 SessionStart 順手掃一次（比照上方 log rotation 的開機
+    打掃時機）。glob 副檔名白名單自然略過 atomic write 的 .tmp 過渡檔。
+    fail-open：目錄不存在 / 單檔被別進程刪或鎖 → 略過不炸。回傳刪除檔數（供測試 / 觀測）。"""
     cutoff = (datetime.now() - timedelta(days=max_age_days)).timestamp()
     pruned = 0
-    for sub in ("aec-report", "aec-decision"):
-        try:
-            entries = list((WORKFLOW_DIR / sub).glob("*.json"))
-        except Exception:
-            continue
-        for p in entries:
+    for sub, patterns in (
+        ("aec-report", ("*.json",)),
+        ("aec-decision", ("*.json",)),
+        ("pan-pass", ("*.flag",)),
+        ("pan-deny", ("*.json",)),
+    ):
+        for pattern in patterns:
             try:
-                if p.stat().st_mtime < cutoff:
-                    p.unlink()
-                    pruned += 1
+                entries = list((WORKFLOW_DIR / sub).glob(pattern))
             except Exception:
                 continue
+            for p in entries:
+                try:
+                    if p.stat().st_mtime < cutoff:
+                        p.unlink()
+                        pruned += 1
+                except Exception:
+                    continue
     return pruned
 
 
@@ -290,6 +334,37 @@ def _health_advisory(last_run_path) -> list:
             "[Guardian:HealthCheck] ⚠ health-last-run.json 不可解析——健檢狀態"
             "未知，手動跑 python tools/health-weekly.py。"
         ]
+
+
+def _unpushed_advisory() -> list:
+    """本地有已 commit 未 push 的東西 → advisory 行（無則回 []，不佔 context）。
+
+    存在理由：SessionEnd 的晉升自動提交把 push 丟到背景（30s 預算內不等網路），
+    push 掛掉時 commit 只留在本地、當下沒人看得到。這裡在下個 session 開頭補上
+    可見性，讓「背景 fail-open」不變成「永遠沒人發現」（可觀測性鐵律）。
+
+    只讀 git 不寫，任何失敗回 []——沒有 upstream / 不是 repo / git 不在都算正常。
+    """
+    try:
+        import subprocess
+        if not (CLAUDE_DIR / ".git").exists():
+            return []
+        r = subprocess.run(
+            ["git", "-C", str(CLAUDE_DIR), "rev-list", "--count", "@{u}..HEAD"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=5)
+        if r.returncode != 0:  # 無 upstream / detached HEAD → 不是異常，不吵
+            return []
+        ahead = int((r.stdout or "0").strip() or 0)
+        if ahead <= 0:
+            return []
+        return [
+            f"[Guardian:Sync] ⚠ ~/.claude 本地有 {ahead} 筆 commit 未 push"
+            f"（背景 push 可能失敗，見 Logs/auto-commit.log）→ 跑 git push 補推。"
+        ]
+    except Exception as e:
+        _atom_debug_error("session_start:unpushed_advisory", e)
+        return []
 
 
 def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
@@ -536,6 +611,10 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         # 在 session 內浮出（fail-open 必告知）——「靜默死 27 天」的最後防線。
         lines.extend(_health_advisory(WORKFLOW_DIR / "health-last-run.json"))
 
+        # ── 未推送 commit ─────────────────────────────────────
+        # SessionEnd 晉升自動提交的 push 走背景、失敗當下無人知 → 這裡補可見性。
+        lines.extend(_unpushed_advisory())
+
         if v4_user:
             lines.append(
                 f"[Role] user={v4_user} roles={','.join(v4_roles) or 'programmer'} mgmt={v4_mgmt}"
@@ -575,6 +654,13 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                             lines.append(extra_line)
             except Exception as e:
                 _atom_debug_error("project_hook:session_start", e)
+
+    # config.json 解析失敗 → 一行告警（load_config 標旗；fail-open 必浮出）
+    if config.get("_config_parse_failed"):
+        lines.append(
+            "[Guardian:Config⚠] workflow/config.json 解析失敗，已退回內建 DEFAULTS"
+            "——請修復 JSON（詳 Logs/atom-debug）。"
+        )
 
     # ── V5+ realm：本地範疇 catalog 注入（補完 index 層 realm 一致性）────────────
     # core catalog 走 CLAUDE.md @import memory/MEMORY.md（全專案，fail-safe 退路）；
@@ -625,6 +711,13 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                 pass
     except Exception as e:
         print(f"[realm] automove notice error: {e}", file=sys.stderr)
+
+    # SessionEnd 哨兵殘留檢查：殘留＝上個 session 的收尾流程未跑完即中斷
+    # （harness timeout / 例外）→ 浮一行告警後清（收尾擁擠不得靜默失敗）。
+    try:
+        _check_se_sentinel_residual(lines)
+    except Exception as e:
+        print(f"SE-sentinel check error: {e}", file=sys.stderr)
 
     # 效用歸因遙測 advisory：上個 session 判定 unknown 比率連續偏高（讀後清 marker）
     try:

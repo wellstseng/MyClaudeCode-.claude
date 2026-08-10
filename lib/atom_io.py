@@ -24,12 +24,14 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from .atom_spec import (
-    SKIP_DIRS, MEMORY_INDEX, ATOM_INDEX, VALID_CONFIDENCE, VALID_SCOPES,
+    SKIP_DIRS, MEMORY_INDEX, VALID_CONFIDENCE, VALID_SCOPES,
     build_atom_content, slugify, validate_atom_content, render_knowledge_lines,
+    knowledge_sections_bytes, knowledge_budget_error,
 )
 from .atom_locations import (
     CLAUDE_DIR, GLOBAL_MEMORY_DIR, FAILURES_DIR,
     is_failures_routed_title, failures_write_target, local_write_target,
+    atom_search_roots, locate_existing_atom, project_subdir_target,
 )
 
 
@@ -47,7 +49,7 @@ VALID_SOURCES = frozenset({
     "hook:extract-worker",
     "tool:atom-move",
     "tool:atom-set-realm",  # V5+ Realm 維度：core⇄local 範疇搬移（_AIDocs/_atoms/ path 唯一寫者）
-    "tool:atom-health-audit",  # atom 體質審視工具
+    "tool:atom-health-check",  # atom 健康診斷 / 反向參照修補
     "tool:atom-heal",  # 記憶自癒（腦內世界 P3）：機械修反向連結 / LLM 提案修死連結
     "tool:changelog-roll",
     "tool:memory-audit",  # memory-audit demote/compact/log_evolution 修補
@@ -97,11 +99,35 @@ def _gen_audit_id() -> str:
 
 
 def _audit_log(entry: Dict[str, Any]) -> None:
-    """Append JSONL entry to atom_io_audit.jsonl（best-effort）。"""
+    """Append JSONL entry to atom_io_audit.jsonl（best-effort），>10MB 輪替。"""
     try:
         AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
         with open(AUDIT_LOG, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        if AUDIT_LOG.stat().st_size > 10 * 1024 * 1024:
+            _rotate_audit_log()
+    except OSError:
+        pass
+
+
+def _rotate_audit_log() -> None:
+    """輪替 atom_io_audit.jsonl（保留 3 份），對拍 memory-write-gate._rotate_log。"""
+    for i in range(2, 0, -1):
+        src = Path(f"{AUDIT_LOG}.{i}")
+        dst = Path(f"{AUDIT_LOG}.{i + 1}")
+        if src.exists():
+            if i == 2:
+                try:
+                    src.unlink()
+                except OSError:
+                    pass
+            else:
+                try:
+                    src.rename(dst)
+                except OSError:
+                    pass
+    try:
+        AUDIT_LOG.rename(Path(f"{AUDIT_LOG}.1"))
     except OSError:
         pass
 
@@ -137,10 +163,23 @@ def _atomic_write(path: Path, content: str) -> None:
     body = content.replace("\r\n", "\n").replace("\r", "\n")
     if eol != "\n":
         body = body.replace("\n", eol)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp, "w", encoding="utf-8", newline="") as f:
-        f.write(body)
-    os.replace(str(tmp), str(path))
+    # tmp 後綴帶 PID+TID 唯一化（仿 atom_access._write_raw）：固定 ".tmp" 會讓
+    # 併發 session 寫同一 atom 時共用 tmp 檔互踩（truncate 競態 → 半空檔）。
+    import threading as _threading
+    tmp = path.with_suffix(
+        f"{path.suffix}.tmp.{os.getpid()}.{_threading.get_ident()}"
+    )
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="") as f:
+            f.write(body)
+        os.replace(str(tmp), str(path))
+    except OSError:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def _find_project_root(cwd: Optional[str]) -> Optional[Path]:
@@ -172,8 +211,14 @@ def _resolve_target(
     title: Optional[str] = None,
     realm: Optional[str] = None,
     domain: Optional[str] = None,
+    subdir: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """回傳 {dir, base, index_dir, index_root, scope_label, routed_to_*, error}。
+    """回傳 {dir, base, index_dir, index_root, search_roots, scope_label, routed_to_*, error}。
+
+    `dir` = **新 atom 的落點**（扁平；主題分層由事後 classifier sweep 歸位，見
+    [[scope-shared-無主題子夾路由-專案靠-project_hooks-sweep-分層]]）。
+    `search_roots` = **既有 atom 的定位範圍**（append/replace 用，含子夾）——兩者
+    刻意分離：create 不猜子夾、append/replace 不因子夾而找不到檔。
 
     對拍 server.js:777 resolveMemDir + 1095-1101 sensitive audience routing。
     V5+ 擴展（皆 global scope 內疊加，與 scope 正交）：
@@ -185,10 +230,20 @@ def _resolve_target(
     if force_global:
         scope = "global"
 
+    # subdir（相對 memory root 的 create 落點）僅 scope=shared 支援；
+    # 其他 scope 給了就明確報錯，不靜默忽略。
+    if subdir and scope != "shared":
+        return {"error": f"subdir is only supported for scope=shared (got scope={scope})"}
+
     if scope == "global":
+        # global 的三個物理居所（memory/ + _AIDocs/Failures/ + _AIDocs/_atoms/）一律
+        # 全納入定位範圍，不隨 create 落點縮窄——否則 realm/domain 給錯（或沒給）的
+        # append/replace 會在錯的子樹找檔。對拍 server.js append/replace 的 find-fallback。
+        global_roots = atom_search_roots()
         if is_failures_routed_title(title):
             return {
                 **failures_write_target(),
+                "search_roots": global_roots,
                 "scope_label": "global",
                 "routed_to_failures": True, "routed_to_pending": False,
                 "routed_to_local": False,
@@ -197,6 +252,7 @@ def _resolve_target(
         if realm == "local":
             return {
                 **local_write_target(domain),
+                "search_roots": global_roots,
                 "scope_label": "global",
                 "routed_to_failures": False, "routed_to_pending": False,
                 "routed_to_local": True,
@@ -206,6 +262,7 @@ def _resolve_target(
         return {
             "dir": GLOBAL_MEMORY_DIR, "base": GLOBAL_MEMORY_DIR,
             "index_dir": GLOBAL_MEMORY_DIR, "index_root": CLAUDE_DIR,
+            "search_roots": global_roots,
             "scope_label": "global",
             "routed_to_failures": False, "routed_to_pending": False,
             "routed_to_local": False,
@@ -232,14 +289,30 @@ def _resolve_target(
 
     base = root / ".claude" / "memory"
     if scope == "shared":
-        target_dir = base / "shared"
+        if subdir:
+            # 一 repo 多專案分區佈局（memory/projects/<專案名>/ 等）一次寫到位；
+            # 逐段沙盒化 + 保護段拒絕在 project_subdir_target 內。
+            target_dir, sub_err = project_subdir_target(base, subdir)
+            if sub_err:
+                return {"error": f"invalid subdir: {sub_err}"}
+        else:
+            target_dir = base / "shared"
         scope_label = "shared"
+        # shared 的定位範圍 = 整個 memory root：實體檔常被歸位到 shared/ 的
+        # 兄弟子夾（projects/<X>/…）。personal/roles/_drafts 等受保護子樹由
+        # locate_existing_atom 的段層級 skip（_LOCATE_SKIP_DIRS）排除，
+        # 跨 scope 保護不因放寬而失守。
+        search_roots = [base]
     elif scope == "role":
         target_dir = base / "roles" / role
         scope_label = f"role:{role}"
+        # role/personal 維持窄根：不得跨角色/跨使用者。
+        search_roots = [target_dir]
     else:  # personal
         target_dir = base / "personal" / user
         scope_label = f"personal:{user}"
+        # personal/auto/<user>/（extract-worker 自動草稿）落在 target_dir 之外 → 自然排除。
+        search_roots = [target_dir]
 
     routed_to_pending = False
     if scope == "shared" and audience and any(
@@ -252,6 +325,7 @@ def _resolve_target(
     return {
         "dir": target_dir, "base": base,
         "index_dir": base, "index_root": base.parent,
+        "search_roots": search_roots,
         "scope_label": scope_label,
         "routed_to_failures": False, "routed_to_pending": routed_to_pending,
         "routed_to_local": False,
@@ -262,24 +336,22 @@ def _resolve_target(
 # ─── Index update（對拍 server.js:953 appendToIndex） ─────────────────────────
 
 
-def _resolve_index_path(mem_dir: Path) -> Path:
-    """優先 _ATOM_INDEX.md，否則 MEMORY.md（對拍 server.js:827）。"""
-    atom_idx = mem_dir / ATOM_INDEX
-    if atom_idx.exists():
-        return atom_idx
-    return mem_dir / MEMORY_INDEX
-
-
 def write_index(
     base_dir: Path,
     slug: str,
     rel_path: str,
     triggers: Iterable[str],
     source: str,
+    scope: Optional[str] = None,
 ) -> WriteResult:
     """更新或追加 atom 條目到 _atom_index.json (SoT)，並回寫 _ATOM_INDEX.md mirror。
 
-    對拍 server.js:953 appendToIndex；JSON 為唯一機器源。
+    對拍 server.js:953 appendToIndex；JSON 為唯一機器源
+    （atom_index_json 同 package，import 恆成功；MD 由其自動 regen）。
+
+    scope：明給則用；None → **沿用索引既有條目的 scope**（replace/edit_metadata
+    不得重設專案層 scope）；新條目才預設 "global"。trigger 逐項驗長度上限
+    （TRIGGER_MAX_LEN）——超長在寫入當下拒絕，不留給後續 validate_index 才爆。
     """
     if source not in VALID_SOURCES:
         return WriteResult(ok=False, error=f"invalid source: {source}",
@@ -288,67 +360,37 @@ def write_index(
     audit_id = _gen_audit_id()
     triggers_list = list(triggers)
 
-    # write JSON via lib/atom_index_json (auto-regen MD mirror)
-    try:
-        from .atom_index_json import upsert_atom
-        upsert_atom(
-            mem_dir=base_dir,
-            name=slug,
-            path=rel_path,
-            triggers=triggers_list,
-            scope="global",
+    from .atom_index_json import (
+        upsert_atom, load_atom_index_json, TRIGGER_MAX_LEN,
+    )
+    too_long = [t for t in triggers_list if len(t) > TRIGGER_MAX_LEN]
+    if too_long:
+        return WriteResult(
+            ok=False, audit_id=audit_id,
+            error=f"trigger too long (>{TRIGGER_MAX_LEN}): "
+                  + ", ".join(repr(t) for t in too_long),
         )
-        index_path = base_dir / "_atom_index.json"
-        _audit_log({
-            "audit_id": audit_id,
-            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "op": "index", "source": source,
-            "path": str(index_path), "slug": slug,
-        })
-        return WriteResult(ok=True, path=index_path, audit_id=audit_id)
-    except ImportError:
-        pass  # fall through to legacy MD write
-
-    index_path = _resolve_index_path(base_dir)
-    trigger_str = ", ".join(triggers_list)
-    new_row = f"| {slug} | {rel_path} | {trigger_str} |"
-
-    try:
-        content = index_path.read_text(encoding="utf-8")
-    except (OSError, FileNotFoundError):
-        content = "\n".join([
-            "# Atom Index", "",
-            "> Session 啟動時先讀此索引。比對 Trigger → Read 對應 atom。",
-            "| Atom | Path | Trigger |",
-            "|------|------|---------|",
-            "",
-        ])
-
-    escaped = re.escape(slug)
-    existing_re = re.compile(rf"^\|\s*{escaped}\s*\|.*$", re.MULTILINE)
-    if existing_re.search(content):
-        content = existing_re.sub(new_row, content, count=1)
-    else:
-        lines = content.split("\n")
-        insert_idx = -1
-        found_sep = False
-        for i, line in enumerate(lines):
-            if line.startswith("|------"):
-                found_sep = True
-                continue
-            if found_sep and not line.startswith("|"):
-                insert_idx = i
-                break
-        if insert_idx >= 0:
-            lines.insert(insert_idx, new_row)
-            content = "\n".join(lines)
-        else:
-            content = content.rstrip() + "\n" + new_row + "\n"
-
-    _atomic_write(index_path, content)
+    if scope is None:
+        try:
+            for a in load_atom_index_json(base_dir).get("atoms", []):
+                if a.get("name") == slug:
+                    scope = a.get("scope")
+                    break
+        except (OSError, ValueError):
+            pass
+    upsert_atom(
+        mem_dir=base_dir,
+        name=slug,
+        path=rel_path,
+        triggers=triggers_list,
+        scope=scope or "global",
+    )
+    index_path = base_dir / "_atom_index.json"
     _audit_log({
-        "audit_id": audit_id, "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "op": "index", "source": source, "path": str(index_path), "slug": slug,
+        "audit_id": audit_id,
+        "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "op": "index", "source": source,
+        "path": str(index_path), "slug": slug,
     })
     return WriteResult(ok=True, path=index_path, audit_id=audit_id)
 
@@ -463,6 +505,13 @@ def append_atom_file(
     if err:
         return WriteResult(ok=False, audit_id=audit_id,
                            error=f"Validation failed after append: {err}")
+    # 大小預算硬拒（append 是 atom 肥大化的實際路徑：一次一點、累積成山）。
+    # 以「拼接後」的 knowledge 區總量計——existing 已超額者任何 append 都會被拒，
+    # 逼迫先瘦身（結論留 atom、個案敘事外移文件）再追加。
+    budget_err = knowledge_budget_error(knowledge_sections_bytes(content))
+    if budget_err:
+        return WriteResult(ok=False, audit_id=audit_id,
+                           error=f"Budget rejected after append: {budget_err}")
     return write_raw(fp, content, source=source, op=op)
 
 
@@ -522,15 +571,33 @@ def edit_metadata(
 
     # ── SoT 先行：triggers 變更時先寫 _atom_index.json ──
     if triggers is not None:
-        base_dir = GLOBAL_MEMORY_DIR  # global memory 與 Failures atoms 索引同居此
         slug = Path(file_path).stem
+        fp = Path(file_path).resolve()
         try:
-            rel_path = Path(file_path).resolve().relative_to(
-                CLAUDE_DIR.resolve()).as_posix()
+            in_claude = fp.is_relative_to(CLAUDE_DIR.resolve())
+        except OSError:
+            in_claude = False
+        if in_claude:
+            # global 三居所（memory/ + _AIDocs/Failures/ + _AIDocs/_atoms/）索引同居
+            # GLOBAL_MEMORY_DIR（Failures/_atoms 上溯不到它，不能走 find_index_dir）
+            base_dir = GLOBAL_MEMORY_DIR
+            index_root = CLAUDE_DIR.resolve()
+        else:
+            # 專案層 atom：上溯最近 _atom_index.json = 該專案 memory root
+            from .atom_index_json import find_index_dir
+            base_dir = find_index_dir(fp.parent)
+            if base_dir is None:
+                return WriteResult(
+                    ok=False, audit_id=audit_id,
+                    error=f"no _atom_index.json found at/above: {fp.parent}",
+                )
+            index_root = base_dir.parent.resolve()
+        try:
+            rel_path = fp.relative_to(index_root).as_posix()
         except ValueError:
             return WriteResult(
                 ok=False, audit_id=audit_id,
-                error=f"file not under {CLAUDE_DIR}: {file_path}",
+                error=f"file not under index root {index_root}: {file_path}",
             )
         idx_res = write_index(base_dir, slug, rel_path, triggers, source)
         if not idx_res.ok:
@@ -580,12 +647,15 @@ def write_atom(
     today: Optional[str] = None,
     realm: Optional[str] = None,
     domain: Optional[str] = None,
+    subdir: Optional[str] = None,
 ) -> WriteResult:
     """寫入 atom 的唯一入口。對拍 server.js:1065 toolAtomWrite byte-identical。
 
     Required: title, scope, confidence, triggers, knowledge, mode, source
     V5+ realm/domain（選填，僅 scope=global 生效）：realm="local" → 物理落
     _AIDocs/_atoms/<domain>/，realm 由 path 推導不存欄位。預設 core（現狀）。
+    subdir（選填，僅 scope=shared）：create 落點改 `<memory root>/<subdir>/`
+    （多段斜線，相對 memory root），支援一 repo 多專案分區佈局。
     """
     audit_id = _gen_audit_id()
 
@@ -610,9 +680,22 @@ def write_atom(
         return WriteResult(ok=False, audit_id=audit_id,
                            error=f"Unknown scope: {scope}")
 
+    # trigger 長度在寫入當下即驗（create/replace 會回寫索引 triggers；append 不動
+    # 既有 triggers，legacy 超長 atom 的 append 不受牽連）。
+    if mode in ("create", "replace"):
+        from .atom_index_json import TRIGGER_MAX_LEN
+        too_long = [t for t in triggers if len(t) > TRIGGER_MAX_LEN]
+        if too_long:
+            return WriteResult(
+                ok=False, audit_id=audit_id,
+                error=f"trigger too long (>{TRIGGER_MAX_LEN} chars): "
+                      + ", ".join(repr(t) for t in too_long)
+                      + " — shorten the trigger; it would poison every later "
+                        "validate_index run (atom_move exit 2).")
+
     # ── Resolve target dir ──
     resolved = _resolve_target(scope, project_cwd, role, user, audience, force_global,
-                               title=title, realm=realm, domain=domain)
+                               title=title, realm=realm, domain=domain, subdir=subdir)
     if resolved.get("error"):
         return WriteResult(ok=False, audit_id=audit_id, error=resolved["error"])
     mem_dir = resolved["dir"]
@@ -624,7 +707,32 @@ def write_atom(
     slug = slugify(title)
     file_path = mem_dir / f"{slug}.md"
     index_root = resolved["index_root"]
-    rel_path = file_path.relative_to(index_root).as_posix()
+
+    # append/replace 的實體檔可能不在扁平落點（專案 projects/<X>/、shared/<Domain>/、
+    # local realm _AIDocs/_atoms/<domain>/）→ 索引優先、rglob 為輔定位。
+    # create 反向使用同一定位：同 slug 已存在於子夾 → 拒絕（否則會叉出重複 atom
+    # 並讓索引 path 蹍掉舊檔）；不改 create 落點本身。
+    if mode in ("append", "replace", "create") and not file_path.exists():
+        found, loc_err = locate_existing_atom(
+            slug,
+            index_dir=resolved["index_dir"],
+            index_root=index_root,
+            search_roots=resolved.get("search_roots") or [],
+        )
+        if loc_err:
+            return WriteResult(ok=False, audit_id=audit_id, error=loc_err)
+        if found:
+            if mode == "create":
+                return WriteResult(
+                    ok=False, audit_id=audit_id,
+                    error=f"Atom already exists: {found} (use mode=append/replace)")
+            file_path = found
+
+    try:
+        rel_path = file_path.relative_to(index_root).as_posix()
+    except ValueError:
+        return WriteResult(ok=False, audit_id=audit_id,
+                           error=f"located atom outside index root: {file_path}")
 
     # ── Build content ──
     if mode == "create":
@@ -692,12 +800,9 @@ def write_atom(
     try:
         from . import atom_access
         if mode == "create":
+            # init 一次帶齊 first_seen + last_used（單寫；create 時 sidecar 必為新檔）
             atom_access.init_access(
-                file_path, first_seen=today_str, source=source,
-            )
-            # 同步把 last_used 設為 today（init 只設 first_seen，未設 last_used）
-            atom_access.write_access_field(
-                file_path, field="last_used", value=today_str, source=source,
+                file_path, first_seen=today_str, last_used=today_str, source=source,
             )
         else:  # append / replace
             atom_access.write_access_field(
@@ -708,8 +813,11 @@ def write_atom(
         pass
 
     # ── Update index ──
+    # scope：create 傳 scope_label（與 frontmatter 一致）；replace 傳 None（沿用索引
+    # 既有值，不得把專案層 scope 重設回 global）。
     if mode in ("create", "replace"):
-        write_index(resolved["index_dir"], slug, rel_path, triggers, source)
+        write_index(resolved["index_dir"], slug, rel_path, triggers, source,
+                    scope=scope_label if mode == "create" else None)
 
     # ── Audit log ──
     _audit_log({
@@ -721,3 +829,56 @@ def write_atom(
 
     return WriteResult(ok=True, audit_id=audit_id, path=file_path,
                        routed_to_pending=routed_to_pending, skip_gate=skip_gate)
+
+
+def locate_atom(
+    title: str,
+    scope: str = "shared",
+    *,
+    project_cwd: Optional[str] = None,
+    role: Optional[str] = None,
+    user: Optional[str] = None,
+    audience: Optional[List[str]] = None,
+    force_global: bool = False,
+    realm: Optional[str] = None,
+    domain: Optional[str] = None,
+) -> WriteResult:
+    """定位既有 atom 實體檔（唯讀，無副作用之外的落檔）。給 MCP js 端 append/replace 用。
+
+    js 不自建第二套定位邏輯（既有 findAtomFileRecursive 只覆蓋 scope=global，
+    專案 scope 全漏）——統一 spawn 本函式，py/js 定位規則單一來源、不會漂移。
+    回 WriteResult：ok=True 且 path=None ⇒ 找不到（caller 給 not-found 訊息）；
+    ok=False ⇒ 撞名或 scope 解析錯，error 已含說明。extra.rel_path 供索引回寫。
+    """
+    audit_id = _gen_audit_id()
+    if scope == "project":
+        scope = "shared"
+    resolved = _resolve_target(scope, project_cwd, role, user, audience, force_global,
+                               title=title, realm=realm, domain=domain)
+    if resolved.get("error"):
+        return WriteResult(ok=False, audit_id=audit_id, error=resolved["error"])
+
+    slug = slugify(title)
+    index_root = resolved["index_root"]
+    file_path = resolved["dir"] / f"{slug}.md"
+    if not file_path.exists():
+        found, loc_err = locate_existing_atom(
+            slug,
+            index_dir=resolved["index_dir"],
+            index_root=index_root,
+            search_roots=resolved.get("search_roots") or [],
+        )
+        if loc_err:
+            return WriteResult(ok=False, audit_id=audit_id, error=loc_err)
+        if not found:
+            return WriteResult(ok=True, audit_id=audit_id, path=None,
+                               extra={"found": False})
+        file_path = found
+    try:
+        rel_path = file_path.relative_to(index_root).as_posix()
+    except ValueError:
+        return WriteResult(ok=False, audit_id=audit_id,
+                           error=f"located atom outside index root: {file_path}")
+    return WriteResult(ok=True, audit_id=audit_id, path=file_path,
+                       extra={"found": True, "rel_path": rel_path,
+                              "scope_label": resolved["scope_label"]})

@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from datetime import date
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 
 # ─── Constants（單一規則來源） ───────────────────────────────────────────────
@@ -23,9 +23,12 @@ from typing import Any, Dict, Iterable, List, Optional
 # - wisdom/: Wisdom Engine 設計文件（DESIGN.md），非 atom（用設計文件章節）
 # - episodic/: auto-generated session 摘要，使用 ## 摘要 章節，與 atom 格式不同
 # - _pending_review/: shared 敏感原子待裁決區，非活躍 atom
+# - _rejected/: memory-undo 撤銷歸檔區，非活躍 atom
+# - _drafts/: auto-capture 草稿隔離區（extract-worker），不入索引不注入
 SKIP_DIRS = frozenset({
     "_meta", "_reference", "_staging", "_vectordb", "_distant",
     "episodic", "templates", "personal", "wisdom", "_pending_review",
+    "_rejected", "_drafts",
 })
 
 # 系統檔前綴（檔名等級跳過）
@@ -43,6 +46,9 @@ OPTIONAL_METADATA = frozenset({
     "Privacy", "Source", "Type", "Created", "TTL",
     "Expires-at", "Tags", "Related", "Supersedes", "Quality",
     "Audience", "Author", "Pending-review-by", "Merge-strategy", "Created-at",
+    "Depends", "Evidence",  # 壞滅緣（validity conditions）/ 證據等級（了義裁決）
+    "Status",  # 選填現況一行（如「案結 2026-07-29」）；cold/skip 一行注入時附帶。
+               # 只寫現況，禁歷史敘事/版本脈絡（feedback-live-檔與記憶不留版本操作脈絡）
 })
 
 # 行動 always required; 知識 or 印象（指標型 atom 變體）二選一
@@ -52,10 +58,33 @@ KNOWLEDGE_SECTIONS = frozenset({"知識", "印象"})
 VALID_CONFIDENCE = frozenset({"[固]", "[觀]", "[臨]"})
 VALID_SCOPES = frozenset({"global", "shared", "role", "personal"})
 
+# ─── Depends（壞滅緣 validity conditions）/ Evidence（證據等級） ────────────────
+# 兩欄皆 optional：既有 atom 缺欄位一律靜默通過（向後相容鐵則）。
+# Depends 條目兩型：
+#   - path 型 `path:<相對或~路徑>` — 機器可驗（存在性）；相對路徑以 ~/.claude 為根
+#   - 自由文字型（如 `decision:xxx`、版本描述）— 不可驗，僅展示
+DEPENDS_PATH_PREFIX = "path:"
+
+# Evidence：實證（實際跑過/測過）> 引述（文件/網路來源）> 推測（模型推斷）> 未標
+VALID_EVIDENCE = frozenset({"實證", "引述", "推測"})
+EVIDENCE_RANK = {"實證": 3, "引述": 2, "推測": 1}  # 未標/非法 = 0
+
 TRIGGER_MIN = 3
 TRIGGER_MAX = 12
 ATOM_MAX_LINES = 200
 INDEX_MAX_LINES = 40
+
+# ─── Knowledge 區大小預算（寫入端硬拒；audit 的 ATOM_MAX_LINES 為事後 warning）──
+# 門檻依據：注入端 per-turn 預算 TURN_BUDGET_LIMIT=500 tok（hooks/wg_core.py）+
+# 知識段注入上限 _KNOWLEDGE_CAP_TOKENS_DEFAULT=200 tok（hooks/wg_atoms.py）——
+# 知識段超過 ~1KB 時全文注入必被截斷/降級，寫再多也到不了模型眼前。管線查無
+# 單顆 byte 硬門檻可直接反推，取 3KB 為硬拒線：低於截斷點的 3 倍餘裕內仍容
+# 得下正常結論型 atom；超過即代表在堆個案敘事而非結論。
+KNOWLEDGE_BUDGET_BYTES = 3072
+
+# 內容樣式軟警門檻（逐筆表格列數 / 含路徑行數）
+STYLE_TABLE_MIN_ROWS = 6
+STYLE_PATH_MIN_LINES = 8
 
 
 # ─── Pure functions ───────────────────────────────────────────────────────────
@@ -124,6 +153,69 @@ def parse_frontmatter(content: str) -> Dict[str, str]:
     return fm
 
 
+def parse_depends(raw: Optional[str]) -> List[Dict[str, str]]:
+    """解析 `- Depends:` 值（逗號分隔）為 typed 條目清單。
+
+    回傳 [{"type": "path"|"free", "value": str}, ...]：
+      - path 型：`path:<路徑>` → value 為去前綴後的路徑字串（可為空 → 格式警告）
+      - free 型：其他任何條目（decision:xxx、版本描述等）原文保留
+    空/None 輸入回傳空清單（欄位 optional，缺欄靜默）。
+    """
+    entries: List[Dict[str, str]] = []
+    for item in re.split(r"[,，]", raw or ""):
+        item = item.strip()
+        if not item:
+            continue
+        if item.startswith(DEPENDS_PATH_PREFIX):
+            entries.append({"type": "path",
+                            "value": item[len(DEPENDS_PATH_PREFIX):].strip()})
+        else:
+            entries.append({"type": "free", "value": item})
+    return entries
+
+
+def resolve_depends_path(value: str, claude_dir: Optional[Path] = None) -> Path:
+    """path 型 Depends 條目 → 絕對路徑。
+
+    - `~` 開頭 → expanduser
+    - 絕對路徑 → 原樣
+    - 相對路徑 → 以 claude_dir（預設 ~/.claude）為根
+    """
+    claude_dir = claude_dir or Path.home() / ".claude"
+    p = Path(value).expanduser()
+    if not p.is_absolute():
+        p = claude_dir / p
+    return p
+
+
+def depends_warnings(raw: Optional[str]) -> List[str]:
+    """Depends 值的格式警告（warning 級，不 fail；缺欄/空值不警告）。"""
+    warns: List[str] = []
+    for e in parse_depends(raw):
+        if e["type"] == "path" and not e["value"]:
+            warns.append("Depends 條目 `path:` 缺路徑值")
+    return warns
+
+
+def parse_evidence(raw: Optional[str]) -> Optional[str]:
+    """解析 `- Evidence:` 值。合法值原樣回傳；缺欄/空/非法 → None（視同未標）。"""
+    v = (raw or "").strip()
+    return v if v in VALID_EVIDENCE else None
+
+
+def evidence_warning(raw: Optional[str]) -> Optional[str]:
+    """Evidence 非法值警告（warning 級，不 fail）。缺欄/空值回 None（optional）。"""
+    v = (raw or "").strip()
+    if v and v not in VALID_EVIDENCE:
+        return f"Evidence 值無效: {v}（應為 實證/引述/推測）"
+    return None
+
+
+def evidence_rank(raw: Optional[str]) -> int:
+    """Evidence 裁決權重：實證3 > 引述2 > 推測1 > 未標/非法0。"""
+    return EVIDENCE_RANK.get((raw or "").strip(), 0)
+
+
 def validate_atom_content(content: str) -> Optional[str]:
     """驗證 atom 內容結構。回傳 None 表通過；錯誤字串表第一個違規。
 
@@ -135,14 +227,56 @@ def validate_atom_content(content: str) -> Optional[str]:
         return "YAML frontmatter (---) is forbidden in atom files"
     if not re.search(r"^# .+", content, re.MULTILINE):
         return "Missing # title heading"
-    if "## 知識" not in content:
-        return "Missing ## 知識 section"
+    # 知識 / 印象 二選一（KNOWLEDGE_SECTIONS；指標型 atom 用 ## 印象 取代 ## 知識，
+    # 對齊 memory-audit validate_format 的判定）
+    if not any(f"## {sec}" in content for sec in KNOWLEDGE_SECTIONS):
+        return "Missing ## 知識 or ## 印象 section"
     if "## 行動" not in content:
         return "Missing ## 行動 section"
     m = re.search(r"^- Confidence:\s*(.+)$", content, re.MULTILINE)
     if not m or m.group(1).strip() not in VALID_CONFIDENCE:
         return "Missing or invalid Confidence metadata"
     return None
+
+
+def knowledge_sections_bytes(content: str) -> int:
+    """atom 全文中 ## 知識 + ## 印象 區 body 的 utf-8 bytes 總和（大小預算量測口徑）。"""
+    total = 0
+    for sec in KNOWLEDGE_SECTIONS:
+        m = re.search(
+            r"^##[ \t]+" + re.escape(sec) + r"[ \t]*\n([\s\S]*?)(?=^## |\Z)",
+            content, re.MULTILINE,
+        )
+        if m:
+            total += len(m.group(1).encode("utf-8"))
+    return total
+
+
+def knowledge_budget_error(nbytes: int, budget: int = KNOWLEDGE_BUDGET_BYTES) -> Optional[str]:
+    """knowledge 區超過大小預算 → 錯誤訊息（寫入端硬拒）；否則 None。budget<=0 停用。"""
+    if budget <= 0 or nbytes <= budget:
+        return None
+    return (
+        f"knowledge 區 {nbytes} bytes 超過預算 {budget} bytes——"
+        "個案事實移文件；atom 只留結論/判斷/教訓/現況/檔案錨點"
+        "（大段逐筆內容改為文件路徑一行）"
+    )
+
+
+_STYLE_PATH_RE = re.compile(r"[\w~.\\-]*[/\\][\w.\\-]+\.\w{1,5}")
+
+
+def knowledge_style_warnings(text: str) -> List[str]:
+    """內容樣式軟警（不硬拒）：逐筆表格 / 逐輪檔名·路徑清單 → 應為文件錨點一行。"""
+    lines = text.splitlines()
+    warns: List[str] = []
+    table_rows = sum(1 for ln in lines if ln.lstrip().startswith("|"))
+    if table_rows >= STYLE_TABLE_MIN_ROWS:
+        warns.append(f"逐筆表格 {table_rows} 列——此類個案清單應收斂為文件錨點一行")
+    path_lines = sum(1 for ln in lines if _STYLE_PATH_RE.search(ln))
+    if path_lines >= STYLE_PATH_MIN_LINES:
+        warns.append(f"含路徑/檔名的行達 {path_lines} 行——逐輪檔名/路徑清單應收斂為文件錨點一行")
+    return warns
 
 
 def _is_block_knowledge(item: str) -> bool:
@@ -187,13 +321,15 @@ def build_atom_content(
     merge_strategy: Optional[str] = None,
     created_at: Optional[str] = None,
     today: Optional[str] = None,
+    status: Optional[str] = None,
 ) -> str:
     """從結構化參數構造 atom 檔內容。
 
     對拍 server.js:669-721 buildAtomContent —— byte-identical 等價契約。
     SPEC §4 metadata 順序：Scope → Audience → Author → Confidence → Trigger →
-    Last-used → Confirmations → ReadHits → Pending-review-by → Merge-strategy →
-    Created-at → Related。空值欄位省略。
+    Status → Last-used → Confirmations → ReadHits → Pending-review-by →
+    Merge-strategy → Created-at → Related。空值欄位省略（status 未給時輸出
+    與既有 parity fixture byte-identical）。
     """
     today = today or date.today().isoformat()
     triggers_list = list(triggers)
@@ -210,6 +346,8 @@ def build_atom_content(
         lines.append(f"- Author: {author}")
     lines.append(f"- Confidence: {confidence}")
     lines.append(f"- Trigger: {', '.join(triggers_list)}")
+    if status:
+        lines.append(f"- Status: {status}")
     # Last-used / Confirmations / ReadHits 居 <atom>.access.json，不再寫入 .md 檔頭
     if pending_review_by:
         lines.append(f"- Pending-review-by: {pending_review_by}")
@@ -277,8 +415,3 @@ def iter_atom_files(memory_root: Path):
 
 # V5+ 多 root atom 搜尋與物理位置規則已搬到 lib/atom_locations.py
 # （atom_spec 只負責「什麼是合法 atom」；路徑/路由屬 atom_locations 範疇）
-
-
-def required_metadata_missing(fm: Dict[str, Any]) -> List[str]:
-    """回傳 fm 中缺的 REQUIRED_METADATA key 清單（保持插入順序穩定）。"""
-    return [k for k in ("Scope", "Confidence", "Trigger", "Last-used") if k not in fm]

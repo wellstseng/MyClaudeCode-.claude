@@ -7,28 +7,37 @@
 | Atom | 說明 |
 |------|------|
 | anti-evasion-hud-設計脊柱與強化前必讀 | anti-evasion-hud-設計脊柱與強化前必讀 |
-| atom-heal-l2-broken-ref-誤判-prefix-rename-為-remove | atom-heal L2 broken-ref 誤判 prefix-rename 為 remove |
+| atom-edit-meta與atom-heal對專案層atom的缺口與繞法 | atom-edit-meta與atom-heal對專案層atom的缺口與繞法 |
 | atom-move-v5-sot-correct-化與半遷移工具辨識 | atom-move V5 SoT-correct 化與半遷移工具辨識 |
 | atom-table-support | atom_write 知識區表格/程式碼 fence block 渲染用法（dogfood） |
 | atom-usefulness-loop | 注入→使用→結果 閉環效用 (α,β)：use 偵測 + Wilson 晉升 + 慢衰減（Phase 2，#2） |
 | atom-元資料編輯與晉升閘真相 | atom 元資料編輯與晉升閘真相 |
 | auto-capture碎片sweep污染詞庫-defer根治 | auto-capture碎片sweep污染詞庫-defer根治 |
+| codex-handoff自檢誤報文件截斷-真因是輸入靜默截斷非模型幻覺 | codex-handoff自檢誤報文件截斷-真因是輸入靜默截斷非模型幻覺 |
 | confirmations-已退役-phase2-usefulness-接管晉升 | confirmations-已退役-Phase2-usefulness-接管晉升 |
 | dashboard-apiatoms-專案-shared-範疇被-frontmatter-scope-覆寫誤歸核心房 | dashboard apiAtoms 專案 shared 範疇被 frontmatter Scope 覆寫誤歸核心房 |
 | guardian-dashboard-孤兒佔埠與新碼重啟 | Guardian Dashboard 孤兒佔埠與新碼重啟 |
+| guardian-警告訊息辨識度-emoji-前綴分流 | guardian 警告訊息辨識度-emoji 前綴分流 |
 | harness原生memory與atom索引marker撞名辨識 | harness原生memory與atom索引marker撞名辨識 |
 | otel-遙測評估結論-不實作-兩目標指標皆測不到 | OTEL 遙測評估結論-不實作-兩目標指標皆測不到 |
-| realm-遷移-llm-domain-跨文字系統亂碼-snap-防線穿透 | realm-遷移-llm-domain-跨文字系統亂碼-snap-防線穿透 |
+| pan-hermes不移植部件與vscode-text-block不落盤實測 | pan-hermes不移植部件與vscode-text-block不落盤實測 |
 | scope-shared-無主題子夾路由-專案靠-project-hooks-sweep-分層 | scope-shared-無主題子夾路由-專案靠-project_hooks-sweep-分層 |
-| skill-計數單一來源-skill-index | skill-計數單一來源-skill-index |
+| usefulness晉升軌兩級同門檻-同日連跳觀到固的假晉升 | usefulness晉升軌兩級同門檻-同日連跳觀到固的假晉升 |
 | write-raw-對未列舉-source-靜默回-okfalse-不-raise呼叫端必檢查回傳值 | write_raw 對未列舉 source 靜默回 ok=False 不 raise（呼叫端必檢查回傳值） |
+| 佛法三缺口工程化-失念壞滅緣了義 | 佛法三缺口工程化-失念壞滅緣了義 |
 | 原子記憶審查總結-好機制被小故障卡死非過重-拔前先實證 | 原子記憶審查總結-好機制被小故障卡死非過重-拔前先實證 |
+| 取用端稽核與瘦身規範-atomaudit與3kb預算 | 取用端稽核與瘦身規範-AtomAudit與3KB預算 |
 | 啟動鏈自動覆寫陷阱-user-init每session拷貝來源檔必先驗證管線仍成立 | 啟動鏈自動覆寫陷阱-user-init每session拷貝來源檔必先驗證管線仍成立 |
+| 專案工作驗收裁判的分級啟動與殺閘設計 | 專案工作驗收裁判的分級啟動與殺閘設計 |
 | 專案等級-mcpskillhookslog-不放全域根層 | 專案等級 mcp/skill/hooks/log 不放全域根層 |
 | 對談結束自動記憶與錯誤加權深記 | 對談結束自動記憶與錯誤加權深記 |
 | 巨檔純機械拆分-carve腳本與驗證盲點 | 巨檔純機械拆分-carve腳本與驗證盲點 |
 | 模型行為移植-fable行為契約必載檔 | 模型行為移植-Fable行為契約必載檔 |
+| 檢索融合與回歸集調參-rrf-min-score-定案 | 檢索融合與回歸集調參-rrf-min-score-定案 |
+| 禁語-hook-不開引用豁免誤報噪音-vs-契約破洞不對稱 | 禁語 hook 不開引用豁免（誤報噪音 vs 契約破洞不對稱） |
 | 自動萃取層淨值審查-調整式拔除-2026-07 | 自動萃取層淨值審查-調整式拔除-2026-07 |
+| 衝突偵測-block-資格閘-複驗一致-分區感知-待審出路 | 衝突偵測-block-資格閘-複驗一致-分區感知-待審出路 |
+| 跨session協調-衝突預警機制與cc原生現況 | 跨session協調-衝突預警機制與CC原生現況 |
 
 ## 子層
 

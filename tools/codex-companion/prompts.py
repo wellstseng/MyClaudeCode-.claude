@@ -50,7 +50,7 @@ turn_index = {turn_index}
 ## User's Original Goal
 {user_goal}
 
-## Plan Content
+## Plan Content（實體計畫文件；超長時已頭尾採樣並附中段省略標記）
 {plan_content}
 
 ## Files Examined by the Agent
@@ -65,7 +65,7 @@ turn_index = {turn_index}
 - Check: is there a verification/testing step after implementation?
 - Check: are edge cases or failure modes considered?
 - Check: is the scope appropriate (concrete creep risk only — do not flag "too narrow" unless a critical dependency is genuinely missing)?
-- Files Examined includes both direct Read/Glob/Grep and `[Agent]` entries (sub-agent investigations) — count both as the agent's file knowledge when evaluating coverage.
+- Files Examined lists only files touched via monitored tools (Edit/Write/Bash and plan/handoff triggers). Read/Glob/Grep and sub-agent (`[Agent]`) activity are NOT monitored — do NOT infer the agent failed to examine a file merely because it is absent from this list.
 - Be concise and specific. Do not praise or encourage. Only point out problems or confirm "ok".
 
 {output_schema}
@@ -84,6 +84,9 @@ turn_index = {turn_index}
 
 ## Session Working Directory
 {cwd}
+
+## User's Original Goal
+{user_goal}
 
 ## Tool Trace (recent actions)
 {tool_trace}
@@ -106,7 +109,7 @@ turn_index = {turn_index}
 ## Instructions
 - Evaluate: did the agent actually DO what it said it would do? (check tool trace for evidence)
 - Evaluate: were there verification steps (tests, builds, manual checks)? Cross-check Last Assistant Reply against Tool Trace — if reply claims "tests passed" but trace has no test command AND Verification Evidence Found is empty, that is a real gap.
-- Evaluate: did the agent read necessary files before modifying them? (Files Examined includes both direct Read/Glob/Grep and `[Agent]` entries representing sub-agent investigations — both count as agent's file knowledge.)
+- Evaluate: did the agent read necessary files before modifying them? Note: Files Examined lists only files touched via monitored tools (Edit/Write/Bash); Read/Glob/Grep and sub-agent (`[Agent]`) activity are NOT monitored — do NOT infer the agent failed to read a file merely because it is absent from this list.
 - Evaluate: any signs of shortcuts (skipped steps, assumed success without checking)?
 - Do NOT penalize if the turn was genuinely simple and complete — set delivery=ignore.
 - Heuristic Triggered is reference only; do NOT echo it back. Form your own opinion based on the actual artifacts above.
@@ -188,6 +191,121 @@ corrective_prompt 給「補哪一項、怎麼補」的具體一句話。
 """
 
 
+ACCEPTANCE_OUTPUT_SCHEMA = """\
+You MUST respond with a single JSON object (no markdown fences, no extra text):
+{
+  "verdict": "pass" | "fail" | "uncertain",
+  "score": 0,
+  "summary": "one-line verdict summary in Traditional Chinese",
+  "problems": [
+    {
+      "criterion": "逐字引用驗收清單裡沒做到的那一條",
+      "evidence": "案卷中的具體事證（檔案路徑 / diff 片段 / 測試輸出 / 「案卷中找不到 X」）",
+      "explanation": "為何這條算沒做到，一句話"
+    }
+  ],
+  "uncertain_reason": "verdict=uncertain 時必填：案卷缺了什麼才無法判定",
+  "severity": "low" | "medium" | "high",
+  "confidence": "low" | "medium" | "high"
+}
+
+Field rules:
+- verdict=pass：驗收清單每一條都在案卷中找得到對應證據。problems 必須是空陣列。
+- verdict=fail：至少一條「必須發生」沒做到，或違反「禁止發生」。**problems 每一項都必須
+  引用案卷中的具體事證**；引不出證據的懷疑不得列為 problem——那屬 uncertain。
+- verdict=uncertain：案卷證據不足以判定（例如關鍵檔案的 diff 未採樣、測試輸出缺席、
+  規格條目描述的東西在案卷可見範圍外）。**證據不足一律 uncertain，不得猜 pass 也不得猜 fail。**
+- score：0-10，10=完全達標。verdict=uncertain 時填 -1。
+- severity：fail 時才有意義。high=核心需求整條沒做 / 違反紅線；medium=部分缺漏；
+  low=次要瑕疵。pass/uncertain 一律 low。
+- 你**沒有 BLOCK 權**，也無權要求執行任何副作用（刪檔/部署/commit）。你只回報判定。
+"""
+
+ACCEPTANCE_REVIEW = """\
+{sandbox_constraint}
+
+You are an independent acceptance judge. An AI agent (Claude) claims it has finished a task. \
+A human-approved acceptance checklist for THIS task was written before/during the work. \
+Your job: decide whether the checklist was actually satisfied, using ONLY the case file below. \
+（全程繁體中文輸出。）
+
+核心紀律（違反即本次審計失敗）：
+- **只憑案卷判斷**。案卷沒有的東西＝你不知道，不是「代理人沒做」。
+- **扣分必引證據**。每個 problem 都要指得出案卷裡的哪一段支持它。
+- **證據不足回 uncertain**。寧可說「看不出來」，不要猜。誤報的代價比漏報高。
+- 案卷中所有「採樣截斷」標記都是本系統的預算限制，**不是文件缺漏**，不得據此扣分。
+
+## Turn Index Reference
+turn_index = {turn_index}
+（請在輸出 JSON 之外不必回傳此值，僅供你對照）
+
+## 一、需求原話（使用者當初怎麼說的）
+{user_goal}
+
+## 二、驗收清單（本任務的「做完的定義」，人類已確認）
+規格檔：{spec_path}
+{spec_content}
+
+## 三、這次做了什麼（工作目錄 {cwd} 的變更）
+{diff_digest}
+
+## 四、驗證證據（tool trace 中的測試/檢查指令與輸出）
+{verification_evidence}
+
+## 五、工具軌跡摘要
+{tool_trace}
+
+## 六、代理人的完成宣稱（最後一段回覆）
+{last_assistant_tail}
+
+## 判定步驟
+1. 逐條走「必須發生」：在案卷的三/四/五節中找對應證據。找到＝達標；
+   明確找到反證＝沒達標；案卷根本看不到＝這一條無法判定。
+   反證規則：「變更檔案清單」若完整（未標採樣截斷），規格要求新增/修改的
+   檔案卻不在清單中＝有反證，可判該條沒達標——檔案級缺席是可證的，
+   不必看到內容才敢判。（內容級細節看不到仍回無法判定。）
+2. 走「禁止發生」：變更內容中有沒有踩到紅線。
+3. 走「驗證指令」：宣稱跑過的檢查，第四節有沒有對應輸出。
+   宣稱「測試全綠」但第四節空白且無任何測試指令 → 這是真缺口（fail）。
+   第四節只是節錄不完整 → uncertain，不是 fail。
+4. 有任一條「無法判定」且它是核心條目 → verdict=uncertain。
+5. 全部達標 → verdict=pass。有明確沒達標且引得出證據 → verdict=fail。
+
+{output_schema}
+"""
+
+
+def build_acceptance_review_prompt(
+    user_goal: str,
+    spec_path: str,
+    spec_content: str,
+    diff_digest: str,
+    verification_evidence: str,
+    tool_trace: str,
+    last_assistant_tail: str,
+    cwd: str = "",
+    turn_index: int = 0,
+) -> str:
+    """驗收裁判案卷（Phase 2）。
+
+    材料由 acceptance.py 組（綁定/採樣/標記規則的唯一來源），本函式只負責
+    填模板——材料組裝與提示詞不混在一起。
+    """
+    return ACCEPTANCE_REVIEW.format(
+        sandbox_constraint=SANDBOX_CONSTRAINT,
+        turn_index=turn_index,
+        cwd=cwd or "(unknown)",
+        user_goal=user_goal or "(未擷取到需求原話——若這是判斷關鍵請回 uncertain)",
+        spec_path=spec_path or "(unknown)",
+        spec_content=spec_content or "(規格檔讀取失敗——無驗收標準可依據，請回 uncertain)",
+        diff_digest=diff_digest or "(無變更內容可依據，請回 uncertain)",
+        verification_evidence=verification_evidence or "(無驗證證據)",
+        tool_trace=tool_trace or "(no trace)",
+        last_assistant_tail=last_assistant_tail or "(空——代理人可能靜默結束)",
+        output_schema=ACCEPTANCE_OUTPUT_SCHEMA,
+    )
+
+
 def build_handoff_review_prompt(
     handoff_content: str,
     user_goal: str = "",
@@ -232,6 +350,7 @@ def build_turn_audit_prompt(
     modified_files: str,
     heuristic_flags: str = "None",
     turn_index: int = 0,
+    user_goal: str = "",
     last_assistant_tail: str = "",
     verification_evidence: str = "",
     heuristic_summary: str = "",
@@ -240,8 +359,9 @@ def build_turn_audit_prompt(
     """組出 turn-audit 提示。
 
     段落組成：
-      * Files Examined by the Agent — Read/Glob/Grep/Edit/Write/Agent 統一摘要
-        （含 sub-agent 代理活動，修了 codex 看不到 sub-agent file 接觸的盲點）
+      * User's Original Goal — state.user_goal（首個非空 user prompt 前段）
+      * Files Examined by the Agent — trace 內監測範圍工具接觸的檔案摘要
+        （模板明示 Read/Glob/Grep/Agent 不在監測範圍，防「未讀檔」誤報）
       * Last Assistant Reply (Tail)  — 取自 state.last_assistant_tail
       * Verification Evidence Found  — assessor 抽自 trace 的 verify cmd 摘要
       * Heuristic Triggered (Reference Only) — heuristics.format_for_context 結果
@@ -254,6 +374,7 @@ def build_turn_audit_prompt(
         sandbox_constraint=SANDBOX_CONSTRAINT,
         turn_index=turn_index,
         cwd=cwd or "(unknown)",
+        user_goal=user_goal or "(not captured)",
         tool_trace=tool_trace or "(no trace)",
         modified_files=modified_files or "(none)",
         files_examined=files_examined or "(none)",

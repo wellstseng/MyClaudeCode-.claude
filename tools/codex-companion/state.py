@@ -48,11 +48,50 @@ def new_state(session_id: str, cwd: str) -> Dict[str, Any]:
         "tool_trace": [],
         "checkpoints_triggered": [],
         "assessments_requested": 0,
+        "assessments_by_type": {},   # Q8 配額分桶：{type: count}
+        "acceptance_reviews": {},    # {spec_path: count}，同一份規格的重審上限
+        "acceptance_blocks": {},     # {spec_path: count}，enforce block 次數（達上限強制放行）
         "assessments_completed": 0,
         "turn_index": 0,
         "last_assistant_tail": "",
+        "user_goal": "",
+        "trace_dropped": 0,
         "last_updated": _now_iso(),
     }
+
+
+USER_GOAL_HEAD = 1600
+USER_GOAL_TAIL = 400
+
+
+def set_user_goal(session_id: str, text: str) -> None:
+    """Capture 使用者原始目標（首個非空 prompt，codex brief 的「背景」要件）。
+
+    Write-once：已有值不覆寫，保「原始目標」語意。Thread-safe。
+
+    超長採**頭尾**並附 in-band 標記：需求的紅線/禁止事項常寫在 prompt 末段，
+    純頭部截斷會讓裁判看不到紅線；靜默截斷更會被誤讀成「使用者沒要求」
+    （INV-EVIDENCE-PIPE-HONESTY）。
+    """
+    text = (text or "").strip()
+    if not text:
+        return
+    if len(text) > USER_GOAL_HEAD + USER_GOAL_TAIL:
+        text = (
+            text[:USER_GOAL_HEAD]
+            + f"\n…（需求原話中段省略：全文共 {len(text)} 字，此處僅含開頭 "
+              f"{USER_GOAL_HEAD} 字與結尾 {USER_GOAL_TAIL} 字；"
+              "此為擷取採樣，不是使用者沒說）…\n"
+            + text[-USER_GOAL_TAIL:]
+        )
+    with _state_lock:
+        st = read_state(session_id)
+        if st is None:
+            st = new_state(session_id, "")
+        if st.get("user_goal"):
+            return
+        st["user_goal"] = text
+        write_state(session_id, st)
 
 
 def increment_turn(session_id: str) -> int:
@@ -107,10 +146,14 @@ def append_event(session_id: str, event: Dict[str, Any]) -> Dict[str, Any]:
             st = new_state(session_id, "")
         trace = st.setdefault("tool_trace", [])
 
-        # Keep trace bounded to avoid unbounded growth
+        # Keep trace bounded to avoid unbounded growth。
+        # 丟棄量累計在 trace_dropped：下游 prompt 的 trace 計數標頭
+        # (showing last N of M) 需要總量，砍歷史不得無聲。
         MAX_TRACE = 200
         if len(trace) >= MAX_TRACE:
-            trace[:] = trace[-(MAX_TRACE // 2):]
+            keep = MAX_TRACE // 2
+            st["trace_dropped"] = int(st.get("trace_dropped", 0)) + (len(trace) - keep)
+            trace[:] = trace[-keep:]
 
         event["timestamp"] = _now_iso()
         trace.append(event)
@@ -118,8 +161,14 @@ def append_event(session_id: str, event: Dict[str, Any]) -> Dict[str, Any]:
     return st
 
 
-def record_checkpoint(session_id: str, checkpoint_type: str) -> None:
-    """Record that a checkpoint was triggered. Thread-safe."""
+def record_checkpoint(
+    session_id: str, checkpoint_type: str, spec_path: str = ""
+) -> None:
+    """Record that a checkpoint was triggered. Thread-safe.
+
+    同時累加 per-type 計數（Q8 配額分桶的依據）與 per-spec 重審計數
+    （同一份驗收規格的重複審計上限）。
+    """
     with _state_lock:
         st = read_state(session_id)
         if st is None:
@@ -129,6 +178,12 @@ def record_checkpoint(session_id: str, checkpoint_type: str) -> None:
             "at": _now_iso(),
         })
         st["assessments_requested"] = st.get("assessments_requested", 0) + 1
+        by_type = st.setdefault("assessments_by_type", {})
+        by_type[checkpoint_type] = int(by_type.get(checkpoint_type, 0)) + 1
+        if spec_path:
+            per_spec = st.setdefault("acceptance_reviews", {})
+            key = spec_path.replace("\\", "/")
+            per_spec[key] = int(per_spec.get(key, 0)) + 1
         write_state(session_id, st)
 
 
@@ -222,12 +277,39 @@ def _metrics_path(session_id: str) -> Path:
 
 _METRIC_KEYS = (
     "audits_skipped_by_score",
+    "audits_skipped_no_artifact",  # plan_review 解析不到計畫 artifact → skip（不空審）
     "audits_total_attempted",  # §四 C3 ratio 分母用
     "empty_returns",
     "sandbox_failures",
     "behavior_gap_blocks",
     "quality_gap_advises",
+    # acceptance_review（影子 + enforce 雙軌）
+    "acceptance_reviews_spawned",   # 實際發給裁判的次數
+    "acceptance_unbound",           # 綁不到規格檔 → 直接記 uncertain 未發審計
+    "acceptance_quota_blocked",     # 撞配額上限被擋（可觀測性：不得無聲跳過）
+    "acceptance_enforce_blocks",    # enforce 閘實際 block 收尾次數
+    "acceptance_forced_release",    # 達上限強制放行次數（附揭露）
+    "acceptance_judge_degraded",    # 裁判逾時/無效 → uncertain 放行（揭露訊號）
 )
+
+
+def increment_spec_blocks(session_id: str, spec_path: str) -> int:
+    """enforce block 計數 +1 並回新值。Thread-safe。"""
+    key = spec_path.replace("\\", "/")
+    with _state_lock:
+        st = read_state(session_id)
+        if st is None:
+            st = new_state(session_id, "")
+        blocks = st.setdefault("acceptance_blocks", {})
+        blocks[key] = int(blocks.get(key, 0)) + 1
+        write_state(session_id, st)
+        return blocks[key]
+
+
+def get_spec_blocks(session_id: str, spec_path: str) -> int:
+    st = read_state(session_id) or {}
+    return int((st.get("acceptance_blocks", {}) or {}).get(
+        spec_path.replace("\\", "/"), 0))
 
 
 def increment_metric(session_id: str, name: str, delta: int = 1) -> None:

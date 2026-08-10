@@ -52,6 +52,8 @@
 | wells-design-principles-明碼優先-職責分離-防呆擋非法 | wells-design-principles-明碼優先-職責分離-防呆擋非法 |
 | coremodule-entry-assembly-拓撲前提地雷-orbit-tslg同dna | coremodule-entry-assembly-拓撲前提地雷-orbit-tslg同dna |
 | wells-review-report-format-分類條列-簡扼說明改動 | wells-review-report-format-分類條列-簡扼說明改動 |
+| winforms-多選資料夾-net-8-無-multiselect-須走-ifileopendialog | WinForms 多選資料夾 — .NET 8 無 Multiselect 須走 IFileOpenDialog |
+| winget-升不動-powershell-msi-與-msix-通道分裂 | winget 升不動 PowerShell — MSI 與 MSIX 通道分裂 |
 | feedback-* | 行為校正（11 atoms） → [`_AIDocs/Failures/`](../_AIDocs/Failures/) |
 | memory-pipeline-silent-failure-2026-05 | 記憶機制靜默失效（confirmations 零增 + episodic 停擺） → [`_AIDocs/Failures/memory-pipeline-silent-failure-2026-05.md`](../_AIDocs/Failures/memory-pipeline-silent-failure-2026-05.md) |
 | cognitive-patterns | 認知模式偏差（Cognitive Patterns） → [`_AIDocs/Failures/cognitive-patterns.md`](../_AIDocs/Failures/cognitive-patterns.md) |

@@ -32,6 +32,12 @@ from ollama_client import get_client
 CLAUDE_DIR = Path.home() / ".claude"
 AUDIT_LOG = CLAUDE_DIR / "memory" / "_vectordb" / "audit.log"
 
+# atom 掃描統一委派 lib.atom_locations（遞迴 + _AIDocs/Failures/ + _AIDocs/_atoms/）
+if str(CLAUDE_DIR) not in sys.path:
+    sys.path.insert(0, str(CLAUDE_DIR))
+from lib.atom_locations import GLOBAL_MEMORY_DIR, iter_atom_files_multi  # noqa: E402
+from lib.atom_spec import evidence_rank, parse_evidence  # noqa: E402  證據等級（了義裁決）
+
 # conflict detection
 WRITE_CHECK_THRESHOLD = 0.85       # SPEC §7.3
 WRITE_CHECK_VECTOR_MIN = 0.60      # vector pre-filter (cheaper than LLM)
@@ -44,8 +50,6 @@ CONF_RANK = {"[固]": 3, "[觀]": 2, "[臨]": 1}
 # ─── Atom Discovery (lightweight, no dependency on memory-audit.py) ──────────
 
 META_RE = re.compile(r"^-\s+([\w-]+):\s*(.+)$")
-SKIP_FILES = {"MEMORY.md", "_CHANGELOG.md", "_CHANGELOG_ARCHIVE.md"}
-SKIP_PREFIXES = ("SPEC_", "_")
 BULLET_RE = re.compile(r"^- \[([固觀臨])\]\s*(.+)")
 
 
@@ -73,21 +77,29 @@ def discover_layers(project_dir: Optional[Path] = None) -> List[Tuple[str, Path]
 
 
 def discover_atoms(layers: List[Tuple[str, Path]]) -> List[Tuple[str, Path, str]]:
-    """Find atom files. Returns [(layer, path, atom_name), ...]."""
+    """Find atom files. Returns [(layer, path, atom_name), ...].
+
+    委派 lib.atom_locations.iter_atom_files_multi（單一掃描來源）：
+    遞迴含子目錄（shared/<domain>/ 等）；global 層額外涵蓋
+    _AIDocs/Failures/（feedback-*）與 _AIDocs/_atoms/（local realm）——
+    舊 flat-only glob 會漏掃這些 atom，其衝突永遠測不到。
+    """
     atoms = []
     for layer_name, mem_dir in layers:
-        for md_file in sorted(mem_dir.glob("*.md")):
-            if md_file.name in SKIP_FILES:
-                continue
-            if any(md_file.name.startswith(p) for p in SKIP_PREFIXES):
-                continue
+        try:
+            is_global = mem_dir.resolve() == GLOBAL_MEMORY_DIR.resolve()
+        except OSError:
+            is_global = False
+        it = iter_atom_files_multi() if is_global else iter_atom_files_multi([mem_dir])
+        for md_file in it:
             atoms.append((layer_name, md_file, md_file.stem))
     return atoms
 
 
 def parse_atom_meta(path: Path) -> Dict[str, Any]:
     """Extract metadata from atom file."""
-    meta = {"title": "", "scope": "", "confidence": "", "last_used": "", "tags": []}
+    meta = {"title": "", "scope": "", "confidence": "", "last_used": "", "tags": [],
+            "evidence": ""}
     try:
         text = path.read_text(encoding="utf-8-sig")
     except (OSError, UnicodeDecodeError):
@@ -107,6 +119,9 @@ def parse_atom_meta(path: Path) -> Dict[str, Any]:
                 meta["last_used"] = val
             elif key == "Tags":
                 meta["tags"] = [t.strip() for t in val.split(",") if t.strip()]
+            elif key == "Evidence":
+                # 非法值視同未標（rank 0）；warning 由 memory-audit 報
+                meta["evidence"] = parse_evidence(val) or ""
     return meta
 
 
@@ -180,37 +195,72 @@ def ollama_classify(fact_a: str, atom_a: str, conf_a: str,
 
 # ─── Arbitration ──────────────────────────────────────────────────────────────
 
+def _evidence_label(meta: Dict) -> str:
+    return meta.get("evidence") or "未標"
+
+
 def arbitrate(meta_a: Dict, meta_b: Dict) -> Dict[str, Any]:
-    """Determine winner for CONTRADICT pair. Returns suggestion dict."""
+    """Determine winner for CONTRADICT pair. Returns suggestion dict.
+
+    優先序（了義裁決）：證據等級（實證>引述>推測>未標）→ recency →
+    現行規則（project>global → confidence）→ tie。
+    兩側證據同級才落到 recency；裁決僅為建議，降級仍是人工/裁決動作。
+    """
     scope_a = meta_a.get("scope", "")
     scope_b = meta_b.get("scope", "")
     conf_a = meta_a.get("confidence", "")
     conf_b = meta_b.get("confidence", "")
     date_a = meta_a.get("last_used", "")
     date_b = meta_b.get("last_used", "")
+    ev_a = evidence_rank(meta_a.get("evidence", ""))
+    ev_b = evidence_rank(meta_b.get("evidence", ""))
 
     reason = ""
     winner = "a"
 
-    # Rule 1: project > global
-    if "project" in scope_a and "global" in scope_b:
-        winner, reason = "a", "project scope overrides global"
-    elif "project" in scope_b and "global" in scope_a:
-        winner, reason = "b", "project scope overrides global"
-    # Rule 2: higher confidence wins
-    elif CONF_RANK.get(conf_a, 0) > CONF_RANK.get(conf_b, 0):
-        winner, reason = "a", f"higher confidence ({conf_a} > {conf_b})"
-    elif CONF_RANK.get(conf_b, 0) > CONF_RANK.get(conf_a, 0):
-        winner, reason = "b", f"higher confidence ({conf_b} > {conf_a})"
-    # Rule 3: newer Last-used wins
+    # Rule 0: stronger evidence wins（實證 > 引述 > 推測 > 未標）
+    if ev_a > ev_b:
+        winner, reason = "a", f"stronger evidence ({_evidence_label(meta_a)} > {_evidence_label(meta_b)})"
+    elif ev_b > ev_a:
+        winner, reason = "b", f"stronger evidence ({_evidence_label(meta_b)} > {_evidence_label(meta_a)})"
+    # Rule 1: newer Last-used wins（同證據等級才比 recency）
     elif date_a > date_b:
         winner, reason = "a", f"more recent ({date_a} > {date_b})"
     elif date_b > date_a:
         winner, reason = "b", f"more recent ({date_b} > {date_a})"
+    # Rule 2: project > global
+    elif "project" in scope_a and "global" in scope_b:
+        winner, reason = "a", "project scope overrides global"
+    elif "project" in scope_b and "global" in scope_a:
+        winner, reason = "b", "project scope overrides global"
+    # Rule 3: higher confidence wins
+    elif CONF_RANK.get(conf_a, 0) > CONF_RANK.get(conf_b, 0):
+        winner, reason = "a", f"higher confidence ({conf_a} > {conf_b})"
+    elif CONF_RANK.get(conf_b, 0) > CONF_RANK.get(conf_a, 0):
+        winner, reason = "b", f"higher confidence ({conf_b} > {conf_a})"
     else:
         winner, reason = "a", "tie — manual review recommended"
 
     return {"winner": winner, "reason": reason}
+
+
+def fast_refute_check(meta_a: Dict, meta_b: Dict) -> Optional[str]:
+    """快速否證通道：CONTRADICT 且新側 Evidence=實證、舊側 [固]/[觀] → 高優先浮出。
+
+    回傳新側代號（'a'/'b'），不構成則 None。新舊由 Last-used 判定；
+    無法分辨新舊（同日/皆缺）不觸發。只做置頂浮出，不自動降級——裁決權在人。
+    """
+    date_a = meta_a.get("last_used", "") or ""
+    date_b = meta_b.get("last_used", "") or ""
+    if date_a == date_b:
+        return None
+    if date_a > date_b:
+        new_m, old_m, side = meta_a, meta_b, "a"
+    else:
+        new_m, old_m, side = meta_b, meta_a, "b"
+    if new_m.get("evidence") == "實證" and old_m.get("confidence") in ("[固]", "[觀]"):
+        return side
+    return None
 
 
 # ─── Audit Log ────────────────────────────────────────────────────────────────
@@ -329,6 +379,11 @@ def scan_conflicts(
             meta_b = atom_metas.get(f"{cand['layer_b']}:{cand['atom_b']}", {})
             arb = arbitrate(meta_a, meta_b)
             cand["arbitration"] = arb
+            # 快速否證通道：新側實證 vs 舊側 [固]/[觀] → 置頂高優先裁決
+            fr_side = fast_refute_check(meta_a, meta_b)
+            cand["fast_refute"] = bool(fr_side)
+            if fr_side:
+                cand["fast_refute_side"] = fr_side
 
         results.append(cand)
 
@@ -377,11 +432,17 @@ def print_report(results: List[Dict], dry_run: bool = False) -> None:
     print(f"  UNRELATED/ERROR: {len(results) - len(contradictions) - len(extends) - len(agrees)}")
 
     if contradictions:
+        # fast-refute 置頂（高優先裁決）
+        contradictions.sort(key=lambda r: not r.get("fast_refute", False))
         print(f"\n--- CONTRADICTIONS ({len(contradictions)}) ---\n")
         for r in contradictions:
             arb = r.get("arbitration", {})
             winner_label = r[f"atom_{arb.get('winner', 'a')}"]
             print(f"  {r['atom_a']} vs {r['atom_b']} (sim={r['similarity']:.3f})")
+            if r.get("fast_refute"):
+                new_label = r[f"atom_{r.get('fast_refute_side', 'a')}"]
+                print(f"    [fast-refute] 新側 {new_label} Evidence=實證、舊側為 [固]/[觀] — "
+                      f"高優先裁決（不自動降級，裁決權在人）")
             print(f"    A [{r['conf_a']}]: {r['fact_a'][:100]}")
             print(f"    B [{r['conf_b']}]: {r['fact_b'][:100]}")
             print(f"    Suggestion: keep {winner_label} ({arb.get('reason', '')})")
@@ -425,6 +486,18 @@ def _is_git_only_atom(text: str) -> bool:
     return bool(GIT_ONLY_RE.search(text))
 
 
+EVIDENCE_LINE_RE = re.compile(r"^-\s+Evidence:\s*(.+)$", re.MULTILINE)
+
+
+def _incoming_evidence(content: str) -> Optional[str]:
+    """從 incoming 內容抽 `- Evidence:` 值（合法值才算；缺/非法 → None=未標）。"""
+    m = EVIDENCE_LINE_RE.search(content or "")
+    return parse_evidence(m.group(1)) if m else None
+
+
+FAST_REFUTE_NOTE = "新側 Evidence=實證、舊側為 [固]/[觀] — 高優先裁決（不自動降級，裁決權在人）"
+
+
 def _classify_match(content: str, match: Dict[str, Any]) -> str:
     """Wrap ollama_classify for write-time/pull-time pairs.
 
@@ -438,6 +511,30 @@ def _classify_match(content: str, match: Dict[str, Any]) -> str:
         atom_b=match.get("atom_name", ""),
         conf_b=match.get("confidence", ""),
     )
+
+
+def _partition_of_path(file_path: str) -> Optional[str]:
+    """atom 檔所屬專案分區：`.../memory/projects/<X>/...` → "projects/<X>"；否則 None。
+
+    「一 repo 多專案共用一層記憶」佈局（memory/projects/<專案名>/）的分區判定；
+    shared/<Domain>/ 是主題夾非分區，不參與。
+    """
+    parts = Path(file_path or "").as_posix().split("/")
+    try:
+        i = len(parts) - 1 - parts[::-1].index("memory")  # 最後一個 memory 段
+    except ValueError:
+        return None
+    if i + 2 < len(parts) and parts[i + 1] == "projects":
+        return f"projects/{parts[i + 2]}"
+    return None
+
+
+def _partition_of_subdir(subdir: Optional[str]) -> Optional[str]:
+    """incoming 寫入目標（subdir，相對 memory root）的分區；非 projects/<X> → None。"""
+    segs = [s for s in (subdir or "").replace("\\", "/").split("/") if s]
+    if len(segs) >= 2 and segs[0] == "projects":
+        return f"projects/{segs[1]}"
+    return None
 
 
 def _decide_verdict(matches: List[Dict[str, Any]],
@@ -469,15 +566,23 @@ def _decide_verdict(matches: List[Dict[str, Any]],
 
 
 def run_write_check(content: str, project_cwd: Optional[str], scope: str,
-                    threshold: float = WRITE_CHECK_THRESHOLD) -> Dict[str, Any]:
+                    threshold: float = WRITE_CHECK_THRESHOLD,
+                    subdir: Optional[str] = None) -> Dict[str, Any]:
     """Pre-write semantic conflict check (SPEC §7.1 write-time).
 
     Returns:
-      {verdict, matches: [...], detector_model, skipped, skip_reason}
+      {verdict, matches: [...], detector_model, skipped, skip_reason, warnings}
     Verdict ∈ {ok, extend_overlap, contradict, duplicate}.
 
     On any vector/LLM unavailability: verdict=ok + skipped=True (fail-open at
     write-time so dead infrastructure does not block all writes).
+
+    Block 資格閘（LLM 判定是機率性的，block 必須高把握；降級一律入 warnings 浮出）：
+      - CONTRADICT 需**第二次獨立判定一致**才成立；不一致 → UNSTABLE，warn 不 block。
+      - 高相似但 LLM ERROR → warn 不 block（fail-open；舊行為保守判 contradict
+        會讓壞掉的 LLM 擋下所有寫入）。
+      - subdir 給定且 incoming 落 projects/<X> 分區時，**其他分區**的相似 atom
+        不參與 block（跨專案相似陳述非事實衝突），warn 浮出。
     """
     out = {
         "verdict": "ok",
@@ -486,6 +591,8 @@ def run_write_check(content: str, project_cwd: Optional[str], scope: str,
         "skipped": False,
         "skip_reason": None,
         "scope": scope,
+        "fast_refute": False,
+        "warnings": [],
     }
     if not content or not content.strip():
         out["skipped"] = True
@@ -519,6 +626,15 @@ def run_write_check(content: str, project_cwd: Optional[str], scope: str,
         label = _classify_match(content, h)
         if label == "ERROR":
             llm_errors += 1
+        elif label == "CONTRADICT":
+            # 穩定性複驗：同輸入第二次獨立判定；不一致 = 判定不穩，降 warn 不 block。
+            # （小模型對同輸入常翻面——單次 CONTRADICT 不足以擋寫入。）
+            second = _classify_match(content, h)
+            if second != "CONTRADICT":
+                out["warnings"].append(
+                    f"unstable verdict on '{h.get('atom_name', '')}': "
+                    f"CONTRADICT→{second} across two runs — downgraded to warn, not blocking")
+                label = f"UNSTABLE({second})"
         matches.append({
             "atom_name": h.get("atom_name", ""),
             "layer": h.get("layer", ""),
@@ -535,8 +651,40 @@ def run_write_check(content: str, project_cwd: Optional[str], scope: str,
         out["skip_reason"] = "all LLM classifications failed"
         return out
 
-    verdict, _primary = _decide_verdict(matches, threshold)
+    # 跨分區排除：incoming 目標落 projects/<X> 時，其他分區的相似 atom 不參與 block
+    #（同 shared 層下多個獨立專案的相似設定/陳述非事實衝突）。
+    decide_matches = matches
+    incoming_part = _partition_of_subdir(subdir)
+    if incoming_part:
+        decide_matches = []
+        for m in matches:
+            mp = _partition_of_path(m.get("file_path", ""))
+            if mp and mp != incoming_part:
+                m["cross_partition"] = mp
+                if m.get("classification", "").startswith(("CONTRADICT", "UNSTABLE")):
+                    out["warnings"].append(
+                        f"cross-partition match '{m.get('atom_name', '')}' ({mp} vs "
+                        f"{incoming_part}) — independent project, similar wording is "
+                        f"not a factual conflict; not blocking")
+            else:
+                decide_matches.append(m)
+
+    verdict, primary = _decide_verdict(decide_matches, threshold)
+    # 高相似但 LLM ERROR：fail-open 降 warn（舊行為保守判 contradict → 壞掉的
+    # LLM 會擋下所有寫入；可觀測性鐵律：降級必浮訊號）。
+    if (verdict == "contradict" and primary is not None
+            and primary.get("classification") == "ERROR"):
+        out["warnings"].append(
+            f"LLM classification failed on high-similarity match "
+            f"'{primary.get('atom_name', '')}' — degraded to warn (fail-open); review manually")
+        verdict, primary = "ok", None
     out["verdict"] = verdict
+    # 快速否證通道：incoming（新側）Evidence=實證 且矛盾對象為 [固]/[觀] → 高優先浮出
+    if (verdict == "contradict" and primary is not None
+            and _incoming_evidence(content) == "實證"
+            and primary.get("confidence") in ("[固]", "[觀]")):
+        out["fast_refute"] = True
+        out["fast_refute_note"] = FAST_REFUTE_NOTE
     return out
 
 
@@ -632,13 +780,18 @@ def _collect_changed_atoms(proj_root: Path, since_ts: str) -> List[Dict[str, Any
 def _write_pull_conflict_report(proj_root: Path, atom_name: str,
                                 incoming: Dict[str, Any],
                                 match: Dict[str, Any],
-                                verdict: str) -> Path:
+                                verdict: str,
+                                fast_refute: bool = False) -> Path:
     """Create _pending_review/{atom}.pull-conflict.md report (non-atom format)."""
     pending_dir = proj_root / ".claude" / "memory" / "shared" / "_pending_review"
     pending_dir.mkdir(parents=True, exist_ok=True)
     report_path = pending_dir / f"{atom_name}.pull-conflict.md"
+    fr_lines = (
+        f"- Fast-refute: yes（{FAST_REFUTE_NOTE}）\n" if fast_refute else ""
+    )
     body = (
         f"# Pull-time conflict: {atom_name}\n\n"
+        f"{fr_lines}"
         f"- Detected-at: {_utcnow_iso()}\n"
         f"- Verdict: {verdict}\n"
         f"- Detector: {DETECTOR_MODEL_LABEL}\n"
@@ -715,16 +868,27 @@ def run_pull_audit(project_cwd: str, since: str = "last") -> Dict[str, Any]:
                     "classification": label,
                     "fact_preview": h.get("text", "")[:120],
                 }
+                # 快速否證：incoming（新側）Evidence=實證 且既有側 [固]/[觀]
+                fast_refute = (
+                    label == "CONTRADICT"
+                    and _incoming_evidence(atom["content"]) == "實證"
+                    and h.get("confidence") in ("[固]", "[觀]")
+                )
                 report = _write_pull_conflict_report(proj_root, atom["atom_name"],
-                                                    atom, match, "contradict")
+                                                    atom, match, "contradict",
+                                                    fast_refute=fast_refute)
                 _append_merge_history(proj_root, "pull-audit-flag", atom["atom_name"],
                                       "shared", "<git>",
-                                      f"contradict vs {match['atom_name']} sim={sim:.3f} report={report.name}")
+                                      f"contradict vs {match['atom_name']} sim={sim:.3f} report={report.name}"
+                                      + (" fast-refute" if fast_refute else ""))
                 flagged.append({"atom": atom["atom_name"], "report": str(report),
-                                "match": match["atom_name"], "similarity": sim})
+                                "match": match["atom_name"], "similarity": sim,
+                                "fast_refute": fast_refute})
                 break  # one report per incoming atom
 
     _set_last_audit_ts(proj_root, started_at)
+    # fast-refute 置頂（高優先裁決）
+    flagged.sort(key=lambda f: not f.get("fast_refute", False))
     return {
         "since": since_ts,
         "until": started_at,
@@ -755,6 +919,9 @@ def main():
                         help="(write-check / pull-audit) project root")
     parser.add_argument("--threshold", type=float, default=WRITE_CHECK_THRESHOLD,
                         help="(write-check) cosine threshold for extend_overlap (default 0.85)")
+    parser.add_argument("--subdir", type=str, default=None,
+                        help="(write-check) incoming write target subdir relative to memory root "
+                             "(e.g. projects/X) — cross-partition matches warn instead of block")
     parser.add_argument("--since", type=str, default="last",
                         help="(pull-audit) ISO ts or 'last' (read .last_pull_audit_ts)")
     args = parser.parse_args()
@@ -764,7 +931,8 @@ def main():
         if not args.content:
             print(json.dumps({"error": "--content is required for write-check"}))
             sys.exit(2)
-        result = run_write_check(args.content, args.project_cwd, args.scope, args.threshold)
+        result = run_write_check(args.content, args.project_cwd, args.scope, args.threshold,
+                                 subdir=args.subdir)
         print(json.dumps(result, ensure_ascii=False))
         return
 
@@ -784,8 +952,11 @@ def main():
                   f"flagged {result['flagged_count']} "
                   f"(since {result['since']} → {result['until']})")
             for f in result.get("flagged", []):
-                print(f"  ! {f['atom']} CONTRADICT vs {f['match']} "
+                fr = "[fast-refute] " if f.get("fast_refute") else ""
+                print(f"  ! {fr}{f['atom']} CONTRADICT vs {f['match']} "
                       f"(sim={f['similarity']:.3f}) → {f['report']}")
+                if f.get("fast_refute"):
+                    print(f"    {FAST_REFUTE_NOTE}")
         return
 
     # ─ legacy: full-scan ─

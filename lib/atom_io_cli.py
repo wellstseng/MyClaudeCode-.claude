@@ -5,7 +5,7 @@
 
 Schema:
   stdin:  {"action": "write_atom"|"write_index"|"write_index_full"|"write_raw"
-                    |"build"|"append", ...kwargs}
+                    |"build"|"append"|"locate", ...kwargs}
   stdout: WriteResult.to_dict()  (single-line JSON)
   exit code: 0=ok, 1=error
 
@@ -16,6 +16,10 @@ build / append：server.js toolAtomWrite 的內容構造
 test_13 parity fixture）：
   build:  build_atom_content kwargs → {ok, extra: {content}}（含 validate，不落檔）
   append: {file_path, knowledge, source} → 拼接+validate+write_raw 落檔
+
+locate：{title, scope, project_cwd, role, user, audience, realm, domain}
+→ {ok, path, extra:{found, rel_path}}。append/replace 找不到扁平落點時，js 端
+以此定位子夾內的實體檔（定位規則 py 單一來源，見 atom_io.locate_atom）。
 
 update_atom_field action 已移除（計數類欄位改走 lib/atom_access.py CLI
 入口 `python -m lib.atom_access ...`，不再透過此 bridge）。
@@ -29,23 +33,32 @@ from pathlib import Path
 
 from .atom_io import (
     write_atom, write_index, write_index_full, write_raw,
-    append_atom_file, WriteResult,
+    append_atom_file, locate_atom, WriteResult,
 )
-from .atom_access import init_access, write_access_field
-from .atom_spec import build_atom_content, validate_atom_content
+from .atom_access import init_access
+from .atom_spec import (
+    build_atom_content, validate_atom_content,
+    knowledge_sections_bytes, knowledge_budget_error,
+)
+
+
+def _budget_check(content: str):
+    """build 產物的 knowledge 區大小預算（create/replace 共用硬拒；append 在
+    atom_io.append_atom_file 內檢）。超額回錯誤字串，否則 None。"""
+    return knowledge_budget_error(knowledge_sections_bytes(content))
 
 
 def create_atom(payload: dict) -> WriteResult:
-    """合併 create funnel：build→write_raw→access(init + set last_used)→write_index，
-    單一 subprocess 取代 create 路徑原本的 5 次 spawn。
+    """合併 create funnel：build→write_raw→access init（first_seen+last_used 單寫）
+    →write_index，單一 subprocess 取代 create 路徑原本的多次 spawn。
 
-    純重構：逐步呼叫的函式與順序與原本分開 spawn 完全一致，落檔 .md /
-    .access.json / index 三件 byte-identical（守 verify_atom_io_equivalence 對拍）。
+    落檔 .md / .access.json / index 三件 byte-identical
+    （守 verify_atom_io_equivalence 對拍）。
 
-    行為對拍原 create 路徑：
+    行為對拍逐一呼叫路徑：
       - build / validate 失敗 → 致命（ok=False）
       - write_raw 失敗 → 致命（ok=False）
-      - access init / set → 不檢查結果（原 spawn 亦未檢查回傳）
+      - access init → 不檢查結果（原 spawn 亦未檢查回傳）
       - write_index 失敗 → 非致命（原 appendToIndex 僅 crashLog）：ok 仍 True，
         index 狀態放 extra.index_ok / extra.index_error 供 caller 記錄。
 
@@ -65,20 +78,24 @@ def create_atom(payload: dict) -> WriteResult:
     err = validate_atom_content(content)
     if err is not None:
         return WriteResult(ok=False, error=f"validate: {err}")
+    budget_err = _budget_check(content)
+    if budget_err is not None:
+        return WriteResult(ok=False, error=f"budget: {budget_err}")
 
     # 2. write_raw（atomic write + audit；_atomic_write 自動 mkdir parent）
     wr = write_raw(file_path, content, source="mcp", op="atom_create")
     if not wr.ok:
         return WriteResult(ok=False, error=f"write_raw: {wr.error}")
 
-    # 3. access.json：init（first_seen）+ set last_used（對拍原 init→set 兩 spawn）
-    init_access(file_path, first_seen=today, source="mcp")
-    write_access_field(file_path, field="last_used", value=today, source="mcp")
+    # 3. access.json：init 一次帶齊 first_seen + last_used（單寫，去冗餘雙寫）
+    init_access(file_path, first_seen=today, last_used=today, source="mcp")
 
     # 4. index upsert（非致命，對拍 appendToIndex 的 crashLog-only）
+    # scope：js 端 create 傳 scopeLabel（與 frontmatter 一致）；缺省 None → 沿用既有/global
     ir = write_index(
         base_dir=Path(index["base_dir"]), slug=index["slug"],
         rel_path=index["rel_path"], triggers=list(index["triggers"]), source="mcp",
+        scope=index.get("scope"),
     )
     return WriteResult(
         ok=True,
@@ -109,7 +126,7 @@ def main() -> int:
             result = write_raw(**payload)
         elif action == "build":
             content = build_atom_content(**payload)
-            err = validate_atom_content(content)
+            err = validate_atom_content(content) or _budget_check(content)
             result = WriteResult(ok=err is None, error=err,
                                  extra={"content": content})
         elif action == "append":
@@ -117,6 +134,8 @@ def main() -> int:
             result = append_atom_file(**payload)
         elif action == "create_atom":
             result = create_atom(payload)
+        elif action == "locate":
+            result = locate_atom(**payload)
         else:
             result = WriteResult(ok=False, error=f"unknown action: {action}")
     except TypeError as e:

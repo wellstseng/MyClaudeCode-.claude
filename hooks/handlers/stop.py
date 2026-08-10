@@ -13,12 +13,13 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from wg_core import (
     _ensure_state, _now_iso, write_state, output_nothing, output_block,
-    append_guard_log,
+    append_guard_log, WORKFLOW_DIR,
 )
 from wg_evasion import (
     claims_completion, detect_evasion,
@@ -152,6 +153,9 @@ def _detect_uncommitted_files(
     return uncommitted
 
 
+_ACCESSED_FILES_CAP = 500  # accessed_files state 條目上限（超出裁最舊）
+
+
 def _harvest_accessed_files(state: Dict[str, Any], transcript_text: str) -> bool:
     """從共用 transcript 尾段一次回收 Read 過的檔案到 accessed_files；回是否有新增。
 
@@ -167,6 +171,7 @@ def _harvest_accessed_files(state: Dict[str, Any], transcript_text: str) -> bool
     accessed = state.setdefault("accessed_files", [])
     seen = {a.get("path") for a in accessed if isinstance(a, dict)}
     added = False
+    trimmed = False
     for raw in transcript_text.splitlines():
         # 廉價預篩：多數行連 tool_use/Read 字樣都沒有，免逐行 json.loads
         if '"tool_use"' not in raw or '"Read"' not in raw:
@@ -191,21 +196,147 @@ def _harvest_accessed_files(state: Dict[str, Any], transcript_text: str) -> bool
                     seen.add(fp)
                     accessed.append({"path": fp, "at": _now_iso()})
                     added = True
-    return added
+    # 上限 500（重讀量大的長 session 不無限累積 state）：裁最舊；被裁路徑之後
+    # 再被 Read 會重新回收（消費端皆 best-effort 統計，可接受）。
+    if len(accessed) > _ACCESSED_FILES_CAP:
+        state["accessed_files"] = accessed[-_ACCESSED_FILES_CAP:]
+        trimmed = True
+    return added or trimmed
+
+
+# ─── 取用端閉環稽核（AtomAudit Gate） ───────────────────────────
+
+
+def _normalize_read_path(p: str) -> str:
+    return (p or "").replace("\\", "/").lower()
+
+
+_ATOM_AUDIT_LIST_MAX = 3  # 收尾訊息最多列名幾顆（其餘以計數帶過）
+
+
+def _audit_pointer_atom_consumption(
+    state: Dict[str, Any],
+) -> Optional[tuple]:
+    """取用端閉環：trigger 命中（＝與本場任務域吻合）但僅以一行路標注入
+    （budget skip / cold）、且整場未 Read 的 atom → 回 (reason, names) 供
+    Stop 閘要求三選一表態；無候選回 None。
+
+    寫入端有閘（write-gate/funnel），取用端此前全靠模型自律——路標的具體性
+    輸給 context 實體線索時就漏（實證：trigger 命中的肥 atom 被 budget skip
+    成一行、全程未展開）。防噪內建：
+      - 只稽核 source=trigger（bm25/vector/related 不催——related 擴散本就低確信）
+      - 同 turn 注入不催（至少給模型一個完整 turn 決定要不要展開）
+      - 消費判定用 Stop 已回收的 accessed_files（同 turn 的 Read 先於本判定入 state）
+    """
+    inj_log = state.get("injection_log") or []
+    if not inj_log:
+        return None
+    turn_seq = int(state.get("turn_seq", 0))
+    prompted = set(state.get("atom_audit_prompted") or [])
+    accessed = {
+        _normalize_read_path(a.get("path"))
+        for a in (state.get("accessed_files") or [])
+        if isinstance(a, dict)
+    }
+    seen: set = set()
+    candidates: List[Dict[str, Any]] = []
+    for rec in inj_log:
+        if not isinstance(rec, dict):
+            continue
+        name = rec.get("name") or ""
+        if not name or name in prompted or name in seen:
+            continue
+        if rec.get("source") != "trigger" or rec.get("form") not in ("skip", "cold"):
+            continue
+        if turn_seq and int(rec.get("turn_seq", 0)) >= turn_seq:
+            continue  # 本 turn 才注入——不催
+        rec_path = _normalize_read_path(rec.get("path"))
+        suffix = f"/{name.lower()}.md"
+        if any(ap == rec_path or ap.endswith(suffix) for ap in accessed):
+            continue  # 已 Read（consumed）
+        seen.add(name)
+        candidates.append(rec)
+    if not candidates:
+        return None
+
+    msg: List[str] = [
+        "[Guardian:AtomAudit] 本 session 有 trigger 命中、但僅以一行路標注入"
+        "（token 預算降級/cold）且全程未 Read 的 atom：",
+    ]
+    for rec in candidates[:_ATOM_AUDIT_LIST_MAX]:
+        # 一律用絕對 path（rel 只相對該 atom 自己的 realm root，跨 realm 會斷鏈）
+        msg.append(f"  - {rec['name']} → Read {rec.get('path') or rec.get('rel', '')}")
+    if len(candidates) > _ATOM_AUDIT_LIST_MAX:
+        msg.append(f"  …另 {len(candidates) - _ATOM_AUDIT_LIST_MAX} 顆（見 state injection_log）")
+    msg.append(
+        "路標命中＝該 atom 的 trigger 與本場任務域吻合，可能含本場獨有的教訓。"
+        "請對每顆三選一表態（每 atom 本 session 只提醒一次，不阻工作）：\n"
+        "  (a) 已從其他來源取得等價資訊——說明來源\n"
+        "  (b) 確與本場任務無關——一句理由即可\n"
+        "  (c) 現在補讀（Read 上列路徑）再收尾"
+    )
+    return "\n".join(msg), [r["name"] for r in candidates]
 
 
 # ─── 注入→使用→結果 閉環歸因 ───────────────────────────────────
 
 
+def _budgeted_embed_fn(raw_embed_fn, uconf: Dict[str, Any]):
+    """embedding tiebreak 的全 turn 共用時間預算包裝。
+
+    單次 tiebreak 最壞 2×embed_timeout_s（兩段 embed），多顆 atom 疊加會頂到
+    Stop hook 上限。累計耗時超過 usefulness.embed_budget_s（預設 3s）→ 之後
+    一律回 None（detect_atom_use 退回 lexical 主判）。預算耗盡浮 stderr 一行
+    （fail-open 必告知）。raw_embed_fn 為 None 時原樣回 None。
+    """
+    if raw_embed_fn is None:
+        return None
+    try:
+        budget_s = float(uconf.get("embed_budget_s", 3.0))
+    except (TypeError, ValueError):
+        budget_s = 3.0
+    if budget_s <= 0:
+        return raw_embed_fn
+    spent = [0.0]
+    exhausted_warned = [False]
+
+    def _fn(a: str, b: str):
+        if spent[0] >= budget_s:
+            if not exhausted_warned[0]:
+                exhausted_warned[0] = True
+                print(
+                    f"[usefulness] embed tiebreak turn budget exhausted "
+                    f"({spent[0]:.1f}s ≥ {budget_s}s) — falling back to lexical",
+                    file=sys.stderr,
+                )
+            return None
+        t0 = time.monotonic()
+        try:
+            return raw_embed_fn(a, b)
+        finally:
+            spent[0] += time.monotonic() - t0
+
+    return _fn
+
+
 def _detect_turn_outcome(state: Dict[str, Any], last_text: str) -> Optional[bool]:
     """3 值 success 偵測（複用既有訊號）。回 True(+1)/False(0)/None(unknown=no-op)。
 
-      - 0（fail）：failing_tests 非空 / 本 turn evasion_flag / wisdom_retry_count≥2
-        （error / 糾正 / retry / evasion 任一）。
+      - 0（fail）：**本 turn** failing_tests 非空 / 本 turn evasion_flag /
+        wisdom_retry_count≥2（error / 糾正 / retry / evasion 任一）。
       - +1（success）：宣告完成（claims_completion）且無上述 fail 訊號（硬正向）。
       - None（unknown）：既無完成宣告也無 fail 訊號 → 不動 (α,β)，防雜訊污染。
+
+    failing_tests 只認本 turn（entry turn_seq == state turn_seq）——全量累積會讓
+    早前 turn 的舊失敗污染後續每個 turn 的 outcome。無 turn_seq 的 entry（升級前
+    in-flight session）保守視為本 turn（fail-open，不漏 fail 訊號）。sync gate /
+    TestFailGate 等其他消費者維持全量語意不變。
     """
-    failing = state.get("failing_tests") or []
+    turn_seq = int(state.get("turn_seq", 0))
+    failing = [
+        f for f in (state.get("failing_tests") or [])
+        if int((f or {}).get("turn_seq", turn_seq)) == turn_seq
+    ]
     evasion = bool(state.get("evasion_flag"))
     retry = int(state.get("wisdom_retry_count", 0) or 0)
     if failing or evasion or retry >= 2:
@@ -251,7 +382,7 @@ def _attribute_usefulness(
 
         rare_min = int(uconf.get("rare_token_min", 2))
         overlap_min = float(uconf.get("lexical_overlap_min", 0.18))
-        embed_fn = make_embed_tiebreak_fn(config)
+        embed_fn = _budgeted_embed_fn(make_embed_tiebreak_fn(config), uconf)
 
         turn_text = (
             get_current_turn_text(transcript, text=transcript_text)
@@ -366,6 +497,16 @@ def _should_deep_postmortem(
     return effort and real_failure
 
 
+def _dpm_marker(session_id: str) -> Path:
+    """DPM one-shot 的檔案側 marker。
+
+    state 旗標在併發 hook 行程的全量覆寫下可能被舊快照競掉（旗標寫入後被他行程
+    write_state 蓋回），marker 檔不受 state 覆寫影響；gate 以 state 旗標 OR marker
+    判定，保證真 one-shot。
+    """
+    return WORKFLOW_DIR / "dpm-done" / f"{session_id}.flag"
+
+
 _DEEP_POSTMORTEM_INSTRUCTION = (
     "[Guardian:DeepPostMortem] 偵測到高 effort 失敗訊號（失敗中反覆重試 /"
     " fix-escalation）。失敗骨架已由 hook 自動落地，但根因與設計脈絡只有你知道。\n"
@@ -378,6 +519,62 @@ _DEEP_POSTMORTEM_INSTRUCTION = (
     "  - 防再犯：下次如何提早攔截\n"
     "寫完即可宣告完成；此為一次性提示，本 session 不再出現。"
 )
+
+
+# ─── 迴歸累積提示（驗收真命中 → 建議補測試/落 atom）───────────────
+
+
+def _acceptance_regression_hint(
+    state: Dict[str, Any], session_id: str, config: Dict[str, Any],
+) -> Optional[str]:
+    """驗收裁判真命中的迴歸累積提示（非強制）：本 session 的 acceptance-audit.jsonl
+    有 verdict=fail 且 severity=high（enforce 級——回測兩輪 4/4 零誤擋的那一級）
+    → 收尾訊息搭車建議 (a) 補測試案例 (b) 模式類落 atom。
+
+    純 piggyback（同 token 預警模式）：只搭既有 block 訊息帶出，不獨立打斷；
+    一次性（acceptance_hint_emitted，隨該 gate 的 write_state 固化）；
+    不建佇列不建表——做不做由模型當場判斷，誤判忽略即可。
+    fail-open：讀檔/解析失敗 stderr 浮訊號後回 None。
+    """
+    try:
+        cfg = (config or {}).get("acceptance_regression_hint", {}) or {}
+        if not cfg.get("enabled", True):
+            return None
+        if state.get("acceptance_hint_emitted"):
+            return None
+        audit_path = WORKFLOW_DIR / "acceptance-audit.jsonl"
+        if not audit_path.exists():
+            return None
+        slugs: List[str] = []
+        hits = 0
+        for line in audit_path.read_text(encoding="utf-8").splitlines():
+            if session_id not in line:  # 廉價預篩，免逐行 json.loads
+                continue
+            try:
+                rec = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if not isinstance(rec, dict) or rec.get("session_id") != session_id:
+                continue
+            if rec.get("verdict") != "fail" or rec.get("severity") != "high":
+                continue
+            hits += 1
+            slug = rec.get("task_slug") or Path(str(rec.get("spec_path", ""))).stem
+            if slug and slug not in slugs:
+                slugs.append(slug)
+        if not hits:
+            return None
+        return (
+            f"\n[Guardian:RegressionHint] 本 session 驗收裁判有 {hits} 筆真命中級"
+            f"判定（fail/high；任務：{', '.join(slugs[:3])}）。"
+            "抓到的漏修完就過去＝同型錯下次照犯，建議（非強制、當場判斷）：\n"
+            "  (a) 在該專案為漏掉的行為補一個測試案例（永久防線）\n"
+            "  (b) 屬跨任務模式類教訓 → atom_write 落 atom\n"
+            "裁判誤判或防線已存在則忽略即可，不建佇列不追蹤。"
+        )
+    except Exception as e:
+        print(f"[Guardian:RegressionHint] hint error (fail-open): {e}", file=sys.stderr)
+        return None
 
 
 def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
@@ -412,11 +609,16 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
     _token_warn = token_warn_payload(
         state, config, transcript, transcript_text=transcript_text
     )
+    # 迴歸累積提示同為 piggyback payload：驗收裁判真命中 → 建議補測試/落 atom。
+    _accept_hint = _acceptance_regression_hint(state, session_id, config)
 
     def _piggyback(reason: str) -> str:
         if _token_warn:
             state["token_warn_emitted"] = True
-            return reason + _token_warn
+            reason = reason + _token_warn
+        if _accept_hint:
+            state["acceptance_hint_emitted"] = True
+            reason = reason + _accept_hint
         return reason
 
     if failing and claims_completion(last_text):
@@ -566,14 +768,47 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
             output_block(reason)
             return
 
+    # ── Atom Consumption Audit Gate（取用端閉環稽核）──────────────
+    # 排序：correctness / sync 之後（那些優先）、DPM 之前；沿用 stop_gate_max_blocks
+    # 全域預算（第 3 次強制放行）。per-atom 一次（atom_audit_prompted）防轟炸。
+    # fail-open：判定任何失敗 → stderr 浮訊號後照常放行，不比既有慣例更擋人。
+    if (
+        (config.get("atom_audit", {}) or {}).get("enabled", True)
+        and stop_count < max_blocks
+    ):
+        try:
+            aa = _audit_pointer_atom_consumption(state)
+        except Exception as e:
+            aa = None
+            print(f"[Guardian:AtomAudit] audit error (fail-open): {e}", file=sys.stderr)
+        if aa:
+            aa_reason, aa_names = aa
+            prompted = state.setdefault("atom_audit_prompted", [])
+            prompted.extend(n for n in aa_names if n not in prompted)
+            state["stop_blocked_count"] = stop_count + 1
+            write_state(session_id, state)
+            output_block(_piggyback(aa_reason))
+            return
+
     # ── Deep Post-Mortem Gate（Stage 3）────────────────────────
     # (effort 訊號) AND (真失敗訊號) + 本 session 未深寫過 → 注入指令，要 Claude 結束前用
     # atom_write 補完整 post-mortem。deep_postmortem_done 一次性防重複＝獨立預算 1；
     # 排在 correctness/sync gate 之後（那些優先）但★不共用 stop_gate_max_blocks——
     # 否則 Sync+TestFail 先吃光預算就餓死 DPM（見 _should_deep_postmortem docstring 實證）。
     claims_done = bool(last_text and claims_completion(last_text))
-    if _should_deep_postmortem(state, config, claims_done):
+    if (_should_deep_postmortem(state, config, claims_done)
+            and not _dpm_marker(session_id).exists()):
         state["deep_postmortem_done"] = True
+        try:
+            marker = _dpm_marker(session_id)
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            cutoff = time.time() - 7 * 86400  # 舊 marker 順手清，防執行期狀態檔累積
+            for old in marker.parent.glob("*.flag"):
+                if old.stat().st_mtime < cutoff:
+                    old.unlink()
+            marker.touch()
+        except OSError:
+            pass
         state["stop_blocked_count"] = stop_count + 1
         reason = _piggyback(_DEEP_POSTMORTEM_INSTRUCTION)
         write_state(session_id, state)

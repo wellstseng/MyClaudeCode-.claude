@@ -29,6 +29,7 @@ stats-cache.json
 workflow/state-*.json
 workflow/state-*.json.bak-*
 workflow/state-*.json.corrupt
+workflow/coord-warn-cache-*.json
 workflow/world-dev.json
 workflow/_*.log
 workflow/guardian-crash.log
@@ -45,10 +46,16 @@ workflow/mcp-version-cache.json
 workflow/aec-report/
 workflow/aec-decision/
 workflow/ups-sentinel/
+workflow/dpm-done/
 workflow/outcome_stats.jsonl
 workflow/outcome-unknown-advisory.json
 workflow/health-reports/
 workflow/health-last-run.json
+workflow/pan-pass/
+workflow/pan-deny/
+workflow/acceptance-spec/
+workflow/acceptance-audit.jsonl*
+workflow/acceptance-backtest.jsonl*
 
 # ─── Per-user / per-machine state (Wave 5 untracked) ─────
 memory/project-registry.json
@@ -63,6 +70,7 @@ workflow/companion-state-*.json
 workflow/companion-assessment-*.json
 workflow/companion-metrics-*.json
 workflow/companion.pid
+workflow/companion-backend.json
 
 # ─── Runtime logs (atom-debug, hook output) ───────────────
 Logs/

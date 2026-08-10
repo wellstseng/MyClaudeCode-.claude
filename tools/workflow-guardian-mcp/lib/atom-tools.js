@@ -6,9 +6,13 @@ const { CLAUDE_DIR, MEMORY_DIR, TOOLS_DIR, loadConfig } = require("./paths");
 const { crashLog } = require("./log");
 const {
   slugify, findSeparatorVariant, getCurrentUser, isSensitiveAudience, resolveMemDir,
-  applyFeedbackRouting, applyLocalRouting, classifyRealm,
+  applyFeedbackRouting, applyLocalRouting, classifyRealm, resolveSubdirTarget,
   FAILURES_DIR, FEEDBACK_TITLE_PREFIX, LOCAL_ATOMS_DIR,
 } = require("./realm");
+
+// SYNC: lib/atom_index_json.py TRIGGER_MAX_LEN — 超長 trigger 在寫入當下即拒，
+// 不留給後續 validate_index / atom_move 才爆（exit 2）。
+const TRIGGER_MAX_LEN = 30;
 const { parseAtomMeta, readAtomAccess, spawnAtomAccess, usefulnessStats } = require("./atom-access");
 const {
   execConflictDetector, appendMergeHistory, buildConflictReport, execWriteGate,
@@ -24,12 +28,24 @@ async function toolAtomWrite(id, args) {
     title, scope, confidence, triggers, knowledge, actions, related, mode,
     project_cwd, skip_gate, skip_conflict_check,
     role, user, audience, pending_review_by, merge_strategy,
-    realm, domain,
+    realm, domain, status, subdir,
   } = args;
 
   // Validate core required fields (scope now optional, defaults to shared)
   if (!title || !confidence || !triggers || !knowledge || !mode) {
     return sendToolResult(id, "Missing required parameters (title, confidence, triggers, knowledge, mode)", true);
+  }
+
+  // trigger 長度寫入當下即驗（create/replace 會回寫索引 triggers；append 不動）。
+  // [...t] 以 code point 計長，對拍 py len()。
+  if ((mode === "create" || mode === "replace") && Array.isArray(triggers)) {
+    const tooLong = triggers.filter((t) => [...String(t)].length > TRIGGER_MAX_LEN);
+    if (tooLong.length) {
+      return sendToolResult(id,
+        `trigger too long (>${TRIGGER_MAX_LEN} chars): ${tooLong.map(t => `"${t}"`).join(", ")}\n` +
+        `Shorten the trigger — an over-limit trigger poisons every later validate_index run (atom_move exit 2).`,
+        true);
+    }
   }
 
   // V4: default scope, transparent legacy mapping
@@ -74,6 +90,20 @@ async function toolAtomWrite(id, args) {
     routedToLocal = true;
   }
 
+  // subdir（相對 memory root 的 create 落點，多段斜線）：僅 scope=shared 支援，
+  // 其他 scope 給了就明確報錯（不靜默忽略）。沙盒化在 resolveSubdirTarget
+  // （MIRROR: lib/atom_locations.py:project_subdir_target）。
+  // 注意順序：敏感 audience → _pending_review 路由在下方，優先權高於 subdir。
+  if (subdir) {
+    if (scope !== "shared") {
+      return sendToolResult(id,
+        `atom_write: subdir is only supported for scope=shared (got scope=${scope})`, true);
+    }
+    const sub = resolveSubdirTarget(baseDir, subdir);
+    if (sub.error) return sendToolResult(id, `atom_write: ${sub.error}`, true);
+    memDir = sub.dir;
+  }
+
   // SPEC 7.4: sensitive audience on shared → auto-pending
   let pendingReviewBy = pending_review_by || null;
   if (scope === "shared" && isSensitiveAudience(audience)) {
@@ -90,6 +120,23 @@ async function toolAtomWrite(id, args) {
   // filePath/relPath may be recomputed after conflict-detector reroute
   let filePath = path.join(memDir, slug + ".md");
   let relPath = path.relative(indexRoot, filePath).replace(/\\/g, "/");
+
+  // append/replace 的實體檔常不在扁平落點：專案 shared atom 被 classifier sweep 歸位到
+  // shared/<Domain>/，local realm atom 落 _AIDocs/_atoms/<多段 domain>/。定位規則
+  // （索引 path 優先 → rglob → 撞名報錯）**只在 py 維護一份**（lib/atom_io.locate_atom），
+  // js 不自建第二套；只在扁平落點 miss 時才 spawn，正常路徑零額外成本。
+  async function locateExisting() {
+    const lr = await spawnAtomCli("locate", {
+      title, scope, project_cwd, role, user, audience, realm, domain,
+    });
+    if (!lr.ok) return { error: lr.error };
+    if (!lr.path) return {};
+    return {
+      filePath: lr.path,
+      relPath: ((lr.extra || {}).rel_path) ||
+               path.relative(indexRoot, lr.path).replace(/\\/g, "/"),
+    };
+  }
 
   const author = getCurrentUser();
   const today = new Date().toISOString().slice(0, 10);
@@ -109,6 +156,17 @@ async function toolAtomWrite(id, args) {
         `→ Use mode=append/replace on the existing atom, or rename "${variant}" to the hyphen convention first.`,
         true);
     }
+    // 撞名防叉：同 slug 已存在於子夾（projects/<X>/、shared/<Domain>/…）→ 拒絕。
+    // 否則 create 會叉出重複 atom 並讓索引 path 蹍掉舊檔（定位規則同 append/replace，
+    // py 單一來源）。
+    {
+      const lr = await locateExisting();
+      if (lr.error) return sendToolResult(id, `atom_write: ${lr.error}`, true);
+      if (lr.filePath) {
+        return sendToolResult(id,
+          `Atom already exists: ${lr.filePath} — use mode=append or mode=replace`, true);
+      }
+    }
 
     // 原子記憶語意契約：新 atom 必須 [臨]
     if (confidence !== "[臨]") {
@@ -120,6 +178,7 @@ async function toolAtomWrite(id, args) {
         true);
     }
 
+    let gateWarnings = [];
     if (!skip_gate) {
       const gateResult = await execWriteGate(knowledge.join("\n"), confidence);
       if (gateResult.action === "skip") {
@@ -130,12 +189,20 @@ async function toolAtomWrite(id, args) {
           `Write-gate: similar to existing atom "${gateResult.dedup_match.atom_name}" ` +
           `(score=${gateResult.dedup_match.score}). Use mode=append on that atom instead.`, true);
       }
+      // 樣式軟警（逐筆表格/路徑清單）：不擋，附在成功訊息尾端轉述給寫入者
+      if (Array.isArray(gateResult.warnings) && gateResult.warnings.length) {
+        gateWarnings = gateResult.warnings;
+      }
     }
 
     // ─── write-time conflict detection (SPEC §7.1) ───
     // Only shared scope. skip_conflict_check honored for migrations/tests.
     if (scope === "shared" && !skip_conflict_check) {
-      const cr = await execConflictDetector(knowledge.join("\n"), "shared", project_cwd);
+      const cr = await execConflictDetector(knowledge.join("\n"), "shared", project_cwd, subdir);
+      // 偵測器降級訊號（複驗不穩 / 跨分區 / LLM ERROR fail-open）→ 併入成功訊息浮出
+      if (Array.isArray(cr.warnings) && cr.warnings.length) {
+        gateWarnings = gateWarnings.concat(cr.warnings.map(w => `[conflict-detector] ${w}`));
+      }
       if (cr.verdict === "contradict") {
         const pendingDir = path.join(baseDir, "shared", "_pending_review");
         fs.mkdirSync(pendingDir, { recursive: true });
@@ -149,9 +216,10 @@ async function toolAtomWrite(id, args) {
         appendMergeHistory(baseDir, "pending-create", slug, scopeLabel, author,
           `contradict vs ${(cr.matches[0] || {}).atom_name || "?"} sim=${((cr.matches[0] || {}).similarity || 0).toFixed(3)}`);
         return sendToolResult(id,
-          `BLOCKED by conflict detector — CONTRADICT vs "${(cr.matches[0] || {}).atom_name || "?"}".\n` +
+          `BLOCKED by conflict detector — CONTRADICT (double-confirmed) vs "${(cr.matches[0] || {}).atom_name || "?"}".\n` +
           `Report written: ${reportPath}\n` +
-          `Atom NOT written to shared/. Awaiting management review (/conflict-review).`,
+          `Atom NOT written to shared/. 待審出路：/conflict pending 檢視 → approve/reject\n` +
+          `（後端 tools/conflict-review.py --list / --action approve|reject --target <name> --project-cwd <root>）`,
           false  // not isError — pending is normal flow
         );
       }
@@ -175,10 +243,13 @@ async function toolAtomWrite(id, args) {
       build: {
         title, scope: scopeLabel, confidence, triggers, knowledge, actions, related,
         audience, author, pending_review_by: pendingReviewBy, merge_strategy, created_at: today,
+        status,
       },
       file_path: filePath,
       today,
-      index: { base_dir: indexDir, slug, rel_path: relPath, triggers },
+      // index scope 傳 scopeLabel（與 frontmatter 一致）——不再由 py 端預設 global
+      // 蹍掉專案層 scope。
+      index: { base_dir: indexDir, slug, rel_path: relPath, triggers, scope: scopeLabel },
     });
     if (!cr.ok) {
       return sendToolResult(id, `atom_create funnel failed: ${cr.error}`, true);
@@ -195,7 +266,8 @@ async function toolAtomWrite(id, args) {
       `Author: ${author}\n` +
       (pendingReviewBy ? `Pending-review-by: ${pendingReviewBy} (sensitive audience auto-routed)\n` : "") +
       `Triggers: ${triggers.join(", ")}\n` +
-      `MEMORY.md index updated.`
+      `MEMORY.md index updated.` +
+      (gateWarnings.length ? `\n[write-gate 樣式警告] ${gateWarnings.join("；")}` : "")
     );
   }
 
@@ -206,14 +278,10 @@ async function toolAtomWrite(id, args) {
       filePath = legacyPath;
       relPath = path.relative(indexRoot, filePath).replace(/\\/g, "/");
     }
-    if (!fs.existsSync(filePath) && scopeLabel === "global") {
-      // find-fallback：local（_AIDocs/_atoms/）與 feedback-*（_AIDocs/Failures/）物理居 memory/ 外，
-      // 鏡像 promote/edit_meta 的遞迴 fallback；否則 scope=global 的 local atom append 報 not-found。
-      const found = findAtomFileRecursive(FAILURES_DIR, slug) || findAtomFileRecursive(LOCAL_ATOMS_DIR, slug);
-      if (found) {
-        filePath = found;
-        relPath = path.relative(indexRoot, filePath).replace(/\\/g, "/");
-      }
+    if (!fs.existsSync(filePath)) {
+      const lr = await locateExisting();
+      if (lr.error) return sendToolResult(id, `atom_write: ${lr.error}`, true);
+      if (lr.filePath) { filePath = lr.filePath; relPath = lr.relPath; }
     }
     if (!fs.existsSync(filePath)) {
       return sendToolResult(id, `Atom not found: ${slug}.md — use mode=create first`, true);
@@ -248,13 +316,10 @@ async function toolAtomWrite(id, args) {
     }
     // Guard: replace = overwrite an EXISTING atom. If the target is absent, this was a
     // silent upsert that birthed a brand-new atom bypassing the create [臨] gate. Refuse.
-    if (!fs.existsSync(filePath) && scopeLabel === "global") {
-      // find-fallback（同 append）：local / feedback-* 物理居 memory/ 外。
-      const found = findAtomFileRecursive(FAILURES_DIR, slug) || findAtomFileRecursive(LOCAL_ATOMS_DIR, slug);
-      if (found) {
-        filePath = found;
-        relPath = path.relative(indexRoot, filePath).replace(/\\/g, "/");
-      }
+    if (!fs.existsSync(filePath)) {
+      const lr = await locateExisting();
+      if (lr.error) return sendToolResult(id, `atom_write: ${lr.error}`, true);
+      if (lr.filePath) { filePath = lr.filePath; relPath = lr.relPath; }
     }
     if (!fs.existsSync(filePath)) {
       const variant = findSeparatorVariant(memDir, slug);
@@ -284,7 +349,7 @@ async function toolAtomWrite(id, args) {
     const br = await spawnAtomCli("build", {
       title, scope: scopeLabel, confidence, triggers, knowledge, actions, related,
       audience, author: prevAuthor, pending_review_by: pendingReviewBy,
-      merge_strategy, created_at: prevCreatedAt,
+      merge_strategy, created_at: prevCreatedAt, status,
     });
     if (!br.ok) {
       return sendToolResult(id, `Validation failed: ${br.error}`, true);
@@ -323,9 +388,12 @@ async function toolAtomWrite(id, args) {
 // are valid atom subdirs (mirrors lib/atom_spec.SKIP_DIRS exclusions).
 function findAtomFileRecursive(memDir, atomName) {
   const target = atomName + ".md";
+  // SYNC: lib/atom_spec.py SKIP_DIRS（+ _drafts：taxonomy 牢籠草稿非 atom；
+  // _archived 由下方 startsWith("_archive") 涵蓋）。
   const SKIP = new Set([
-    "_reference", "_archived", "_pending_review", "_staging",
-    "templates", "wisdom", "_drafts", "episodic", "_meta",
+    "_meta", "_reference", "_staging", "_vectordb", "_distant",
+    "episodic", "templates", "personal", "wisdom", "_pending_review",
+    "_drafts",
   ]);
   const queue = [memDir];
   while (queue.length) {
@@ -343,6 +411,51 @@ function findAtomFileRecursive(memDir, atomName) {
     }
   }
   return null;
+}
+
+/** Spawn inline python → lib.atom_index_json.delete_atom（含 _ATOM_INDEX.md mirror
+ *  自動 regenerate）。沿用 spawnEditMetadata 慣例：cwd=CLAUDE_DIR、PYTHONIOENCODING、
+ *  windowsHide、30s timeout。Returns Promise<{ok, removed?, error?}>。 */
+function spawnIndexDelete(memDir, atomName) {
+  const inline = [
+    "import sys, json",
+    "from pathlib import Path",
+    "from lib.atom_index_json import delete_atom",
+    "removed = delete_atom(Path(sys.argv[1]), sys.argv[2])",
+    "print(json.dumps({'ok': True, 'removed': removed}))",
+  ].join("\n");
+  return new Promise((resolve) => {
+    let cp;
+    try {
+      cp = require("child_process").spawn(
+        "python", ["-c", inline, memDir, atomName],
+        { cwd: CLAUDE_DIR, windowsHide: true,
+          env: { ...process.env, PYTHONIOENCODING: "utf-8" } },
+      );
+    } catch (e) {
+      return resolve({ ok: false, error: `spawn failed: ${e.message}` });
+    }
+    let out = "", err = "", timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try { cp.kill(); } catch {}
+    }, 30000);
+    cp.stdout.on("data", (d) => { out += d.toString("utf-8"); });
+    cp.stderr.on("data", (d) => { err += d.toString("utf-8"); });
+    cp.on("close", () => {
+      clearTimeout(timer);
+      if (timedOut) return resolve({ ok: false, error: "index delete timeout (30s), killed" });
+      try {
+        resolve(JSON.parse(out.trim()));
+      } catch (e) {
+        resolve({ ok: false, error: `parse fail: ${e.message} stderr=${err.slice(0, 200)}` });
+      }
+    });
+    cp.on("error", (e) => {
+      clearTimeout(timer);
+      resolve({ ok: false, error: `spawn error: ${e.message}` });
+    });
+  });
 }
 
 async function toolAtomPromote(id, args) {
@@ -407,7 +520,7 @@ async function toolAtomPromote(id, args) {
   const uconf = (loadConfig().usefulness) || {};
   const promoteLb = Number(uconf.promote_lb != null ? uconf.promote_lb : 0.6);
   const minN = Number(uconf.min_n != null ? uconf.min_n : 3);
-  const wilsonZ = Number(uconf.wilson_z != null ? uconf.wilson_z : 1.96);
+  const wilsonZ = Number(uconf.wilson_z != null ? uconf.wilson_z : 1.28);
   const ustat = usefulnessStats(access, wilsonZ);
   const utilEligible = ustat.n >= minN && ustat.lowerBound >= promoteLb;
 
@@ -452,12 +565,21 @@ async function toolAtomPromote(id, args) {
     .replace(/^- Confidence:\s*.+$/m, `- Confidence: ${next}`);
 
   // Also update individual knowledge lines: [臨] → [觀] etc.
-  // NB: .replace() 已把 [ ] 跳脫成 \[ \]，模板前綴只需「- 」一個空白；
-  //     若再多寫 `\\` 前綴會產出 `- \\[X\]`（字元類未閉合 → Unterminated character class）。
-  const finalContent = updated.replace(
-    new RegExp(`- ${meta.confidence.replace(/[[\]]/g, "\\$&")}`, "g"),
-    `- ${next}`
-  );
+  // 只處理 ## 知識 段落內、行首（含縮排）的 `- [X]` 條目——全文全域替換會誤改
+  // ## 行動 區與引文中出現的同字樣。段落邊界 = 下一個 `## ` 標題。
+  // NB: .replace() 已把 [ ] 跳脫成 \[ \]；若再多寫 `\\` 前綴會產出未閉合字元類。
+  const confLineRe = new RegExp(
+    `^(\\s*- )${meta.confidence.replace(/[[\]]/g, "\\$&")}`);
+  const outLines = updated.split("\n");
+  let inKnowledge = false;
+  for (let i = 0; i < outLines.length; i++) {
+    if (/^## /.test(outLines[i])) {
+      inKnowledge = /^## 知識/.test(outLines[i]);
+      continue;
+    }
+    if (inKnowledge) outLines[i] = outLines[i].replace(confLineRe, `$1${next}`);
+  }
+  const finalContent = outLines.join("\n");
 
   // 走 lib.atom_io.write_raw funnel
   const wrPromote = await funnelWriteRaw(filePath, finalContent, "mcp", "atom_promote");
@@ -492,7 +614,8 @@ async function toolAtomPromote(id, args) {
   // 自動提示：只要晉升為 [固]，一律在回覆裡附上「是否合進 preferences.md」提示，
   // 讓 Claude 引導使用者裁決。
   // 自動執行：當 merge_to_preferences=true，立即把 knowledge 追加到 preferences.md、
-  // 歸檔本 atom 到 _archived/，再請 Claude 後續手動移除 _ATOM_INDEX.md 的該行。
+  // 歸檔本 atom（含 .access.json sidecar）到 _archived/，並從 _atom_index.json
+  // 移除條目（mirror 自動 regenerate）。
   const promotedToStable = next === "[固]";
   let mergeReport = "";
   if (promotedToStable && merge_to_preferences) {
@@ -520,12 +643,33 @@ async function toolAtomPromote(id, args) {
         if (!wrPref.ok) throw new Error(`funnel write_raw failed: ${wrPref.error}`);
 
         fs.renameSync(filePath, archivePath);
+        // 同步歸檔 .access.json sidecar（遙測跟著 atom 走，不留孤兒）
+        const accSrc = filePath.replace(/\.md$/, ".access.json");
+        let accMoved = false;
+        if (fs.existsSync(accSrc)) {
+          fs.renameSync(accSrc, archivePath.replace(/\.md$/, ".access.json"));
+          accMoved = true;
+        }
+
+        // 從 _atom_index.json（SoT）移除條目；mirror _ATOM_INDEX.md 由
+        // lib.atom_index_json.delete_atom 自動 regenerate。
+        const idxDel = await spawnIndexDelete(MEMORY_DIR, atom_name);
+        let idxLine;
+        if (idxDel.ok) {
+          idxLine = idxDel.removed
+            ? `  - Removed ${atom_name} from _atom_index.json (+mirror regenerated)`
+            : `  - Index entry ${atom_name} not found in _atom_index.json（無需移除）`;
+        } else {
+          crashLog("merge_to_preferences index delete", idxDel.error);
+          idxLine = `  - ⚠ 索引移除失敗（${idxDel.error}）— 請手動清 _atom_index.json 的 ${atom_name} 條目`;
+        }
 
         mergeReport =
           `\n\n[merge_to_preferences] 已執行：\n` +
           `  - Appended ${knowledgeLines.length} 行到 preferences.md\n` +
-          `  - Archived → ${path.relative(MEMORY_DIR, archivePath)}\n` +
-          `  - ⚠ 請手動移除 _ATOM_INDEX.md 中 ${atom_name} 的索引列。`;
+          `  - Archived → ${path.relative(MEMORY_DIR, archivePath)}` +
+          (accMoved ? "（含 .access.json sidecar）" : "") + `\n` +
+          idxLine;
       } catch (e) {
         mergeReport = `\n\n[merge_to_preferences] 失敗：${e.message}`;
       }
@@ -583,17 +727,26 @@ function spawnEditMetadata(filePath, fields) {
     } catch (e) {
       return resolve({ ok: false, error: `spawn failed: ${e.message}` });
     }
-    let out = "", err = "";
+    let out = "", err = "", timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try { cp.kill(); } catch {}
+    }, 30000);
     cp.stdout.on("data", (d) => { out += d.toString("utf-8"); });
     cp.stderr.on("data", (d) => { err += d.toString("utf-8"); });
     cp.on("close", () => {
+      clearTimeout(timer);
+      if (timedOut) return resolve({ ok: false, error: "edit_metadata timeout (30s), killed" });
       try {
         resolve(JSON.parse(out.trim()));
       } catch (e) {
         resolve({ ok: false, error: `cli parse fail: ${e.message} stderr=${err.slice(0, 300)}` });
       }
     });
-    cp.on("error", (e) => resolve({ ok: false, error: `spawn error: ${e.message}` }));
+    cp.on("error", (e) => {
+      clearTimeout(timer);
+      resolve({ ok: false, error: `spawn error: ${e.message}` });
+    });
   });
 }
 
@@ -669,6 +822,8 @@ function toolAtomMove(id, args) {
       return Promise.resolve(sendToolResult(id, "atom_move move: --from and --to required", true));
     }
     argv.push("--from", args.from, "--to", args.to);
+    // scope 預設沿用索引既有值；明給才覆寫（atom-move.py --scope）
+    if (args.scope) argv.push("--scope", args.scope);
   } else if (subcommand === "reconcile") {
     if (!args.at) {
       return Promise.resolve(sendToolResult(id, "atom_move reconcile: --at required", true));

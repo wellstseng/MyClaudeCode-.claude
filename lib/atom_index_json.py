@@ -32,6 +32,25 @@ from typing import Any, Dict, List, Optional
 ATOM_INDEX_JSON = "_atom_index.json"
 ATOM_INDEX_MD = "_ATOM_INDEX.md"
 SCHEMA_VERSION = "1.0"
+TRIGGER_MAX_LEN = 30  # validate_index 與 write funnel 共用（寫入當下即驗，不留到後續操作才爆）
+
+
+def find_index_dir(path: Path) -> Optional[Path]:
+    """從 path 往上找最近含 _atom_index.json 的祖先 = index root（memory root）。
+
+    單一來源：edit_metadata（專案層 atom 的索引歸屬）與 tools/atom-move.py 共用，
+    取代各處硬編 ~/.claude 或自刻上溯。找不到回 None。
+    """
+    try:
+        cur = Path(path).resolve(strict=False)
+    except OSError:
+        cur = Path(path)
+    while True:
+        if (cur / ATOM_INDEX_JSON).exists():
+            return cur
+        if cur.parent == cur:
+            return None
+        cur = cur.parent
 
 
 def _write_text_preserving_eol(path: Path, content: str) -> None:
@@ -50,10 +69,23 @@ def _write_text_preserving_eol(path: Path, content: str) -> None:
     body = content.replace("\r\n", "\n").replace("\r", "\n")
     if eol != "\n":
         body = body.replace("\n", eol)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp, "w", encoding="utf-8", newline="") as f:
-        f.write(body)
-    tmp.replace(path)
+    # tmp 後綴帶 PID+TID 唯一化（仿 atom_access._write_raw）：索引檔為全系統共用，
+    # 固定 ".tmp" 在併發 session upsert 時互踩（truncate 競態 → 半空索引）。
+    import threading as _threading
+    tmp = path.with_suffix(
+        f"{path.suffix}.tmp.{os.getpid()}.{_threading.get_ident()}"
+    )
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="") as f:
+            f.write(body)
+        tmp.replace(path)
+    except OSError:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def _empty_index() -> Dict[str, Any]:
@@ -255,8 +287,8 @@ def validate_index(mem_dir: Path) -> List[str]:
             errors.append(f"atoms[{i}] triggers not list")
         else:
             for t in a["triggers"]:
-                if len(t) > 30:
-                    errors.append(f"trigger too long (>30): {name}: {t!r}")
+                if len(t) > TRIGGER_MAX_LEN:
+                    errors.append(f"trigger too long (>{TRIGGER_MAX_LEN}): {name}: {t!r}")
     return errors
 
 
