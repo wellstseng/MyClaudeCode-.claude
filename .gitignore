@@ -145,3 +145,6 @@ sessions/
 history.jsonl
 tasks/
 .codex/
+
+# codex-bridge runtime state
+workflow/codex-bridge/
