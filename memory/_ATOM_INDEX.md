@@ -7,12 +7,11 @@
 |------|------|---------|-------|
 | electron-uia-automation | _AIDocs/_atoms/Tools/electron-uia-automation.md | Electron 自動化, VS Code 自動點擊, UIA Invoke, EVENT_E_NO_SUBSCRIBERS, PostMessage Chromium 失效, SendInput 偷塞字, AttachThreadInput, SetForegroundWindow 失敗, focus swap, ghost button, Claude Code 彈窗, GUI 工具 | global |
 | gdoc-harvester | _AIDocs/_atoms/Tools/gdoc-harvester.md | harvester, Google Docs, Sheets, 收割, Playwright, cookie, export | global |
-| preferences | memory/preferences.md | 偏好, 風格, 習慣, 語言, 回應, 執P, 執驗上P, 上GIT, Obsidian | global |
-| workflow-icld | memory/workflow-icld.md | ICLD, 閉環, Sprint, 功能拆解, 開發計畫, 大型新功能, 新系統規劃, 規格書 | global |
-| workflow-svn | memory/workflow-svn.md | svn, svn-update, TortoiseSVN, 衝突, conflict | global |
-| cognitive-patterns | _AIDocs/Failures/cognitive-patterns.md | 過度工程, 代理指標, proxy metric, AI看不懂, AI在打轉, 品質回饋, 自我合理化, 編造規則, 籠統話術, 訂規保留, 設計慣例 | global |
+| preferences | memory/工作流/節奏與收尾/preferences.md | 偏好, 風格, 習慣, 語言, 回應, 執P, 執驗上P, 上GIT, Obsidian | global |
+| workflow-icld | memory/工作流/節奏與收尾/workflow-icld.md | ICLD, 閉環, Sprint, 功能拆解, 開發計畫, 大型新功能, 新系統規劃, 規格書 | global |
+| workflow-svn | memory/版控/SVN/workflow-svn.md | svn, svn-update, TortoiseSVN, 衝突, conflict | global |
+| cognitive-patterns | memory/Failures/思考與決策/cognitive-patterns.md | 過度工程, 代理指標, proxy metric, AI看不懂, AI在打轉, 品質回饋, 自我合理化, 編造規則, 籠統話術, 訂規保留, 設計慣例 | global |
 | atom-table-support | _AIDocs/_atoms/MemDev/atom-table-support.md | atom_write, 表格, table, markdown 表格, code fence, 程式碼 fence, knowledge block, block 渲染, dogfood | global |
-| feedback-memory-system-doc-sync | _AIDocs/Failures/feedback-memory-system-doc-sync.md | 原子記憶系統, 記憶系統修正, 記憶系統修改, 記憶系統開發, 改 hook, 改 wg_, 改 server.js, memory system, 文件同步, doc sync | global |
 | memory-index-caption-regen | _AIDocs/_atoms/MemDev/MemoryIndex/memory-index-caption-regen.md | MEMORY.md, sync-memory-index, 描述欄, caption, atom_write regen, 裸名, syncMemoryIndex, 記憶索引, 索引描述, MEMORY.md 描述 | global |
 | atom-usefulness-loop | _AIDocs/_atoms/MemDev/atom-usefulness-loop.md | 效用閉環, usefulness, record_usefulness, atom 晉升, use 偵測, Wilson 下界, 慢衰減, Beta-Bernoulli, 注入使用結果, useful_hits, used_fail, 原子記憶開發 | global |
 | cc-能力查證反編譯實跑-binary | _AIDocs/_atoms/Tools/cc-能力查證反編譯實跑-binary.md | CC 版本, hook event, 查證, 反編譯, claude binary, docs 幻覺, 版本分裂, WebFetch, capability, PostCompact, PostToolBatch | global |
@@ -24,14 +23,14 @@
 | windows-cc-hook-閃-console-pythonw-修-layer-1勿只補巢狀-creationflags | _AIDocs/_atoms/OS/Windows/windows-cc-hook-閃-console-pythonw-修-layer-1勿只補巢狀-creationflags.md | 閃 console, console 視窗, 黑窗, 閃窗, pythonw, CREATE_NO_WINDOW, windowsHide, MCP 閃窗, hook 閃窗, WindowsTerminal, 上GIT, git commit 閃窗, subprocess spawn | global |
 | a執p-自執驗上p-自動完工協議 | _AIDocs/_atoms/Tools/自動化流程與協議/a執p-自執驗上p-自動完工協議.md | A執P, 自執驗上P, Auto執驗上P, 自動執驗上P, 全自動完工, 自動推進, auto-handoff, 自動交接 | global |
 | dotnet-run-單檔跑拋棄式-demo-net-10-file-based-app | _AIDocs/_atoms/Tools/自動化流程與協議/dotnet/dotnet-run-單檔跑拋棄式-demo-net-10-file-based-app.md | dotnet run 單檔, file-based app, C# 單檔, 拋棄式 demo, C# script, 驗證 C# 語意 | global |
-| goal-driven-verify-loopkarpathy-吸收 | memory/goal-driven-verify-loopkarpathy-吸收.md | 寫程式, 寫扣, 實作, refactor, 重構, fix bug, 修 bug, add validation, 成功標準, verify, 驗收 | global |
+| goal-driven-verify-loopkarpathy-吸收 | memory/驗證與實證/goal-driven-verify-loopkarpathy-吸收.md | 寫程式, 寫扣, 實作, refactor, 重構, fix bug, 修 bug, add validation, 成功標準, verify, 驗收 | global |
 | confirmations-已退役-phase2-usefulness-接管晉升 | _AIDocs/_atoms/MemDev/confirmations-已退役-phase2-usefulness-接管晉升.md | confirmations, confirmation_events, 恒 0, 零增, 晋升判定, wilson, usefulness, 記憶健檢, 静默失效誤報 | global |
 | 專案等級-mcpskillhookslog-不放全域根層 | _AIDocs/_atoms/MemDev/專案等級-mcpskillhookslog-不放全域根層.md | 建立skill, 建立mcp, 新增hooks, 暫存檔, play-log, 全域 vs 專案, ~/.claude 根層, 專案自包含, skill 放哪, 檔案歸屬 | global |
 | harness原生memory與atom索引marker撞名辨識 | _AIDocs/_atoms/MemDev/harness原生memory與atom索引marker撞名辨識.md | discover_all_project, memory_dirs 掃描, harness memory, file-based memory, MEMORY.md 撞名, cross-project 掃描, marker, projects/ memory, flat-legacy, 誤納 | global |
 | dashboard-apiatoms-專案-shared-範疇被-frontmatter-scope-覆寫誤歸核心房 | _AIDocs/_atoms/MemDev/dashboard-apiatoms-專案-shared-範疇被-frontmatter-scope-覆寫誤歸核心房.md | dashboard, world.html, 腦內世界, apiAtoms, scanProjMemDir, 專案atom消失, project shared, scope 誤歸, 核心房, 看不到專案記憶 | global |
-| 自己flag的維護動作直接做完不要反問 | memory/自己flag的維護動作直接做完不要反問.md | 更新atom, 維護, 同步, 反問, 要不要我, 該做就做, 推進, 收尾, follow-through | global |
+| 自己flag的維護動作直接做完不要反問 | memory/行為契約/自己flag的維護動作直接做完不要反問.md | 更新atom, 維護, 同步, 反問, 要不要我, 該做就做, 推進, 收尾, follow-through | global |
 | bash-呼叫-msbuild-用-dash-參數 | _AIDocs/_atoms/Tools/自動化流程與協議/dotnet/bash-呼叫-msbuild-用-dash-參數.md | msbuild, dotnet build, MSYS2, git bash, MSB1008, 編譯參數, 斜線參數, dash flag, bash 編譯, /t:Build | global |
-| 跨session資訊失真機制與對策 | _AIDocs/_atoms/Continuity/跨session資訊失真機制與對策.md | 失真, 失憶, context 壓縮, 長對話, 多 session, lost in the middle, context rot, goal drift, 摘要有損, 為什麼會偏掉, anchoring, context poisoning, 錯誤發展, 錯誤認知 | global |
+| 跨session資訊失真機制與對策 | memory/工作流/節奏與收尾/跨session資訊失真機制與對策.md | 失真, 失憶, context 壓縮, 長對話, 多 session, lost in the middle, context rot, goal drift, 摘要有損, 為什麼會偏掉, anchoring, context poisoning, 錯誤發展, 錯誤認知 | global |
 | auto-capture碎片sweep污染詞庫-defer根治 | _AIDocs/_atoms/MemDev/auto-capture碎片sweep污染詞庫-defer根治.md | auto-capture, realm sweep, 詞庫污染, 專案知識寫到根層, extract-worker 分類, realm-lexicon-learned, auto_migrate | global |
 | write-raw-對未列舉-source-靜默回-okfalse-不-raise呼叫端必檢查回傳值 | _AIDocs/_atoms/MemDev/write-raw-對未列舉-source-靜默回-okfalse-不-raise呼叫端必檢查回傳值.md | write_raw, atom_io, VALID_SOURCES, source 白名單, 靜默失敗, ok=False, WriteResult, 腳本寫 atom, funnel 寫入, 一次性整理腳本 | global |
 | atom-move-v5-sot-correct-化與半遷移工具辨識 | _AIDocs/_atoms/MemDev/atom-move-v5-sot-correct-化與半遷移工具辨識.md | atom-move, atom 搬移, 資料夾搬移, 記憶系統工具, SoT 損壞, 半遷移工具, sidecar 搬移 | global |
@@ -70,7 +69,6 @@
 | wells-workflow-feedback-driven-teaching | memory/wells-workflow-feedback-driven-teaching.md | 工作流洞見, 教AI, feedback, 行為校正, 糾正, teaching | global |
 | wells-workflow-handoff-quality | memory/wells-workflow-handoff-quality.md | 工作流洞見, handoff, 交接, 大型任務, 跨session | global |
 | svn-windows-中文-commit-log-編碼陷阱 | _AIDocs/_atoms/Tools/自動化流程與協議/dotnet/svn-windows-中文-commit-log-編碼陷阱.md | SVN, commit log, 中文, UTF-8, CP950, Windows, 亂碼, encoding, BOM, commit message, svn:log | global |
-| feedback-已驗證的重複操作直接做完勿反覆確認 | _AIDocs/Failures/feedback-已驗證的重複操作直接做完勿反覆確認.md | 重複操作, 升級, upstream 合版, 落地, 確認, checkpoint, 別多問, 效率, AskUserQuestion | global |
 | vscode-csdevkit-鎖目錄擋-git-mv-逐子項繞過 | memory/vscode-csdevkit-鎖目錄擋-git-mv-逐子項繞過.md | git mv, Permission denied, csdevkit, C# Dev Kit, rename directory, 目錄鎖, 搬遷, build-server | global |
 | aec-b欄如實載明hook標記退避語不以自評覆蓋 | memory/aec-b欄如實載明hook標記退避語不以自評覆蓋.md | anti_evasion_report, 收尾檢核, 退避語, AEC, cross-check, real-evasion | global |
 | orbit-hotfix-lua-direction | memory/orbit-hotfix-lua-direction.md | Orbit, 熱修, 熱更, hotfix, Lua導入, LuaJIT, 郁方, 團隊簡報, shim-less, titangoo, 指標注入 | global |
@@ -79,7 +77,6 @@
 | dotnet-interface-devirt-pgo | memory/dotnet-interface-devirt-pgo.md | guarded devirtualization, devirt, Dynamic PGO, TieredPGO, 介面派發, interface dispatch, callvirt, monomorphic, AggressiveInlining, sealed, JitDisasm, OSR, MethodTable guard, 收包 dispatch, INodePacketHandler | global |
 | wells-design-principles-明碼優先-職責分離-防呆擋非法 | memory/wells-design-principles-明碼優先-職責分離-防呆擋非法.md | 設計原則, 明碼, 反直覺, 隱性語意, 哨兵值, 職責分離, 反射掃描, magic value, 註冊表, 防呆, 開發文化, design principle | global |
 | coremodule-entry-assembly-拓撲前提地雷-orbit-tslg同dna | memory/coremodule-entry-assembly-拓撲前提地雷-orbit-tslg同dna.md | GetEntryAssembly, 反射掃描, 模組註冊, DataModule, assembly 拆分, 殼專案, GetModule null, Orbit CoreModule, tslg-servercore, 靜默失敗, HandlerHelper | global |
-| feedback-核心檔結構性改寫先確認方案再動手 | _AIDocs/Failures/feedback-核心檔結構性改寫先確認方案再動手.md | 核心檔, 註冊表, 改寫, restructure, 先確認, 方案選擇, DataType, Defines, 架構級變更 | global |
 | wells-review-report-format-分類條列-簡扼說明改動 | memory/wells-review-report-format-分類條列-簡扼說明改動.md | 檢查回報, code review 回報, 審查報告, 檢查報告格式, review report | global |
 | atom-edit-meta與atom-heal對專案層atom的缺口與繞法 | _AIDocs/_atoms/MemDev/atom-edit-meta與atom-heal對專案層atom的缺口與繞法.md | atom_edit_meta, atom-heal, broken_refs, 專案層 atom, trigger 編輯, file not under, L2 自癒, 死連結修復, sync-atom-index, --fix, --memory-dir, mirror 重生 | global |
 | codex-handoff自檢誤報文件截斷-真因是輸入靜默截斷非模型幻覺 | _AIDocs/_atoms/MemDev/codex-handoff自檢誤報文件截斷-真因是輸入靜默截斷非模型幻覺.md | codex 誤報, handoff 自檢, 文件截斷, 誤報截斷, 審查者輸入, 6000字, _read_handoff_content, 頭尾採樣, codex companion 截斷 | global |
@@ -96,23 +93,17 @@
 | titan-c-port-是-titan-行為的現成權威來源勿從零重寫 | memory/titan-c-port-是-titan-行為的現成權威來源勿從零重寫.md | titan 移植, C# port, goo_log, log.lua, LogSchema, GooLogBridge, titan C 原始碼, 41 符號, Titan.Log, Titan.Lua | global |
 | sqlx-讀取端三個踩點字串定序tinyint-當-booldesc-的-enum | memory/sqlx-讀取端三個踩點字串定序tinyint-當-booldesc-的-enum.md | Sqlx, MysqlxClient, unknown type: Bytes, utf8mb3, utf8mb4_0900_as_cs, collation, TINYINT bool, DESC, SHOW INDEX, X protocol, MysqlxUtils.Column | global |
 | titan-c-移植鐵則-優先用csharp設施-架構為師細節可精進 | memory/titan-c-移植鐵則-優先用csharp設施-架構為師細節可精進.md | titan 移植, TitanC, C 移植, goo_log, log.c, 移植鐵則, C# 設施, port, 照抄, 簡化 | global |
-| feedback-提議機制時要標示成熟度-風險分析不等於現在就建 | _AIDocs/Failures/feedback-提議機制時要標示成熟度-風險分析不等於現在就建.md | 做太多, 還不需要, YAGNI, 過度工程, 退掉, 提議機制, 風險分析, 預先優化, 限流器, 防禦性機制 | global |
-| feedback-回答先給重點-結論一句話-細節按需展開 | _AIDocs/Failures/feedback-回答先給重點-結論一句話-細節按需展開.md | 回答, 回應, 講重點, 簡單明瞭, 太長, 講太多, 冗長, 報告, 說明, 結論, TLDR | global |
-| feedback-程式註解一律白話簡單明瞭 | _AIDocs/Failures/feedback-程式註解一律白話簡單明瞭.md | 註解, comment, 程式註解, 白話, doc comment, summary 註解, 檔頭註解, 註解風格 | global |
 | wells-design-測試專用成員走internal繞道-runtime-api-乾淨 | memory/wells-design-測試專用成員走internal繞道-runtime-api-乾淨.md | internal, InternalsVisibleTo, 測試專用, public 成員, runtime 乾淨, API 表面, 監控屬性, 測試探針 | global |
 | dotnet-major-版本與-vs-版本硬綁定-sln檔頭決定開哪版 | memory/dotnet-major-版本與-vs-版本硬綁定-sln檔頭決定開哪版.md | NETSDK1209, net10, .NET 10, VS 2026, Visual Studio 18, TFM 升級, LTS 升級, sln 檔頭, VisualStudioVersion, IDE 建不起來, CLI 能建 VS 不能建 | global |
 | winforms-關閉階段-async-續體不執行-formclosing-殺process必須同步 | memory/winforms-關閉階段-async-續體不執行-formclosing-殺process必須同步.md | FormClosing, ApplicationExit, fire-and-forget, StopAsync, process 殘留, 關閉不殺, WinForms 關閉, await 續體, Kill, ServerLauncher | global |
 | toolchain-http-server-無charset-中文頁亂碼-量測假訊號 | memory/toolchain-http-server-無charset-中文頁亂碼-量測假訊號.md | python -m http.server, charset, 亂碼, mojibake, 本機預覽, SVG 驗證, getBBox, meta charset, latin-1 | global |
-| feedback-註解一律白話-不堆術語 | _AIDocs/Failures/feedback-註解一律白話-不堆術語.md | 註解, comment, 白話, 術語, summary 註解, 程式註解, doc comment | global |
 | hotfix-ilruntime-traps | memory/hotfix-ilruntime-traps.md | ILRuntime, hotfix #if, UNITY_EDITOR, DefineConstants, isEditor, 預處理指令, hotfix旗標, BRM_ILR_Hotfix | global |
 | luajit-ffi-函式指標型別三種等價寫法-ctype相等比較不可靠 | memory/luajit-ffi-函式指標型別三種等價寫法-ctype相等比較不可靠.md | luajit, ffi, cdef, 函式指標, function pointer, typedef, ffi.cast, ffi.typeof, ctype, goo.cdef, titangoo | global |
 | luajit-cdef-typedef重複宣告沉默忽略-只有具名struct-tag會炸 | memory/luajit-cdef-typedef重複宣告沉默忽略-只有具名struct-tag會炸.md | ffi.cdef, cdef, typedef, redefine, pcall ffi.cdef, luajit, 熱更 re-require, goo.bind, fp_typedef | global |
 | mongodb-replacement-upsert-不併filter等值鍵 | memory/mongodb-replacement-upsert-不併filter等值鍵.md | mongodb, upsert, ReplaceOne, replacement, filter, nUpserted, 查無, UpdateOne, $set, mongo 寫入消失 | global |
 | lua-弱表探測字串無效-字串是值不是物件-驗回收用堆積量測 | memory/lua-弱表探測字串無效-字串是值不是物件-驗回收用堆積量測.md | weak table, 弱表, __mode, collectgarbage, GC 驗證, 記憶體洩漏, ffi.string 回收, pb.decode GC | global |
-| feedback-移植轉寫類任務-忠實1比1-勿擅自對齊他版權威或加料 | _AIDocs/Failures/feedback-移植轉寫類任務-忠實1比1-勿擅自對齊他版權威或加料.md | 移植, 改成C#, 轉寫, port, rewrite, 翻譯腳本, python 轉 C#, 忠實移植, 1:1, 路徑不要動, 全部維持 | global |
 | catclaw-agent-routing-boundaries | memory/catclaw-agent-routing-boundaries.md | catclaw, project-agent, channel 綁定, boundProject, cron subagent, atom scope, 掛載 | global |
 | dedup-stage-牢籠去蕪設計-信任模型隔離與substring-only首版 | _AIDocs/_atoms/MemDev/dedup-stage-牢籠去蕪設計-信任模型隔離與substring-only首版.md | dedup, 去蕪, DedupStage, draft, 草稿, _drafts, 截斷, truncate, soft-delete, 牢籠, taxonomy, 近重複, sweep | global |
-| feedback-memory-structure | _AIDocs/Failures/feedback-memory-structure.md | 寫入記憶, atom 設計, atom 顆粒, 指標型, scope 敏感, GUID硬編碼, 環境相依, gitignore, git rm, memory path, _staging | global |
 | mac-缺-python-用-wrapper-指向-python3 | memory/mac-缺-python-用-wrapper-指向-python3.md | python, python3, spawn python ENOENT, atom_write, funnel, vector service, xcode-select, AtomFunnelBlock, command not found python | global |
 | merge-時-sot-索引檔-ours-策略誤清-catalog-post-mortem | memory/merge-時-sot-索引檔-ours-策略誤清-catalog-post-mortem.md | catalog 誤清, _INDEX.md 被刪, index 磁碟不一致, SoT 衝突解, _atom_index.json merge, sync-memory-index, atoms 隱形, 衝突檔 ours, 衍生索引, post-mortem | global |
 | post-mortem-write-raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用 | _AIDocs/_atoms/MemDev/post-mortem-write-raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用.md | write_raw, atom_io, VALID_SOURCES, WriteResult, ok=False, 靜默失敗, 未檢回傳值, funnel, fail-soft, invalid source, 代理訊號, post-mortem, 批次寫入驗收, sync-atom-index | global |
@@ -135,7 +126,6 @@
 | cognitive-patterns | memory/Failures/思考與決策/cognitive-patterns.md | 過度工程, 代理指標, proxy metric, AI看不懂, AI在打轉, 品質回饋, 自我合理化, 編造規則, 籠統話術, 訂規保留, 設計慣例, 截斷, 採樣, 完整內容, 品質判定, excerpt | global |
 | feedback-atom-write-initial-confidence | memory/Failures/CC與原子記憶契約/feedback-atom-write-initial-confidence.md | atom_write, 初次寫, 信心度, [固], [臨], [觀], confidence, knowledge 行, 隨手寫 [固] | global |
 | workflow-parallel-agents | memory/工作流/協作與並行/workflow-parallel-agents.md | 多 agent, 平行 agent, sub-agent, 並行, 並行加速, 拆 agent, 多開 agent, 分頭, 多檔調查, 批量重構, 全面審視, 跨檔比較, parallel agents | global |
-| feedback-memory-system-doc-sync | _AIDocs/_atoms/MemDev/feedback-memory-system-doc-sync.md | 原子記憶系統, 記憶系統修正, 記憶系統修改, 記憶系統開發, 改 hook, 改 wg_, 改 server.js, memory system, 文件同步, doc sync, 寫入記憶, atom 設計, atom 顆粒, 指標型, GUID硬編碼, 環境相依, gitignore, memory path | global |
 | goal-driven-verify-loopkarpathy-吸收 | memory/驗證與實證/goal-driven-verify-loopkarpathy-吸收.md | 成功標準, 驗收, verify loop, goal-driven | global |
 | 自己flag的維護動作直接做完不要反問 | memory/行為契約/自己flag的維護動作直接做完不要反問.md | 反問, 要不要我, 該做就做, follow-through | global |
 | handoff-綜觀品質與抗失真寫法 | memory/工作流/節奏與收尾/handoff-綜觀品質與抗失真寫法.md | handoff, 續接, 下 session, next-phase, /continue, 交接, 接續 prompt, 綜觀, 失真, 多 session, 寫接續文, handoff 品質, 新開 session | global |
@@ -212,12 +202,6 @@
 | 驗證探針的副作用與假失敗-heredoc反斜線-假session登記-dry-run留目錄-fallback索引源 | _AIDocs/_atoms/MemDev/驗證探針的副作用與假失敗-heredoc反斜線-假session登記-dry-run留目錄-fallback索引源.md | 探針, 假失敗, 假紅, heredoc, 反斜線, node -e, 假 session, 實機驗證, dry-run 副作用, 探針副作用, 空目錄, parse_memory_index fallback, 驗證機制, post-mortem | global |
 | wrong-assumptions-思考與決策 | memory/Failures/思考與決策/wrong-assumptions-思考與決策.md | 假設錯誤, 誤判, 直覺假設, wrong assumption, 前提錯 | global |
 | atom-scope-讀取端可見性-候選池一次收窄-他專案不進池-personal只給本人 | memory/CC與原子記憶契約/atom-scope-讀取端可見性-候選池一次收窄-他專案不進池-personal只給本人.md | scope 可見性, 跨專案注入, personal 洩漏, 候選池, filter_visible, scope_from_rel_path, cross-project, alias 帶入, layers 白名單, 他專案 atom, scope 過濾 | global |
-| atoms-的納入流程必須由-cc-透過全域-靜默-定期的機制-如-cron-在 | memory/personal/holylight/atoms-的納入流程必須由-cc-透過全域-靜默-定期的機制-如-cron-在.md | 全自動, 靜默, 定期處理, 根層 | personal:holylight |
-| 要求ai助手以清晰-白話-條列的方式溝通-並主動提供session-prompt | memory/personal/holylight/要求ai助手以清晰-白話-條列的方式溝通-並主動提供session-prompt.md | 清晰, 白話, 條列, session prompt | personal:holylight |
-| 技術調查必須以數據和具體程式碼路徑為依據-避免猜測-懷疑-並著重於找出問題 | memory/personal/holylight/技術調查必須以數據和具體程式碼路徑為依據-避免猜測-懷疑-並著重於找出問題.md | 懷疑, 資料, 程式碼, 根因 | personal:holylight |
-| feedback-計畫文件紀律-人稱標明角色-重大發現獨立成節-監督者與留意事項必寫 | memory/personal/holylight/feedback-計畫文件紀律-人稱標明角色-重大發現獨立成節-監督者與留意事項必寫.md | 計畫, 計畫文件, plan, 交付文件, 人稱, 你我, 監督, 重大發現, 埋表格, ExitPlanMode, 審查發現 | personal:holylight |
-| gitlab-ssh金鑰真相-ujgitlab才是活鑰-id-rsa是死鑰 | memory/personal/holylight/gitlab-ssh金鑰真相-ujgitlab才是活鑰-id-rsa是死鑰.md | gitlab, ssh, 金鑰, fetch 失敗, Permission denied, UJGitLab, serverbase 同步, id_rsa | personal:holylight |
-| 給予的技術回饋必須具備高可行動性-聚焦於流程與思考過程-如-為什麼這樣設計-並 | memory/personal/holylight/給予的技術回饋必須具備高可行動性-聚焦於流程與思考過程-如-為什麼這樣設計-並.md | 精簡, 批判性自審, 設計推理, 可行動 | personal:holylight |
 | windows-新機-path-的-windowsapps-pythonexe-是-store-佔位程式-零輸出-exit-9009-子程序裸-spawn-python-必用絕對路徑 | memory/OS-Windows/windows-新機-path-的-windowsapps-pythonexe-是-store-佔位程式-零輸出-exit-9009-子程序裸-spawn-python-必用絕對路徑.md | Microsoft Store, WindowsApps, python.exe, exit 9009, App Execution Alias, spawn python, 裸 python, Unexpected end of JSON input, WG_PYTHON, resolvePythonExe, 新機安裝, PATH 順位 | global |
 | testfailgate-非-pytest-失敗紀錄只靠同前綴-40-字的成功指令清除-重跑勿加-cd-前綴 | _AIDocs/_atoms/MemDev/testfailgate-非-pytest-失敗紀錄只靠同前綴-40-字的成功指令清除-重跑勿加-cd-前綴.md | TestFailGate, 測試未綠, failing_tests, 不得宣告完成, 重複觸發, Stop 閘, node --check, heredoc | global |
 | git-apply-check-過但-git-am-失敗-crlf-檔案的-patch-用-git-apply-index-加-git-am-continue-保留原作者 | memory/版控/Git/git-apply-check-過但-git-am-失敗-crlf-檔案的-patch-用-git-apply-index-加-git-am-continue-保留原作者.md | git am, git apply, patch does not apply, format-patch, 同事 patch, 審核 patch, CRLF patch, git am --continue, 保留作者, 無 push 權 | global |
@@ -227,14 +211,12 @@
 | 跨層bash閘與sessionstart逾時-fd複製非寫檔-開場提醒無聲消失 | _AIDocs/_atoms/MemDev/跨層bash閘與sessionstart逾時-fd複製非寫檔-開場提醒無聲消失.md | CrossRealmBashBlock, 2>&1, fd 複製, hook_cancelled, SessionStart 逾時, timedOut, 開場提醒沒出, ScopeLayout 沒出, 一律被擋, 冷啟動 | global |
 | gh-cli-已裝已登入-pr本地merge-push自動標merged | memory/版控/gh-cli-已裝已登入-pr本地merge-push自動標merged.md | gh, gh cli, pull request, PR, 合併 PR, github api, merge, 審 PR | global |
 | 本repo公開有同事使用者-外部pr審查與docindex衝突解法 | _AIDocs/_atoms/MemDev/本repo公開有同事使用者-外部pr審查與docindex衝突解法.md | pull request, PR, 外部貢獻, 同事, DocIndex, 衝突, 向後相容, journal | global |
-| feedback-口令承接脈絡-開工等短口令以最近承諾的流程為準-不得跳過已承諾的planmode | memory/personal/holylight/feedback-口令承接脈絡-開工等短口令以最近承諾的流程為準-不得跳過已承諾的planmode.md | 開工, 動工, 口令歧義, plan mode, 先出計畫, 誤讀指令, 承諾流程 | personal:holylight |
 | 團隊產出上傳前先問人-記憶庫自動做滿 | memory/行為契約/團隊產出上傳前先問人-記憶庫自動做滿.md | 上傳, commit, push, 提交, 版控, 團隊, 協作, 記憶庫, atom, 自動分類, 要不要問, 收尾 | global |
 | 記憶索引三檔多機合併必衝突-裝-merge-atom-index-驅動-勿手合 | memory/版控/Git/記憶索引三檔多機合併必衝突-裝-merge-atom-index-驅動-勿手合.md | 索引衝突, _atom_index.json 衝突, MEMORY.md 衝突, _ATOM_INDEX.md 衝突, _INDEX.md 衝突, _local_catalog.md 衝突, merge driver, 合併驅動, rebase 衝突, pull --rebase 衝突, CRLF 衝突, 索引三檔, merge-atom-index, gitattributes, --resolve, IndexConflict, MergeDriver, svn update 衝突, svn resolve, svn:eol-style | global |
 | unity-editor崩潰鑑識三路徑-事件檔1000先看故障模組-edr注入dll可能是真兇 | memory/OS-Windows/unity-editor崩潰鑑識三路徑-事件檔1000先看故障模組-edr注入dll可能是真兇.md | Unity crash, Unity 崩潰, Editor 閃退, Native Crash Reporting, Got a UNKNOWN, InProcessClient64.dll, SentinelOne, EDR, Application Error 1000, CrashDumps, Editor-prev.log, c0000005, WER | global |
 | codex-exec-手動派工三旗標-skip-git-repo-check-stdin關閉-unelevated | _AIDocs/_atoms/CC與原子記憶契約/codex-exec-手動派工三旗標-skip-git-repo-check-stdin關閉-unelevated.md | codex exec, codex, 派 codex, 第二觀點, second opinion, 大師會議 | global |
 | repo-全面-lf-決策與守衛鏈 | _AIDocs/_atoms/MemDev/repo-全面-lf-決策與守衛鏈.md | LF, CRLF, 換行, eol, gitattributes, write_text_lf, normalize-eol, verify_lf_writes, newline | global |
 | heredoc反斜線三連踩post-mortem-含反斜線的腳本一律write成檔再跑 | _AIDocs/_atoms/Tools/heredoc反斜線三連踩post-mortem-含反斜線的腳本一律write成檔再跑.md | heredoc, 反斜線, python - <<EOF, replace 沒中, SyntaxError unterminated, assert old in s, post-mortem, Write 工具 | global |
-| identity-變動需同步更新-identity-template-且所有文件 | memory/文字與格式/identity-變動需同步更新-identity-template-且所有文件.md | identity, identity.template, LF格式, 統一LF | global |
 | git-合併與換行的實證事實-text-auto-不回頭轉-stage-方向-孤立-cr-是-binary-driver-缺-command-會-fatal | memory/版控/Git/git-合併與換行的實證事實-text-auto-不回頭轉-stage-方向-孤立-cr-是-binary-driver-缺-command-會-fatal.md | text=auto, eol=lf, renormalize, gitattributes, merge driver, stage 2, stage 3, ls-files -u, rebase ours theirs, cherry-pick 衝突, 孤立 CR, lone CR, ignore-cr-at-eol, lacks command line, add/add, stash pop 衝突, MERGE_HEAD | global |
 | feedback-強迫選擇也是退避-自動化承諾要對團隊每人成立-不可把專案層動作推給使用者貼prompt | memory/Failures/行為契約/feedback-強迫選擇也是退避-自動化承諾要對團隊每人成立-不可把專案層動作推給使用者貼prompt.md | 強迫選擇, 先不選, 繼續討論, 決策缺漏, 全自動, 貼 prompt, 專案 session, 自動辦到好, 多機, 團隊每個人, 二選一, 拍板 | global |
 | hook-內呼叫外部工具的四個坑-home覆寫下claude-dir指錯-pythonw無stdio-5秒預算-探針要隔離global設定 | _AIDocs/_atoms/MemDev/hook-內呼叫外部工具的四個坑-home覆寫下claude-dir指錯-pythonw無stdio-5秒預算-探針要隔離global設定.md | PreToolUse, hook 子行程, CLAUDE_DIR, Path.home, HOME 覆寫, pythonw, stdout None, 5 秒, hook timeout, 探針, GIT_CONFIG_GLOBAL, 隔離測試, run_verify 並行, 假紅 | global |
@@ -249,4 +231,16 @@
 | hook-py改動立即生效-每次呼叫起新進程-只有mcp-node進程需重啟 | _AIDocs/_atoms/MemDev/hook-py改動立即生效-每次呼叫起新進程-只有mcp-node進程需重啟.md | hook 生效, 下個 session 才生效, 新 session 才生效, hook 改動, PreToolUse 生效, Stop hook 生效, 重啟生效, MCP 重啟, reload window | global |
 | 健檢error與索引矛盾即解析器誤報-audit跨層全掃自08-31起-週報global-only看不到專案層 | _AIDocs/_atoms/MemDev/健檢error與索引矛盾即解析器誤報-audit跨層全掃自08-31起-週報global-only看不到專案層.md | memory health, memory-audit, 缺少必要欄位, health error, dashboard 問題, 解析器誤報, Decided-by, 跨層掃描, discover_layers, health-weekly, 為什麼會錯那麼多 | global |
 | 多phase計畫的驗收規格要一開始就標phase-否則分session收尾會被裁判當全案未完 | memory/工作流/多phase計畫的驗收規格要一開始就標phase-否則分session收尾會被裁判當全案未完.md | 驗收規格, acceptance, 驗收裁判, 分phase, 分階段, 多session, phase標籤, 收尾被擋, plan-mode 驗收 | global |
-| feedback-動手前不要找理由縮小範圍 | memory/personal/holylight/feedback-動手前不要找理由縮小範圍.md | 退縮, 撤退, 找理由, over-thinking, 推測沒驗證, 範圍縮小, 推小範圍, 工程過大, 風險高, 丟給使用者, prompt 漏給, 追蹤承諾, token 過期, auth error | personal:holylight |
+| collab-anchor | memory/collab-anchor.md | CatClaw, 個人專案, 跑偏, 過度擴張, 焦慮, 收斂, 方向校正, 提醒, 副駕, 協作規則, 邊界, 失焦, 方向, 副駕規則 | global |
+| collab-experiment | memory/collab-experiment.md | AI自主開發, AI自主, Sprint自主, 協作實驗, harness agent, subagent協作, PM角色, AI當開發, 啟動協作實驗, 協作模式 | global |
+| experience-vmlx-gemma4-abliterated | memory/experience-vmlx-gemma4-abliterated.md | vmlx, gemma4, gemma 4, abliterated, dealignai, 破解版模型, 去審查模型, JANG, 本地 LLM, mac 跑大模型, ollama, gguf, windows, rdchat, RTX 3090, douyamv, 31B JANG | global |
+| feedback-knowledge-doc-iteration | memory/feedback-knowledge-doc-iteration.md | same_file_3x, retry_escalation, knowledge_doc, 規劃文件, 補章節, WellsDB, 知識庫 | global |
+| nodejs-ecosystem | memory/nodejs-ecosystem.md | Node.js, NodeJS, npm, npx, package.json, node_modules, TypeScript, tsc, pm2, ecosystem.config, JavaScript, JS, TS, ESM, CommonJS, CJS | global |
+| reference-claudecode | memory/reference-claudecode.md | Claude Code, claudecode, claude code 架構, context 管理, token 控制, session 處理, 安全邊界 | global |
+| reference-obsidian-vault | memory/reference-obsidian-vault.md | obsidian, vault, WellsDB, 筆記庫, 寫到obsidian, 放到obsidian, 輸出obsidian | global |
+| wells-workflow-infra-before-app | memory/wells-workflow-infra-before-app.md | 新專案啟動, AI 工作流規劃, 大任務開工, 基礎建設, 記憶系統, infrastructure | global |
+| wells-workflow-mechanism-over-discipline | memory/wells-workflow-mechanism-over-discipline.md | 紀律, 決心, 機制, 自動偵測, guardian, hook, 自動化, 靠記得 | global |
+| wells-workflow-multi-llm-ledger | memory/wells-workflow-multi-llm-ledger.md | 多 agent, 多 LLM, 平行協作, 任務分派, subagent, claim, 範圍認領, Doomsday Phase2 | global |
+| wells-workflow-small-automation-payoff | memory/wells-workflow-small-automation-payoff.md | 自動化, hook, stream idle, watchdog, 卡死, 沉默失敗, silent failure, LLM 不回覆 | global |
+| wells-workflow-tell-ai-what-you-hate | memory/wells-workflow-tell-ai-what-you-hate.md | AI 行為糾正, feedback atom, 偏好設定, 行為校正, 不喜歡, 別這樣做 | global |
+| feedback-memory-system-doc-sync | _AIDocs/_atoms/MemDev/feedback-memory-system-doc-sync.md | 原子記憶系統, 記憶系統修正, 記憶系統修改, 記憶系統開發, 改 hook, 改 wg_, 改 server.js, memory system, 文件同步, doc sync, 寫入記憶, atom 設計, atom 顆粒, 指標型, GUID硬編碼, 環境相依, gitignore, memory path | global |

@@ -6,7 +6,17 @@
 
 | Atom | 說明 |
 |------|------|
+| dotnet-inline-cant-cross-delegate | dotnet-inline-cant-cross-delegate |
+| dotnet-interface-devirt-pgo | dotnet-interface-devirt-pgo |
+| dotnet-major-版本與-vs-版本硬綁定-sln檔頭決定開哪版 | dotnet-major-版本與-vs-版本硬綁定-sln檔頭決定開哪版 |
+| dotnet-mysqldata-collation-id-相容 | dotnet-mysqldata-collation-id-相容 |
+| dotnet-sdk10-rid-restore-runtime-pack | dotnet-sdk10-rid-restore-runtime-pack |
+| dotnet-string-gethashcode-per-process-randomized | dotnet-string-gethashcode-per-process-randomized |
+| dotnet-xunit-getentryassembly-testhost | dotnet-xunit-getentryassembly-testhost |
+| mongodb-replacement-upsert-不併filter等值鍵 | mongodb-replacement-upsert-不併filter等值鍵 |
 | msbuild-17x-重導向-stdout-輸出-utf-8-net-framework-用-encodingdefault-讀會亂碼 | MSBuild 17.x 重導向 stdout 輸出 UTF-8-net-framework-用-Encoding.Default-讀會亂碼 |
+| sqlx-讀取端三個踩點字串定序tinyint-當-booldesc-的-enum | Sqlx 讀取端三個踩點：字串定序、TINYINT 當 bool、DESC 的 ENUM |
+| winforms-關閉階段-async-續體不執行-formclosing-殺process必須同步 | winforms-關閉階段-async-續體不執行-formclosing-殺process必須同步 |
 
 ## 子層
 

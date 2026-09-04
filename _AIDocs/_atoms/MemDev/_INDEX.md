@@ -6,6 +6,8 @@
 
 | Atom | 說明 |
 |------|------|
+| activation負值不是負相關-act-r對數尺度天然跨零-注入噪音修門檻與顯示勿過濾分數 | activation負值不是負相關-ACT-R對數尺度天然跨零-注入噪音修門檻與顯示勿過濾分數 |
+| always-load-規則檔修剪判準-事前規則留一句-事後且已有程式硬控制才刪-啟發式提示不算硬控制 | always-load 規則檔修剪判準-事前規則留一句-事後且已有程式硬控制才刪-啟發式提示不算硬控制 |
 | anti-evasion-hud-設計脊柱與強化前必讀 | anti-evasion-hud-設計脊柱與強化前必讀 |
 | atom-edit-meta與atom-heal對專案層atom的缺口與繞法 | atom-edit-meta與atom-heal對專案層atom的缺口與繞法 |
 | atom-move-v5-sot-correct-化與半遷移工具辨識 | atom-move V5 SoT-correct 化與半遷移工具辨識 |
@@ -16,49 +18,47 @@
 | codex-handoff自檢誤報文件截斷-真因是輸入靜默截斷非模型幻覺 | codex-handoff自檢誤報文件截斷-真因是輸入靜默截斷非模型幻覺 |
 | confirmations-已退役-phase2-usefulness-接管晉升 | confirmations-已退役-Phase2-usefulness-接管晉升 |
 | dashboard-apiatoms-專案-shared-範疇被-frontmatter-scope-覆寫誤歸核心房 | dashboard apiAtoms 專案 shared 範疇被 frontmatter Scope 覆寫誤歸核心房 |
+| decisions-architecture | 架構決策 |
+| dedup-stage-牢籠去蕪設計-信任模型隔離與substring-only首版 | dedup-stage-牢籠去蕪設計-信任模型隔離與substring-only首版 |
+| feedback-memory-system-doc-sync | feedback-memory-system-doc-sync |
 | guardian-dashboard-孤兒佔埠與新碼重啟 | Guardian Dashboard 孤兒佔埠與新碼重啟 |
 | guardian-警告訊息辨識度-emoji-前綴分流 | guardian 警告訊息辨識度-emoji 前綴分流 |
 | harness原生memory與atom索引marker撞名辨識 | harness原生memory與atom索引marker撞名辨識 |
-| otel-遙測評估結論-不實作-兩目標指標皆測不到 | OTEL 遙測評估結論-不實作-兩目標指標皆測不到 |
-| pan-hermes不移植部件與vscode-text-block不落盤實測 | pan-hermes不移植部件與vscode-text-block不落盤實測 |
-| scope-shared-無主題子夾路由-專案靠-project-hooks-sweep-分層 | scope-shared-無主題子夾路由-專案靠-project_hooks-sweep-分層 |
-| usefulness晉升軌兩級同門檻-同日連跳觀到固的假晉升 | usefulness晉升軌兩級同門檻-同日連跳觀到固的假晉升 |
-| write-raw-對未列舉-source-靜默回-okfalse-不-raise呼叫端必檢查回傳值 | write_raw 對未列舉 source 靜默回 ok=False 不 raise（呼叫端必檢查回傳值） |
-| 佛法三缺口工程化-失念壞滅緣了義 | 佛法三缺口工程化-失念壞滅緣了義 |
-| 原子記憶審查總結-好機制被小故障卡死非過重-拔前先實證 | 原子記憶審查總結-好機制被小故障卡死非過重-拔前先實證 |
-| 取用端稽核與瘦身規範-atomaudit與3kb預算 | 取用端稽核與瘦身規範-AtomAudit與3KB預算 |
-| 啟動鏈自動覆寫陷阱-user-init每session拷貝來源檔必先驗證管線仍成立 | 啟動鏈自動覆寫陷阱-user-init每session拷貝來源檔必先驗證管線仍成立 |
-| 專案工作驗收裁判的分級啟動與殺閘設計 | 專案工作驗收裁判的分級啟動與殺閘設計 |
-| 專案等級-mcpskillhookslog-不放全域根層 | 專案等級 mcp/skill/hooks/log 不放全域根層 |
-| 巨檔純機械拆分-carve腳本與驗證盲點 | 巨檔純機械拆分-carve腳本與驗證盲點 |
-| 模型行為移植-fable行為契約必載檔 | 模型行為移植-Fable行為契約必載檔 |
-| 檢索融合與回歸集調參-rrf-min-score-定案 | 檢索融合與回歸集調參-rrf-min-score-定案 |
-| 禁語-hook-不開引用豁免誤報噪音-vs-契約破洞不對稱 | 禁語 hook 不開引用豁免（誤報噪音 vs 契約破洞不對稱） |
-| 衝突偵測-block-資格閘-複驗一致-分區感知-待審出路 | 衝突偵測-block-資格閘-複驗一致-分區感知-待審出路 |
-| 跨session協調-衝突預警機制與cc原生現況 | 跨session協調-衝突預警機制與CC原生現況 |
-| dedup-stage-牢籠去蕪設計-信任模型隔離與substring-only首版 | dedup-stage-牢籠去蕪設計-信任模型隔離與substring-only首版 |
-| post-mortem-write-raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用 | post-mortem-write_raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用 |
-| activation負值不是負相關-act-r對數尺度天然跨零-注入噪音修門檻與顯示勿過濾分數 | activation負值不是負相關-ACT-R對數尺度天然跨零-注入噪音修門檻與顯示勿過濾分數 |
-| always-load-規則檔修剪判準-事前規則留一句-事後且已有程式硬控制才刪-啟發式提示不算硬控制 | always-load 規則檔修剪判準-事前規則留一句-事後且已有程式硬控制才刪-啟發式提示不算硬控制 |
-| decisions-architecture | 架構決策 |
-| feedback-memory-system-doc-sync | feedback-memory-system-doc-sync |
 | hook-py改動立即生效-每次呼叫起新進程-只有mcp-node進程需重啟 | hook-py改動立即生效-每次呼叫起新進程-只有MCP-node進程需重啟 |
 | hook-內呼叫外部工具的四個坑-home覆寫下claude-dir指錯-pythonw無stdio-5秒預算-探針要隔離global設定 | hook 內呼叫外部工具的四個坑-HOME覆寫下CLAUDE_DIR指錯-pythonw無stdio-5秒預算-探針要隔離global設定 |
 | hud暫存清單靠prose猜路徑的失敗-改殘檔帳本以檔案系統為權威 | HUD暫存清單靠prose猜路徑的失敗-改殘檔帳本以檔案系統為權威 |
 | mcp-js-改動後未重啟-lazy-require-新舊模組混載-tool-回-undefined-類錯誤不是-bug-reload-window-即復原 | MCP js 改動後未重啟-lazy-require 新舊模組混載-tool 回 undefined 類錯誤不是 bug-Reload Window 即復原 |
 | memory-pipeline-silent-failure-2026-05 | 記憶機制靜默失效（confirmations 零增 + episodic 停擺） |
+| otel-遙測評估結論-不實作-兩目標指標皆測不到 | OTEL 遙測評估結論-不實作-兩目標指標皆測不到 |
+| pan-hermes不移植部件與vscode-text-block不落盤實測 | pan-hermes不移植部件與vscode-text-block不落盤實測 |
+| post-mortem-write-raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用 | post-mortem-write_raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用 |
 | repo-全面-lf-決策與守衛鏈 | repo-全面-LF-決策與守衛鏈 |
+| scope-shared-無主題子夾路由-專案靠-project-hooks-sweep-分層 | scope-shared-無主題子夾路由-專案靠-project_hooks-sweep-分層 |
 | svn測試與hook的三個實測事實-diff3相鄰改動自合-整wc-status爆預算-只信xml輸出 | svn測試與hook的三個實測事實-diff3相鄰改動自合-整WC status爆預算-只信xml輸出 |
 | testfailgate-非-pytest-失敗紀錄只靠同前綴-40-字的成功指令清除-重跑勿加-cd-前綴 | TestFailGate 非 pytest 失敗紀錄只靠同前綴 40 字的成功指令清除-重跑勿加 cd 前綴 |
 | toolchain-ollama | Ollama Dual-Backend 實戰記憶 |
+| usefulness晉升軌兩級同門檻-同日連跳觀到固的假晉升 | usefulness晉升軌兩級同門檻-同日連跳觀到固的假晉升 |
+| write-raw-對未列舉-source-靜默回-okfalse-不-raise呼叫端必檢查回傳值 | write_raw 對未列舉 source 靜默回 ok=False 不 raise（呼叫端必檢查回傳值） |
+| 佛法三缺口工程化-失念壞滅緣了義 | 佛法三缺口工程化-失念壞滅緣了義 |
 | 健檢error與索引矛盾即解析器誤報-audit跨層全掃自08-31起-週報global-only看不到專案層 | 健檢error與索引矛盾即解析器誤報-audit跨層全掃自08-31起-週報global-only看不到專案層 |
 | 刪除候選清單的進入條件要有正向資格判定-只驗exists會讓正式檔進hud刪除鈕 | 刪除候選清單的進入條件要有正向資格判定-只驗exists會讓正式檔進HUD刪除鈕 |
+| 原子記憶審查總結-好機制被小故障卡死非過重-拔前先實證 | 原子記憶審查總結-好機制被小故障卡死非過重-拔前先實證 |
+| 取用端稽核與瘦身規範-atomaudit與3kb預算 | 取用端稽核與瘦身規範-AtomAudit與3KB預算 |
 | 向量庫stale清理失效根因-layer標籤含冒號拆鍵錯位-刪0列仍回報成功 | 向量庫stale清理失效根因-layer標籤含冒號拆鍵錯位-刪0列仍回報成功 |
+| 啟動鏈自動覆寫陷阱-user-init每session拷貝來源檔必先驗證管線仍成立 | 啟動鏈自動覆寫陷阱-user-init每session拷貝來源檔必先驗證管線仍成立 |
 | 回訪機制-改完一週後看數據交給到期自動跑-交接以接手者零記憶為前提 | 回訪機制-改完一週後看數據交給到期自動跑-交接以接手者零記憶為前提 |
+| 專案工作驗收裁判的分級啟動與殺閘設計 | 專案工作驗收裁判的分級啟動與殺閘設計 |
+| 專案等級-mcpskillhookslog-不放全域根層 | 專案等級 mcp/skill/hooks/log 不放全域根層 |
+| 巨檔純機械拆分-carve腳本與驗證盲點 | 巨檔純機械拆分-carve腳本與驗證盲點 |
 | 本repo公開有同事使用者-外部pr審查與docindex衝突解法 | 本repo公開有同事使用者-外部PR審查與DocIndex衝突解法 |
+| 模型行為移植-fable行為契約必載檔 | 模型行為移植-Fable行為契約必載檔 |
+| 檢索融合與回歸集調參-rrf-min-score-定案 | 檢索融合與回歸集調參-rrf-min-score-定案 |
 | 注入預算三教訓-裁切要回填-分級看token不看字元-橋接檔須隨索引重產 | 注入預算三教訓-裁切要回填-分級看token不看字元-橋接檔須隨索引重產 |
+| 禁語-hook-不開引用豁免誤報噪音-vs-契約破洞不對稱 | 禁語 hook 不開引用豁免（誤報噪音 vs 契約破洞不對稱） |
+| 衝突偵測-block-資格閘-複驗一致-分區感知-待審出路 | 衝突偵測-block-資格閘-複驗一致-分區感知-待審出路 |
 | 規則縫隙偏移-兩條各自合理的規則疊出第三種行為-syncreminder被local-commit靜音 | 規則縫隙偏移-兩條各自合理的規則疊出第三種行為-SyncReminder被local-commit靜音 |
 | 記憶索引分類讀寫鏈總審計結論-驗無誤清單與一條龍中斷點 | 記憶索引分類讀寫鏈總審計結論-驗無誤清單與一條龍中斷點 |
+| 跨session協調-衝突預警機制與cc原生現況 | 跨session協調-衝突預警機制與CC原生現況 |
 | 跨層bash閘與sessionstart逾時-fd複製非寫檔-開場提醒無聲消失 | 跨層Bash閘與SessionStart逾時-fd複製非寫檔-開場提醒無聲消失 |
 | 路徑解析函式的根層分支是遷移盲點-cwd在claude根時專案分支會長出舊址 | 路徑解析函式的根層分支是遷移盲點-cwd在claude根時專案分支會長出舊址 |
 | 驗收裁判對多階段戰役的等待回合會誤判為完工宣稱-規格檔只綁當前phase | 驗收裁判對多階段戰役的等待回合會誤判為完工宣稱-規格檔只綁當前phase |

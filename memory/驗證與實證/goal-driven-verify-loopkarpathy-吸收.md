@@ -3,9 +3,9 @@
 - Scope: global
 - Author: holylight
 - Confidence: [固]
-- Trigger: 成功標準, 驗收, verify loop, goal-driven
+- Trigger: 成功標準, 驗收, verify loop, goal-driven, 寫程式, 寫扣, 實作, refactor, 重構, fix bug, 修 bug, add validation, verify
 - Created-at: 2026-06-12
-- Related: feedback-workflow-discipline, workflow-icld, decisions, handoff-綜觀品質與抗失真寫法, write-raw-對未列舉-source-靜默回-okfalse-不-raise呼叫端必檢查回傳值, 專案工作驗收裁判的分級啟動與殺閘設計, 契約加欄位必查手寫映射點-單元綠不代表wire存活, feedback-等秒數是次等方法-固定模式資訊要事件驅動主動處理
+- Related: feedback-workflow-discipline, workflow-icld, decisions, handoff-綜觀品質與抗失真寫法, write-raw-對未列舉-source-靜默回-okfalse-不-raise呼叫端必檢查回傳值, 專案工作驗收裁判的分級啟動與殺閘設計, 契約加欄位必查手寫映射點-單元綠不代表wire存活, feedback-等秒數是次等方法-固定模式資訊要事件驅動主動處理, post-mortem-write-raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用
 
 ## 知識
 

@@ -7,6 +7,8 @@
 | Atom | 說明 |
 |------|------|
 | goal-driven-verify-loopkarpathy-吸收 | goal-driven-verify-loop（karpathy 吸收） |
+| goal-driven-verify-loopkarpathy-吸收 | goal-driven-verify-loop（karpathy 吸收） |
+| 品質完整性判定須讀完整內容-勿從截斷採樣斷言 | 品質完整性判定須讀完整內容-勿從截斷採樣斷言 |
 | 實驗性改動的復原要驗回快照-送一次指令不算復原 | 實驗性改動的復原要驗回快照-送一次指令不算復原 |
 | 禁ui自動化時怎麼驗winforms版面-printwindow截被遮住的視窗 | 禁UI自動化時怎麼驗WinForms版面-printwindow截被遮住的視窗 |
 | 背景驗證未收就結束回合-stop閘裁判只看當下事證不看未來承諾 | 背景驗證未收就結束回合-Stop閘裁判只看當下事證不看未來承諾 |

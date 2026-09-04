@@ -12,7 +12,7 @@ When this skill is invoked, send a message to the local OpenClaw agent.
 
 1. Run the gateway-chat.js script:
    ```bash
-   node C:/Users/holyl/.claude/scripts/gateway-chat.js "<user's message>"
+   node C:/Users/wellstseng/.claude/scripts/gateway-chat.js "<user's message>"
    ```
 
 2. The script:
@@ -37,7 +37,7 @@ When this skill is invoked, send a message to the local OpenClaw agent.
 
 If the WebSocket approach fails, fall back to the Bridge endpoint:
 ```bash
-node C:/Users/holyl/.claude/scripts/send-to-openclaw.js "<message>"
+node C:/Users/wellstseng/.claude/scripts/send-to-openclaw.js "<message>"
 ```
 This writes to `.openclaw/workspace/claude-messages.jsonl` which OpenClaw can read.
 

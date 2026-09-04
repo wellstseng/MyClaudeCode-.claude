@@ -6,7 +6,7 @@
 - Created: 2026-03-19
 - Type: procedural
 - Tags: ollama, dual-backend, extraction
-- Related: toolchain, decisions-architecture, decisions
+- Related: toolchain, decisions-architecture, decisions, experience-vmlx-gemma4-abliterated
 
 ## 知識
 

@@ -171,3 +171,6 @@ workflow/companion-state-*.tmp
 workflow/aec-tempfiles/
 chrome/
 journals/
+
+# vendor deps（各機 npm install，不進版控）
+node_modules/

@@ -3,10 +3,10 @@
 - Scope: global
 - Author: wellstseng
 - Confidence: [固]
-- Trigger: 偏好, 風格, 習慣, 語言, 回應, 執P, 執驗上P, 上GIT, Obsidian
+- Trigger: 偏好, 風格, 習慣, 語言, 回應, 執P, 執驗上P, 上GIT, Obsidian, 上傳GIT, commit, push
 - Created-at: 2026-06-08
 
-- Related: collaboration-protocol, feedback_upload_discord, hotfix-ilruntime-traps, wells-workflow-copilot-not-driver, wells-workflow-feedback-driven-teaching, 專案等級-mcpskillhookslog-不放全域根層, a執p-自執驗上p-自動完工協議, feedback-rigor-standards, feedback-workflow-discipline, feedback-已驗證的重複操作直接做完勿反覆確認, wells-design-principles-明碼優先-職責分離-防呆擋非法, feedback-回答先給重點-結論一句話-細節按需展開, feedback-註解一律白話-不堆術語, feedback-上git是commit加push一體-沒口令前不先commit-讓使用者能先看diff, feedback-收尾工作樹要上乾淨-該上就上-用不到就刪-不反問, 併發-session-共用工作樹-收尾選擇性-staging-勿-git-add-a, workflow-rules
+- Related: collaboration-protocol, feedback_upload_discord, hotfix-ilruntime-traps, wells-workflow-copilot-not-driver, wells-workflow-feedback-driven-teaching, 專案等級-mcpskillhookslog-不放全域根層, a執p-自執驗上p-自動完工協議, feedback-rigor-standards, feedback-workflow-discipline, feedback-已驗證的重複操作直接做完勿反覆確認, wells-design-principles-明碼優先-職責分離-防呆擋非法, feedback-回答先給重點-結論一句話-細節按需展開, feedback-註解一律白話-不堆術語, feedback-上git是commit加push一體-沒口令前不先commit-讓使用者能先看diff, feedback-收尾工作樹要上乾淨-該上就上-用不到就刪-不反問, 併發-session-共用工作樹-收尾選擇性-staging-勿-git-add-a, workflow-rules, collab-anchor, reference-obsidian-vault, wells-workflow-tell-ai-what-you-hate
 
 ## 知識
 

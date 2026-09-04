@@ -153,7 +153,7 @@ cp "$SRC/version.json" "$DST/version.json"
 # 核心模組（整資料夾覆蓋；不含個人 atom 與 runtime state）
 rsync -a --delete "$SRC/hooks/" "$DST/hooks/"      # dispatcher + handlers/（9 事件）+ wg_*.py + 獨立 hook
 rsync -a --delete "$SRC/lib/" "$DST/lib/"          # atom_io / atom_spec / atom_locations / atom_index_json / atom_access / realm_gate …
-rsync -a --delete "$SRC/skills/" "$DST/skills/"    # <!-- skill-count -->21<!-- /skill-count --> 個 active skill + _archived/
+rsync -a --delete "$SRC/skills/" "$DST/skills/"    # <!-- skill-count -->23<!-- /skill-count --> 個 active skill + _archived/
 rsync -a --delete "$SRC/rules/" "$DST/rules/"
 rsync -a "$SRC/tools/" "$DST/tools/"               # 保留 user 自加
 
@@ -365,7 +365,7 @@ python tools/merge-atom-index.py --install # 可選：不跑也行——下一�
 - [ ] `hooks/dispatcher.py` 存在；`hooks/handlers/` 有 **9** 個事件 handler（session_start / session_end / user_prompt_submit / pre_tool_use / post_tool_use / stop / pre_compact / post_compact / post_tool_batch）+ `ups_*.py` 四段 + `_shared.py` + `aec_ledger.py`
 - [ ] `hooks/wg_*.py` 為：wg_atoms / wg_coordination / wg_core / wg_docdrift / wg_episodic / wg_evasion / wg_extraction / wg_handoff / wg_parallel / wg_recall_miss / wg_rescue / wg_research / wg_roles（shim 只有 wg_roles）
 - [ ] `hooks/` 內**沒有** `quick-extract.py`、`wg_atom_observation.py`（已刪）；`commands/` 已刪（併入 `skills/`）
-- [ ] `skills/` 有 <!-- skill-count -->21<!-- /skill-count --> 個 active skill；`skills/_archived/` 放 dormant 的 init-roles / conflict-review
+- [ ] `skills/` 有 <!-- skill-count -->23<!-- /skill-count --> 個 active skill；`skills/_archived/` 放 dormant 的 init-roles / conflict-review
 - [ ] `lib/atom_index_json.py` + `memory/_atom_index.json` 存在；`memory/_meta/taxonomy.json` + `forbidden-phrases.json` 存在
 - [ ] 核心 atom 已階層化在 `memory/<範疇>/`，`memory/` 根目錄無平鋪 atom；`taxonomy.gate_enabled=true`
 - [ ] `workflow/config.json`：`vector_search.global_layer="bm25"`、`bm25_min_score=7.0`、`fusion="rrf"`；無 `codex_companion.subprocess_timeout` 死鍵；`ollama_backends` 在 `vector_search` 底下

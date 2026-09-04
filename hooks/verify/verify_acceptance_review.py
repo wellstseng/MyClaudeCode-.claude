@@ -256,6 +256,11 @@ def test_map_invalid_verdict_is_uncertain():
 
 def test_judge_failure_maps_to_uncertain(monkeypatch, sandbox):
     """裁判逾時/空回 → uncertain 揭露，不靜默通過（INV-JUDGE-FAILURE-IS-DISCLOSE）。"""
+    # 釘住 codex 路徑：無 codex 的機器會被導去真的 claude fallback、繞過下面的 mock（測資可移植性）
+    monkeypatch.setattr(
+        assessor.judge_backend, "select_backend",
+        lambda config: ("codex", str(config.get("codex_binary", "codex"))),
+    )
     monkeypatch.setattr(
         assessor, "_run_codex_with_retry", lambda *a, **k: ("", "timeout after 60s", 2)
     )

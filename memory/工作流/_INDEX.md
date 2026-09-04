@@ -6,6 +6,17 @@
 
 | Atom | 說明 |
 |------|------|
+| feedback-knowledge-doc-iteration | feedback-knowledge-doc-iteration |
+| feedback_upload_discord | Discord 附件上傳流程 |
+| wells-workflow-brake-mechanism | wells-workflow-brake-mechanism |
+| wells-workflow-copilot-not-driver | wells-workflow-copilot-not-driver |
+| wells-workflow-feedback-driven-teaching | wells-workflow-feedback-driven-teaching |
+| wells-workflow-handoff-quality | wells-workflow-handoff-quality |
+| wells-workflow-infra-before-app | wells-workflow-infra-before-app |
+| wells-workflow-mechanism-over-discipline | wells-workflow-mechanism-over-discipline — 不靠決心靠機制 |
+| wells-workflow-multi-llm-ledger | wells-workflow-multi-llm-ledger |
+| wells-workflow-small-automation-payoff | wells-workflow-small-automation-payoff |
+| wells-workflow-tell-ai-what-you-hate | wells-workflow-tell-ai-what-you-hate |
 | 多phase計畫的驗收規格要一開始就標phase-否則分session收尾會被裁判當全案未完 | 多phase計畫的驗收規格要一開始就標phase-否則分session收尾會被裁判當全案未完 |
 
 ## 子層
@@ -13,5 +24,5 @@
 | 子層 | atom 數 | 深入 |
 |------|---------|------|
 | 協作與並行 | 8 | `memory/工作流/協作與並行/_INDEX.md` |
-| 節奏與收尾 | 6 | `memory/工作流/節奏與收尾/_INDEX.md` |
+| 節奏與收尾 | 8 | `memory/工作流/節奏與收尾/_INDEX.md` |
 | 重構 | 1 | `memory/工作流/重構/coding-style掃碼重構sop-量化掃加獨立第二意見-特徵測試先行-純重構以自測報告逐行相同為證.md` |

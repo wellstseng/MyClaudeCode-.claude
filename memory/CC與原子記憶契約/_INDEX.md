@@ -11,3 +11,6 @@
 | decisions | 全域決策 |
 | escalation-hook-在-edit-count-proxy-上-false-fire-的辨識無真實失敗迴圈時不盲從不編造 | escalation-hook 在 edit-count-proxy 上 false-fire 的辨識（無真實失敗迴圈時不盲從不編造） |
 | mcp-json-與-user-scope-同名-server-並存雙開-黑窗第四層破口 | mcp-json-與-user-scope-同名-server-並存雙開-黑窗第四層破口 |
+| merge-時-sot-索引檔-ours-策略誤清-catalog-post-mortem | merge-時-SoT-索引檔-ours-策略誤清-catalog-post-mortem |
+| obsidian-sync-hook-全域同步-stdin-json-測試陷阱 | obsidian-sync hook 全域同步 + stdin-JSON 測試陷阱 |
+| 記憶汙染與上下文腐化-注入萃取自檢 | 記憶汙染與上下文腐化-注入萃取自檢 |

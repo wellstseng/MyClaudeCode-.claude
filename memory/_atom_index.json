@@ -30,33 +30,18 @@
         "收割",
         "Playwright",
         "cookie",
-        "export"
-      ],
-      "scope": "global"
-    },
-    {
-      "name": "preferences",
-      "path": "memory/preferences.md",
-      "triggers": [
-        "偏好",
-        "風格",
-        "習慣",
-        "語言",
-        "回應",
-        "執P",
-        "執驗上P",
-        "上GIT",
-        "Obsidian"
+        "export",
+        "Google Sheets"
       ],
       "scope": "global"
     },
     {
       "name": "workflow-icld",
-      "path": "memory/workflow-icld.md",
+      "path": "memory/工作流/節奏與收尾/workflow-icld.md",
       "triggers": [
         "ICLD",
-        "閉環",
         "Sprint",
+        "閉環",
         "功能拆解",
         "開發計畫",
         "大型新功能",
@@ -67,7 +52,7 @@
     },
     {
       "name": "workflow-svn",
-      "path": "memory/workflow-svn.md",
+      "path": "memory/版控/SVN/workflow-svn.md",
       "triggers": [
         "svn",
         "svn-update",
@@ -79,7 +64,7 @@
     },
     {
       "name": "cognitive-patterns",
-      "path": "_AIDocs/Failures/cognitive-patterns.md",
+      "path": "memory/Failures/思考與決策/cognitive-patterns.md",
       "triggers": [
         "過度工程",
         "代理指標",
@@ -91,7 +76,12 @@
         "編造規則",
         "籠統話術",
         "訂規保留",
-        "設計慣例"
+        "設計慣例",
+        "截斷",
+        "採樣",
+        "完整內容",
+        "品質判定",
+        "excerpt"
       ],
       "scope": "global"
     },
@@ -108,23 +98,6 @@
         "knowledge block",
         "block 渲染",
         "dogfood"
-      ],
-      "scope": "global"
-    },
-    {
-      "name": "feedback-memory-system-doc-sync",
-      "path": "_AIDocs/Failures/feedback-memory-system-doc-sync.md",
-      "triggers": [
-        "原子記憶系統",
-        "記憶系統修正",
-        "記憶系統修改",
-        "記憶系統開發",
-        "改 hook",
-        "改 wg_",
-        "改 server.js",
-        "memory system",
-        "文件同步",
-        "doc sync"
       ],
       "scope": "global"
     },
@@ -331,8 +304,12 @@
     },
     {
       "name": "goal-driven-verify-loopkarpathy-吸收",
-      "path": "memory/goal-driven-verify-loopkarpathy-吸收.md",
+      "path": "memory/驗證與實證/goal-driven-verify-loopkarpathy-吸收.md",
       "triggers": [
+        "成功標準",
+        "驗收",
+        "verify loop",
+        "goal-driven",
         "寫程式",
         "寫扣",
         "實作",
@@ -341,9 +318,7 @@
         "fix bug",
         "修 bug",
         "add validation",
-        "成功標準",
-        "verify",
-        "驗收"
+        "verify"
       ],
       "scope": "global"
     },
@@ -416,17 +391,17 @@
     },
     {
       "name": "自己flag的維護動作直接做完不要反問",
-      "path": "memory/自己flag的維護動作直接做完不要反問.md",
+      "path": "memory/行為契約/自己flag的維護動作直接做完不要反問.md",
       "triggers": [
-        "更新atom",
-        "維護",
-        "同步",
         "反問",
         "要不要我",
         "該做就做",
+        "follow-through",
+        "更新atom",
+        "維護",
+        "同步",
         "推進",
-        "收尾",
-        "follow-through"
+        "收尾"
       ],
       "scope": "global"
     },
@@ -449,7 +424,7 @@
     },
     {
       "name": "跨session資訊失真機制與對策",
-      "path": "_AIDocs/_atoms/Continuity/跨session資訊失真機制與對策.md",
+      "path": "memory/工作流/節奏與收尾/跨session資訊失真機制與對策.md",
       "triggers": [
         "失真",
         "失憶",
@@ -464,7 +439,11 @@
         "anchoring",
         "context poisoning",
         "錯誤發展",
-        "錯誤認知"
+        "錯誤認知",
+        "記憶汙染",
+        "知識汙染",
+        "上下文腐化",
+        "selective forgetting"
       ],
       "scope": "global"
     },
@@ -495,7 +474,12 @@
         "WriteResult",
         "腳本寫 atom",
         "funnel 寫入",
-        "一次性整理腳本"
+        "一次性整理腳本",
+        "代理訊號",
+        "fail-soft",
+        "未檢回傳值",
+        "批次寫入驗收",
+        "post-mortem"
       ],
       "scope": "global"
     },
@@ -669,7 +653,7 @@
     },
     {
       "name": "collaboration-protocol",
-      "path": "memory/collaboration-protocol.md",
+      "path": "memory/協作/collaboration-protocol.md",
       "triggers": [
         "協作",
         "協作原則",
@@ -687,7 +671,7 @@
     },
     {
       "name": "designexceltodata-優化實況與驗證流",
-      "path": "memory/designexceltodata-優化實況與驗證流.md",
+      "path": "memory/遊戲專案/designexceltodata-優化實況與驗證流.md",
       "triggers": [
         "DesignExcelToData",
         "產檔器",
@@ -709,7 +693,7 @@
     },
     {
       "name": "discord-channels",
-      "path": "memory/discord-channels.md",
+      "path": "memory/協作/discord-channels.md",
       "triggers": [
         "Discord",
         "頻道",
@@ -723,7 +707,7 @@
     },
     {
       "name": "doc-程式人員ai協作指南",
-      "path": "memory/doc-程式人員ai協作指南.md",
+      "path": "memory/協作/doc-程式人員ai協作指南.md",
       "triggers": [
         "AI協作指南",
         "AI 協作",
@@ -737,7 +721,7 @@
     },
     {
       "name": "dotnet-inline-cant-cross-delegate",
-      "path": "memory/dotnet-inline-cant-cross-delegate.md",
+      "path": "memory/dotnet/dotnet-inline-cant-cross-delegate.md",
       "triggers": [
         "AggressiveInlining",
         "MethodImpl",
@@ -758,7 +742,7 @@
     },
     {
       "name": "dotnet-mysqldata-collation-id-相容",
-      "path": "memory/dotnet-mysqldata-collation-id-相容.md",
+      "path": "memory/dotnet/dotnet-mysqldata-collation-id-相容.md",
       "triggers": [
         "MySql.Data",
         "MySQL",
@@ -772,7 +756,7 @@
     },
     {
       "name": "dotnet-sdk10-rid-restore-runtime-pack",
-      "path": "memory/dotnet-sdk10-rid-restore-runtime-pack.md",
+      "path": "memory/dotnet/dotnet-sdk10-rid-restore-runtime-pack.md",
       "triggers": [
         "offline build",
         "nuget-offline",
@@ -788,7 +772,7 @@
     },
     {
       "name": "dotnet-string-gethashcode-per-process-randomized",
-      "path": "memory/dotnet-string-gethashcode-per-process-randomized.md",
+      "path": "memory/dotnet/dotnet-string-gethashcode-per-process-randomized.md",
       "triggers": [
         "GetHashCode",
         "hash 路由",
@@ -801,7 +785,7 @@
     },
     {
       "name": "dotnet-xunit-getentryassembly-testhost",
-      "path": "memory/dotnet-xunit-getentryassembly-testhost.md",
+      "path": "memory/dotnet/dotnet-xunit-getentryassembly-testhost.md",
       "triggers": [
         "GetEntryAssembly",
         "testhost",
@@ -816,7 +800,7 @@
     },
     {
       "name": "failures",
-      "path": "memory/failures.md",
+      "path": "memory/Failures/failures.md",
       "triggers": [
         "失敗",
         "錯誤",
@@ -832,7 +816,7 @@
     },
     {
       "name": "feedback_upload_discord",
-      "path": "memory/feedback_upload_discord.md",
+      "path": "memory/工作流/feedback_upload_discord.md",
       "triggers": [
         "上傳",
         "傳附件",
@@ -845,7 +829,7 @@
     },
     {
       "name": "hot-topics",
-      "path": "memory/hot-topics.md",
+      "path": "memory/參考與環境/hot-topics.md",
       "triggers": [
         "監控",
         "hot-topics",
@@ -857,7 +841,7 @@
     },
     {
       "name": "obsidian-sync-hook-全域同步-stdin-json-測試陷阱",
-      "path": "memory/obsidian-sync-hook-全域同步-stdin-json-測試陷阱.md",
+      "path": "memory/CC與原子記憶契約/obsidian-sync-hook-全域同步-stdin-json-測試陷阱.md",
       "triggers": [
         "obsidian-sync",
         "obsidian",
@@ -874,7 +858,7 @@
     },
     {
       "name": "project-ecosystem",
-      "path": "memory/project-ecosystem.md",
+      "path": "memory/參考與環境/project-ecosystem.md",
       "triggers": [
         "專案",
         "SGI",
@@ -891,7 +875,7 @@
     },
     {
       "name": "redmine-config",
-      "path": "memory/redmine-config.md",
+      "path": "memory/參考與環境/redmine-config.md",
       "triggers": [
         "Redmine",
         "sgi",
@@ -905,7 +889,7 @@
     },
     {
       "name": "team-roster",
-      "path": "memory/team-roster.md",
+      "path": "memory/協作/team-roster.md",
       "triggers": [
         "團隊",
         "名冊",
@@ -919,7 +903,7 @@
     },
     {
       "name": "titan-dotnet-split",
-      "path": "memory/titan-dotnet-split.md",
+      "path": "memory/遊戲專案/titan-dotnet-split.md",
       "triggers": [
         "titan_dotnet",
         "分家",
@@ -936,7 +920,7 @@
     },
     {
       "name": "toolchain-batch-cmd-crlf-encoding",
-      "path": "memory/toolchain-batch-cmd-crlf-encoding.md",
+      "path": "memory/文字與格式/toolchain-batch-cmd-crlf-encoding.md",
       "triggers": [
         "batch",
         "bat",
@@ -957,7 +941,7 @@
     },
     {
       "name": "toolchain-ps51-getcontent-utf8-file-corruption",
-      "path": "memory/toolchain-ps51-getcontent-utf8-file-corruption.md",
+      "path": "memory/文字與格式/toolchain-ps51-getcontent-utf8-file-corruption.md",
       "triggers": [
         "Get-Content",
         "Set-Content",
@@ -971,7 +955,7 @@
     },
     {
       "name": "toolchain-svn-powershell-中文log編碼",
-      "path": "memory/toolchain-svn-powershell-中文log編碼.md",
+      "path": "memory/文字與格式/toolchain-svn-powershell-中文log編碼.md",
       "triggers": [
         "svn",
         "svn commit",
@@ -992,7 +976,7 @@
     },
     {
       "name": "toolchain-win-cmd-cwd-exepath",
-      "path": "memory/toolchain-win-cmd-cwd-exepath.md",
+      "path": "memory/OS-Windows/toolchain-win-cmd-cwd-exepath.md",
       "triggers": [
         "NoDefaultCurrentDirectory",
         "not recognized as an internal",
@@ -1004,7 +988,7 @@
     },
     {
       "name": "unity-mcp-自動化工具鏈",
-      "path": "memory/unity-mcp-自動化工具鏈.md",
+      "path": "memory/遊戲專案/unity-mcp-自動化工具鏈.md",
       "triggers": [
         "unity-mcp",
         "Unity重編",
@@ -1019,7 +1003,7 @@
     },
     {
       "name": "wells-workflow-brake-mechanism",
-      "path": "memory/wells-workflow-brake-mechanism.md",
+      "path": "memory/工作流/wells-workflow-brake-mechanism.md",
       "triggers": [
         "工作流洞見",
         "煞車",
@@ -1032,7 +1016,7 @@
     },
     {
       "name": "wells-workflow-copilot-not-driver",
-      "path": "memory/wells-workflow-copilot-not-driver.md",
+      "path": "memory/工作流/wells-workflow-copilot-not-driver.md",
       "triggers": [
         "工作流洞見",
         "副駕",
@@ -1044,7 +1028,7 @@
     },
     {
       "name": "wells-workflow-feedback-driven-teaching",
-      "path": "memory/wells-workflow-feedback-driven-teaching.md",
+      "path": "memory/工作流/wells-workflow-feedback-driven-teaching.md",
       "triggers": [
         "工作流洞見",
         "教AI",
@@ -1057,7 +1041,7 @@
     },
     {
       "name": "wells-workflow-handoff-quality",
-      "path": "memory/wells-workflow-handoff-quality.md",
+      "path": "memory/工作流/wells-workflow-handoff-quality.md",
       "triggers": [
         "工作流洞見",
         "handoff",
@@ -1086,24 +1070,8 @@
       "scope": "global"
     },
     {
-      "name": "feedback-已驗證的重複操作直接做完勿反覆確認",
-      "path": "_AIDocs/Failures/feedback-已驗證的重複操作直接做完勿反覆確認.md",
-      "triggers": [
-        "重複操作",
-        "升級",
-        "upstream 合版",
-        "落地",
-        "確認",
-        "checkpoint",
-        "別多問",
-        "效率",
-        "AskUserQuestion"
-      ],
-      "scope": "global"
-    },
-    {
       "name": "vscode-csdevkit-鎖目錄擋-git-mv-逐子項繞過",
-      "path": "memory/vscode-csdevkit-鎖目錄擋-git-mv-逐子項繞過.md",
+      "path": "memory/OS-Windows/vscode-csdevkit-鎖目錄擋-git-mv-逐子項繞過.md",
       "triggers": [
         "git mv",
         "Permission denied",
@@ -1118,7 +1086,7 @@
     },
     {
       "name": "aec-b欄如實載明hook標記退避語不以自評覆蓋",
-      "path": "memory/aec-b欄如實載明hook標記退避語不以自評覆蓋.md",
+      "path": "memory/行為契約/aec-b欄如實載明hook標記退避語不以自評覆蓋.md",
       "triggers": [
         "anti_evasion_report",
         "收尾檢核",
@@ -1131,7 +1099,7 @@
     },
     {
       "name": "orbit-hotfix-lua-direction",
-      "path": "memory/orbit-hotfix-lua-direction.md",
+      "path": "memory/遊戲專案/orbit-hotfix-lua-direction.md",
       "triggers": [
         "Orbit",
         "熱修",
@@ -1149,7 +1117,7 @@
     },
     {
       "name": "worktree-session-驗證前先同步目標分支",
-      "path": "memory/worktree-session-驗證前先同步目標分支.md",
+      "path": "memory/版控/Git/worktree-session-驗證前先同步目標分支.md",
       "triggers": [
         "worktree",
         "落後",
@@ -1164,7 +1132,7 @@
     },
     {
       "name": "titan-lua-socket-rpc機制-兩版同構",
-      "path": "memory/titan-lua-socket-rpc機制-兩版同構.md",
+      "path": "memory/遊戲專案/titan-lua-socket-rpc機制-兩版同構.md",
       "triggers": [
         "titan",
         "gate",
@@ -1183,7 +1151,7 @@
     },
     {
       "name": "dotnet-interface-devirt-pgo",
-      "path": "memory/dotnet-interface-devirt-pgo.md",
+      "path": "memory/dotnet/dotnet-interface-devirt-pgo.md",
       "triggers": [
         "guarded devirtualization",
         "devirt",
@@ -1205,7 +1173,7 @@
     },
     {
       "name": "wells-design-principles-明碼優先-職責分離-防呆擋非法",
-      "path": "memory/wells-design-principles-明碼優先-職責分離-防呆擋非法.md",
+      "path": "memory/設計通則/wells-design-principles-明碼優先-職責分離-防呆擋非法.md",
       "triggers": [
         "設計原則",
         "明碼",
@@ -1224,7 +1192,7 @@
     },
     {
       "name": "coremodule-entry-assembly-拓撲前提地雷-orbit-tslg同dna",
-      "path": "memory/coremodule-entry-assembly-拓撲前提地雷-orbit-tslg同dna.md",
+      "path": "memory/遊戲專案/coremodule-entry-assembly-拓撲前提地雷-orbit-tslg同dna.md",
       "triggers": [
         "GetEntryAssembly",
         "反射掃描",
@@ -1241,24 +1209,8 @@
       "scope": "global"
     },
     {
-      "name": "feedback-核心檔結構性改寫先確認方案再動手",
-      "path": "_AIDocs/Failures/feedback-核心檔結構性改寫先確認方案再動手.md",
-      "triggers": [
-        "核心檔",
-        "註冊表",
-        "改寫",
-        "restructure",
-        "先確認",
-        "方案選擇",
-        "DataType",
-        "Defines",
-        "架構級變更"
-      ],
-      "scope": "global"
-    },
-    {
       "name": "wells-review-report-format-分類條列-簡扼說明改動",
-      "path": "memory/wells-review-report-format-分類條列-簡扼說明改動.md",
+      "path": "memory/設計通則/wells-review-report-format-分類條列-簡扼說明改動.md",
       "triggers": [
         "檢查回報",
         "code review 回報",
@@ -1475,7 +1427,7 @@
     },
     {
       "name": "titan-c-port-是-titan-行為的現成權威來源勿從零重寫",
-      "path": "memory/titan-c-port-是-titan-行為的現成權威來源勿從零重寫.md",
+      "path": "memory/遊戲專案/titan-c-port-是-titan-行為的現成權威來源勿從零重寫.md",
       "triggers": [
         "titan 移植",
         "C# port",
@@ -1492,7 +1444,7 @@
     },
     {
       "name": "sqlx-讀取端三個踩點字串定序tinyint-當-booldesc-的-enum",
-      "path": "memory/sqlx-讀取端三個踩點字串定序tinyint-當-booldesc-的-enum.md",
+      "path": "memory/dotnet/sqlx-讀取端三個踩點字串定序tinyint-當-booldesc-的-enum.md",
       "triggers": [
         "Sqlx",
         "MysqlxClient",
@@ -1510,7 +1462,7 @@
     },
     {
       "name": "titan-c-移植鐵則-優先用csharp設施-架構為師細節可精進",
-      "path": "memory/titan-c-移植鐵則-優先用csharp設施-架構為師細節可精進.md",
+      "path": "memory/遊戲專案/titan-c-移植鐵則-優先用csharp設施-架構為師細節可精進.md",
       "triggers": [
         "titan 移植",
         "TitanC",
@@ -1526,58 +1478,8 @@
       "scope": "global"
     },
     {
-      "name": "feedback-提議機制時要標示成熟度-風險分析不等於現在就建",
-      "path": "_AIDocs/Failures/feedback-提議機制時要標示成熟度-風險分析不等於現在就建.md",
-      "triggers": [
-        "做太多",
-        "還不需要",
-        "YAGNI",
-        "過度工程",
-        "退掉",
-        "提議機制",
-        "風險分析",
-        "預先優化",
-        "限流器",
-        "防禦性機制"
-      ],
-      "scope": "global"
-    },
-    {
-      "name": "feedback-回答先給重點-結論一句話-細節按需展開",
-      "path": "_AIDocs/Failures/feedback-回答先給重點-結論一句話-細節按需展開.md",
-      "triggers": [
-        "回答",
-        "回應",
-        "講重點",
-        "簡單明瞭",
-        "太長",
-        "講太多",
-        "冗長",
-        "報告",
-        "說明",
-        "結論",
-        "TLDR"
-      ],
-      "scope": "global"
-    },
-    {
-      "name": "feedback-程式註解一律白話簡單明瞭",
-      "path": "_AIDocs/Failures/feedback-程式註解一律白話簡單明瞭.md",
-      "triggers": [
-        "註解",
-        "comment",
-        "程式註解",
-        "白話",
-        "doc comment",
-        "summary 註解",
-        "檔頭註解",
-        "註解風格"
-      ],
-      "scope": "global"
-    },
-    {
       "name": "wells-design-測試專用成員走internal繞道-runtime-api-乾淨",
-      "path": "memory/wells-design-測試專用成員走internal繞道-runtime-api-乾淨.md",
+      "path": "memory/設計通則/wells-design-測試專用成員走internal繞道-runtime-api-乾淨.md",
       "triggers": [
         "internal",
         "InternalsVisibleTo",
@@ -1592,7 +1494,7 @@
     },
     {
       "name": "dotnet-major-版本與-vs-版本硬綁定-sln檔頭決定開哪版",
-      "path": "memory/dotnet-major-版本與-vs-版本硬綁定-sln檔頭決定開哪版.md",
+      "path": "memory/dotnet/dotnet-major-版本與-vs-版本硬綁定-sln檔頭決定開哪版.md",
       "triggers": [
         "NETSDK1209",
         "net10",
@@ -1610,7 +1512,7 @@
     },
     {
       "name": "winforms-關閉階段-async-續體不執行-formclosing-殺process必須同步",
-      "path": "memory/winforms-關閉階段-async-續體不執行-formclosing-殺process必須同步.md",
+      "path": "memory/dotnet/winforms-關閉階段-async-續體不執行-formclosing-殺process必須同步.md",
       "triggers": [
         "FormClosing",
         "ApplicationExit",
@@ -1627,7 +1529,7 @@
     },
     {
       "name": "toolchain-http-server-無charset-中文頁亂碼-量測假訊號",
-      "path": "memory/toolchain-http-server-無charset-中文頁亂碼-量測假訊號.md",
+      "path": "memory/文字與格式/toolchain-http-server-無charset-中文頁亂碼-量測假訊號.md",
       "triggers": [
         "python -m http.server",
         "charset",
@@ -1642,22 +1544,8 @@
       "scope": "global"
     },
     {
-      "name": "feedback-註解一律白話-不堆術語",
-      "path": "_AIDocs/Failures/feedback-註解一律白話-不堆術語.md",
-      "triggers": [
-        "註解",
-        "comment",
-        "白話",
-        "術語",
-        "summary 註解",
-        "程式註解",
-        "doc comment"
-      ],
-      "scope": "global"
-    },
-    {
       "name": "hotfix-ilruntime-traps",
-      "path": "memory/hotfix-ilruntime-traps.md",
+      "path": "memory/遊戲專案/hotfix-ilruntime-traps.md",
       "triggers": [
         "ILRuntime",
         "hotfix #if",
@@ -1672,7 +1560,7 @@
     },
     {
       "name": "luajit-ffi-函式指標型別三種等價寫法-ctype相等比較不可靠",
-      "path": "memory/luajit-ffi-函式指標型別三種等價寫法-ctype相等比較不可靠.md",
+      "path": "memory/lua/luajit-ffi-函式指標型別三種等價寫法-ctype相等比較不可靠.md",
       "triggers": [
         "luajit",
         "ffi",
@@ -1690,7 +1578,7 @@
     },
     {
       "name": "luajit-cdef-typedef重複宣告沉默忽略-只有具名struct-tag會炸",
-      "path": "memory/luajit-cdef-typedef重複宣告沉默忽略-只有具名struct-tag會炸.md",
+      "path": "memory/lua/luajit-cdef-typedef重複宣告沉默忽略-只有具名struct-tag會炸.md",
       "triggers": [
         "ffi.cdef",
         "cdef",
@@ -1706,7 +1594,7 @@
     },
     {
       "name": "mongodb-replacement-upsert-不併filter等值鍵",
-      "path": "memory/mongodb-replacement-upsert-不併filter等值鍵.md",
+      "path": "memory/dotnet/mongodb-replacement-upsert-不併filter等值鍵.md",
       "triggers": [
         "mongodb",
         "upsert",
@@ -1723,7 +1611,7 @@
     },
     {
       "name": "lua-弱表探測字串無效-字串是值不是物件-驗回收用堆積量測",
-      "path": "memory/lua-弱表探測字串無效-字串是值不是物件-驗回收用堆積量測.md",
+      "path": "memory/lua/lua-弱表探測字串無效-字串是值不是物件-驗回收用堆積量測.md",
       "triggers": [
         "weak table",
         "弱表",
@@ -1737,26 +1625,8 @@
       "scope": "global"
     },
     {
-      "name": "feedback-移植轉寫類任務-忠實1比1-勿擅自對齊他版權威或加料",
-      "path": "_AIDocs/Failures/feedback-移植轉寫類任務-忠實1比1-勿擅自對齊他版權威或加料.md",
-      "triggers": [
-        "移植",
-        "改成C#",
-        "轉寫",
-        "port",
-        "rewrite",
-        "翻譯腳本",
-        "python 轉 C#",
-        "忠實移植",
-        "1:1",
-        "路徑不要動",
-        "全部維持"
-      ],
-      "scope": "global"
-    },
-    {
       "name": "catclaw-agent-routing-boundaries",
-      "path": "memory/catclaw-agent-routing-boundaries.md",
+      "path": "memory/參考與環境/catclaw-agent-routing-boundaries.md",
       "triggers": [
         "catclaw",
         "project-agent",
@@ -1789,26 +1659,8 @@
       "scope": "global"
     },
     {
-      "name": "feedback-memory-structure",
-      "path": "_AIDocs/Failures/feedback-memory-structure.md",
-      "triggers": [
-        "寫入記憶",
-        "atom 設計",
-        "atom 顆粒",
-        "指標型",
-        "scope 敏感",
-        "GUID硬編碼",
-        "環境相依",
-        "gitignore",
-        "git rm",
-        "memory path",
-        "_staging"
-      ],
-      "scope": "global"
-    },
-    {
       "name": "mac-缺-python-用-wrapper-指向-python3",
-      "path": "memory/mac-缺-python-用-wrapper-指向-python3.md",
+      "path": "memory/OS-macOS/mac-缺-python-用-wrapper-指向-python3.md",
       "triggers": [
         "python",
         "python3",
@@ -1824,7 +1676,7 @@
     },
     {
       "name": "merge-時-sot-索引檔-ours-策略誤清-catalog-post-mortem",
-      "path": "memory/merge-時-sot-索引檔-ours-策略誤清-catalog-post-mortem.md",
+      "path": "memory/CC與原子記憶契約/merge-時-sot-索引檔-ours-策略誤清-catalog-post-mortem.md",
       "triggers": [
         "catalog 誤清",
         "_INDEX.md 被刪",
@@ -1862,7 +1714,7 @@
     },
     {
       "name": "upstream-merge-mac-適配工作流",
-      "path": "memory/upstream-merge-mac-適配工作流.md",
+      "path": "memory/版控/Git/upstream-merge-mac-適配工作流.md",
       "triggers": [
         "upstream merge",
         "整併",
@@ -1879,7 +1731,7 @@
     },
     {
       "name": "品質完整性判定須讀完整內容-勿從截斷採樣斷言",
-      "path": "memory/品質完整性判定須讀完整內容-勿從截斷採樣斷言.md",
+      "path": "memory/驗證與實證/品質完整性判定須讀完整內容-勿從截斷採樣斷言.md",
       "triggers": [
         "斷言品質",
         "沒垃圾",
@@ -1900,7 +1752,7 @@
     },
     {
       "name": "記憶汙染與上下文腐化-注入萃取自檢",
-      "path": "memory/記憶汙染與上下文腐化-注入萃取自檢.md",
+      "path": "memory/CC與原子記憶契約/記憶汙染與上下文腐化-注入萃取自檢.md",
       "triggers": [
         "上下文腐化",
         "context rot",
@@ -1927,13 +1779,16 @@
       "name": "decisions-architecture",
       "path": "_AIDocs/_atoms/MemDev/decisions-architecture.md",
       "triggers": [
-        "架構決策",
-        "hooks 架構",
+        "架構",
+        "hooks",
         "pipeline",
         "guardian",
         "SessionStart",
+        "hot cache",
         "extract-worker",
         "vector service",
+        "架構決策",
+        "hooks 架構",
         "dispatcher"
       ],
       "scope": "global"
@@ -1945,6 +1800,9 @@
         "決策",
         "記憶系統",
         "原子記憶",
+        "guardian",
+        "hooks",
+        "MCP",
         "架構細節",
         "context budget"
       ],
@@ -2041,9 +1899,14 @@
       "path": "memory/工作流/節奏與收尾/preferences.md",
       "triggers": [
         "偏好",
+        "風格",
+        "習慣",
+        "語言",
+        "回應",
         "執P",
         "執驗上P",
         "上GIT",
+        "Obsidian",
         "上傳GIT",
         "commit",
         "push"
@@ -2085,17 +1948,6 @@
       "scope": "global"
     },
     {
-      "name": "workflow-icld",
-      "path": "memory/工作流/節奏與收尾/workflow-icld.md",
-      "triggers": [
-        "ICLD",
-        "Sprint",
-        "閉環",
-        "功能拆解"
-      ],
-      "scope": "global"
-    },
-    {
       "name": "workflow-rules",
       "path": "memory/工作流/節奏與收尾/workflow-rules.md",
       "triggers": [
@@ -2111,16 +1963,6 @@
       "scope": "global"
     },
     {
-      "name": "workflow-svn",
-      "path": "memory/版控/SVN/workflow-svn.md",
-      "triggers": [
-        "svn",
-        "svn-update",
-        "TortoiseSVN"
-      ],
-      "scope": "global"
-    },
-    {
       "name": "memory-pipeline-silent-failure-2026-05",
       "path": "_AIDocs/_atoms/MemDev/memory-pipeline-silent-failure-2026-05.md",
       "triggers": [
@@ -2132,29 +1974,6 @@
         "自我迭代",
         "衰減掃描",
         "覆轍偵測"
-      ],
-      "scope": "global"
-    },
-    {
-      "name": "cognitive-patterns",
-      "path": "memory/Failures/思考與決策/cognitive-patterns.md",
-      "triggers": [
-        "過度工程",
-        "代理指標",
-        "proxy metric",
-        "AI看不懂",
-        "AI在打轉",
-        "品質回饋",
-        "自我合理化",
-        "編造規則",
-        "籠統話術",
-        "訂規保留",
-        "設計慣例",
-        "截斷",
-        "採樣",
-        "完整內容",
-        "品質判定",
-        "excerpt"
       ],
       "scope": "global"
     },
@@ -2195,53 +2014,6 @@
       "scope": "global"
     },
     {
-      "name": "feedback-memory-system-doc-sync",
-      "path": "_AIDocs/_atoms/MemDev/feedback-memory-system-doc-sync.md",
-      "triggers": [
-        "原子記憶系統",
-        "記憶系統修正",
-        "記憶系統修改",
-        "記憶系統開發",
-        "改 hook",
-        "改 wg_",
-        "改 server.js",
-        "memory system",
-        "文件同步",
-        "doc sync",
-        "寫入記憶",
-        "atom 設計",
-        "atom 顆粒",
-        "指標型",
-        "GUID硬編碼",
-        "環境相依",
-        "gitignore",
-        "memory path"
-      ],
-      "scope": "global"
-    },
-    {
-      "name": "goal-driven-verify-loopkarpathy-吸收",
-      "path": "memory/驗證與實證/goal-driven-verify-loopkarpathy-吸收.md",
-      "triggers": [
-        "成功標準",
-        "驗收",
-        "verify loop",
-        "goal-driven"
-      ],
-      "scope": "global"
-    },
-    {
-      "name": "自己flag的維護動作直接做完不要反問",
-      "path": "memory/行為契約/自己flag的維護動作直接做完不要反問.md",
-      "triggers": [
-        "反問",
-        "要不要我",
-        "該做就做",
-        "follow-through"
-      ],
-      "scope": "global"
-    },
-    {
       "name": "handoff-綜觀品質與抗失真寫法",
       "path": "memory/工作流/節奏與收尾/handoff-綜觀品質與抗失真寫法.md",
       "triggers": [
@@ -2258,31 +2030,6 @@
         "寫接續文",
         "handoff 品質",
         "新開 session"
-      ],
-      "scope": "global"
-    },
-    {
-      "name": "跨session資訊失真機制與對策",
-      "path": "memory/工作流/節奏與收尾/跨session資訊失真機制與對策.md",
-      "triggers": [
-        "失真",
-        "失憶",
-        "context 壓縮",
-        "長對話",
-        "多 session",
-        "lost in the middle",
-        "context rot",
-        "goal drift",
-        "摘要有損",
-        "為什麼會偏掉",
-        "anchoring",
-        "context poisoning",
-        "錯誤發展",
-        "錯誤認知",
-        "記憶汙染",
-        "知識汙染",
-        "上下文腐化",
-        "selective forgetting"
       ],
       "scope": "global"
     },
@@ -3577,83 +3324,6 @@
       "scope": "global"
     },
     {
-      "name": "atoms-的納入流程必須由-cc-透過全域-靜默-定期的機制-如-cron-在",
-      "path": "memory/personal/holylight/atoms-的納入流程必須由-cc-透過全域-靜默-定期的機制-如-cron-在.md",
-      "triggers": [
-        "全自動",
-        "靜默",
-        "定期處理",
-        "根層"
-      ],
-      "scope": "personal:holylight"
-    },
-    {
-      "name": "要求ai助手以清晰-白話-條列的方式溝通-並主動提供session-prompt",
-      "path": "memory/personal/holylight/要求ai助手以清晰-白話-條列的方式溝通-並主動提供session-prompt.md",
-      "triggers": [
-        "清晰",
-        "白話",
-        "條列",
-        "session prompt"
-      ],
-      "scope": "personal:holylight"
-    },
-    {
-      "name": "技術調查必須以數據和具體程式碼路徑為依據-避免猜測-懷疑-並著重於找出問題",
-      "path": "memory/personal/holylight/技術調查必須以數據和具體程式碼路徑為依據-避免猜測-懷疑-並著重於找出問題.md",
-      "triggers": [
-        "懷疑",
-        "資料",
-        "程式碼",
-        "根因"
-      ],
-      "scope": "personal:holylight"
-    },
-    {
-      "name": "feedback-計畫文件紀律-人稱標明角色-重大發現獨立成節-監督者與留意事項必寫",
-      "path": "memory/personal/holylight/feedback-計畫文件紀律-人稱標明角色-重大發現獨立成節-監督者與留意事項必寫.md",
-      "triggers": [
-        "計畫",
-        "計畫文件",
-        "plan",
-        "交付文件",
-        "人稱",
-        "你我",
-        "監督",
-        "重大發現",
-        "埋表格",
-        "ExitPlanMode",
-        "審查發現"
-      ],
-      "scope": "personal:holylight"
-    },
-    {
-      "name": "gitlab-ssh金鑰真相-ujgitlab才是活鑰-id-rsa是死鑰",
-      "path": "memory/personal/holylight/gitlab-ssh金鑰真相-ujgitlab才是活鑰-id-rsa是死鑰.md",
-      "triggers": [
-        "gitlab",
-        "ssh",
-        "金鑰",
-        "fetch 失敗",
-        "Permission denied",
-        "UJGitLab",
-        "serverbase 同步",
-        "id_rsa"
-      ],
-      "scope": "personal:holylight"
-    },
-    {
-      "name": "給予的技術回饋必須具備高可行動性-聚焦於流程與思考過程-如-為什麼這樣設計-並",
-      "path": "memory/personal/holylight/給予的技術回饋必須具備高可行動性-聚焦於流程與思考過程-如-為什麼這樣設計-並.md",
-      "triggers": [
-        "精簡",
-        "批判性自審",
-        "設計推理",
-        "可行動"
-      ],
-      "scope": "personal:holylight"
-    },
-    {
       "name": "windows-新機-path-的-windowsapps-pythonexe-是-store-佔位程式-零輸出-exit-9009-子程序裸-spawn-python-必用絕對路徑",
       "path": "memory/OS-Windows/windows-新機-path-的-windowsapps-pythonexe-是-store-佔位程式-零輸出-exit-9009-子程序裸-spawn-python-必用絕對路徑.md",
       "triggers": [
@@ -3800,20 +3470,6 @@
       "scope": "global"
     },
     {
-      "name": "feedback-口令承接脈絡-開工等短口令以最近承諾的流程為準-不得跳過已承諾的planmode",
-      "path": "memory/personal/holylight/feedback-口令承接脈絡-開工等短口令以最近承諾的流程為準-不得跳過已承諾的planmode.md",
-      "triggers": [
-        "開工",
-        "動工",
-        "口令歧義",
-        "plan mode",
-        "先出計畫",
-        "誤讀指令",
-        "承諾流程"
-      ],
-      "scope": "personal:holylight"
-    },
-    {
       "name": "團隊產出上傳前先問人-記憶庫自動做滿",
       "path": "memory/行為契約/團隊產出上傳前先問人-記憶庫自動做滿.md",
       "triggers": [
@@ -3920,17 +3576,6 @@
         "assert old in s",
         "post-mortem",
         "Write 工具"
-      ],
-      "scope": "global"
-    },
-    {
-      "name": "identity-變動需同步更新-identity-template-且所有文件",
-      "path": "memory/文字與格式/identity-變動需同步更新-identity-template-且所有文件.md",
-      "triggers": [
-        "identity",
-        "identity.template",
-        "LF格式",
-        "統一LF"
       ],
       "scope": "global"
     },
@@ -4178,25 +3823,227 @@
       "scope": "global"
     },
     {
-      "name": "feedback-動手前不要找理由縮小範圍",
-      "path": "memory/personal/holylight/feedback-動手前不要找理由縮小範圍.md",
+      "name": "collab-anchor",
+      "path": "memory/協作/collab-anchor.md",
       "triggers": [
-        "退縮",
-        "撤退",
-        "找理由",
-        "over-thinking",
-        "推測沒驗證",
-        "範圍縮小",
-        "推小範圍",
-        "工程過大",
-        "風險高",
-        "丟給使用者",
-        "prompt 漏給",
-        "追蹤承諾",
-        "token 過期",
-        "auth error"
+        "CatClaw",
+        "個人專案",
+        "跑偏",
+        "過度擴張",
+        "焦慮",
+        "收斂",
+        "方向校正",
+        "提醒",
+        "副駕",
+        "協作規則",
+        "邊界",
+        "失焦",
+        "方向",
+        "副駕規則"
       ],
-      "scope": "personal:holylight"
+      "scope": "global"
+    },
+    {
+      "name": "collab-experiment",
+      "path": "memory/協作/collab-experiment.md",
+      "triggers": [
+        "AI自主開發",
+        "AI自主",
+        "Sprint自主",
+        "協作實驗",
+        "harness agent",
+        "subagent協作",
+        "PM角色",
+        "AI當開發",
+        "啟動協作實驗",
+        "協作模式"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "experience-vmlx-gemma4-abliterated",
+      "path": "memory/參考與環境/experience-vmlx-gemma4-abliterated.md",
+      "triggers": [
+        "vmlx",
+        "gemma4",
+        "gemma 4",
+        "abliterated",
+        "dealignai",
+        "破解版模型",
+        "去審查模型",
+        "JANG",
+        "本地 LLM",
+        "mac 跑大模型",
+        "ollama",
+        "gguf",
+        "windows",
+        "rdchat",
+        "RTX 3090",
+        "douyamv",
+        "31B JANG"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "feedback-knowledge-doc-iteration",
+      "path": "memory/工作流/feedback-knowledge-doc-iteration.md",
+      "triggers": [
+        "same_file_3x",
+        "retry_escalation",
+        "knowledge_doc",
+        "規劃文件",
+        "補章節",
+        "WellsDB",
+        "知識庫"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "nodejs-ecosystem",
+      "path": "memory/參考與環境/nodejs-ecosystem.md",
+      "triggers": [
+        "Node.js",
+        "NodeJS",
+        "npm",
+        "npx",
+        "package.json",
+        "node_modules",
+        "TypeScript",
+        "tsc",
+        "pm2",
+        "ecosystem.config",
+        "JavaScript",
+        "JS",
+        "TS",
+        "ESM",
+        "CommonJS",
+        "CJS"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "reference-claudecode",
+      "path": "memory/參考與環境/reference-claudecode.md",
+      "triggers": [
+        "Claude Code",
+        "claudecode",
+        "claude code 架構",
+        "context 管理",
+        "token 控制",
+        "session 處理",
+        "安全邊界"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "reference-obsidian-vault",
+      "path": "memory/參考與環境/reference-obsidian-vault.md",
+      "triggers": [
+        "obsidian",
+        "vault",
+        "WellsDB",
+        "筆記庫",
+        "寫到obsidian",
+        "放到obsidian",
+        "輸出obsidian"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "wells-workflow-infra-before-app",
+      "path": "memory/工作流/wells-workflow-infra-before-app.md",
+      "triggers": [
+        "新專案啟動",
+        "AI 工作流規劃",
+        "大任務開工",
+        "基礎建設",
+        "記憶系統",
+        "infrastructure"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "wells-workflow-mechanism-over-discipline",
+      "path": "memory/工作流/wells-workflow-mechanism-over-discipline.md",
+      "triggers": [
+        "紀律",
+        "決心",
+        "機制",
+        "自動偵測",
+        "guardian",
+        "hook",
+        "自動化",
+        "靠記得"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "wells-workflow-multi-llm-ledger",
+      "path": "memory/工作流/wells-workflow-multi-llm-ledger.md",
+      "triggers": [
+        "多 agent",
+        "多 LLM",
+        "平行協作",
+        "任務分派",
+        "subagent",
+        "claim",
+        "範圍認領",
+        "Doomsday Phase2"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "wells-workflow-small-automation-payoff",
+      "path": "memory/工作流/wells-workflow-small-automation-payoff.md",
+      "triggers": [
+        "自動化",
+        "hook",
+        "stream idle",
+        "watchdog",
+        "卡死",
+        "沉默失敗",
+        "silent failure",
+        "LLM 不回覆"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "wells-workflow-tell-ai-what-you-hate",
+      "path": "memory/工作流/wells-workflow-tell-ai-what-you-hate.md",
+      "triggers": [
+        "AI 行為糾正",
+        "feedback atom",
+        "偏好設定",
+        "行為校正",
+        "不喜歡",
+        "別這樣做"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "feedback-memory-system-doc-sync",
+      "path": "_AIDocs/_atoms/MemDev/feedback-memory-system-doc-sync.md",
+      "triggers": [
+        "原子記憶系統",
+        "記憶系統修正",
+        "記憶系統修改",
+        "記憶系統開發",
+        "改 hook",
+        "改 wg_",
+        "改 server.js",
+        "memory system",
+        "文件同步",
+        "doc sync",
+        "寫入記憶",
+        "atom 設計",
+        "atom 顆粒",
+        "指標型",
+        "GUID硬編碼",
+        "環境相依",
+        "gitignore",
+        "memory path"
+      ],
+      "scope": "global"
     }
   ]
 }

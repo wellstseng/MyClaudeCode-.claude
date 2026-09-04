@@ -83,7 +83,8 @@ original_path: {file_path}
 
     # 寫入 Obsidian
     target_dir.mkdir(parents=True, exist_ok=True)
-    target_path.write_text(output, encoding="utf-8")
+    with open(target_path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(output)
 
 if __name__ == "__main__":
     main()
