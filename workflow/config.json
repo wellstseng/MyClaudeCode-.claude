@@ -86,7 +86,17 @@
       "enabled": false,
       "dry_run": true,
       "isolate_threshold": 0.3
-    }
+    },
+    "_doc_rut_file_whitelist": "same_file_3x 覆轍信號檔名白名單（fnmatch、不分大小寫）：索引/編年/驗收工件每 session 高頻反覆更新屬常態，不構成表面修復證據。生成端(wg_episodic)、掃描端(wg_evasion)、recall-miss 共用；被略過者落 atom-debug log。",
+    "rut_file_whitelist": [
+      "readme*",
+      "_changelog*",
+      "docindex-*",
+      "*_index*",
+      "memory.md",
+      "_atom_index*",
+      "acceptance-*"
+    ]
   },
   "usefulness": {
     "_doc": "Phase 2 (#2) 注入→使用→結果 閉環效用：Beta-Bernoulli (α,β) + Wilson 下界 + 慢衰減。py↔js 鏡像門檻 (promote_lb/min_n/wilson_z) 與 lib/atom_access.py、server.js SYNC。",
@@ -119,7 +129,14 @@
       "enabled": true,
       "skip_demoted": true,
       "max_related": 6
-    }
+    },
+    "_doc_redundancy_gate": "同題去冗：主迴圈中與本 turn 已全文注入者 trigger 精確重疊 ≥ min_shared_triggers 的 atom 只送表頭＋知識前兩句（節錄，標 same-topic → 代表者），不整張丟。全庫 8515 對實測精確 ≥3 僅 4 對且皆真同題；子字串重疊不採計（泛 trigger 噪音）。",
+    "redundancy_gate": {
+      "enabled": true,
+      "min_shared_triggers": 3
+    },
+    "_doc_truncated_pointer_max": "最終 budget 裁切（_truncate_context_by_activation）寧缺勿截：超支犧牲的 atom 中僅 activation 最高的前 N 顆留一行指標，其餘整塊不注入（明細落 atom-debug log，尾行 budget 標記附 trim 統計）。",
+    "truncated_pointer_max": 3
   },
   "response_capture": {
     "enabled": true,
@@ -462,6 +479,60 @@
         "git ls-remote"
       ],
       "deny_template": "⛔ [Guardian:PreActionNotice] 本回合尚未輸出動手前預告（{fail_detail}），工具呼叫已暫擋。\n請先以使用者可見的一般文字輸出預告（thinking 區塊不算），然後再重新呼叫工具：\n\n執行目標：<這次動手要達成的具體目標，一句話>\n預估：<工作量或時間，例：改 2 個檔約 3 分鐘>\n\n格式規則：\n- 「執行目標」後必須是實質目標內容；只填時間不合格（例：「執行目標：預估1分鐘」）。\n- 「預估」可改寫「概估」，其後必須有實質內容。\n- 建議先送出這段文字、下一步再呼叫工具（同訊息夾帶可能偵測不到）。\n- 本回合通過一次後，後續工具呼叫不再檢查。\n（第 {n}/{max} 次提醒；達上限將放行並記錄。若你是 subagent，同樣補一段預告即可通過。）"
+    },
+    "commit_order": {
+      "_doc": "PreToolUse git commit 口令閘：本回合使用者原話無任何 keywords → deny。USER.md 縮寫指令契約的程式化版本。",
+      "enabled": true,
+      "keywords": [
+        "上GIT",
+        "上 GIT",
+        "上傳GIT",
+        "上乾淨",
+        "全上",
+        "上版",
+        "上SVN",
+        "執P",
+        "執驗上P",
+        "commit",
+        "提交",
+        "push"
+      ]
     }
+  },
+  "taxonomy": {
+    "_doc": "核心層範疇寫入閘。gate_enabled=false：遷移期（memory/ 仍有散檔）關閉硬規則與拒寫；遷移完成改 true。",
+    "gate_enabled": true,
+    "llm_fallback": {
+      "enabled": false,
+      "max_per_session": 5,
+      "min_confidence": 0.7
+    }
+  },
+  "research_fanout": {
+    "_doc": "知識檢索型 prompt（幫我查/搜索/我想知道）偵測 → 注入兩階段 fan-out SOP。命中時抑制 parallel_agents 提示避免重複。一鍵關 = enabled:false。",
+    "enabled": true,
+    "cooldown_turns": 2,
+    "min_prompt_chars": 5
+  },
+  "deferral_gate": {
+    "_doc": "Stop DeferralGate（退縮歸屬）：主任務已完工（完成宣告 ∨ 本 turn 已 commit）且 context 用量 ≤ max_context_ratio（讀 transcript 真實 usage，同 auto_handoff 量測）時，收尾訊息把帶受詞的可做之事推給下個 session／獨立議題／非我造成 → 擋回三選一。min_object_chars＝命中句去掉退縮語後至少幾字才算有受詞。詞表在 memory/_meta/forbidden-phrases.json categories[deferral-attribution] + deferral_user_ok。",
+    "enabled": true,
+    "max_context_ratio": 0.75,
+    "min_object_chars": 6
+  },
+  "merge_driver": {
+    "_doc": "索引三檔合併驅動的兩個自動化（handlers/pre_tool_use.py check_merge_driver，advisory-only 永不 deny）：auto_install＝Bash/PowerShell 跑 git pull/merge/rebase/cherry-pick/stash pop 前若本機未裝驅動就自動 python tools/merge-atom-index.py --install（git 全域設定，各機一次）；auto_resolve＝跑 rebase/merge/cherry-pick --continue、commit、stash pop 時若索引三檔（MEMORY.md/_ATOM_INDEX.md/_atom_index.json）處於未合併狀態就先自動 --resolve（語意合併 stages 並 git add）再放行。一鍵關：auto_install:false / auto_resolve:false。hook 內一律 fail-open、總時限 2.5s。",
+    "auto_install": true,
+    "auto_resolve": true
+  },
+  "eol": {
+    "_doc": "專案記憶樹（<proj>/.claude/memory）換行自動統一 LF：tools/sync-memory-index.py 專案模式 --write 成功後（＝每次 atom 寫入的漏斗尾端）呼叫 normalize-eol.auto_project_eol——樹內轉 LF，git 專案在 .gitattributes 寫入標記區塊（eol=lf＋索引三檔 merge=atomindex），svn 專案對已版控文字檔 svn propset svn:eol-style LF；第一次會動整棵樹、之後為零，改動跟著下一次記憶提交走。auto_normalize_project:false 或 --no-eol 關閉。",
+    "auto_normalize_project": true
+  },
+  "sync_reminder": {
+    "_doc": "Stop 同步閘。unpushed=true：本 session 改的檔已 commit 但 repo 領先 upstream 也擋（上GIT＝commit+push 一氣）。",
+    "enabled": true,
+    "max_reminders": 1,
+    "unpushed": true
   }
 }

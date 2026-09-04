@@ -129,11 +129,12 @@ def _auto_commit_promotions(promoted, config: Dict[str, Any]) -> None:
     try:
         log_path = CLAUDE_DIR / "Logs" / "auto-commit.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        logf = open(log_path, "a", encoding="utf-8")
+        logf = open(log_path, "a", encoding="utf-8", newline="\n")
         logf.write(f"\n=== {_now_iso()} push {len(paths)} promoted atoms ===\n")
         logf.flush()
+        # origin 掛兩個 push URL（GitHub + GitLab），一次 push 同一份歷史到兩邊
         subprocess.Popen(
-            ["git", "-C", str(CLAUDE_DIR), "push"],
+            ["git", "-C", str(CLAUDE_DIR), "push", "--quiet", "origin", "main"],
             stdout=logf, stderr=subprocess.STDOUT,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
@@ -157,7 +158,7 @@ def _se_sentinel_arm(session_id: str) -> None:
         p = _se_sentinel_path(session_id)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(
-            json.dumps({"at": _now_iso()}, ensure_ascii=False), encoding="utf-8")
+            json.dumps({"at": _now_iso()}, ensure_ascii=False), encoding="utf-8", newline="\n")
     except OSError:
         pass
 
@@ -235,7 +236,7 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
             _ow_marker.write_text(
                 json.dumps({"msg": _ow_advisory, "at": _now_iso()}, ensure_ascii=False),
                 encoding="utf-8",
-            )
+            newline="\n")
             print(_ow_advisory, file=sys.stderr)
     except Exception as e:
         _atom_debug_error("session_end:outcome_watch", e)
@@ -298,12 +299,15 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
                     file=sys.stderr,
                 )
             else:
-                print(
-                    f"Archive candidates: "
-                    f"{len(si_results['archive_candidates'])} atoms (low decay score; "
-                    f"dry-run → _staging/forget-candidates.md)",
-                    file=sys.stderr,
-                )
+                # 報告落候選 atom 所屬記憶庫的 _staging（全域候選 → ~/.claude/memory/_staging，
+                # 非 cwd 專案庫），故印實際路徑而非相對 "_staging/"。
+                for rp in si_results.get("reports") or []:
+                    print(
+                        f"Archive candidates: "
+                        f"{len(si_results['archive_candidates'])} atoms (low decay score; "
+                        f"dry-run → {rp}, forget-candidates.md 同目錄)",
+                        file=sys.stderr,
+                    )
     except Exception as e:
         print(f"Self-iteration error: {e}", file=sys.stderr)
 
@@ -357,7 +361,7 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
                 staging_dir.mkdir(parents=True, exist_ok=True)
                 (staging_dir / stub_name).write_text(
                     build_handoff_stub(state, cwd), encoding="utf-8"
-                )
+                , newline="\n")
                 state["handoff_stub_path"] = str(staging_dir / stub_name)
                 state["handoff_stub_at"] = _now_iso()
                 print(

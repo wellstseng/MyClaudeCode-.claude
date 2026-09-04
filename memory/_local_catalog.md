@@ -4,8 +4,9 @@
 
 | 範疇根 | atom 數 | 深入 |
 |--------|---------|------|
-| Continuity | 2 | `_AIDocs/_atoms/Continuity/_INDEX.md` |
-| MemDev | 36 | `_AIDocs/_atoms/MemDev/_INDEX.md` |
-| OS | 4 | `_AIDocs/_atoms/OS/_INDEX.md` |
+| MemDev | 59 | `_AIDocs/_atoms/MemDev/_INDEX.md` |
+| OS | 2 | `_AIDocs/_atoms/OS/_INDEX.md` |
 | Tools | 10 | `_AIDocs/_atoms/Tools/_INDEX.md` |
 | Vision | 1 | `_AIDocs/_atoms/Vision/jarvis-企業-ai-平台發想文件指標.md` |
+| CC與原子記憶契約 | 1 | `_AIDocs/_atoms/CC與原子記憶契約/codex-exec-手動派工三旗標-skip-git-repo-check-stdin關閉-unelevated.md` |
+| 工作流 | 1 | `_AIDocs/_atoms/工作流/_INDEX.md` |

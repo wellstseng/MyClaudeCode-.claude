@@ -50,6 +50,25 @@ def _build_v4_layer_clause(
     return "(" + " OR ".join(clauses) + ")"
 
 
+_SANE_LAYER = re.compile(r"^[\w\-:]+$")
+
+
+def _build_layers_clause(layers: Optional[List[str]]) -> Optional[str]:
+    """把明確的 layer 標籤清單組成 `layer IN (...)`。
+
+    給呼叫端「只看這幾層」用（例：write-gate 去重只比 global + 當前專案自己的層）。
+    標籤只允許 [\\w\\-:]（layer 標籤形如 shared:c--proj / personal:c--proj:user），
+    不合的丟掉；全丟光回 None（= 不過濾，呼叫端自行決定是否接受）。
+    """
+    if not layers:
+        return None
+    clean = [l.strip() for l in layers if l and _SANE_LAYER.match(l.strip())]
+    if not clean:
+        return None
+    quoted = ", ".join(f"'{l}'" for l in dict.fromkeys(clean))
+    return f"layer IN ({quoted})"
+
+
 # ─── Ranking Constants ───────────────────────────────────────────────────────
 
 CONFIDENCE_SCORE_MAP = {"[固]": 1.0, "[觀]": 0.7, "[臨]": 0.4}
@@ -158,6 +177,7 @@ def search(
     embedder=None,
     user: Optional[str] = None,
     roles: Optional[List[str]] = None,
+    layers: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """Semantic search across indexed atoms.
 
@@ -165,6 +185,7 @@ def search(
     [{"atom_name", "title", "section", "text", "score", "confidence", "file_path", "layer", "line_number"}, ...]
 
     V4: 若傳 user/roles → 組 role-filter clause 過濾可見性。
+    layers：明確的 layer 標籤清單，只搜這幾層（優先於 user/roles 與 layer_filter）。
     """
     if not query.strip():
         return []
@@ -177,8 +198,8 @@ def search(
     if not query_vec or not query_vec[0]:
         return []
 
-    # V4: role-based layer clause（優先於 layer_filter）
-    layer_clause = _build_v4_layer_clause(user, roles)
+    # 明確 layers 清單 > V4 role-based clause > layer_filter
+    layer_clause = _build_layers_clause(layers) or _build_v4_layer_clause(user, roles)
 
     # Search LanceDB
     # LanceDB cosine metric: _distance = 1 - cosine_similarity
@@ -242,6 +263,7 @@ def ranked_search(
     embedder=None,
     user: Optional[str] = None,
     roles: Optional[List[str]] = None,
+    layers: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """Intent-aware ranked search.
 
@@ -260,7 +282,8 @@ def ranked_search(
     if not query_vec or not query_vec[0]:
         return []
 
-    layer_clause = _build_v4_layer_clause(user, roles)
+    # 明確 layers 白名單（呼叫端可見性）> V4 role clause
+    layer_clause = _build_layers_clause(layers) or _build_v4_layer_clause(user, roles)
 
     raw_results = search_vectors(
         query_vec[0],
@@ -330,6 +353,7 @@ def ranked_search_sections(
     embedder=None,
     user: Optional[str] = None,
     roles: Optional[List[str]] = None,
+    layers: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """Intent-aware ranked search preserving section-level detail.
 
@@ -351,7 +375,7 @@ def ranked_search_sections(
     if not query_vec or not query_vec[0]:
         return []
 
-    layer_clause = _build_v4_layer_clause(user, roles)
+    layer_clause = _build_layers_clause(layers) or _build_v4_layer_clause(user, roles)
 
     raw_results = search_vectors(
         query_vec[0],

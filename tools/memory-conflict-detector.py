@@ -32,7 +32,7 @@ from ollama_client import get_client
 CLAUDE_DIR = Path.home() / ".claude"
 AUDIT_LOG = CLAUDE_DIR / "memory" / "_vectordb" / "audit.log"
 
-# atom 掃描統一委派 lib.atom_locations（遞迴 + _AIDocs/Failures/ + _AIDocs/_atoms/）
+# atom 掃描統一委派 lib.atom_locations（memory/ 遞迴含 memory/Failures/ + 舊址 _AIDocs/Failures/ + _AIDocs/_atoms/）
 if str(CLAUDE_DIR) not in sys.path:
     sys.path.insert(0, str(CLAUDE_DIR))
 from lib.atom_locations import GLOBAL_MEMORY_DIR, iter_atom_files_multi  # noqa: E402
@@ -65,13 +65,27 @@ def discover_layers(project_dir: Optional[Path] = None) -> List[Tuple[str, Path]
     global_mem = CLAUDE_DIR / "memory"
     if global_mem.is_dir():
         layers.append(("global", global_mem))
-    # Legacy: ~/.claude/projects/{slug}/memory/
-    projects_dir = CLAUDE_DIR / "projects"
-    if projects_dir.is_dir():
-        for proj_dir in sorted(projects_dir.iterdir()):
-            if proj_dir.is_dir():
+    # 專案層：與執行期同一套判定（wg_core.discover_all_project_memory_dirs），
+    # 不自掃 projects/*/memory（會把 CC 原生 auto-memory 目錄誤當 atom 層）。
+    try:
+        import sys as _sys
+        _hooks = CLAUDE_DIR / "hooks"
+        if str(_hooks) not in _sys.path:
+            _sys.path.insert(0, str(_hooks))
+        from wg_core import discover_all_project_memory_dirs  # noqa: E402
+        for slug, mem_dir in discover_all_project_memory_dirs():
+            if project_dir is not None and mem_dir.resolve() == Path(project_dir).resolve():
+                continue
+            layers.append((f"project:{slug}", mem_dir))
+    except Exception as e:  # noqa: BLE001 — 退回舊址掃描（需 atom 索引標記）並告知
+        import sys as _sys
+        print(f"[conflict-detector] wg_core discovery unavailable ({e!r}); fallback scan",
+              file=_sys.stderr)
+        projects_dir = CLAUDE_DIR / "projects"
+        if projects_dir.is_dir():
+            for proj_dir in sorted(projects_dir.iterdir()):
                 mem_dir = proj_dir / "memory"
-                if mem_dir.is_dir():
+                if proj_dir.is_dir() and (mem_dir / "_atom_index.json").exists():
                     layers.append((f"project:{proj_dir.name}", mem_dir))
     return layers
 
@@ -80,9 +94,9 @@ def discover_atoms(layers: List[Tuple[str, Path]]) -> List[Tuple[str, Path, str]
     """Find atom files. Returns [(layer, path, atom_name), ...].
 
     委派 lib.atom_locations.iter_atom_files_multi（單一掃描來源）：
-    遞迴含子目錄（shared/<domain>/ 等）；global 層額外涵蓋
-    _AIDocs/Failures/（feedback-*）與 _AIDocs/_atoms/（local realm）——
-    舊 flat-only glob 會漏掃這些 atom，其衝突永遠測不到。
+    遞迴含子目錄（memory/<範疇>/、memory/Failures/<主題>/、shared/<domain>/ 等）；
+    global 層額外涵蓋舊址 _AIDocs/Failures/（未遷入的 feedback-*）與 _AIDocs/_atoms/
+    （local realm）——flat-only glob 會漏掃這些 atom，其衝突永遠測不到。
     """
     atoms = []
     for layer_name, mem_dir in layers:
@@ -268,7 +282,7 @@ def fast_refute_check(meta_a: Dict, meta_b: Dict) -> Optional[str]:
 def write_audit(entries: List[Dict]) -> None:
     """Append conflict detection results to audit.log (JSONL)."""
     AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
-    with open(AUDIT_LOG, "a", encoding="utf-8") as f:
+    with open(AUDIT_LOG, "a", encoding="utf-8", newline="\n") as f:
         for entry in entries:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
@@ -476,7 +490,7 @@ def _append_merge_history(proj_root: Path, action: str, atom: str,
     line = "\t".join([_utcnow_iso(), safe(action), safe(atom),
                       safe(scope), safe(by), safe(detail)]) + "\n"
     try:
-        with open(log_path, "a", encoding="utf-8") as f:
+        with open(log_path, "a", encoding="utf-8", newline="\n") as f:
             f.write(line)
     except OSError as e:
         print(f"[merge_history] write failed: {e}", file=sys.stderr)
@@ -706,7 +720,7 @@ def _set_last_audit_ts(proj_root: Path, ts: str) -> None:
     f = proj_root / ".claude" / "memory" / "shared" / LAST_AUDIT_TS_NAME
     f.parent.mkdir(parents=True, exist_ok=True)
     try:
-        f.write_text(ts, encoding="utf-8")
+        f.write_text(ts, encoding="utf-8", newline="\n")
     except OSError as e:
         print(f"[pull-audit] cannot persist ts: {e}", file=sys.stderr)
 
@@ -809,7 +823,7 @@ def _write_pull_conflict_report(proj_root: Path, atom_name: str,
         "1. 編輯 incoming atom 或 conflicting atom 解決矛盾\n"
         "2. approve（搬到 shared/）或 reject（刪 pending 報告）\n"
     )
-    report_path.write_text(body, encoding="utf-8")
+    report_path.write_text(body, encoding="utf-8", newline="\n")
     return report_path
 
 

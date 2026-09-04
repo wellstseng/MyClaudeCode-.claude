@@ -10,6 +10,7 @@ wg_core.py — Workflow Guardian 共用基礎模組（V5）
 - Promotion audit log
 """
 
+import fnmatch
 import json
 import math
 import os
@@ -40,13 +41,15 @@ sys.path.insert(0, str(CLAUDE_DIR / "lib"))
 try:
     from atom_locations import (
         atom_writable_dir_segments, failures_atom_stems, is_local_realm_path,
-        is_cross_project_local,
+        is_cross_project_local, iter_realm_category_dirs, FAILURES_DIR,
     )
 except ImportError:
     atom_writable_dir_segments = None
     failures_atom_stems = None
     is_local_realm_path = None
     is_cross_project_local = None
+    iter_realm_category_dirs = None
+    FAILURES_DIR = CLAUDE_DIR / "memory" / "Failures"
 
 # ─── Token budget 單一來源─────────────────────────
 # 三個 budget 概念各司其職，數值不互相推導：
@@ -56,18 +59,48 @@ except ImportError:
 # token 估算器單一口徑：wg_core._estimate_tokens — CJK-aware（中文 ~1.5 tok/字 + ASCII word），
 # transcript/handoff/debug 摘要與 atom 注入預算共用（wg_atoms import 複用）
 CONTEXT_BUDGET_DEFAULT = 3000
-TURN_BUDGET_LIMIT = 500   # atom 注入段 per-turn 硬頂，控每輪 token 稅
+TURN_BUDGET_LIMIT = 1200  # atom 注入段 per-turn 硬頂（atom 全文中位數 ~360 tok → 約 3 顆全文；總額仍由 compute_token_budget 夾住）
+
+
+TOKEN_BUDGET_TIERS = ((15, 1000), (80, 2000))  # (prompt 估算 tok 上限, 總額)；超過最後一級 → 3000
+TOKEN_BUDGET_MAX = 3000
 
 
 def compute_token_budget(prompt: str) -> int:
-    """每輪注入總額：短 prompt 少注入，長 prompt 多注入。"""
-    plen = len(prompt)
-    if plen < 50:
-        return 1000
-    elif plen < 200:
-        return 2000
-    else:
-        return 3000
+    """每輪注入總額：短 prompt 少注入，長 prompt 多注入。
+
+    分級依 prompt 的估算 token 數（CJK-aware），不依字元數——中文 37 字≈33 tok 是實質
+    問題，英文 37 字≈9 tok 只是短句；用字元數分級會把中文問句壓在最低額度。
+
+    注意：此為起始額度；build_context 會逐段扣減（session context 注入輪 −reserved_tokens
+    預設 200、JIT 參考注入 −250），故 [Context budget: x/y] 尾行的 y 常見 750（1000−250）
+    或 2550（3000−200−250）等扣減後數字，非固定常數。"""
+    ptok = _estimate_tokens(prompt or "")
+    for cap, budget in TOKEN_BUDGET_TIERS:
+        if ptok < cap:
+            return budget
+    return TOKEN_BUDGET_MAX
+
+
+# ─── 覆轍信號（same_file_3x）檔名白名單 ─────────────────────────────────────
+# 索引/編年/說明/驗收工件本來就每 session 高頻反覆更新（README、_CHANGELOG、
+# DocIndex-*、各種 _INDEX、MEMORY.md、acceptance-*），「同檔改 ≥3 次」proxy 對
+# 這類檔必然過度警報 → 警報疲勞。命中白名單者不產生 / 不採計 rut 信號。
+# 降噪非關警報：各過濾點必落 atom-debug log（可觀測性鐵律）。
+# config self_iteration.rut_file_whitelist 覆寫；fnmatch、不分大小寫。
+RUT_FILE_WHITELIST_DEFAULT = [
+    "readme*", "_changelog*", "docindex-*", "*_index*",
+    "memory.md", "_atom_index*", "acceptance-*",
+]
+
+
+def is_rut_whitelisted(filename: str, config: Optional[Dict[str, Any]] = None) -> bool:
+    """same_file_3x 覆轍信號的檔名白名單判定（僅比對檔名，不含路徑）。"""
+    patterns = ((config or {}).get("self_iteration") or {}).get(
+        "rut_file_whitelist", RUT_FILE_WHITELIST_DEFAULT
+    )
+    name = Path(str(filename)).name.lower()
+    return any(fnmatch.fnmatch(name, str(p).lower()) for p in patterns)
 
 
 # Defaults（可被 config.json 覆寫）
@@ -384,10 +417,19 @@ def resolve_episodic_dir(cwd: str) -> Tuple[Path, str]:
 def resolve_failures_dir(cwd: str) -> Path:
     mem = get_project_memory_dir(cwd)
     if mem:
-        d = mem / "failures"
-        d.mkdir(exist_ok=True)
-        return d
-    return MEMORY_DIR / "failures"
+        try:
+            is_root_layer = mem.resolve() == MEMORY_DIR.resolve()
+        except OSError:
+            is_root_layer = mem == MEMORY_DIR
+        if not is_root_layer:
+            d = mem / "failures"
+            d.mkdir(exist_ok=True)
+            return d
+        # cwd 在 ~/.claude 本身：get_project_memory_dir 回 MEMORY_DIR，但根層失敗家族不走
+        # 專案佈局（memory/failures/ 小寫舊址），要落全域家族目錄。
+    # 全域 failures 家族物理居 memory/Failures/<主題>/（單一來源 atom_locations.FAILURES_DIR）；
+    # 小寫 memory/failures/ 是更早的舊址，寫進去會被健檢當 atom 掃到而報格式錯（缺 Trigger）。
+    return FAILURES_DIR
 
 
 def resolve_staging_dir(cwd: str) -> Path:
@@ -422,14 +464,64 @@ def _load_registry() -> Dict[str, Any]:
 def _save_registry(reg: Dict[str, Any]) -> None:
     REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = REGISTRY_PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(reg, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp.write_text(json.dumps(reg, indent=2, ensure_ascii=False), encoding="utf-8", newline="\n")
     tmp.replace(REGISTRY_PATH)
+
+
+def _transient_temp_dirs() -> List[Path]:
+    """系統暫存根（tempfile + TEMP/TMP 環境變數）；測試 harness 的假專案都住這裡。"""
+    import tempfile
+    cands = [tempfile.gettempdir(), os.environ.get("TEMP", ""), os.environ.get("TMP", "")]
+    out: List[Path] = []
+    for c in cands:
+        if c:
+            try:
+                out.append(Path(c).resolve())
+            except OSError:
+                pass
+    return out
+
+
+# 路徑含這些片段即視為暫存專案（pytest tmp_path 的固定命名）；測試可 monkeypatch 為空以驗登記路徑
+_TRANSIENT_PATH_MARKERS = ("pytest-of-",)
+
+
+def is_transient_project_root(root: Path) -> bool:
+    """暫存區內的專案根（pytest tmp_path、系統 Temp）不得登記進 project-registry。
+
+    測試用真 dispatcher 跑假專案時 SessionStart 會呼叫 register_project；不擋會讓
+    registry 每跑一次測試長兩筆、dashboard「已知專案」被垃圾淹掉。
+    """
+    try:
+        r = root.resolve()
+    except OSError:
+        r = root
+    if any(m in str(r) for m in _TRANSIENT_PATH_MARKERS):
+        return True
+    for t in _transient_temp_dirs():
+        if r == t or t in r.parents:
+            return True
+    return False
 
 
 def register_project(cwd: str) -> None:
     root = find_project_root(cwd)
     if not root:
         return
+    # 8.3 短檔名（C:\Users\HOLYLI~1）展開成長名，否則同一專案登記成兩個 slug
+    try:
+        root = root.resolve()
+    except OSError:
+        pass
+    if is_transient_project_root(root):
+        return
+    # ~/.claude 本身與家目錄不是「專案」：家目錄的 .claude/memory 就是全域記憶、
+    # ~/.claude 的記憶在 memory/ 而非 .claude/memory/；登記只會讓專案清單多兩筆假項目
+    try:
+        if root.resolve() in (CLAUDE_DIR.resolve(), CLAUDE_DIR.resolve().parent):
+            return
+    except OSError:
+        pass
     has_marker = (
         (root / ".claude" / "memory" / MEMORY_INDEX).exists()
         or (root / "_AIDocs").is_dir()
@@ -481,6 +573,66 @@ def discover_all_project_memory_dirs() -> List[Tuple[str, Path]]:
     results = _discover_all_project_memory_dirs_uncached()
     _DISCOVER_CACHE = (sig, list(results))
     return results
+
+
+def find_vcs_root(start: Path) -> Optional[Tuple[str, Path]]:
+    """從 start 往上找最近的 VCS 根：.git（dir 或 worktree/submodule 的 file）或 .svn 目錄。
+
+    純檔案系統 walk-up、零 subprocess。回 ("git"|"svn", root)；非工作區回 None。
+    巢狀時取最近的那個（svn WC 住在 git repo 裡，如 c:/Projects/Tools 在 c:/Projects 之下）。
+    """
+    cur = Path(start)
+    while True:
+        try:
+            if (cur / ".git").exists():
+                return ("git", cur)
+            if (cur / ".svn").is_dir():
+                return ("svn", cur)
+        except OSError:
+            return None
+        if cur.parent == cur:
+            return None
+        cur = cur.parent
+
+
+def memory_dir_candidates(start: Path, root: Path) -> List[Path]:
+    """VCS 根 root 之下可能的記憶樹——不掃整個工作區（大 SVN WC 的 svn status 要 3～6 秒，hook 預算只有 2.5 秒）。
+
+    收：start 往上到 root 每層的 `.claude/memory`、root 的根層佈局 `memory/`（須有 _atom_index.json）、
+    登記專案中位於 root 之下者。回存在的目錄，去重、保序。
+    """
+    out: List[Path] = []
+    seen: set = set()
+
+    def _add(p: Path) -> None:
+        try:
+            key = p.resolve()
+        except OSError:
+            return
+        if p.is_dir() and key not in seen:
+            seen.add(key)
+            out.append(p)
+
+    try:
+        root_r = Path(root).resolve()
+        cur = Path(start).resolve()
+        cur.relative_to(root_r)
+    except (OSError, ValueError):
+        cur, root_r = Path(root), Path(root)
+    while True:
+        _add(cur / ".claude" / "memory")
+        if cur == root_r or cur.parent == cur:
+            break
+        cur = cur.parent
+    if (Path(root) / "memory" / "_atom_index.json").exists():
+        _add(Path(root) / "memory")
+    for _slug, mem in discover_all_project_memory_dirs():
+        try:
+            mem.resolve().relative_to(root_r)
+        except (OSError, ValueError):
+            continue
+        _add(mem)
+    return out
 
 
 def _discover_all_project_memory_dirs_uncached() -> List[Tuple[str, Path]]:
@@ -571,6 +723,12 @@ def discover_v4_sublayers(slug: str, mem_dir: Path) -> List[Tuple[str, Path, str
     shared_dir = mem_dir / "shared"
     if shared_dir.is_dir():
         out.append((shared_label, shared_dir, "recursive"))
+
+    # 專案層失敗家族（memory/failures/<主題>/；scope=shared 的 feedback-* 落點，
+    # resolve_failures_dir 同址）屬 shared 層——向量索引／去重層清單靠這裡才看得到。
+    failures_dir = mem_dir / "failures"
+    if failures_dir.is_dir():
+        out.append((shared_label, failures_dir, "recursive"))
 
     roles_root = mem_dir / "roles"
     if roles_root.is_dir():
@@ -693,7 +851,7 @@ def write_state(session_id: str, state: Dict[str, Any]) -> None:
             lock_fh = None
 
     try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
+        with open(tmp_path, "w", encoding="utf-8", newline="\n") as f:
             json.dump(state, f, ensure_ascii=False, indent=2)
         tmp_path.replace(path)
     except OSError:
@@ -902,10 +1060,37 @@ def log_promotion_audit(action: str, atom: str, **fields: Any) -> None:
                  "action": action, "atom": atom}
         entry.update(fields)
         audit_path = MEMORY_DIR / "_promotion_audit.jsonl"
-        with open(audit_path, "a", encoding="utf-8") as f:
+        with open(audit_path, "a", encoding="utf-8", newline="\n") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception as e:
         _atom_debug_error("promotion:audit_append", e)
+
+
+def log_promotion_heartbeat(scanned: int, min_gap_hours: float = 20.0) -> None:
+    """晉升掃描完成但無事件時落一筆 heartbeat（尾筆距今 < min_gap_hours 則跳過）。
+
+    週健檢鮮度檢查以 _promotion_audit.jsonl 最後一筆 ts 判斷管線死活；
+    沒有 heartbeat 時「長期無晉升事件」與「管線靜默停擺」不可分（誤報紅燈）。
+    節流讓 audit 檔不被 heartbeat 洗版：正常使用約每日一筆。"""
+    try:
+        p = MEMORY_DIR / "_promotion_audit.jsonl"
+        try:
+            with open(p, "rb") as f:
+                f.seek(max(0, p.stat().st_size - 4096))
+                lines = f.read().decode("utf-8", errors="replace").strip().splitlines()
+            for line in reversed(lines):
+                try:
+                    last = datetime.fromisoformat(json.loads(line)["ts"])
+                except (ValueError, KeyError):
+                    continue
+                if (datetime.now() - last).total_seconds() < min_gap_hours * 3600:
+                    return
+                break
+        except OSError:
+            pass  # 檔不存在 → 首筆 heartbeat 直接寫
+        log_promotion_audit("heartbeat", "-", scanned=scanned)
+    except Exception as e:
+        _atom_debug_error("promotion:heartbeat", e)
 
 
 # ─── Guard Trigger Log（可觀測性：各護欄觸發計數 JSONL）─────────────────────
@@ -925,7 +1110,7 @@ def append_guard_log(guard: str, payload: Dict[str, Any]) -> None:
         rotate_log_if_oversized(log_path, max_mb=5, keep=2)
         entry = {"at": _now_iso()}
         entry.update(payload)
-        with open(log_path, "a", encoding="utf-8") as f:
+        with open(log_path, "a", encoding="utf-8", newline="\n") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception as e:
         _atom_debug_error(f"guard_log:{guard}", e)
@@ -945,7 +1130,7 @@ def _atom_debug_log(tag: str, content: str, config: Dict[str, Any] = None) -> No
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / f"atom-debug-{datetime.now().strftime('%Y-%m-%d_%H')}.log"
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(log_path, "a", encoding="utf-8") as f:
+        with open(log_path, "a", encoding="utf-8", newline="\n") as f:
             f.write(f"[{ts}][{tag}] {content.strip()}\n\n")
     except Exception:
         pass
@@ -1010,34 +1195,45 @@ def _path_under_memory_dir(fp: Path) -> bool:
 
 
 def _atom_path_whitelisted(fp: Path) -> bool:
+    """memory 樹內的豁免判定：只看 `memory` 段**之後**的目錄段是否命中白名單。
+
+    上層目錄名不參與比對——`<proj>/templates/.claude/memory/x.md` 這種「外層資料夾剛好叫
+    templates」不得讓整棵 memory 樹被豁免。範疇資料夾（memory/<範疇>/…）不在白名單，
+    照常走 funnel。
+    """
     if fp.name in _WHITELIST_BASENAMES:
         return True
     if fp.name.startswith("_") or fp.name.startswith("SPEC_"):
         return True
-    parts_lower = {p.lower() for p in fp.parts}
-    if parts_lower & _WHITELIST_DIR_SEGMENTS:
+    parts_lower = [p.lower() for p in fp.parts]
+    try:
+        start = parts_lower.index("memory") + 1
+    except ValueError:
+        start = 0
+    inner = set(parts_lower[start:-1])  # memory 之後、檔名之前的目錄段
+    if inner & _WHITELIST_DIR_SEGMENTS:
         return True
     return False
 
 
 def _is_failures_atom_path(fp: Path) -> bool:
-    """fp 是否為 `_AIDocs/Failures/` 下「已註冊的 atom」(.md)。
+    """fp 是否為失敗家族目錄下「已註冊的 atom」(.md)。
 
-    `_AIDocs/Failures/` 不在 `.claude/memory/` 樹下，故上游 _path_under_memory_dir
-    對其早 return None —— 這正是 funnel guard 的覆蓋缺口（feedback-* / cognitive-patterns
-    / memory-pipeline-* 等失敗 atom 物理居此，直接 Write/Edit 會繞過 funnel + audit）。
+    失敗家族有兩個家：新址 `memory/Failures/[<主題>/]`（在 memory 樹下，上游
+    _path_under_memory_dir 本就會攔）與舊址 `_AIDocs/Failures/`（樹外，讀端相容期間仍需
+    本函式補攔，否則 feedback-* / cognitive-patterns / memory-pipeline-* 直接 Write/Edit
+    會繞過 funnel + audit）。
 
-    該目錄混居「註冊 atom」與「legacy 失敗筆記」（env-traps / silent-failures /
-    wrong-assumptions… 未進 index，屬一般參考文件，不可誤擋），故以 failures_atom_stems()
-    （index SoT）精準比對 stem。_INDEX.md（'_' 前綴）與 legacy 文件 stem 不在 index → 自然放行。
+    目錄內混居「註冊 atom」與「參考文件」（env-traps / silent-failures / _INDEX.md…
+    未進 index，不可誤擋），故以 failures_atom_stems()（index SoT）精準比對 stem。
 
-    failures_atom_stems 在 lib import 失敗時為 None → 退化為「不攔」，與既有行為一致。
+    failures_atom_stems 在 lib import 失敗時為 None → 退化為「不攔」。
     """
     if failures_atom_stems is None or fp.suffix != ".md":
         return False
     parts_lower = [p.lower() for p in fp.parts]
     for i in range(len(parts_lower) - 1):
-        if parts_lower[i] == "_aidocs" and parts_lower[i + 1] == "failures":
+        if parts_lower[i] in ("_aidocs", "memory") and parts_lower[i + 1] == "failures":
             break
     else:
         return False
@@ -1065,7 +1261,7 @@ def check_memory_path_block(
             "正確做法：(1) 全域記憶 → 用 MCP `atom_write` (scope=global) 寫到 "
             "~/.claude/memory/；(2) 專案記憶 → 用 MCP `atom_write` "
             "(scope=shared/role/personal) 寫到 {project_root}/.claude/memory/。\n"
-            "詳見 _AIDocs/Failures/feedback-memory-system-doc-sync.md。"
+            "詳見 atom [[feedback-memory-system-doc-sync]]。"
         )
 
     if _DOUBLE_CLAUDE_RE.search(fp_str):
@@ -1077,8 +1273,8 @@ def check_memory_path_block(
     if os.environ.get("WG_DISABLE_ATOM_GUARD") == "1":
         return None
     fp = Path(fp_str)
-    # memory/ 樹下 atom，或 _AIDocs/Failures/ 下「註冊 atom」(feedback-* 等失敗 atom)
-    # 皆須走 funnel；後者不在 memory 樹下，需 _is_failures_atom_path 補攔（覆蓋缺口）。
+    # memory/ 樹下 atom（含 memory/Failures/），或舊址 _AIDocs/Failures/ 下「註冊 atom」
+    # 皆須走 funnel；後者不在 memory 樹下，需 _is_failures_atom_path 補攔。
     if not _path_under_memory_dir(fp) and not _is_failures_atom_path(fp):
         return None
     if fp.suffix != ".md":
@@ -1204,6 +1400,79 @@ def check_cross_realm_write(
         "  (2) 暫存產物（截圖/log/dump）→ 寫到專案目錄或系統 temp\n"
         "  (3) user 明確要求改核心層 → 請在 ~/.claude 開 session 操作，或於 "
         "workflow/config.json guard.cross_realm_write.allowlist 加入路徑"
+    )
+
+
+# ─── 跨層 Bash 寫入閘 ─────────────────────────────────────────────────────────
+# CrossRealmWriteBlock 只看 Write/Edit/NotebookEdit；實證（2026-09-01）專案 session 以
+# `cd ~/.claude && python - <<EOF … write_text` 改根層 hooks、再 `git add && git commit`，
+# 整條沒被看到。這裡補 Bash/PowerShell：根層上下文（cd 進 ~/.claude、git -C、或命令列直接
+# 指到核心路徑）× 會動手的操作（heredoc／內嵌 python／redirect／sed -i／cp mv rm／
+# git add commit push…／PowerShell 寫入 cmdlet）→ deny。純跑根層工具
+# （`python ~/.claude/tools/x.py …`，不 cd 進去）與唯讀命令照常放行。
+# 「跑根層工具」不構成根層上下文：判定前先把 `python <root>/.claude/tools|hooks|lib|skills/x.py`
+# 這段抹掉，剩下的命令再找根層路徑。否則專案 session 一條命令裡同時「跑根層索引工具」＋
+# 「用 python/cp/rm/git 動自己專案的 .claude/memory」會被當成改根層而誤擋。
+_ROOT_CORE_SUBDIRS_RE = r"(?:hooks|lib|tools|skills|rules|prompts)"
+_ROOT_SENSITIVE_FILES_RE = r"(?:settings\.json|CLAUDE\.md|IDENTITY[^/\\\s]*\.md|USER[^/\\\s]*\.md|TECH\.md|README\.md|Install[^/\\\s]*\.md)"
+_ROOT_HOME_RE = r"(?:~|\$HOME|\$\{HOME\}|%USERPROFILE%|\$env:USERPROFILE|/[a-zA-Z]/Users/[^/\s\"']+|[a-zA-Z]:[\\/]Users[\\/][^\\/\s\"']+)"
+_ROOT_CD_RE = re.compile(
+    rf"(?:\bcd\s+|\bgit\s+-C\s+|\bSet-Location\s+|\bpushd\s+)[\"']?{_ROOT_HOME_RE}[\\/]\.claude(?:[\\/]{_ROOT_CORE_SUBDIRS_RE})?[\\/]?[\"']?(?=\s|;|&&|\|\||$)",
+    re.IGNORECASE,
+)
+_ROOT_CORE_PATH_RE = re.compile(
+    rf"{_ROOT_HOME_RE}[\\/]\.claude[\\/](?:{_ROOT_CORE_SUBDIRS_RE}[\\/]|{_ROOT_SENSITIVE_FILES_RE}\b)",
+    re.IGNORECASE,
+)
+_ROOT_TOOL_INVOKE_RE = re.compile(
+    rf"\b(?:python3?|pythonw|py)(?:\.exe)?\s+[\"']?{_ROOT_HOME_RE}[\\/]\.claude[\\/](?:tools|hooks|lib|skills)[\\/][^\s\"']*?\.py[\"']?",
+    re.IGNORECASE,
+)
+# heredoc 是 `<<EOF`／`<<'EOF'`／`<<-EOF`；`<<<`（here-string）與 grep 樣式裡的 `<<<<<<<` 衝突標記不算
+_BASH_WRITE_OP_RE = re.compile(
+    r"(?:<<(?!<)-?\s*[\"']?\w|>>|(?<![<>=!])>(?!&?/dev/null|\s*\$null|\s*NUL\b|&\d)|\btee\b|\bsed\s+(?:-[a-zA-Z]*i|--in-place)"
+    r"|\b(?:python3?|pythonw|py)(?:\.exe)?\s+-(?:\s|c\b)|\b(?:cp|mv|rm|rmdir|del|erase|copy|move|ren|rename|truncate|install)\b"
+    r"|\bgit\s+(?:-C\s+\S+\s+)?(?:add|commit|push|mv|rm|checkout|reset|stash|rebase|cherry-pick|merge|apply|am)\b"
+    r"|\b(?:Set-Content|Out-File|Add-Content|Copy-Item|Move-Item|Remove-Item|New-Item|Rename-Item)\b)",
+    re.IGNORECASE,
+)
+
+
+def check_cross_realm_bash(
+    tool_name: str, tool_input: Dict[str, Any], cwd: str,
+    config: Dict[str, Any],
+) -> Optional[str]:
+    """外部專案 session 經 Bash/PowerShell 改 ~/.claude 核心層或操作根層 repo → deny。cwd 缺失 fail-open。"""
+    if tool_name not in ("Bash", "PowerShell"):
+        return None
+    g = (config.get("guard") or {}).get("cross_realm_bash") or {}
+    if not g.get("enabled", True):
+        return None
+    cmd = tool_input.get("command", "") or ""
+    if not cmd or not cwd:
+        return None
+    if _is_core_session(cwd) is not False:
+        return None  # 核心開發 session 放行；無法判定 → fail-open
+    ctx_cmd = _ROOT_TOOL_INVOKE_RE.sub(" ", cmd)  # 跑根層工具本身不算根層上下文
+    root_ctx = bool(_ROOT_CD_RE.search(ctx_cmd) or _ROOT_CORE_PATH_RE.search(ctx_cmd))
+    if not root_ctx:
+        return None
+    if not _BASH_WRITE_OP_RE.search(cmd):
+        return None  # 唯讀（sed -n / grep / cat / python ~/.claude/tools/x.py …）放行
+    cmd_norm = cmd.replace("\\", "/").lower()
+    for pat in g.get("allowlist", []) or []:
+        if pat and str(pat).replace("\\", "/").lower() in cmd_norm:
+            return None
+    return (
+        "[Guardian:CrossRealmBashBlock] 專案 session 不得經 Bash/PowerShell 修改 ~/.claude 核心層"
+        "（hooks/lib/tools/skills/rules/prompts、根層設定與文件）或操作根層 repo（git add/commit/push）。\n"
+        f"命令：{cmd[:160]!r}\n"
+        f"session cwd：{cwd}\n"
+        "規則：專案層遇到要改根層的需求 → 不動手，把需求寫成一段可貼上的 prompt 交給使用者，"
+        "請他到 ~/.claude 開 session 執行（那裡會跑 verify、選擇性 staging、push）。\n"
+        "專案自己的需求 → 寫 {專案根}/.claude/hooks/project_hooks.py 或 .claude/skills/。\n"
+        "只是要跑根層工具（唯讀、或針對本專案）→ 不要 cd 進 ~/.claude，直接 "
+        "`python ~/.claude/tools/<tool>.py …`。"
     )
 
 

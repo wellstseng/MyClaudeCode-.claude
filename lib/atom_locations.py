@@ -37,8 +37,16 @@ except ImportError:  # 頂層模組載入（wg_core / CLI sys.path.insert）
 
 CLAUDE_DIR = Path.home() / ".claude"
 GLOBAL_MEMORY_DIR = CLAUDE_DIR / "memory"
-FAILURES_DIR = CLAUDE_DIR / "_AIDocs" / "Failures"
-FAILURES_REL = "_AIDocs/Failures"
+CORE_ATOMS_REL = "memory"
+# 失敗家族（feedback-* / cognitive-patterns / memory-pipeline-*）是核心層的一個 Lv1 範疇
+# 資料夾：memory/Failures/<主題>/。舊址 _AIDocs/Failures/ 僅供讀端相容（遷移期間兩處都認），
+# 寫端一律落新址。JS mirror：realm.js FAILURES_* / LEGACY_FAILURES_*。
+FAILURES_ROOT_NAME = "Failures"
+FAILURES_DIR = GLOBAL_MEMORY_DIR / FAILURES_ROOT_NAME
+FAILURES_REL = f"{CORE_ATOMS_REL}/{FAILURES_ROOT_NAME}"
+LEGACY_FAILURES_DIR = CLAUDE_DIR / "_AIDocs" / "Failures"
+LEGACY_FAILURES_REL = "_AIDocs/Failures"
+FAILURES_RELS = (FAILURES_REL, LEGACY_FAILURES_REL)
 FEEDBACK_TITLE_PREFIX = "feedback-"
 
 # V5+ local realm（範疇限定）：~/.claude 本地知識物理落 _AIDocs/_atoms/<domain>/，
@@ -52,10 +60,11 @@ LOCAL_REALM_DOMAINS = frozenset({"World", "Tools", "MemDev"})
 # catch-all / fail-safe domain（取代舊 "Misc"；LLM 低信心·unsure 歸此，py+js 鏡像 test_14）。
 LOCAL_REALM_DEFAULT_DOMAIN = "Else"
 # 跨專案注入的 local 範疇（解開「儲存位置綁死注入範圍」）：storage 仍在 _atoms（write 路由不變），
-# 但 injection 全專案——對偶 feedback-*（物理居 _AIDocs/Failures/ 卻 core 注入）。注入閘門
-# （session_start）對清單內 Lv1 根的 local atom 例外放行。**僅影響注入範圍**，不改 realm/path/
-# write 路由/catalog 歸類。py-only（注入是 Python hook，無 js 對拍面）。
-CROSS_PROJECT_LOCAL_DOMAINS = frozenset({"Continuity"})
+# 但 injection 全專案。注入閘門（session_start）對清單內 Lv1 根的 local atom 例外放行。
+# **僅影響注入範圍**，不改 realm/path/write 路由/catalog 歸類。py-only（注入是 Python hook，
+# 無 js 對拍面）。目前清單為空：跨專案通用的知識一律住 memory/<範疇>/（core），local 只留
+# 「只在 ~/.claude 有用」的；機制保留供未來需要時填入 Lv1 根名。
+CROSS_PROJECT_LOCAL_DOMAINS: frozenset = frozenset()
 # 階層 domain 路徑最大深度（user 拍板：深=內容多需細分、非範疇廣；
 # 擴大根因＝「窄範疇但已知內容量龐大」→ 必須加層）。canon 超此→截尾（絕對天花板）。
 LOCAL_REALM_MAX_DEPTH = 7
@@ -64,6 +73,8 @@ LOCAL_REALM_MAX_DEPTH = 7
 LOCAL_REALM_NEW_BRANCH_DEPTH = 3
 # 詞庫自學檔（py-only supplement；js 維持 base-only 以保 classify_realm parity / test_17）。
 LEARNED_LEXICON_PATH = GLOBAL_MEMORY_DIR / "_meta" / "realm-lexicon-learned.json"
+# 核心層範疇分類器（classify_category）的自學詞庫 {term: "<Lv1>[/<Lv2>]"}；base 詞庫在 taxonomy.json terms。
+TAXONOMY_LEARNED_PATH = GLOBAL_MEMORY_DIR / "_meta" / "taxonomy-lexicon-learned.json"
 
 # ─── Local-realm 分類器詞庫（單一來源：memory/_meta/realm-lexicon.json）────────
 #
@@ -138,8 +149,11 @@ def is_failures_routed_title(title: Optional[str]) -> bool:
     """title 是否該路由到 _AIDocs/Failures/。對拍 server.js:applyFeedbackRouting。
 
     兩類：(1) feedback- 前綴（create 起即路由）；(2) 已註冊在索引、path 落
-    Failures 的非 feedback- atom（cognitive-patterns / memory-pipeline-* 等）——
-    缺 (2) 時這些 atom 的 append/replace 會在 memory/ 找不到檔而失敗。
+    Failures 的非 feedback- atom（cognitive-patterns 等）——缺 (2) 時這些 atom 的
+    append/replace 會在 memory/ 找不到檔而失敗。
+
+    顯式守衛：index path 已在 local 範疇（_AIDocs/_atoms/）的 feedback- atom
+    （開發面 post-mortem 住 MemDev）→ False，不回搬——append/replace 在 local 樹找檔。
     """
     if not title:
         return False
@@ -150,16 +164,37 @@ def is_failures_routed_title(title: Optional[str]) -> bool:
         from atom_spec import slugify
     slug = slugify(title)
     if slug.startswith(FEEDBACK_TITLE_PREFIX):
-        return True
+        return not _indexed_in_local_realm(slug)
     try:
         return slug in failures_atom_stems()
     except Exception:
         return False
 
 
+def _indexed_in_local_realm(slug: str, mem_dir: Optional[Path] = None) -> bool:
+    """slug 已註冊在 index 且 path 落 _AIDocs/_atoms/ ⇒ True。index 缺/壞/未註冊 → False。"""
+    try:
+        from .atom_index_json import load_atom_index_json
+    except ImportError:
+        from atom_index_json import load_atom_index_json
+    try:
+        data = load_atom_index_json(mem_dir or GLOBAL_MEMORY_DIR)
+    except (OSError, ValueError):
+        return False
+    for a in data.get("atoms", []):
+        if a.get("name") == slug:
+            return is_local_realm_path(a.get("path") or "")
+    return False
+
+
 def is_in_failures_path(rel_path: str) -> bool:
-    """rel_path（POSIX 風格）是否落在 _AIDocs/Failures/ 之下。"""
-    return rel_path.startswith(FAILURES_REL + "/")
+    """rel_path（POSIX 風格）是否屬失敗家族：memory/Failures/ 之下，或舊址 _AIDocs/Failures/。"""
+    return any(rel_path.startswith(r + "/") for r in FAILURES_RELS)
+
+
+def is_legacy_failures_path(rel_path: str) -> bool:
+    """rel_path 仍在舊址 _AIDocs/Failures/（尚未遷入 memory/Failures/）。"""
+    return rel_path.startswith(LEGACY_FAILURES_REL + "/")
 
 
 def is_local_realm_path(rel_path: str) -> bool:
@@ -233,9 +268,9 @@ def atom_search_roots(include_failures: bool = True, include_local: bool = True)
     否則無 decay/promote/usefulness 歸屬而凍結。dir 不存在時由 caller（iter_atom_files_multi）
     的 `is_dir()` 守門略過，故空目錄無副作用。
     """
-    roots = [GLOBAL_MEMORY_DIR]
+    roots = [GLOBAL_MEMORY_DIR]  # memory/Failures/ 在 memory/ 樹下，rglob 自然涵蓋
     if include_failures:
-        roots.append(FAILURES_DIR)
+        roots.append(LEGACY_FAILURES_DIR)  # 舊址讀端相容；不存在時由 caller is_dir() 略過
     if include_local:
         roots.append(LOCAL_ATOMS_DIR)
     return roots
@@ -260,7 +295,7 @@ def failures_atom_stems(mem_dir: Path = GLOBAL_MEMORY_DIR) -> set:
         return {
             (a.get("path") or "").rsplit("/", 1)[-1].removesuffix(".md")
             for a in data.get("atoms", [])
-            if (a.get("path") or "").startswith(FAILURES_REL + "/")
+            if is_in_failures_path(a.get("path") or "")
         }
     except (OSError, ValueError):
         return set()
@@ -287,10 +322,12 @@ def iter_atom_files_multi(
         from atom_spec import is_atom_file
     roots_list = list(roots) if roots is not None else atom_search_roots()
     stems_cache: Optional[set] = None
-    try:
-        failures_resolved = FAILURES_DIR.resolve()
-    except OSError:
-        failures_resolved = FAILURES_DIR
+    failures_resolved = set()
+    for fd in (FAILURES_DIR, LEGACY_FAILURES_DIR):
+        try:
+            failures_resolved.add(fd.resolve())
+        except OSError:
+            failures_resolved.add(fd)
     for root in roots_list:
         if not root.is_dir():
             continue
@@ -298,7 +335,7 @@ def iter_atom_files_multi(
             root_resolved = root.resolve()
         except OSError:
             root_resolved = root
-        is_failures_root = (root_resolved == failures_resolved)
+        is_failures_root = (root_resolved in failures_resolved)
         if is_failures_root and apply_failures_filter and stems_cache is None:
             stems_cache = failures_atom_stems()
         for md in sorted(root.rglob("*.md")):
@@ -312,16 +349,22 @@ def iter_atom_files_multi(
 # ─── Resolution ───────────────────────────────────────────────────────────────
 
 
-def failures_write_target() -> Dict[str, Any]:
-    """V5+ feedback 路由：失敗 atom 物理落 _AIDocs/Failures/，索引仍在 memory/_atom_index.json。
+def failures_write_target(topic: Optional[str] = None) -> Dict[str, Any]:
+    """失敗家族路由：物理落 memory/Failures/[<主題>/]，索引在 memory/_atom_index.json。
 
+    `topic`＝主題範疇（與核心 Lv1 同名，如「驗證與實證」）；經 validate_category_path 沙盒化，
+    非法/空 → 落 Failures 根（寫入閘啟用後由 caller 要求必填）。
     回 {dir, base, index_dir, index_root} — caller 自行疊加 scope_label / error / routed_* 旗標。
-    副作用：FAILURES_DIR.mkdir(parents=True, exist_ok=True)（對拍既有 atom_io 行為）。
+    MIRROR: realm.js applyFeedbackRouting — keep in sync。
     """
-    FAILURES_DIR.mkdir(parents=True, exist_ok=True)
+    target = FAILURES_DIR
+    segs, _err = validate_category_path(topic or "")
+    if segs:
+        target = FAILURES_DIR.joinpath(*segs)
+    target.mkdir(parents=True, exist_ok=True)
     return {
-        "dir": FAILURES_DIR,
-        "base": FAILURES_DIR,
+        "dir": target,
+        "base": target,
         "index_dir": GLOBAL_MEMORY_DIR,
         "index_root": CLAUDE_DIR,
     }
@@ -432,6 +475,42 @@ def _rglob_locate(root: Path, slug: str) -> List[Path]:
     return hits
 
 
+def find_separator_variant(search_roots: Iterable[Path], slug: str) -> Optional[str]:
+    """既有檔名 slugify 後與 slug 相同、但字面不同（舊底線檔 client_il.md vs 新 slug
+    client-il）→ 回該檔相對 root 的 posix 路徑，否則 None。create 前守門：不擋會叉出
+    append/replace 永遠碰不到的近重複 atom。跳過 `_`/`.` 前綴目錄。"""
+    try:
+        from .atom_spec import slugify as _slugify
+    except ImportError:  # 頂層模組載入
+        from atom_spec import slugify as _slugify  # type: ignore
+    for root in search_roots:
+        try:
+            if not root.is_dir():
+                continue
+        except OSError:
+            continue
+        queue = [root]
+        while queue:
+            cur = queue.pop(0)
+            try:
+                entries = sorted(cur.iterdir())
+            except OSError:
+                continue
+            for e in entries:
+                if e.is_dir():
+                    if e.name.startswith("_") or e.name.startswith("."):
+                        continue
+                    queue.append(e)
+                elif e.suffix == ".md":
+                    base = e.stem
+                    if base != slug and _slugify(base) == slug:
+                        try:
+                            return e.relative_to(root).as_posix()
+                        except ValueError:
+                            return e.as_posix()
+    return None
+
+
 def locate_existing_atom(
     slug: str,
     *,
@@ -531,7 +610,62 @@ def atom_index_row_kind(rel_path: str, name: str) -> str:
         return "failures_other"
     if is_local_realm_path(rel_path):
         return "local_realm"
+    if is_personal_path(rel_path):
+        return "personal"
     return "individual"
+
+
+# 專案記憶「已依 scope 分層整理過」的判定：tools/classify-project-scope.py apply/mark 打在
+# _atom_index.json 頂層的 layout 標記，或專案自訂 shared/_taxonomy.json（已在分類的專案）。
+SCOPE_LAYOUT_MARK = "scope-v2"
+
+
+def scope_layout_classified(mem_dir: Path) -> Optional[str]:
+    """回 'marker' | 'taxonomy' | None（未整理）。無索引的專案回 'marker'（沒東西可整理）。"""
+    try:
+        from .atom_index_json import load_atom_index_json
+    except ImportError:
+        from atom_index_json import load_atom_index_json
+    idx = Path(mem_dir) / "_atom_index.json"
+    if not idx.exists():
+        return "marker"
+    try:
+        data = load_atom_index_json(Path(mem_dir))
+    except (OSError, ValueError):
+        return None
+    if data.get("layout") == SCOPE_LAYOUT_MARK:
+        return "marker"
+    if (Path(mem_dir) / "shared" / "_taxonomy.json").exists():
+        return "taxonomy"
+    return None
+
+
+def scope_from_index_path(rel_path: str, layer: str = "shared") -> str:
+    """索引 path → scope 標籤（單一來源；hooks/wg_atoms.scope_from_rel_path 委派到這裡）。
+    personal/<user>/（含 personal/auto/<user>/）→ personal:<user>；roles/<r>/ → role:<r>；
+    其餘回 layer（global 索引給 "global"，專案索引給 "shared"）。不信 index 的 scope 欄。"""
+    parts = [p for p in str(rel_path).replace("\\", "/").split("/") if p]
+    dirs = parts[:-1]
+    for i, seg in enumerate(dirs):
+        if seg == "personal" and i + 1 < len(dirs):
+            owner = dirs[i + 1]
+            if owner == "auto" and i + 2 < len(dirs):
+                owner = dirs[i + 2]
+            return f"personal:{owner}"
+        if seg == "roles" and i + 1 < len(dirs):
+            return f"role:{dirs[i + 1]}"
+    return layer
+
+
+def is_personal_path(rel_path: str) -> bool:
+    """索引 path 落 personal/<user>/（全域根 memory/personal/<u>/ 或專案根 memory/personal/<u>/）⇒ True。
+    personal 只給本人：不進 MEMORY.md 目錄、不進 realm 自動搬移、不當範疇段。"""
+    parts = [p for p in str(rel_path).replace("\\", "/").split("/") if p]
+    dirs = parts[:-1]
+    for i, seg in enumerate(dirs):
+        if seg == "personal" and i + 1 < len(dirs):
+            return True
+    return False
 
 
 def local_realm_domain(rel_path: str) -> str:
@@ -599,6 +733,314 @@ def enumerate_local_paths(mem_dir: Path = GLOBAL_MEMORY_DIR) -> List[str]:
             if segs:
                 paths.add("/".join(segs))
     return sorted(paths)
+
+
+# ─── 核心層範疇資料夾（memory/<範疇>/…；分類由 index path 推導，與 local realm 同原理）────
+#
+# 兩根：memory/（core，全專案注入；含 Failures 家族 Lv1）與 _AIDocs/_atoms/（local，僅 ~/.claude）。
+# realm 仍由 _AIDocs/_atoms/ 前綴推導（is_local_realm_path 不動）；範疇＝path 在根之後的目錄段。
+REALM_ROOTS = ((CORE_ATOMS_REL, "core"), (LOCAL_ATOMS_REL, "local"))
+
+
+def realm_root_for(rel_path: str) -> Optional[str]:
+    """rel_path 所屬的根（'memory' / '_AIDocs/_atoms'）；舊址 _AIDocs/Failures 視為 core 根；皆非 → None。"""
+    for root, _realm in REALM_ROOTS:
+        if rel_path.startswith(root + "/"):
+            return root
+    if is_legacy_failures_path(rel_path):
+        return LEGACY_FAILURES_REL
+    return None
+
+
+def path_segments_under(rel_path: str, root_rel: str) -> List[str]:
+    """<root>/<a>/<b>/<slug>.md → ['a','b']（去檔名）；不在 root 下 → []。"""
+    prefix = root_rel + "/"
+    if not rel_path.startswith(prefix):
+        return []
+    parts = [p for p in rel_path[len(prefix):].split("/") if p]
+    return parts[:-1]
+
+
+def core_category_segments(rel_path: str) -> List[str]:
+    """核心層範疇段：memory/<Lv1>/<Lv2>/<slug>.md → ['Lv1','Lv2']；根下散檔 → []。
+
+    舊址 _AIDocs/Failures/<slug>.md 視為 ['Failures']（遷移期間 catalog 計數一致）。
+    """
+    if is_legacy_failures_path(rel_path):
+        return [FAILURES_ROOT_NAME] + path_segments_under(rel_path, LEGACY_FAILURES_REL)
+    return path_segments_under(rel_path, CORE_ATOMS_REL)
+
+
+def is_flat_core_path(rel_path: str) -> bool:
+    """memory/<slug>.md（根下散檔、無範疇資料夾）⇒ True。範疇資料夾必備的硬規則就看這個。"""
+    return rel_path.startswith(CORE_ATOMS_REL + "/") and not core_category_segments(rel_path)
+
+
+# 範疇資料夾禁用名（casefold）：撞 atom 掃描 skip 名單、定位 skip、funnel 白名單段、dashboard 層名、
+# 舊址小寫 failures。命中即拒——否則 atom 會被掃描器跳過或整樹被 funnel 豁免。
+# `Failures`（正名大寫）由 taxonomy 明列放行（validate_category_segment 的 allow 參數）。
+def _category_reserved_segments() -> frozenset:
+    try:
+        from .atom_spec import SKIP_DIRS
+    except ImportError:  # 頂層模組載入
+        from atom_spec import SKIP_DIRS
+    extra = {"shared", "roles", "projects", "unity", "memory", "failures"}
+    return frozenset(s.lower() for s in (set(SKIP_DIRS) | _LOCATE_SKIP_DIRS | _BASE_WRITABLE_DIR_SEGMENTS | extra))
+
+
+CATEGORY_RESERVED_SEGMENTS = _category_reserved_segments()
+
+
+def validate_category_segment(seg: str, allow: Iterable[str] = ()) -> str:
+    """單段範疇名驗證：_clean_segment 沙盒 + 保留名拒絕（casefold）+ `_archive*` 拒。合法回正規化段，否則 ''。"""
+    s = _clean_segment(seg)
+    if not s:
+        return ""
+    low = s.lower()
+    if low.startswith("_archive"):
+        return ""
+    if low in CATEGORY_RESERVED_SEGMENTS and s not in set(allow):
+        return ""
+    return s
+
+
+def validate_category_path(path: str, max_depth: int = LOCAL_REALM_MAX_DEPTH,
+                           allow_first: Iterable[str] = (FAILURES_ROOT_NAME,)) -> tuple:
+    """範疇路徑 'Lv1[/Lv2…]' → (segs, error)。任一段非法 → ([], error)。空 → ([], None)。"""
+    raw = [s for s in (path or "").replace("\\", "/").split("/") if s.strip()]
+    if not raw:
+        return ([], None)
+    segs: List[str] = []
+    for i, r in enumerate(raw[:max_depth]):
+        seg = validate_category_segment(r, allow=allow_first if i == 0 else ())
+        if not seg:
+            return ([], f"category segment invalid or reserved: {r!r}")
+        segs.append(seg)
+    return (segs, None)
+
+
+def iter_realm_category_dirs(root: Path) -> List[Path]:
+    """root 直屬的範疇資料夾（名稱通過 validate_category_segment；`_`/skip 名單目錄剪掉）。"""
+    out: List[Path] = []
+    try:
+        entries = sorted(root.iterdir())
+    except OSError:
+        return out
+    for e in entries:
+        if e.is_dir() and validate_category_segment(e.name, allow=(FAILURES_ROOT_NAME,)):
+            out.append(e)
+    return out
+
+
+def enumerate_category_paths(mem_dir: Path = GLOBAL_MEMORY_DIR) -> List[str]:
+    """從 index 抽核心層所有去重範疇路徑（'版控/Git' 等；含 'Failures/<主題>'）。例外回 []。"""
+    try:
+        from .atom_index_json import load_atom_index_json
+    except ImportError:
+        from atom_index_json import load_atom_index_json
+    try:
+        data = load_atom_index_json(mem_dir)
+    except (OSError, ValueError):
+        return []
+    paths = set()
+    for a in data.get("atoms", []):
+        segs = core_category_segments(a.get("path") or "")
+        if segs:
+            paths.add("/".join(segs))
+    return sorted(paths)
+
+
+def known_category_paths(mem_dir: Path = GLOBAL_MEMORY_DIR) -> List[str]:
+    """Lv2 snap 的兄弟來源：index 既有範疇路徑 ∪ taxonomy 宣告的 sub（'版控/Git' 等）。
+
+    宣告過的 Lv2 就算目前還沒有 atom 住進去，也要能把輸入 'vcs/git' snap 成 '版控/Git'
+    （Windows 不分大小寫：同名異案的資料夾會撞在一起、index path 卻分岔）。
+    """
+    paths = set(enumerate_category_paths(mem_dir))
+    try:
+        from .atom_taxonomy import load_taxonomy
+    except ImportError:
+        from atom_taxonomy import load_taxonomy
+    try:
+        core = load_taxonomy()["core"]
+    except Exception:
+        return sorted(paths)
+    for name, info in core.items():
+        for sub in (info or {}).get("sub") or []:
+            if sub:
+                paths.add(f"{name}/{sub}")
+    return sorted(paths)
+
+
+def unclassified_error(raw: Optional[str], categories: Iterable[str], layer: str = "core") -> str:
+    """寫入閘拒寫訊息的單一出口：列出全部合法 Lv1、別名提示、新類旗標。"""
+    cats = ", ".join(categories)
+    return (
+        f"unclassified {layer} atom rejected: domain={raw!r} (missing or unknown). "
+        f"Valid Lv1: {cats}. Aliases/EN slugs accepted (e.g. vcs→版控); Lv2 free (e.g. 版控/Git). "
+        "To create a new Lv1 pass allow_new_category=true."
+    )
+
+
+def core_write_target(domain: Optional[str], allow_new: bool = False,
+                      existing_paths: Optional[Iterable[str]] = None) -> tuple:
+    """核心層 create 落點：memory/<Lv1>[/<Lv2>]/。回 (target_dict|None, error|None)。
+
+    Lv1 必須在 taxonomy 閉合清單（正名／slug／別名皆可，snap 回正名）；未知 Lv1 → 拒，
+    除非 allow_new=True（仍須通過保留名／字元集）。Lv2 自由，對既有同深度兄弟 snap
+    （normalize_domain_path）。`Failures` 走 failures_write_target，不由此函式處理。
+    不做 mkdir 以外的副作用；不猜、不落 Else。
+    """
+    try:
+        from .atom_taxonomy import core_categories, match_lv1, TaxonomyUnavailable
+    except ImportError:
+        from atom_taxonomy import core_categories, match_lv1, TaxonomyUnavailable
+    try:
+        cats = core_categories()
+    except TaxonomyUnavailable as e:
+        return (None, f"taxonomy.json unavailable: {e}")
+    raw = (domain or "").strip().replace("\\", "/")
+    if not raw:
+        return (None, unclassified_error(domain, cats))
+    head, _, rest = raw.partition("/")
+    if head.casefold() == FAILURES_ROOT_NAME.casefold():
+        return (None, "use failures routing (feedback- title / topic) for the Failures family")
+    lv1 = match_lv1(head)
+    if lv1 is None:
+        if not allow_new:
+            return (None, unclassified_error(domain, cats))
+        lv1 = validate_category_segment(head)
+        if not lv1:
+            return (None, f"new category name invalid or reserved: {head!r}")
+    existing = list(existing_paths) if existing_paths is not None else known_category_paths()
+    full = lv1 if not rest else f"{lv1}/{rest}"
+    canon = normalize_domain_path(full, existing)
+    segs, err = validate_category_path(canon, allow_first=())
+    if err or not segs or segs[0] != lv1:
+        return (None, err or f"category path invalid: {canon!r}")
+    target = GLOBAL_MEMORY_DIR.joinpath(*segs)
+    target.mkdir(parents=True, exist_ok=True)
+    return ({
+        "dir": target, "base": target,
+        "index_dir": GLOBAL_MEMORY_DIR, "index_root": CLAUDE_DIR,
+        "category": "/".join(segs),
+    }, None)
+
+
+def failures_topic_target(domain: Optional[str], allow_new: bool = False) -> tuple:
+    """失敗家族 create 落點：memory/Failures/<主題>[/<Lv2>]/。回 (target_dict|None, error|None)。
+
+    `domain` 可為 "驗證與實證"、"verify"（別名 snap）或 "Failures/驗證與實證"（前導 Failures 段
+    自動剝掉）。主題必須在 taxonomy Lv1 閉合清單（failures.topics="same-as-core"）；未知主題
+    → 拒，除非 allow_new（仍過保留名／字元集）。空 → 拒（寫入閘：feedback- 標題 domain 必填）。
+    """
+    try:
+        from .atom_taxonomy import failures_topics, match_lv1, TaxonomyUnavailable
+    except ImportError:
+        from atom_taxonomy import failures_topics, match_lv1, TaxonomyUnavailable
+    try:
+        topics = failures_topics()
+    except TaxonomyUnavailable as e:
+        return (None, f"taxonomy.json unavailable: {e}")
+    raw = (domain or "").strip().replace("\\", "/").strip("/")
+    head, _, rest = raw.partition("/")
+    if head.casefold() == FAILURES_ROOT_NAME.casefold():
+        raw = rest
+        head, _, rest = raw.partition("/")
+    if not head:
+        return (None, unclassified_error(domain, topics, layer="failures"))
+    topic = match_lv1(head, topics)
+    if topic is None:
+        if not allow_new:
+            return (None, unclassified_error(domain, topics, layer="failures"))
+        topic = validate_category_segment(head)
+        if not topic:
+            return (None, f"new failures topic invalid or reserved: {head!r}")
+    full = topic if not rest else f"{topic}/{rest}"
+    segs, err = validate_category_path(full, allow_first=())
+    if err or not segs:
+        return (None, err or f"failures topic path invalid: {full!r}")
+    t = failures_write_target("/".join(segs))
+    t["category"] = f"{FAILURES_ROOT_NAME}/" + "/".join(segs)
+    return (t, None)
+
+
+def project_taxonomy_lv1(base: Path) -> List[str]:
+    """專案層 Lv1 擴充：<base>/shared/_taxonomy.json 的 domains 鍵（缺/壞 → []）。
+
+    這是專案自訂範疇的**唯一**資料面入口（與 `taxonomy_term_pairs` 同一檔）。
+    `project_hooks.py` delegate（`action="taxonomy"`）刻意不接：每次 create 熱路徑多一次
+    5s 逾時的子程序、且目前無專案使用；真有需求的專案再開，不為想像需求長枝葉。
+    """
+    try:
+        data = json.loads((base / "shared" / "_taxonomy.json").read_text(encoding="utf-8-sig"))
+        domains = data.get("domains") or {}
+        return [str(k) for k in domains.keys() if str(k).strip()] if isinstance(domains, dict) else []
+    except (OSError, ValueError, AttributeError):
+        return []
+
+
+def project_category_target(base: Path, domain: Optional[str], allow_new: bool = False,
+                            root_dir: Optional[Path] = None) -> tuple:
+    """專案層 create 落點：<root_dir or base/shared>/<Lv1>[/<Lv2>]/。回 (target_dict|None, error|None)。
+
+    Lv1 閉合清單＝核心 taxonomy Lv1（正名／slug／別名 snap）∪ 專案 `shared/_taxonomy.json`
+    domains 鍵（專案自訂 Lv1，casefold 比對）。未知 → 拒，除非 allow_new。Lv2 自由，對
+    root_dir 下既有兄弟資料夾 snap。`root_dir` 給了（subdir 分區）→ 範疇落在該分區之下。
+    """
+    try:
+        from .atom_taxonomy import core_categories, match_lv1, TaxonomyUnavailable
+    except ImportError:
+        from atom_taxonomy import core_categories, match_lv1, TaxonomyUnavailable
+    try:
+        cats = core_categories()
+    except TaxonomyUnavailable as e:
+        return (None, f"taxonomy.json unavailable: {e}")
+    extra = project_taxonomy_lv1(base)
+    all_cats = cats + [x for x in extra if x not in cats]
+    raw = (domain or "").strip().replace("\\", "/").strip("/")
+    if not raw:
+        return (None, unclassified_error(domain, all_cats, layer="shared"))
+    head, _, rest = raw.partition("/")
+    lv1 = match_lv1(head, cats)
+    if lv1 is None:
+        for x in extra:
+            if x.casefold() == head.casefold():
+                lv1 = x
+                break
+    if lv1 is None:
+        if not allow_new:
+            return (None, unclassified_error(domain, all_cats, layer="shared"))
+        lv1 = validate_category_segment(head)
+        if not lv1:
+            return (None, f"new category name invalid or reserved: {head!r}")
+    root = root_dir if root_dir is not None else (base / "shared")
+    # Lv2 snap 的兄弟來源：分區根下既有範疇資料夾 ∪ taxonomy 宣告的 sub（Windows 不分大小寫：
+    # 'vcs/git' 沒 snap 成 '版控/Git' 會落小寫資料夾、index path 分岔）。
+    existing = [
+        "/".join(p.relative_to(root).parts)
+        for d in iter_realm_category_dirs(root)
+        for p in [d, *[c for c in iter_realm_category_dirs(d)]]
+    ] if root.is_dir() else []
+    try:
+        from .atom_taxonomy import load_taxonomy
+    except ImportError:
+        from atom_taxonomy import load_taxonomy
+    for name, info in load_taxonomy()["core"].items():
+        existing.extend(f"{name}/{sub}" for sub in ((info or {}).get("sub") or []) if sub)
+    full = lv1 if not rest else f"{lv1}/{rest}"
+    canon = normalize_domain_path(full, existing)
+    segs, err = validate_category_path(canon, allow_first=())
+    if err or not segs or segs[0].casefold() != lv1.casefold():
+        return (None, err or f"category path invalid: {canon!r}")
+    segs[0] = lv1
+    target = root.joinpath(*segs)
+    target.mkdir(parents=True, exist_ok=True)
+    return ({
+        "dir": target, "base": base,
+        "index_dir": base, "index_root": base.parent,
+        "category": "/".join(segs),
+    }, None)
 
 
 # ─── 階層 domain 路徑：segment 正規化 + canonicalization（OPEN 2）──────────────
@@ -770,10 +1212,11 @@ def is_generic_lexicon_term(term: str) -> bool:
     return not tokens or all(t in _LEXICON_GENERIC_TOKENS for t in tokens)
 
 
-def load_learned_lexicon() -> Dict[str, str]:
-    """讀自學詞庫 {term_lower: domain_path}。缺/壞 → {}（fail-safe，永不拋）。"""
+def load_learned_lexicon(path: Optional[Path] = None) -> Dict[str, str]:
+    """讀自學詞庫 {term_lower: domain_path}。缺/壞 → {}（fail-safe，永不拋）。
+    `path` 預設 realm 自學檔；傳 TAXONOMY_LEARNED_PATH 讀核心層範疇自學檔。"""
     try:
-        data = json.loads(LEARNED_LEXICON_PATH.read_text(encoding="utf-8"))
+        data = json.loads((path or LEARNED_LEXICON_PATH).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     terms = data.get("terms", {}) if isinstance(data, dict) else {}
@@ -781,7 +1224,8 @@ def load_learned_lexicon() -> Dict[str, str]:
             for k, v in terms.items() if str(k).strip() and str(v).strip()}
 
 
-def append_learned_terms(new_terms: Dict[str, str]) -> Dict[str, str]:
+def append_learned_terms(new_terms: Dict[str, str],
+                         path: Optional[Path] = None) -> Dict[str, str]:
     """併 {term: domain_path} 入 learned.json（atomic temp+rename + 去重）。回合併後全集。
 
     LLM sweep 判 local 後寫入 → 下次 deterministic 直接命中、免再喚 LLM。
@@ -792,9 +1236,13 @@ def append_learned_terms(new_terms: Dict[str, str]) -> Dict[str, str]:
       - 泛用詞拒收（is_generic_lexicon_term）——防 core atom 被泛用 trigger 誤降 local
       - domain path 任一段非法（含非 CJK/ASCII 字元，_clean_segment）→ 整條拒收
         ——防亂碼 domain 經詞庫自我強化
+
+    `path` 預設 realm 自學檔；核心層範疇分類器的自學檔（TAXONOMY_LEARNED_PATH）
+    共用同一把鎖／同一套護欄（值＝"<Lv1>[/<Lv2>]"，同樣逐段 _clean_segment）。
     """
-    LEARNED_LEXICON_PATH.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = LEARNED_LEXICON_PATH.with_suffix(".lock")
+    learned_path = path or LEARNED_LEXICON_PATH
+    learned_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = learned_path.with_suffix(".lock")
     lock_fh = None
     if sys.platform == "win32":
         try:
@@ -806,7 +1254,7 @@ def append_learned_terms(new_terms: Dict[str, str]) -> Dict[str, str]:
                 lock_fh.close()
             lock_fh = None
     try:
-        merged = load_learned_lexicon()
+        merged = load_learned_lexicon(learned_path)
         for k, v in (new_terms or {}).items():
             kk, vv = str(k).strip().lower(), str(v).strip()
             if not kk or not vv:
@@ -816,12 +1264,12 @@ def append_learned_terms(new_terms: Dict[str, str]) -> Dict[str, str]:
             if any(not _clean_segment(s) for s in vv.split("/") if s.strip()):
                 continue  # domain 段非法（亂碼/traversal）拒收
             merged[kk] = vv
-        tmp = LEARNED_LEXICON_PATH.with_suffix(".json.tmp")
+        tmp = learned_path.with_suffix(".json.tmp")
         tmp.write_text(
             json.dumps({"terms": merged}, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
-        )
-        tmp.replace(LEARNED_LEXICON_PATH)
+        newline="\n")
+        tmp.replace(learned_path)
         return merged
     finally:
         if lock_fh is not None:
@@ -835,3 +1283,144 @@ def append_learned_terms(new_terms: Dict[str, str]) -> Dict[str, str]:
                 lock_path.unlink()
             except OSError:
                 pass
+
+
+# ─── 核心層範疇自動分類器（程式寫手用；MCP 來源永不走這條——AI 必給 domain）────────
+#
+# 四態：lex（詞庫命中）／llm（本地 LLM 閉合清單命中）→ caller 用 category 落地；
+# unsure／error → caller **拒寫**（core 不設 Else；error 另標，可延後重試）。
+# 詞庫＝taxonomy.json 各 Lv1 terms ∪ TAXONOMY_LEARNED_PATH（LLM 命中後回寫的實例詞）。
+# LLM 由 config `taxonomy.llm_fallback{enabled,max_per_session,min_confidence}` 管：
+# 預設關；開了也 per-process 計數封頂（hook 一次 process ≈ 一次 session）。
+
+_LLM_CATEGORY_CALLS = 0
+
+
+def taxonomy_llm_config(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """taxonomy.llm_fallback 段（config 未給則讀 workflow/config.json；缺 → 關）。"""
+    cfg = config
+    if cfg is None:
+        try:
+            from .atom_taxonomy import CONFIG_PATH
+        except ImportError:
+            from atom_taxonomy import CONFIG_PATH
+        try:
+            cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            cfg = {}
+    llm = ((cfg or {}).get("taxonomy") or {}).get("llm_fallback") or {}
+    return {
+        "enabled": bool(llm.get("enabled", False)),
+        "max_per_session": int(llm.get("max_per_session", 5) or 0),
+        "min_confidence": float(llm.get("min_confidence", 0.7) or 0.0),
+    }
+
+
+def _lexicon_category(name: str, triggers: Iterable[str], layer: str) -> Dict[str, Any]:
+    """詞庫計分：回 {category|None, matched, reason}。Lv1 平手 → None（保守，不猜）。"""
+    try:
+        from .atom_taxonomy import category_term_pairs, weights, match_lv1, TaxonomyUnavailable
+    except ImportError:
+        from atom_taxonomy import category_term_pairs, weights, match_lv1, TaxonomyUnavailable
+    try:
+        pairs = list(category_term_pairs(layer))
+        name_w, trig_w = weights()
+    except TaxonomyUnavailable as e:
+        return {"category": None, "matched": [], "reason": f"taxonomy unavailable: {e}", "error": True}
+    for term, cat in load_learned_lexicon(TAXONOMY_LEARNED_PATH).items():
+        lv1 = match_lv1(cat.split("/", 1)[0])
+        if lv1 is None:
+            continue  # learned 指向已不存在的 Lv1 → 忽略（taxonomy 是單一真相）
+        rest = cat.partition("/")[2]
+        pairs.append((term, f"{lv1}/{rest}" if rest else lv1))
+    scores, matched = score_by_lexicon(name, list(triggers or []), pairs,
+                                       name_w=name_w, trig_w=trig_w)
+    if not scores:
+        return {"category": None, "matched": [], "reason": "lexicon miss"}
+    lv1_scores: Dict[str, int] = {}
+    for bucket, sc in scores.items():
+        lv1 = bucket.split("/", 1)[0]
+        lv1_scores[lv1] = lv1_scores.get(lv1, 0) + sc
+    ranked = sorted(lv1_scores.items(), key=lambda kv: -kv[1])
+    if len(ranked) > 1 and ranked[0][1] == ranked[1][1]:
+        return {"category": None, "matched": [],
+                "reason": f"lexicon tie: {ranked[0][0]}={ranked[0][1]} vs {ranked[1][0]}={ranked[1][1]}"}
+    best_lv1 = ranked[0][0]
+    # 同 Lv1 內取最高分 bucket（learned 可能指到 Lv2）；平手取較深者（實例詞比 Lv1 泛詞更具體）
+    inner = sorted(((b, s) for b, s in scores.items() if b.split("/", 1)[0] == best_lv1),
+                   key=lambda kv: (-kv[1], -kv[0].count("/")))
+    best = inner[0][0]
+    hits = sorted({t for b, ts in matched.items() if b.split("/", 1)[0] == best_lv1 for t in ts})
+    return {"category": best, "matched": hits, "reason": f"lexicon hit: {', '.join(hits)}"}
+
+
+def _default_llm_category_classifier():
+    """lazy 取 tools/realm_llm_classify.llm_classify_category（tools 反依賴 lib，故不在模組頂層 import）。
+    取不到 → None（caller 視同 LLM 不可用 → error 態）。"""
+    for p in (CLAUDE_DIR / "tools", CLAUDE_DIR):
+        if str(p) not in sys.path:
+            sys.path.insert(0, str(p))
+    try:
+        from realm_llm_classify import llm_classify_category  # type: ignore
+        return llm_classify_category
+    except Exception as e:  # noqa: BLE001 — 任何載入失敗都只降級
+        print(f"[classify_category] llm classifier unavailable: {e!r}", file=sys.stderr)
+        return None
+
+
+def classify_category(name: str, triggers: Optional[Iterable[str]] = None, layer: str = "core",
+                      *, excerpt: str = "", config: Optional[Dict[str, Any]] = None,
+                      llm=None) -> Dict[str, Any]:
+    """程式寫手的範疇自動分類：詞庫 → 本地 LLM（閉合清單）→ 四態。
+
+    回 {status: lex|llm|unsure|error, category: "<Lv1>[/<Lv2>]"|None, matched: [...],
+        confidence: float, reason: str}。layer="failures" 時 category＝主題（同核心 Lv1 名）。
+    `llm`：注入的分類 callable（測試 stub）；None → lazy 取 tools/realm_llm_classify。
+    只掃 name + triggers（高訊號）；excerpt 只餵 LLM。**MCP 來源不得呼叫本函式**（AI 必給）。
+    """
+    global _LLM_CATEGORY_CALLS
+    lex = _lexicon_category(name or "", triggers or [], layer)
+    if lex.get("error"):
+        return {"status": "error", "category": None, "matched": [], "confidence": 0.0,
+                "reason": lex["reason"]}
+    if lex["category"]:
+        return {"status": "lex", "category": lex["category"], "matched": lex["matched"],
+                "confidence": 1.0, "reason": lex["reason"]}
+    llm_cfg = taxonomy_llm_config(config)
+    if not llm_cfg["enabled"]:
+        return {"status": "unsure", "category": None, "matched": [], "confidence": 0.0,
+                "reason": f"{lex['reason']}; llm_fallback disabled"}
+    if _LLM_CATEGORY_CALLS >= llm_cfg["max_per_session"]:
+        return {"status": "unsure", "category": None, "matched": [], "confidence": 0.0,
+                "reason": f"{lex['reason']}; llm_fallback max_per_session reached"}
+    fn = llm if llm is not None else _default_llm_category_classifier()
+    if fn is None:
+        return {"status": "error", "category": None, "matched": [], "confidence": 0.0,
+                "reason": f"{lex['reason']}; llm classifier unavailable"}
+    try:
+        from .atom_taxonomy import failures_topics, core_categories, match_lv1
+    except ImportError:
+        from atom_taxonomy import failures_topics, core_categories, match_lv1
+    cats = failures_topics() if layer == "failures" else core_categories()
+    _LLM_CATEGORY_CALLS += 1
+    try:
+        r = fn(name or "", list(triggers or []), excerpt or "", cats, layer=layer) or {}
+    except Exception as e:  # noqa: BLE001 — LLM 任何炸法都是 error 態
+        r = {"status": "error", "reason": f"llm raised: {e!r}"}
+    status = str(r.get("status") or "unsure")
+    if status == "error":
+        return {"status": "error", "category": None, "matched": [], "confidence": 0.0,
+                "reason": f"{lex['reason']}; llm error: {r.get('reason', '')}"}
+    cat = match_lv1(str(r.get("category") or ""), cats)
+    conf = float(r.get("confidence") or 0.0)
+    if status != "hit" or cat is None or conf < llm_cfg["min_confidence"]:
+        return {"status": "unsure", "category": None, "matched": [], "confidence": conf,
+                "reason": f"{lex['reason']}; llm unsure: {r.get('reason', '')}"}
+    terms = [str(t) for t in (r.get("terms") or []) if str(t).strip()]
+    if terms:
+        try:
+            append_learned_terms({t: cat for t in terms}, path=TAXONOMY_LEARNED_PATH)
+        except OSError as e:
+            print(f"[classify_category] learned lexicon write failed: {e}", file=sys.stderr)
+    return {"status": "llm", "category": cat, "matched": terms, "confidence": conf,
+            "reason": f"llm hit: {r.get('reason', '')}"}

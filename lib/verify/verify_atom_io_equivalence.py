@@ -37,6 +37,15 @@ def isolated_claude(tmp_path, monkeypatch):
     monkeypatch.setattr(atom_io, "CLAUDE_DIR", fake_claude)
     monkeypatch.setattr(atom_io, "GLOBAL_MEMORY_DIR", fake_global_mem)
     monkeypatch.setattr(atom_io, "AUDIT_LOG", fake_audit)
+    # 範疇寫入閘的落點函式（core_write_target / failures_topic_target / local_write_target）
+    # 讀 atom_locations 的模組全域 → 一併指到 tmp，否則測試會寫進現役 memory/<範疇>/。
+    from lib import atom_locations as _aloc
+    monkeypatch.setattr(_aloc, "CLAUDE_DIR", fake_claude)
+    monkeypatch.setattr(_aloc, "GLOBAL_MEMORY_DIR", fake_global_mem)
+    monkeypatch.setattr(_aloc, "FAILURES_DIR", fake_global_mem / "Failures")
+    monkeypatch.setattr(_aloc, "LOCAL_ATOMS_DIR", fake_claude / "_AIDocs" / "_atoms")
+    monkeypatch.setattr(_aloc, "TAXONOMY_LEARNED_PATH",
+                        fake_global_mem / "_meta" / "taxonomy-lexicon-learned.json")
     return {
         "root": tmp_path,
         "claude": fake_claude,
@@ -66,12 +75,12 @@ def test_01_global_create_byte_identical(isolated_claude):
     result = write_atom(
         title="Hello", scope="global", confidence="[臨]",
         triggers=["a", "b", "c"], knowledge=["fact1", "fact2"],
-        mode="create", source="test", skip_gate=True, today=FIXED_TODAY,
+        domain="設計通則", mode="create", source="test", skip_gate=True, today=FIXED_TODAY,
     )
     assert result.ok, result.error
     actual = result.path.read_text(encoding="utf-8")
     assert actual == expected, f"DIFF\nEXPECTED:\n{expected}\nACTUAL:\n{actual}"
-    assert result.path == isolated_claude["memory"] / "hello.md"
+    assert result.path == isolated_claude["memory"] / "設計通則" / "hello.md"
 
 
 # ─── 2. shared atom create (project scope) ────────────────────────────────────
@@ -82,10 +91,10 @@ def test_02_shared_create(isolated_claude, fake_project):
         title="Shared Knowledge", scope="shared", confidence="[臨]",
         triggers=["x", "y", "z"], knowledge=["k1"],
         project_cwd=str(fake_project),
-        mode="create", source="test", skip_gate=True, today=FIXED_TODAY,
+        domain="工作流", mode="create", source="test", skip_gate=True, today=FIXED_TODAY,
     )
     assert result.ok, result.error
-    expected_path = fake_project / ".claude" / "memory" / "shared" / "shared-knowledge.md"
+    expected_path = fake_project / ".claude" / "memory" / "shared" / "工作流" / "shared-knowledge.md"
     assert result.path == expected_path
     content = result.path.read_text(encoding="utf-8")
     assert "- Scope: shared" in content
@@ -137,7 +146,7 @@ def test_05_optional_fields(isolated_claude):
         related=["other-atom-1", "other-atom-2"],
         audience=["programmer"],  # not in SENSITIVE_AUDIENCE
         author="testuser", merge_strategy="manual",
-        mode="create", source="test", skip_gate=True, today=FIXED_TODAY,
+        domain="設計通則", mode="create", source="test", skip_gate=True, today=FIXED_TODAY,
     )
     assert result.ok, result.error
     content = result.path.read_text(encoding="utf-8")
@@ -152,7 +161,7 @@ def test_05_optional_fields(isolated_claude):
         title="Full Atom 2", scope="global", confidence="[臨]",
         triggers=["x", "y", "z"], knowledge=["k"],
         merge_strategy="ai-assist",
-        mode="create", source="test", skip_gate=True, today=FIXED_TODAY,
+        domain="設計通則", mode="create", source="test", skip_gate=True, today=FIXED_TODAY,
     )
     assert "Merge-strategy:" not in result2.path.read_text(encoding="utf-8")
 
@@ -166,7 +175,7 @@ def test_06_sensitive_audience_routes_pending(isolated_claude, fake_project):
         triggers=["d1", "d2", "d3"], knowledge=["k"],
         audience=["decision"],  # sensitive
         project_cwd=str(fake_project),
-        mode="create", source="test", skip_gate=True, today=FIXED_TODAY,
+        domain="工作流", mode="create", source="test", skip_gate=True, today=FIXED_TODAY,
     )
     assert result.ok, result.error
     assert result.routed_to_pending is True
@@ -182,9 +191,9 @@ def test_07_append_mode(isolated_claude):
     write_atom(
         title="Appendable", scope="global", confidence="[臨]",
         triggers=["a", "b", "c"], knowledge=["original-fact"],
-        mode="create", source="test", skip_gate=True, today="2026-05-01",
+        domain="設計通則", mode="create", source="test", skip_gate=True, today="2026-05-01",
     )
-    file_path = isolated_claude["memory"] / "appendable.md"
+    file_path = isolated_claude["memory"] / "設計通則" / "appendable.md"
     access_path = file_path.with_suffix(".access.json")
     before = file_path.read_text(encoding="utf-8")
     assert "- original-fact" in before
@@ -219,7 +228,7 @@ def test_08_replace_preserves_counters(isolated_claude):
         title="Counter Atom", scope="global", confidence="[臨]",
         triggers=["c1", "c2", "c3"], knowledge=["v1"],
         author="orig-author",
-        mode="create", source="test", skip_gate=True, today="2026-05-01",
+        domain="設計通則", mode="create", source="test", skip_gate=True, today="2026-05-01",
     )
     # 計數在 access.json，模擬 post-write 演進
     fp = initial.path
@@ -254,7 +263,7 @@ def test_09_dry_run_no_write(isolated_claude):
     result = write_atom(
         title="Ghost Atom", scope="global", confidence="[臨]",
         triggers=["g1", "g2", "g3"], knowledge=["k"],
-        mode="create", source="test", skip_gate=True,
+        domain="設計通則", mode="create", source="test", skip_gate=True,
         dry_run=True, today=FIXED_TODAY,
     )
     assert result.ok
@@ -274,7 +283,7 @@ def test_10_error_paths(isolated_claude, fake_project):
     r1 = write_atom(
         title="X", scope="global", confidence="[臨]",
         triggers=["a", "b", "c"], knowledge=["k"],
-        mode="create", source="hacker:bypass", skip_gate=True,
+        domain="設計通則", mode="create", source="hacker:bypass", skip_gate=True,
     )
     assert not r1.ok and "invalid source" in r1.error
 
@@ -290,7 +299,7 @@ def test_10_error_paths(isolated_claude, fake_project):
     r3 = write_atom(
         title="X", scope="global", confidence="[固]",
         triggers=["a", "b", "c"], knowledge=["k"],
-        mode="create", source="test", skip_gate=True,
+        domain="設計通則", mode="create", source="test", skip_gate=True,
     )
     assert not r3.ok and "[臨]" in r3.error
 
@@ -298,12 +307,12 @@ def test_10_error_paths(isolated_claude, fake_project):
     write_atom(
         title="Once", scope="global", confidence="[臨]",
         triggers=["a", "b", "c"], knowledge=["k"],
-        mode="create", source="test", skip_gate=True, today=FIXED_TODAY,
+        domain="設計通則", mode="create", source="test", skip_gate=True, today=FIXED_TODAY,
     )
     r4 = write_atom(
         title="Once", scope="global", confidence="[臨]",
         triggers=["a", "b", "c"], knowledge=["k"],
-        mode="create", source="test", skip_gate=True, today=FIXED_TODAY,
+        domain="設計通則", mode="create", source="test", skip_gate=True, today=FIXED_TODAY,
     )
     assert not r4.ok and "already exists" in r4.error
 
@@ -323,7 +332,7 @@ def test_audit_log_appends_jsonl(isolated_claude):
     write_atom(
         title="LoggedAtom", scope="global", confidence="[臨]",
         triggers=["a", "b", "c"], knowledge=["k"],
-        mode="create", source="test", skip_gate=True, today=FIXED_TODAY,
+        domain="設計通則", mode="create", source="test", skip_gate=True, today=FIXED_TODAY,
     )
     audit_path = isolated_claude["audit"]
     assert audit_path.exists()
@@ -346,7 +355,7 @@ def test_11_table_and_fence_blocks(isolated_claude):
     result = write_atom(
         title="Block Atom", scope="global", confidence="[臨]",
         triggers=["a", "b", "c"], knowledge=kn,
-        mode="create", source="test", skip_gate=True, today=FIXED_TODAY,
+        domain="設計通則", mode="create", source="test", skip_gate=True, today=FIXED_TODAY,
     )
     assert result.ok, result.error
     content = result.path.read_text(encoding="utf-8")
@@ -365,7 +374,7 @@ def test_12_append_table_block(isolated_claude):
     write_atom(
         title="Appendable Table", scope="global", confidence="[臨]",
         triggers=["a", "b", "c"], knowledge=["original-fact"],
-        mode="create", source="test", skip_gate=True, today="2026-05-01",
+        domain="設計通則", mode="create", source="test", skip_gate=True, today="2026-05-01",
     )
     result = write_atom(
         title="Appendable Table", scope="global", confidence="[臨]",
@@ -424,31 +433,29 @@ def test_13_py_js_byte_parity_table(tmp_path):
 # ─── 14. py↔js path / realm routing constants parity (source-level guard) ──────
 
 
-def test_14_py_js_path_constants_parity():
-    """Path/realm routing constants must stay in sync py↔js.
+def test_14_js_has_no_routing_mirror():
+    """落點／路由／分類只在 py（lib/atom_io.locate_atom + atom_locations）一份。
+    js 端（realm.js / atom-tools.js）不得再長出鏡像：常數、路由函式、分類器、遞迴找檔
+    任一出現即是「同一件事兩處各做一半」回潮（曾靠 // SYNC: 註解維繫 5 處，已拔）。"""
+    from lib.atom_locations import FAILURES_REL
+    assert FAILURES_REL == "memory/Failures", "失敗家族新址必須是 memory/Failures"
 
-    lib/atom_locations.py is the single source of truth; server.js mirrors it by hand.
-    This is a source-level guard (no node exec): if someone edits one side's rel-path
-    constant or domain set without the other, this fails — catching the exact drift the
-    `// MIRROR: keep in sync` comment alone cannot enforce.
-    """
-    from lib.atom_locations import (
-        FAILURES_REL, LOCAL_ATOMS_REL, FEEDBACK_TITLE_PREFIX,
-        LOCAL_REALM_DOMAINS, LOCAL_REALM_DEFAULT_DOMAIN,
-    )
-
-    # 拆檔：realm 路由常數居 lib/realm.js（py 鏡像 atom_locations.py）
-    server_js = LIB_PARENT / "tools" / "workflow-guardian-mcp" / "lib" / "realm.js"
-    if not server_js.exists():
-        pytest.skip("lib/realm.js not found")
-    js = server_js.read_text(encoding="utf-8")
-
-    assert f'FAILURES_REL = "{FAILURES_REL}"' in js, "FAILURES_REL drift"
-    assert f'LOCAL_ATOMS_REL = "{LOCAL_ATOMS_REL}"' in js, "LOCAL_ATOMS_REL drift"
-    assert f'FEEDBACK_TITLE_PREFIX = "{FEEDBACK_TITLE_PREFIX}"' in js, "FEEDBACK_TITLE_PREFIX drift"
-    assert f'LOCAL_REALM_DEFAULT_DOMAIN = "{LOCAL_REALM_DEFAULT_DOMAIN}"' in js, "default domain drift"
-    for dom in LOCAL_REALM_DOMAINS:
-        assert f'"{dom}"' in js, f"local domain {dom!r} missing in server.js LOCAL_REALM_DOMAINS"
+    mcp_lib = LIB_PARENT / "tools" / "workflow-guardian-mcp" / "lib"
+    realm_js = mcp_lib / "realm.js"
+    tools_js = mcp_lib / "atom-tools.js"
+    if not realm_js.exists() or not tools_js.exists():
+        pytest.skip("mcp lib not found")
+    src = realm_js.read_text(encoding="utf-8") + tools_js.read_text(encoding="utf-8")
+    forbidden = [
+        "resolveMemDir", "applyFeedbackRouting", "applyLocalRouting", "classifyRealm",
+        "resolveSubdirTarget", "findSeparatorVariant", "findAtomFileRecursive",
+        "isRegisteredFailuresStem", "cleanRealmSegment", "LOCAL_REALM_LEXICON",
+        'FAILURES_REL = "', 'LOCAL_ATOMS_REL = "', "CATEGORY_RESERVED_SEGMENTS",
+    ]
+    leaked = [f for f in forbidden if f in src]
+    assert not leaked, f"js 端重新長出路由/分類鏡像: {leaked}"
+    # 寫入路徑必須問 py locate 且帶 cwd-scope 防護旗標
+    assert 'spawnAtomCli("locate"' in src and "enforce_cwd_scope: true" in src
 
 
 # ─── 14b. realm 詞庫 JSON 單一來源（schema 完整 + 兩端讀同檔、無手抄殘留）────────
@@ -485,16 +492,50 @@ def test_14b_realm_lexicon_json_single_source():
     assert AL.LOCAL_REALM_NAME_WEIGHT == data["name_weight"]
     assert AL.LOCAL_REALM_TRIGGER_WEIGHT == data["trigger_weight"]
 
-    # ③ 無手抄殘留（sentinel 詞不得出現在任一端原始碼）+ js 端引用 JSON
+    # ③ 無手抄殘留（sentinel 詞不得出現在 py 原始碼）；js 端不再讀詞庫（分類只在 py）
     py_src = (LIB_PARENT / "lib" / "atom_locations.py").read_text(encoding="utf-8")
     realm_js = LIB_PARENT / "tools" / "workflow-guardian-mcp" / "lib" / "realm.js"
     if realm_js.exists():
         js_src = realm_js.read_text(encoding="utf-8")
-        assert "realm-lexicon.json" in js_src, "realm.js 未引用 realm-lexicon.json"
+        assert "realm-lexicon.json" not in js_src, "realm.js 不該再讀詞庫（分類單一在 py）"
         for sentinel in ("腦內世界", "guardian-dashboard", "reconcile-render"):
             assert sentinel not in js_src, f"realm.js 出現手抄詞庫殘留: {sentinel}"
     for sentinel in ("腦內世界", "guardian-dashboard", "reconcile-render"):
         assert sentinel not in py_src, f"atom_locations.py 出現手抄詞庫殘留: {sentinel}"
+
+
+# ─── 14c. 核心層範疇分類法 JSON 單一來源（taxonomy.json ↔ py ↔ js）────────────
+
+
+def test_14c_taxonomy_json_single_source():
+    """memory/_meta/taxonomy.json 是核心層 Lv1 範疇的單一來源：
+    ① js 端確實引用該檔；② Lv1 正名不得撞保留名（casefold）；
+    ③ py core_categories() == JSON core keys；④ py CATEGORY_RESERVED_SEGMENTS 涵蓋 JSON reserved 全項。"""
+    from lib import atom_locations as AL
+    from lib import atom_taxonomy as AT
+
+    tax_path = LIB_PARENT / "memory" / "_meta" / "taxonomy.json"
+    assert tax_path.exists(), "taxonomy.json missing（單一來源檔不存在）"
+    data = json.loads(tax_path.read_text(encoding="utf-8-sig"))
+    core_keys = list(data["core"].keys())
+    reserved = [str(r) for r in data.get("reserved") or []]
+    assert core_keys, "taxonomy core 空"
+
+    # ① js 端不再讀 taxonomy（範疇閘與錯誤訊息皆由 py 產）
+    realm_js = LIB_PARENT / "tools" / "workflow-guardian-mcp" / "lib" / "realm.js"
+    if realm_js.exists():
+        assert "taxonomy.json" not in realm_js.read_text(encoding="utf-8"), "realm.js 不該再讀 taxonomy.json"
+
+    # ② Lv1 ∩ reserved（casefold）== ∅
+    clash = {k.casefold() for k in core_keys} & {r.casefold() for r in reserved}
+    assert not clash, f"Lv1 正名撞保留名: {clash}"
+
+    # ③ py 讀到的 Lv1 == JSON keys
+    assert AT.core_categories(tax_path) == core_keys
+
+    # ④ py 保留名集合涵蓋 JSON reserved 全項（小寫）
+    missing = {r.lower() for r in reserved} - set(AL.CATEGORY_RESERVED_SEGMENTS)
+    assert not missing, f"CATEGORY_RESERVED_SEGMENTS 缺 taxonomy.reserved 項: {missing}"
 
 
 # ─── 15. realm=local routing → _AIDocs/_atoms/<domain>/ (Scope stays global) ───
@@ -527,10 +568,10 @@ def test_15_local_realm_routing(isolated_claude, monkeypatch):
     core = write_atom(
         title="Plain Core", scope="global", confidence="[臨]",
         triggers=["a", "b", "c"], knowledge=["k"],
-        mode="create", source="test", skip_gate=True, today=FIXED_TODAY,
+        domain="設計通則", mode="create", source="test", skip_gate=True, today=FIXED_TODAY,
     )
     assert core.ok, core.error
-    assert core.path == isolated_claude["memory"] / "plain-core.md"
+    assert core.path == isolated_claude["memory"] / "設計通則" / "plain-core.md"
 
 
 # ─── 16. realm classifier: zero false positives + correct local detection ──────
@@ -590,60 +631,24 @@ def test_16_classify_realm_zero_false_positive():
 # ─── 17. realm classifier py↔js parity (mirror guard) ──────────────────────────
 
 
-def test_17_classify_realm_py_js_parity():
-    """classify_realm (py) 必與 realm.js classifyRealm (js) 對同一 fixture 集一致判定。
-    兩端各自從 memory/_meta/realm-lexicon.json 載入詞庫（單一來源）後 require 實跑對拍
-    ——同時守「演算法鏡像漂移」與「兩端都正確讀同一 JSON」（realm/domain/protected/matched 全比）。"""
-    import shutil
-    import subprocess
+def test_17_realm_classifier_single_impl_via_locate():
+    """realm 分類只在 py 一份，且 MCP 寫入路徑經 locate_atom 自動套用：
+    global create 未給 realm 時，詞庫命中 → routed_to_local + domain + auto_realm 命中詞；
+    核心保護名 → 維持 core。js 端不得存在 classifyRealm（test_14 守）。"""
+    from lib.atom_io import locate_atom
 
-    from lib.atom_locations import classify_realm
+    r = locate_atom("gdoc-harvester-新筆記", "global", mode="create", triggers=["harvester"])
+    assert r.ok and r.path is None, r.error
+    assert r.extra["routed_to_local"] is True and r.extra["domain"] == "Tools"
+    assert r.extra["auto_realm"], "auto_realm 命中詞應非空"
+    assert r.extra["target_dir"].replace("\\", "/").endswith("_AIDocs/_atoms/Tools")
 
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node not available")
-    # 拆檔：classifyRealm 居 lib/realm.js（py 鏡像 atom_locations.py）
-    server_js = LIB_PARENT / "tools" / "workflow-guardian-mcp" / "lib" / "realm.js"
-    if not server_js.exists():
-        pytest.skip("lib/realm.js not found")
+    r2 = locate_atom("decisions-architecture", "global", triggers=["guardian"])
+    assert r2.ok and r2.extra["routed_to_local"] is False and not r2.extra["auto_realm"]
 
-    fixtures = [
-        ["gdoc-harvester", ["harvester", "Google Docs"]],
-        ["guardian-dashboard-孤兒佔埠與新碼重啟", ["guardian", "world.html", "EADDRINUSE"]],
-        ["腦內世界-環境演化-放置式架構", ["腦內世界", "環境演化", "world.html"]],
-        ["decisions-architecture", ["guardian", "SessionStart"]],
-        ["feedback-tooling-reliability", ["codex", "MCP"]],
-        ["memory-index-caption-regen", ["MEMORY.md"]],
-        ["cc-能力查證反編譯實跑-binary", ["反編譯", "claude binary"]],
-        ["atom-usefulness-loop", ["usefulness"]],
-        ["some-new-world-note", ["腦內世界", "wander"]],
-        ["plain-generic-atom", ["foo", "bar"]],
-        # 保護清單 py↔js 鏡像（goal-driven 曾誤降後加硬擋）
-        ["goal-driven-verify-loopkarpathy-吸收", ["karpathy", "verify loop"]],
-    ]
-    py = [classify_realm(n, t) for n, t in fixtures]
-
-    # 直接 require 模組實跑（非 eval 原始碼塊）：realm.js 載入時讀 realm-lexicon.json，
-    # 與 py 端同一份 → 對拍即同時驗演算法鏡像與 JSON 讀取正確性。
-    js_script = (
-        "const {classifyRealm}=require(process.argv[1]);"
-        "const fx=JSON.parse(process.argv[2]);"
-        "const out=fx.map(([n,t])=>{const r=classifyRealm(n,t);"
-        "return {realm:r.realm,domain:r.domain,prot:r.protected,matched:r.matched};});"
-        "process.stdout.write(JSON.stringify(out));"
-    )
-    proc = subprocess.run(
-        [node, "-e", js_script, str(server_js), json.dumps(fixtures)],
-        capture_output=True, text=True, encoding="utf-8", timeout=30,
-    )
-    assert proc.returncode == 0, f"node failed: {proc.stderr}"
-    js = json.loads(proc.stdout)
-    for (n, _t), p, j in zip(fixtures, py, js):
-        assert p["realm"] == j["realm"], f"{n}: realm py={p['realm']} js={j['realm']}"
-        assert p["domain"] == j["domain"], f"{n}: domain py={p['domain']} js={j['domain']}"
-        assert p["protected"] == j["prot"], f"{n}: protected py={p['protected']} js={j['prot']}"
-        assert sorted(p["matched"]) == sorted(j["matched"]), \
-            f"{n}: matched py={p['matched']} js={j['matched']}"
+    realm_js = LIB_PARENT / "tools" / "workflow-guardian-mcp" / "lib" / "realm.js"
+    if realm_js.exists():
+        assert "classifyRealm" not in realm_js.read_text(encoding="utf-8")
 
 
 # ─── 18. normalize_domain_path: 階層 canon（snap 既有層 + 深度 + 拒非法）─────────
@@ -741,42 +746,23 @@ def test_21_classify_realm_extra_lexicon():
 # ─── 22. path-traversal 守門 py↔js parity（_clean_segment ↔ cleanRealmSegment）──
 
 
-def test_22_clean_segment_py_js_parity():
-    """單段正規化（path-traversal 最後防線）py↔js 一致。守 applyLocalRouting 鏡像漂移。"""
-    import shutil
-    import subprocess
+def test_22_clean_segment_single_impl():
+    """單段正規化（path-traversal 最後防線）只在 py 一份；釘住行為（原為 py↔js 對拍，
+    js 端 cleanRealmSegment/applyLocalRouting 已拔——路由全走 py locate）。"""
     from lib.atom_locations import _clean_segment
 
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node not available")
-    # 拆檔：cleanRealmSegment / applyLocalRouting 居 lib/realm.js
-    server_js = LIB_PARENT / "tools" / "workflow-guardian-mcp" / "lib" / "realm.js"
-    if not server_js.exists():
-        pytest.skip("lib/realm.js not found")
-
-    fixtures = ["Windows", "  OS  ", "WSL", "..", "_hidden", ".dot",
-                "a/b", "a\\b", "bad<x", 'q"x', "", "Hermes Agent",
-                # 非 CJK/ASCII 字元集 guard（防韓文等亂碼 domain）
-                "자동화流程與協議", "自動化流程與協議", "Кириллица", "Tools①"]
-    py = [_clean_segment(s) for s in fixtures]
-
-    js_script = (
-        "const fs=require('fs');"
-        "const src=fs.readFileSync(process.argv[1],'utf-8');"
-        "const start=src.indexOf('function cleanRealmSegment');"
-        "const block=src.slice(start, src.indexOf('function applyLocalRouting'));"
-        "eval(block);"
-        "const fx=JSON.parse(process.argv[2]);"
-        "process.stdout.write(JSON.stringify(fx.map(cleanRealmSegment)));"
-    )
-    proc = subprocess.run(
-        [node, "-e", js_script, str(server_js), json.dumps(fixtures)],
-        capture_output=True, text=True, encoding="utf-8", timeout=30,
-    )
-    assert proc.returncode == 0, f"node failed: {proc.stderr}"
-    js = json.loads(proc.stdout)
-    assert py == js, f"clean-segment drift\nPY={py}\nJS={js}"
+    cases = {
+        "Windows": "Windows", "  OS  ": "OS", "WSL": "WSL",
+        "..": "", "_hidden": "", ".dot": "", "a/b": "", "a\\b": "", "bad<x": "", 'q"x': "",
+        "": "", "Hermes Agent": "Hermes Agent",
+        # 非 CJK/ASCII 字元集 guard（防韓文等亂碼 domain）
+        "자동화流程與協議": "", "自動化流程與協議": "自動化流程與協議", "Кириллица": "", "Tools①": "",
+    }
+    for src, expect in cases.items():
+        assert _clean_segment(src) == expect, f"{src!r} → {_clean_segment(src)!r} != {expect!r}"
+    realm_js = LIB_PARENT / "tools" / "workflow-guardian-mcp" / "lib" / "realm.js"
+    if realm_js.exists():
+        assert "cleanRealmSegment" not in realm_js.read_text(encoding="utf-8")
 
 
 # ─── 23. 自學詞庫 load/append round-trip（Phase C；atomic + 去重 + 餵 classify）──
@@ -804,20 +790,20 @@ def test_23_learned_lexicon_roundtrip(tmp_path, monkeypatch):
     assert r["realm"] == "local" and r["domain"] == "OS/Windows/WSL"
 
 
-# ─── 24. append CRLF byte-stability（parity：拼接統一走 py 單一實作）─────
+# ─── 24. append 對 CRLF 輸入：落檔全 LF、既有行原序保留（parity：拼接統一走 py 單一實作）─────
 
 
-def test_24_append_crlf_byte_stability(isolated_claude):
-    """CRLF 既有檔 append 後：行尾全保 CRLF、零混寫（\\r\\r\\n）、既有行 byte 不動。
-    覆 lib/atom_io.py:_atomic_write L135-138 註解描述的混寫風險面。"""
+def test_24_append_crlf_input_normalized_to_lf(isolated_claude):
+    """CRLF 既有檔 append 後：全檔 LF、零 \\r、既有行（LF 正規化後）原序保留。
+    覆 lib/atom_io.py:write_text_lf 的「一律 LF」契約。"""
     from lib.atom_io import append_atom_file
 
     write_atom(
         title="Crlf Atom", scope="global", confidence="[臨]",
         triggers=["a", "b", "c"], knowledge=["original-fact"],
-        mode="create", source="test", skip_gate=True, today="2026-05-01",
+        domain="設計通則", mode="create", source="test", skip_gate=True, today="2026-05-01",
     )
-    fp = isolated_claude["memory"] / "crlf-atom.md"
+    fp = isolated_claude["memory"] / "設計通則" / "crlf-atom.md"
     # 強制整檔 CRLF（不依賴平台 os.linesep）
     crlf_bytes = fp.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
     fp.write_bytes(crlf_bytes)
@@ -826,14 +812,13 @@ def test_24_append_crlf_byte_stability(isolated_claude):
     assert result.ok, result.error
 
     raw = fp.read_bytes()
-    assert b"\r\r\n" not in raw, "CRLF 二次翻譯（CR CR LF）"
-    assert raw.count(b"\n") == raw.count(b"\r\n"), "混寫：存在裸 LF"
-    lines = raw.split(b"\r\n")
+    assert b"\r" not in raw, "落檔必須全 LF"
+    lines = raw.split(b"\n")
     assert "- original-fact".encode() in lines
     assert "- new-fact-crlf".encode() in lines
-    # 既有行 byte 不動：除插入行與其間隔外，原行序列完整保留
-    old_lines = [ln for ln in crlf_bytes.split(b"\r\n") if ln]
-    new_lines = [ln for ln in raw.split(b"\r\n") if ln]
+    # 既有行（LF 正規化後）原序保留：除插入行與其間隔外，原行序列完整
+    old_lines = [ln for ln in crlf_bytes.replace(b"\r\n", b"\n").split(b"\n") if ln]
+    new_lines = [ln for ln in lines if ln]
     assert [ln for ln in new_lines if ln in old_lines] == old_lines
 
 
@@ -871,15 +856,15 @@ def test_25_cli_build_append_cross_language(tmp_path):
     assert res["ok"], res.get("error")
     assert res["extra"]["content"] == expected
 
-    # append：CRLF 既有檔 → 落檔全 CRLF 零混寫（server.js spawn 的同一條路）
+    # append：CRLF 既有檔 → 落檔全 LF（server.js spawn 的同一條路）
     fp = tmp_path / "cli-append.md"
     fp.write_bytes(expected.replace("\n", "\r\n").encode("utf-8"))
     res2 = run_cli({"action": "append", "file_path": str(fp),
                     "knowledge": ["cli-appended"], "source": "test"})
     assert res2["ok"], res2.get("error")
     raw = fp.read_bytes()
-    assert b"\r\r\n" not in raw and raw.count(b"\n") == raw.count(b"\r\n")
-    assert "- cli-appended".encode() in raw.split(b"\r\n")
+    assert b"\r" not in raw
+    assert "- cli-appended".encode() in raw.split(b"\n")
 
     # delegation guard：三處已 spawn py、js 自拼 splice 已退役（拆檔：toolAtomWrite 居 lib/atom-tools.js）
     server_js = LIB_PARENT / "tools" / "workflow-guardian-mcp" / "lib" / "atom-tools.js"

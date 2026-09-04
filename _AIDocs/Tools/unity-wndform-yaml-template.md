@@ -4,7 +4,6 @@
 - Confidence: [固]
 - Trigger: WndForm template, prefab YAML, RefDb, AutoGenUICode, Scroller stack, Canvas template, prefab 建立
 - Last-used: 2026-04-01
-- Confirmations: 2
 - Related: unity-prefab-workflow
 
 ## WndForm Prefab Root Structure
@@ -130,3 +129,5 @@ Scroller 需要 3 個 Component 掛在同一個 GameObject 上：
 - 讀 RefDb._objects → 產生 InitComp.cs + UIEvent.cs
 - 模板：`Assets/MainScripts/ScriptGenerator/Editor/ILScript/UIFramework/UIWndInitComp.cs.txt`
 - Marker 取代：`//#COMPONENT_VAR#` 和 `//#INIT_COMPONENT#`
+
+

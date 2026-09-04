@@ -2,13 +2,11 @@
 // sendToolResult 來自 mcp.js（循環相依：mcp.handleToolCall lazy-require 本檔，故本檔載入時 mcp 已就緒）。
 const fs = require("fs");
 const path = require("path");
-const { CLAUDE_DIR, MEMORY_DIR, TOOLS_DIR, loadConfig } = require("./paths");
+const { CLAUDE_DIR, MEMORY_DIR, TOOLS_DIR, loadConfig, PYTHON_EXE } = require("./paths");
 const { crashLog } = require("./log");
-const {
-  slugify, findSeparatorVariant, getCurrentUser, isSensitiveAudience, resolveMemDir,
-  applyFeedbackRouting, applyLocalRouting, classifyRealm, resolveSubdirTarget,
-  FAILURES_DIR, FEEDBACK_TITLE_PREFIX, LOCAL_ATOMS_DIR,
-} = require("./realm");
+// 落點／定位／路由全部由 py lib/atom_io.locate_atom 裁決（spawnAtomCli("locate")），
+// js 只採用回傳的路徑；realm.js 只剩 js 自己真的需要的（使用者名、去重層清單）。
+const { getCurrentUser, dedupLayersFor } = require("./realm");
 
 // SYNC: lib/atom_index_json.py TRIGGER_MAX_LEN — 超長 trigger 在寫入當下即拒，
 // 不留給後續 validate_index / atom_move 才爆（exit 2）。
@@ -17,7 +15,7 @@ const { parseAtomMeta, readAtomAccess, spawnAtomAccess, usefulnessStats } = requ
 const {
   execConflictDetector, appendMergeHistory, buildConflictReport, execWriteGate,
   appendToIndex, triggerVectorReindex, syncMemoryIndex, spawnAtomCli,
-  funnelWriteRaw, flatLegacyFallback,
+  funnelWriteRaw,
 } = require("./funnel");
 const { sendToolResult } = require("./mcp");
 
@@ -28,8 +26,9 @@ async function toolAtomWrite(id, args) {
     title, scope, confidence, triggers, knowledge, actions, related, mode,
     project_cwd, skip_gate, skip_conflict_check,
     role, user, audience, pending_review_by, merge_strategy,
-    realm, domain, status, subdir,
+    realm, domain, status, subdir, allow_new_category, dry_run, cross_project,
   } = args;
+  dry_run = !!dry_run;
 
   // Validate core required fields (scope now optional, defaults to shared)
   if (!title || !confidence || !triggers || !knowledge || !mode) {
@@ -58,115 +57,59 @@ async function toolAtomWrite(id, args) {
   // V4 personal default user
   if (scope === "personal" && !user) user = getCurrentUser();
 
-  // Resolve target memory dir (write target + base for index)
-  const resolved = resolveMemDir(scope, project_cwd, { role, user });
-  if (resolved.error) {
-    return sendToolResult(id, `atom_write: ${resolved.error}`, true);
-  }
-  const slug = slugify(title);
-  // V5+ feedback-* routing 集中到 applyFeedbackRouting（對拍 lib/atom_locations.py）
-  let { memDir, baseDir, indexDir, indexRoot, routedToFailures } =
-    applyFeedbackRouting(resolved, slug, scope);
-
-  // V5+ realm 自動分類（無顯式 realm 時跑分類器；server.js 側）。
-  // 顯式 realm（含 "core"）優先、不覆寫；核心保護硬擋、安全預設 core。跑於所有 global
-  // 非-feedback 寫入（非只 create）——因 8 顆 allowlist 的 slug 皆含 lexicon 詞（name 權重），
-  // append/replace 任意 triggers 都穩定判 local → 找得到已遷移的 local 檔（防 append 回歸）。
-  if (realm === undefined && !routedToFailures && scope === "global") {
-    const rc = classifyRealm(slug, triggers);
-    if (rc.realm === "local") {
-      realm = "local";
-      if (!domain) domain = rc.domain;
-      try { process.stderr.write(
-        `[atom_write] auto-realm: ${slug} → local/${domain} (matched: ${rc.matched.join(",")})\n`); } catch {}
-    }
-  }
-
-  // V5+ local-realm routing（與 feedback 互斥；realm 與 scope 正交，只在 global 生效）
-  // 對拍 lib/atom_io._resolve_target 的 realm=="local" 分支。
-  let routedToLocal = false;
-  if (!routedToFailures && scope === "global" && realm === "local") {
-    ({ memDir, baseDir, indexDir, indexRoot } = applyLocalRouting(domain));
-    routedToLocal = true;
-  }
-
-  // subdir（相對 memory root 的 create 落點，多段斜線）：僅 scope=shared 支援，
-  // 其他 scope 給了就明確報錯（不靜默忽略）。沙盒化在 resolveSubdirTarget
-  // （MIRROR: lib/atom_locations.py:project_subdir_target）。
-  // 注意順序：敏感 audience → _pending_review 路由在下方，優先權高於 subdir。
-  if (subdir) {
-    if (scope !== "shared") {
-      return sendToolResult(id,
-        `atom_write: subdir is only supported for scope=shared (got scope=${scope})`, true);
-    }
-    const sub = resolveSubdirTarget(baseDir, subdir);
-    if (sub.error) return sendToolResult(id, `atom_write: ${sub.error}`, true);
-    memDir = sub.dir;
-  }
-
-  // SPEC 7.4: sensitive audience on shared → auto-pending
-  let pendingReviewBy = pending_review_by || null;
-  if (scope === "shared" && isSensitiveAudience(audience)) {
-    memDir = path.join(baseDir, "shared", "_pending_review");
-    fs.mkdirSync(memDir, { recursive: true });
-    if (!pendingReviewBy) pendingReviewBy = "management";
-  }
-
-  // V4 metadata: scope label (composite for role/personal)
-  let scopeLabel = scope;
-  if (scope === "role") scopeLabel = `role:${role}`;
-  else if (scope === "personal") scopeLabel = `personal:${user}`;
-
-  // filePath/relPath may be recomputed after conflict-detector reroute
-  let filePath = path.join(memDir, slug + ".md");
-  let relPath = path.relative(indexRoot, filePath).replace(/\\/g, "/");
-
-  // append/replace 的實體檔常不在扁平落點：專案 shared atom 被 classifier sweep 歸位到
-  // shared/<Domain>/，local realm atom 落 _AIDocs/_atoms/<多段 domain>/。定位規則
-  // （索引 path 優先 → rglob → 撞名報錯）**只在 py 維護一份**（lib/atom_io.locate_atom），
-  // js 不自建第二套；只在扁平落點 miss 時才 spawn，正常路徑零額外成本。
-  async function locateExisting() {
-    const lr = await spawnAtomCli("locate", {
-      title, scope, project_cwd, role, user, audience, realm, domain,
+  // Realm gate：專案專屬內容不得落 global——所有 mode（create/append/replace）都跑，
+  // 且**不受 skip_gate 影響**（skip_gate 只跳品質/去重閘）。裁決在 py lib/realm_gate.py
+  // 單源（專名從 cwd 的專案 root 機械化推導）；缺 project_cwd 時退用本 MCP 進程 cwd
+  // （Claude Code 以 session cwd 啟動 stdio server）。cwd∈~/.claude → py 端不啟動。
+  if (scope === "global") {
+    const gateCwd = project_cwd || process.cwd();
+    const rg = await spawnAtomCli("realm_check", {
+      project_cwd: gateCwd, title, triggers, knowledge, actions, domain,
     });
-    if (!lr.ok) return { error: lr.error };
-    if (!lr.path) return {};
-    return {
-      filePath: lr.path,
-      relPath: ((lr.extra || {}).rel_path) ||
-               path.relative(indexRoot, lr.path).replace(/\\/g, "/"),
-    };
+    if (!rg.ok) return sendToolResult(id, `atom_write: ${rg.error}`, true);
   }
+
+  // 落點／定位／路由一律問 py 一次（lib/atom_io.locate_atom 單一裁決者）：cwd-scope 防護、
+  // 範疇閘（缺 domain 拒寫並列 Lv1）、feedback-* 失敗家族、local realm 自動分類、subdir
+  // 沙盒、敏感 audience → _pending_review、分隔符變體撞名、既有檔定位（含子夾）。
+  // js 不自算任何路徑，只採用 target_dir / index_dir / index_root / rel_path。
+  const lr0 = await spawnAtomCli("locate", {
+    title, scope, project_cwd, role, user, audience, realm, domain, triggers,
+    subdir, mode, allow_new_category: !!allow_new_category, enforce_cwd_scope: true,
+    cross_project: !!cross_project,
+  });
+  if (!lr0.ok) return sendToolResult(id, `atom_write: ${lr0.error}`, true);
+  const loc = lr0.extra || {};
+  const slug = loc.slug;
+  const baseDir = loc.base_dir, indexDir = loc.index_dir, indexRoot = loc.index_root;
+  const scopeLabel = loc.scope_label;
+  const category = loc.category || null;
+  const existingPath = lr0.path || null;
+  if (Array.isArray(loc.auto_realm) && loc.auto_realm.length) {
+    realm = "local";
+    domain = loc.domain;
+    try { process.stderr.write(
+      `[atom_write] auto-realm: ${slug} → local/${domain} (matched: ${loc.auto_realm.join(",")})\n`); } catch {}
+  }
+  let pendingReviewBy = pending_review_by || null;
+  if (loc.routed_to_pending && !pendingReviewBy) pendingReviewBy = "management";
+
+  // memDir/filePath/relPath 可能在 conflict-detector reroute 後重算
+  let memDir = loc.target_dir;
+  let filePath = existingPath || path.join(memDir, slug + ".md");
+  let relPath = existingPath ? loc.rel_path : loc.create_rel_path;
 
   const author = getCurrentUser();
   const today = new Date().toISOString().slice(0, 10);
 
   // ── Mode: create ──
   if (mode === "create") {
-    if (fs.existsSync(filePath)) {
-      return sendToolResult(id, `Atom already exists: ${slug}.md — use mode=append or mode=replace`, true);
-    }
-    // Guard: slug collides with a separator-variant of an existing atom (e.g. legacy
-    // underscore "client_il.md" vs slug "client-il"). Creating would fork a near-dup.
-    const variant = findSeparatorVariant(memDir, slug);
-    if (variant) {
+    // 既有檔（含子夾／local／失敗家族）與分隔符變體撞名皆由 py locate 判定
+    if (existingPath || fs.existsSync(filePath)) {
       return sendToolResult(id,
-        `Slug collision: "${variant}" already exists and normalizes to the same slug "${slug}".\n` +
-        `Creating "${slug}.md" would fork a near-duplicate atom.\n` +
-        `→ Use mode=append/replace on the existing atom, or rename "${variant}" to the hyphen convention first.`,
-        true);
+        `Atom already exists: ${existingPath || filePath} — use mode=append or mode=replace`, true);
     }
-    // 撞名防叉：同 slug 已存在於子夾（projects/<X>/、shared/<Domain>/…）→ 拒絕。
-    // 否則 create 會叉出重複 atom 並讓索引 path 蹍掉舊檔（定位規則同 append/replace，
-    // py 單一來源）。
-    {
-      const lr = await locateExisting();
-      if (lr.error) return sendToolResult(id, `atom_write: ${lr.error}`, true);
-      if (lr.filePath) {
-        return sendToolResult(id,
-          `Atom already exists: ${lr.filePath} — use mode=append or mode=replace`, true);
-      }
-    }
+    fs.mkdirSync(memDir, { recursive: true });
 
     // 原子記憶語意契約：新 atom 必須 [臨]
     if (confidence !== "[臨]") {
@@ -180,14 +123,18 @@ async function toolAtomWrite(id, args) {
 
     let gateWarnings = [];
     if (!skip_gate) {
-      const gateResult = await execWriteGate(knowledge.join("\n"), confidence);
+      // 去重只比「寫入者能 append 到」的層：global + ~/.claude 本地 atom + 當前專案
+      // 自己的 shared／role／personal。不限層會撞到別的專案、別人 personal 的 atom。
+      const gateLayers = dedupLayersFor(scope, baseDir, { role, user, personalGlobal: !!loc.personal_global });
+      const gateResult = await execWriteGate(knowledge.join("\n"), confidence, gateLayers);
       if (gateResult.action === "skip") {
         return sendToolResult(id, `Write-gate rejected: ${gateResult.reason}`, true);
       }
       if (gateResult.action === "update" && gateResult.dedup_match) {
         return sendToolResult(id,
           `Write-gate: similar to existing atom "${gateResult.dedup_match.atom_name}" ` +
-          `(score=${gateResult.dedup_match.score}). Use mode=append on that atom instead.`, true);
+          `(score=${gateResult.dedup_match.score}, searched layers: ${gateLayers.join(", ")}). ` +
+          `Use mode=append on that atom instead.`, true);
       }
       // 樣式軟警（逐筆表格/路徑清單）：不擋，附在成功訊息尾端轉述給寫入者
       if (Array.isArray(gateResult.warnings) && gateResult.warnings.length) {
@@ -197,7 +144,8 @@ async function toolAtomWrite(id, args) {
 
     // ─── write-time conflict detection (SPEC §7.1) ───
     // Only shared scope. skip_conflict_check honored for migrations/tests.
-    if (scope === "shared" && !skip_conflict_check) {
+    // dry_run 跳過：偵測器會落 .conflict.md 報告／_pending_review 草稿（副作用），預覽不該留痕。
+    if (scope === "shared" && !skip_conflict_check && !dry_run) {
       const cr = await execConflictDetector(knowledge.join("\n"), "shared", project_cwd, subdir);
       // 偵測器降級訊號（複驗不穩 / 跨分區 / LLM ERROR fail-open）→ 併入成功訊息浮出
       if (Array.isArray(cr.warnings) && cr.warnings.length) {
@@ -250,19 +198,34 @@ async function toolAtomWrite(id, args) {
       // index scope 傳 scopeLabel（與 frontmatter 一致）——不再由 py 端預設 global
       // 蹍掉專案層 scope。
       index: { base_dir: indexDir, slug, rel_path: relPath, triggers, scope: scopeLabel },
+      dry_run,
     });
     if (!cr.ok) {
       return sendToolResult(id, `atom_create funnel failed: ${cr.error}`, true);
+    }
+    if (dry_run) {
+      return sendToolResult(id,
+        `DRY-RUN (nothing written): would create atom ${slug}.md (${confidence}, scope=${scopeLabel})\n` +
+        `Path: ${filePath}\n` +
+        (category ? `Category: ${category}\n` : "") +
+        `Index rel_path: ${relPath}\n` +
+        `Gates passed: domain/category, [臨], write-gate, build+validate, budget.` +
+        (gateWarnings.length ? `\n[write-gate 樣式警告] ${gateWarnings.join("；")}` : "")
+      );
     }
     if (cr.extra && cr.extra.index_ok === false) {
       crashLog("appendToIndex funnel (json)", cr.extra.index_error);
     }
     triggerVectorReindex();
-    if (scopeLabel === "global") syncMemoryIndex();
+    // catalog 同步：global → memory/MEMORY.md（+側檔/各層 _INDEX.md）；shared → 該專案
+    // MEMORY.md 的 marker 區塊（--memory-dir）。待審（_pending_review）不入 index → 不觸發。
+    if (scopeLabel === "global" || loc.personal_global) syncMemoryIndex();
+    else if (scope === "shared" && !pendingReviewBy) syncMemoryIndex(baseDir);
 
     return sendToolResult(id,
       `Created atom: ${slug}.md (${confidence}, scope=${scopeLabel})\n` +
       `Path: ${filePath}\n` +
+      (category ? `Category: ${category}\n` : "") +
       `Author: ${author}\n` +
       (pendingReviewBy ? `Pending-review-by: ${pendingReviewBy} (sensitive audience auto-routed)\n` : "") +
       `Triggers: ${triggers.join(", ")}\n` +
@@ -273,18 +236,13 @@ async function toolAtomWrite(id, args) {
 
   // ── Mode: append ──
   if (mode === "append") {
-    const legacyPath = flatLegacyFallback(scope, baseDir, slug, filePath);
-    if (legacyPath) {
-      filePath = legacyPath;
-      relPath = path.relative(indexRoot, filePath).replace(/\\/g, "/");
-    }
-    if (!fs.existsSync(filePath)) {
-      const lr = await locateExisting();
-      if (lr.error) return sendToolResult(id, `atom_write: ${lr.error}`, true);
-      if (lr.filePath) { filePath = lr.filePath; relPath = lr.relPath; }
-    }
-    if (!fs.existsSync(filePath)) {
+    // 既有檔定位（扁平舊址／子夾／local／失敗家族）已由 py locate 一次做完
+    if (!existingPath || !fs.existsSync(filePath)) {
       return sendToolResult(id, `Atom not found: ${slug}.md — use mode=create first`, true);
+    }
+    if (dry_run) {
+      return sendToolResult(id,
+        `DRY-RUN (nothing written): would append ${knowledge.length} knowledge line(s) to ${filePath}`);
     }
 
     // 拼接+validate+落檔統一 spawn py（lib.atom_io.append_atom_file）；不走 js readFileSync
@@ -309,20 +267,11 @@ async function toolAtomWrite(id, args) {
 
   // ── Mode: replace ──
   if (mode === "replace") {
-    const legacyPath = flatLegacyFallback(scope, baseDir, slug, filePath);
-    if (legacyPath) {
-      filePath = legacyPath;
-      relPath = path.relative(indexRoot, filePath).replace(/\\/g, "/");
-    }
     // Guard: replace = overwrite an EXISTING atom. If the target is absent, this was a
     // silent upsert that birthed a brand-new atom bypassing the create [臨] gate. Refuse.
-    if (!fs.existsSync(filePath)) {
-      const lr = await locateExisting();
-      if (lr.error) return sendToolResult(id, `atom_write: ${lr.error}`, true);
-      if (lr.filePath) { filePath = lr.filePath; relPath = lr.relPath; }
-    }
-    if (!fs.existsSync(filePath)) {
-      const variant = findSeparatorVariant(memDir, slug);
+    // 定位（含分隔符變體提示）由 py locate 回。
+    if (!existingPath || !fs.existsSync(filePath)) {
+      const variant = loc.separator_variant || null;
       return sendToolResult(id,
         `Atom not found: ${slug}.md — mode=replace requires an existing atom.\n` +
         (variant
@@ -355,6 +304,11 @@ async function toolAtomWrite(id, args) {
       return sendToolResult(id, `Validation failed: ${br.error}`, true);
     }
     const content = (br.extra || {}).content;
+    if (dry_run) {
+      return sendToolResult(id,
+        `DRY-RUN (nothing written): would replace ${filePath} (build+validate passed; ` +
+        `author=${prevAuthor}, created-at=${prevCreatedAt} preserved)`);
+    }
 
     fs.mkdirSync(memDir, { recursive: true });
     // 走 lib.atom_io.write_raw funnel
@@ -369,7 +323,8 @@ async function toolAtomWrite(id, args) {
 
     await appendToIndex(indexDir, slug, relPath, triggers);
     triggerVectorReindex();
-    if (scopeLabel === "global") syncMemoryIndex();
+    if (scopeLabel === "global" || loc.personal_global) syncMemoryIndex();
+    else if (scope === "shared" && !pendingReviewBy) syncMemoryIndex(baseDir);
 
     // 讀 access 給訊息顯示保留的計數
     const accAfter = readAtomAccess(filePath);
@@ -386,31 +341,34 @@ async function toolAtomWrite(id, args) {
 
 // Locate <atom_name>.md anywhere under memDir; needed because feedback/ etc.
 // are valid atom subdirs (mirrors lib/atom_spec.SKIP_DIRS exclusions).
-function findAtomFileRecursive(memDir, atomName) {
-  const target = atomName + ".md";
-  // SYNC: lib/atom_spec.py SKIP_DIRS（+ _drafts：taxonomy 牢籠草稿非 atom；
-  // _archived 由下方 startsWith("_archive") 涵蓋）。
-  const SKIP = new Set([
-    "_meta", "_reference", "_staging", "_vectordb", "_distant",
-    "episodic", "templates", "personal", "wisdom", "_pending_review",
-    "_drafts",
-  ]);
-  const queue = [memDir];
-  while (queue.length) {
-    const cur = queue.shift();
-    let entries;
-    try { entries = fs.readdirSync(cur, { withFileTypes: true }); } catch { continue; }
-    for (const e of entries) {
-      const full = path.join(cur, e.name);
-      if (e.isDirectory()) {
-        if (SKIP.has(e.name) || e.name.startsWith("_archive")) continue;
-        queue.push(full);
-      } else if (e.isFile() && e.name === target) {
-        return full;
-      }
+/** 依 atom 名定位既有檔（promote / edit_meta 用）：全交 py locate（global 三址：memory/、
+ *  memory/Failures/、_AIDocs/_atoms/；專案層依 scope 子層）。scope=project（舊語意＝
+ *  整個專案 memory 根）依序試 shared → personal(現用者) → role(若給)，不悄悄跨層。
+ *  回 {path|null, error?}。 */
+async function locateByName(atomName, scope, projectCwd, { role, user } = {}) {
+  const tryScope = async (sc, extra = {}) => {
+    const lr = await spawnAtomCli("locate", {
+      title: atomName, scope: sc, project_cwd: projectCwd, ...extra,
+    });
+    if (!lr.ok) return { error: lr.error };
+    return { path: lr.path || null };
+  };
+  if (scope === "project") {
+    const attempts = [
+      ["shared", {}],
+      ["personal", { user: user || getCurrentUser() }],
+    ];
+    if (role) attempts.push(["role", { role }]);
+    let lastErr = null;
+    for (const [sc, extra] of attempts) {
+      const r = await tryScope(sc, extra);
+      if (r.path) return r;
+      if (r.error) lastErr = r.error;
     }
+    return lastErr ? { error: lastErr } : { path: null };
   }
-  return null;
+  if (scope === "personal" && !user) user = getCurrentUser();
+  return tryScope(scope, { role, user });
 }
 
 /** Spawn inline python → lib.atom_index_json.delete_atom（含 _ATOM_INDEX.md mirror
@@ -428,7 +386,7 @@ function spawnIndexDelete(memDir, atomName) {
     let cp;
     try {
       cp = require("child_process").spawn(
-        "python", ["-c", inline, memDir, atomName],
+        PYTHON_EXE, ["-c", inline, memDir, atomName],
         { cwd: CLAUDE_DIR, windowsHide: true,
           env: { ...process.env, PYTHONIOENCODING: "utf-8" } },
       );
@@ -461,29 +419,12 @@ function spawnIndexDelete(memDir, atomName) {
 async function toolAtomPromote(id, args) {
   const { atom_name, scope, project_cwd, execute, role, user, merge_to_preferences } = args;
 
-  const resolved = resolveMemDir(scope, project_cwd, { role, user });
-  if (resolved.error) {
-    return sendToolResult(id, `atom_promote: ${resolved.error}`, true);
+  const located = await locateByName(atom_name, scope, project_cwd, { role, user });
+  if (located.error) return sendToolResult(id, `atom_promote: ${located.error}`, true);
+  if (!located.path) {
+    return sendToolResult(id, `Atom not found: ${atom_name}.md in ${scope} scope`, true);
   }
-  const memDir = resolved.dir;
-  let filePath = path.join(memDir, atom_name + ".md");
-
-  if (!fs.existsSync(filePath)) {
-    // Fallback: recursive lookup (atom may live in feedback/ or other subdir)
-    let found = findAtomFileRecursive(memDir, atom_name);
-    // V5+: feedback-* atoms 居 _AIDocs/Failures/，不在 memDir 樹下，需額外掃
-    if (!found && scope === "global" && atom_name.startsWith(FEEDBACK_TITLE_PREFIX)) {
-      found = findAtomFileRecursive(FAILURES_DIR, atom_name);
-    }
-    // V5+: local-realm atoms 居 _AIDocs/_atoms/<domain>/（scope=global 但不在 memory/ 樹下）
-    if (!found && scope === "global") {
-      found = findAtomFileRecursive(LOCAL_ATOMS_DIR, atom_name);
-    }
-    if (!found) {
-      return sendToolResult(id, `Atom not found: ${atom_name}.md in ${scope} scope`, true);
-    }
-    filePath = found;
-  }
+  let filePath = located.path;
 
   let content = fs.readFileSync(filePath, "utf-8");
   if (content.charCodeAt(0) === 0xFEFF) content = content.slice(1);
@@ -717,7 +658,7 @@ function spawnEditMetadata(filePath, fields) {
     let cp;
     try {
       cp = require("child_process").spawn(
-        "python", ["-c", inline, payload],
+        PYTHON_EXE, ["-c", inline, payload],
         {
           cwd: CLAUDE_DIR,
           windowsHide: true,
@@ -769,28 +710,13 @@ async function toolAtomEditMeta(id, args) {
       true);
   }
 
-  // Path resolution — mirror toolAtomPromote exactly (global/project + feedback-*).
-  const resolved = resolveMemDir(scope, project_cwd, { role, user });
-  if (resolved.error) {
-    return sendToolResult(id, `atom_edit_meta: ${resolved.error}`, true);
+  // 定位同 toolAtomPromote：py locate 單一裁決（global 三址／專案 shared→personal→role）。
+  const located = await locateByName(atom_name, scope, project_cwd, { role, user });
+  if (located.error) return sendToolResult(id, `atom_edit_meta: ${located.error}`, true);
+  if (!located.path) {
+    return sendToolResult(id, `Atom not found: ${atom_name}.md in ${scope} scope`, true);
   }
-  const memDir = resolved.dir;
-  let filePath = path.join(memDir, atom_name + ".md");
-
-  if (!fs.existsSync(filePath)) {
-    let found = findAtomFileRecursive(memDir, atom_name);
-    if (!found && scope === "global" && atom_name.startsWith(FEEDBACK_TITLE_PREFIX)) {
-      found = findAtomFileRecursive(FAILURES_DIR, atom_name);
-    }
-    // V5+: local-realm atoms 居 _AIDocs/_atoms/<domain>/（scope=global 但不在 memory/ 樹下）
-    if (!found && scope === "global") {
-      found = findAtomFileRecursive(LOCAL_ATOMS_DIR, atom_name);
-    }
-    if (!found) {
-      return sendToolResult(id, `Atom not found: ${atom_name}.md in ${scope} scope`, true);
-    }
-    filePath = found;
-  }
+  const filePath = located.path;
 
   const result = await spawnEditMetadata(filePath, fields);
   if (!result.ok) {
@@ -835,7 +761,7 @@ function toolAtomMove(id, args) {
   if (dry_run) argv.push("--dry-run");
 
   return new Promise((resolve) => {
-    const cp = require("child_process").spawn("python", argv, { windowsHide: true });
+    const cp = require("child_process").spawn(PYTHON_EXE, argv, { windowsHide: true });
     let out = "", err = "";
     const timer = setTimeout(() => { try { cp.kill(); } catch {} }, 30000);
     cp.stdout.on("data", d => { out += d.toString(); });
@@ -846,7 +772,9 @@ function toolAtomMove(id, args) {
       if (code !== 0) {
         sendToolResult(id, `atom_move exited ${code}\n${combined}`, true);
       } else {
-        sendToolResult(id, combined.trim() || "(no output)");
+        // 本次操作結果與「索引既有問題」分開講：exit 0 = 本次成功；
+        // index_preexisting_issues 是搬移前就存在的 validate 錯誤（非本次造成），只轉述。
+        sendToolResult(id, formatAtomMoveReport(combined));
       }
       resolve();
     });
@@ -856,6 +784,41 @@ function toolAtomMove(id, args) {
       resolve();
     });
   });
+}
+
+/** atom-move.py 的 JSON 報告 → 人讀摘要（成功行 + 既有索引問題另段）+ 原始 JSON。
+ *  非 JSON 輸出原樣回。 */
+function formatAtomMoveReport(raw) {
+  const text = (raw || "").trim();
+  let rep;
+  try { rep = JSON.parse(text.split("\n[stderr]\n")[0]); } catch { return text || "(no output)"; }
+  if (!rep || typeof rep !== "object") return text;
+  const lines = [];
+  if (rep.noop) {
+    lines.push(`atom_move: ${rep.msg || "no-op"}`);
+  } else {
+    const mode = rep.mode || "APPLIED";
+    const dest = rep.to_rel || rep.rel || rep.to || "?";
+    lines.push(`✅ atom_move ${mode}: ${rep.slug} → ${dest} (scope=${rep.scope}` +
+      (rep.scope_changed ? ", scope changed" : "") + ")");
+    if (rep.scope_header_synced) lines.push("  - 檔頭 `- Scope:` 已同步為索引 scope");
+    if (rep.catalog_sync) {
+      for (const [k, v] of Object.entries(rep.catalog_sync)) {
+        lines.push(`  - catalog regen ${k}: ${v.ok ? "ok" : "FAILED " + (v.error || "")}`);
+      }
+    }
+    if (Array.isArray(rep.warnings) && rep.warnings.length) {
+      lines.push(`  - warnings: ${rep.warnings.join(" | ")}`);
+    }
+    const pre = rep.index_preexisting_issues || [];
+    if (pre.length) {
+      lines.push(`⚠ 索引既有問題 ${pre.length} 項（搬移前就存在、非本次造成；` +
+        `修法：atom_edit_meta 縮短 trigger 或 tools/sync-atom-index.py --fix）：`);
+      for (const e of pre) lines.push(`    - ${e}`);
+    }
+  }
+  lines.push(text);
+  return lines.join("\n");
 }
 
 function extractKnowledgeLines(content) {

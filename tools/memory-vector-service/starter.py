@@ -49,7 +49,7 @@ def _slog(msg: str, log_path: Path = SERVICE_LOG) -> None:
     """Starter 動作記錄：時間戳行附加到 service log（失敗不擋流程）。"""
     try:
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(log_path, "a", encoding="utf-8") as f:
+        with open(log_path, "a", encoding="utf-8", newline="\n") as f:
             f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [starter] {msg}\n")
     except Exception:
         pass
@@ -170,7 +170,7 @@ def _spawn_service(port: int, service_script: Path = SERVICE_SCRIPT,
     啟動失敗原因不再進 DEVNULL 黑洞）。"""
     try:
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_f = open(log_path, "a", encoding="utf-8")
+        log_f = open(log_path, "a", encoding="utf-8", newline="\n")
         kw: Dict[str, Any] = {
             "stdin": subprocess.DEVNULL, "stdout": log_f, "stderr": log_f,
         }
@@ -202,6 +202,7 @@ def ensure_service(
     h = _health(port)
     if h == "ok":
         _write_flag(flag_path)
+        _kick_incremental_index(port)
         return {"ready": True, "action": "already_up", "wait_s": 0.0, "killed_pid": None}
 
     killed_pid = None
@@ -215,7 +216,7 @@ def ensure_service(
     else:
         try:
             lock_path.parent.mkdir(parents=True, exist_ok=True)
-            lock_path.write_text(str(time.time()), encoding="utf-8")
+            lock_path.write_text(str(time.time()), encoding="utf-8", newline="\n")
         except Exception:
             pass
         _rotate_log(log_path)
@@ -234,6 +235,7 @@ def ensure_service(
     wait_s = round(time.time() - t0, 1)
     if ready:
         _write_flag(flag_path)
+        _kick_incremental_index(port)
         try:
             lock_path.unlink(missing_ok=True)
         except Exception:
@@ -242,10 +244,26 @@ def ensure_service(
     return {"ready": ready, "action": action, "wait_s": wait_s, "killed_pid": killed_pid}
 
 
+def _kick_incremental_index(port: int) -> None:
+    """服務就緒後補打增量索引：把 git pull 拉進來、尚未入庫的 atom 立即納入語意召回
+    （trigger/BM25 讀 .md 即時生效，但向量端過去只在 atom 寫入/SessionEnd 才補索引，
+    pull 後首個 session 的語意召回會漏掉新 atom）。庫無變動時 indexer 逐檔比對
+    file_hash 全 skip（零 embedding、零寫入），成本僅掃檔算 hash。
+    fail-open：索引已在跑（already_running）或請求失敗都不影響啟動流程，只落 log。"""
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/index/incremental",
+            data=b"{}", headers={"Content-Type": "application/json"}, method="POST")
+        urllib.request.urlopen(req, timeout=2)
+        _slog("kicked incremental index (post-ready)")
+    except Exception as e:
+        _slog(f"incremental index kick failed (fail-open): {e}")
+
+
 def _write_flag(flag_path: Path = FLAG_PATH) -> None:
     try:
         flag_path.parent.mkdir(parents=True, exist_ok=True)
-        flag_path.write_text("ready", encoding="utf-8")
+        flag_path.write_text("ready", encoding="utf-8", newline="\n")
     except Exception:
         pass
 
@@ -253,7 +271,7 @@ def _write_flag(flag_path: Path = FLAG_PATH) -> None:
 def _log_probe(rec: Dict[str, Any], probe_log: Path = PROBE_LOG) -> None:
     try:
         probe_log.parent.mkdir(parents=True, exist_ok=True)
-        with open(probe_log, "a", encoding="utf-8") as f:
+        with open(probe_log, "a", encoding="utf-8", newline="\n") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     except Exception:
         pass

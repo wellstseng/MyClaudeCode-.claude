@@ -1,6 +1,6 @@
 # _AIDocs/_atoms/MemDev — 範疇索引
 
-> 階層 local 範疇索引（自動生成，`_` 前綴非 atom）。機制見 [[realm-範疇分區機制-v5]]。
+> 階層範疇索引（自動生成，`_` 前綴非 atom）。機制見 [[realm-範疇分區機制-v5]]。
 
 ## 本層 atom
 
@@ -30,16 +30,39 @@
 | 啟動鏈自動覆寫陷阱-user-init每session拷貝來源檔必先驗證管線仍成立 | 啟動鏈自動覆寫陷阱-user-init每session拷貝來源檔必先驗證管線仍成立 |
 | 專案工作驗收裁判的分級啟動與殺閘設計 | 專案工作驗收裁判的分級啟動與殺閘設計 |
 | 專案等級-mcpskillhookslog-不放全域根層 | 專案等級 mcp/skill/hooks/log 不放全域根層 |
-| 對談結束自動記憶與錯誤加權深記 | 對談結束自動記憶與錯誤加權深記 |
 | 巨檔純機械拆分-carve腳本與驗證盲點 | 巨檔純機械拆分-carve腳本與驗證盲點 |
 | 模型行為移植-fable行為契約必載檔 | 模型行為移植-Fable行為契約必載檔 |
 | 檢索融合與回歸集調參-rrf-min-score-定案 | 檢索融合與回歸集調參-rrf-min-score-定案 |
 | 禁語-hook-不開引用豁免誤報噪音-vs-契約破洞不對稱 | 禁語 hook 不開引用豁免（誤報噪音 vs 契約破洞不對稱） |
-| 自動萃取層淨值審查-調整式拔除-2026-07 | 自動萃取層淨值審查-調整式拔除-2026-07 |
 | 衝突偵測-block-資格閘-複驗一致-分區感知-待審出路 | 衝突偵測-block-資格閘-複驗一致-分區感知-待審出路 |
 | 跨session協調-衝突預警機制與cc原生現況 | 跨session協調-衝突預警機制與CC原生現況 |
 | dedup-stage-牢籠去蕪設計-信任模型隔離與substring-only首版 | dedup-stage-牢籠去蕪設計-信任模型隔離與substring-only首版 |
 | post-mortem-write-raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用 | post-mortem-write_raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用 |
+| activation負值不是負相關-act-r對數尺度天然跨零-注入噪音修門檻與顯示勿過濾分數 | activation負值不是負相關-ACT-R對數尺度天然跨零-注入噪音修門檻與顯示勿過濾分數 |
+| always-load-規則檔修剪判準-事前規則留一句-事後且已有程式硬控制才刪-啟發式提示不算硬控制 | always-load 規則檔修剪判準-事前規則留一句-事後且已有程式硬控制才刪-啟發式提示不算硬控制 |
+| decisions-architecture | 架構決策 |
+| feedback-memory-system-doc-sync | feedback-memory-system-doc-sync |
+| hook-py改動立即生效-每次呼叫起新進程-只有mcp-node進程需重啟 | hook-py改動立即生效-每次呼叫起新進程-只有MCP-node進程需重啟 |
+| hook-內呼叫外部工具的四個坑-home覆寫下claude-dir指錯-pythonw無stdio-5秒預算-探針要隔離global設定 | hook 內呼叫外部工具的四個坑-HOME覆寫下CLAUDE_DIR指錯-pythonw無stdio-5秒預算-探針要隔離global設定 |
+| hud暫存清單靠prose猜路徑的失敗-改殘檔帳本以檔案系統為權威 | HUD暫存清單靠prose猜路徑的失敗-改殘檔帳本以檔案系統為權威 |
+| mcp-js-改動後未重啟-lazy-require-新舊模組混載-tool-回-undefined-類錯誤不是-bug-reload-window-即復原 | MCP js 改動後未重啟-lazy-require 新舊模組混載-tool 回 undefined 類錯誤不是 bug-Reload Window 即復原 |
+| memory-pipeline-silent-failure-2026-05 | 記憶機制靜默失效（confirmations 零增 + episodic 停擺） |
+| repo-全面-lf-決策與守衛鏈 | repo-全面-LF-決策與守衛鏈 |
+| svn測試與hook的三個實測事實-diff3相鄰改動自合-整wc-status爆預算-只信xml輸出 | svn測試與hook的三個實測事實-diff3相鄰改動自合-整WC status爆預算-只信xml輸出 |
+| testfailgate-非-pytest-失敗紀錄只靠同前綴-40-字的成功指令清除-重跑勿加-cd-前綴 | TestFailGate 非 pytest 失敗紀錄只靠同前綴 40 字的成功指令清除-重跑勿加 cd 前綴 |
+| toolchain-ollama | Ollama Dual-Backend 實戰記憶 |
+| 健檢error與索引矛盾即解析器誤報-audit跨層全掃自08-31起-週報global-only看不到專案層 | 健檢error與索引矛盾即解析器誤報-audit跨層全掃自08-31起-週報global-only看不到專案層 |
+| 刪除候選清單的進入條件要有正向資格判定-只驗exists會讓正式檔進hud刪除鈕 | 刪除候選清單的進入條件要有正向資格判定-只驗exists會讓正式檔進HUD刪除鈕 |
+| 向量庫stale清理失效根因-layer標籤含冒號拆鍵錯位-刪0列仍回報成功 | 向量庫stale清理失效根因-layer標籤含冒號拆鍵錯位-刪0列仍回報成功 |
+| 回訪機制-改完一週後看數據交給到期自動跑-交接以接手者零記憶為前提 | 回訪機制-改完一週後看數據交給到期自動跑-交接以接手者零記憶為前提 |
+| 本repo公開有同事使用者-外部pr審查與docindex衝突解法 | 本repo公開有同事使用者-外部PR審查與DocIndex衝突解法 |
+| 注入預算三教訓-裁切要回填-分級看token不看字元-橋接檔須隨索引重產 | 注入預算三教訓-裁切要回填-分級看token不看字元-橋接檔須隨索引重產 |
+| 規則縫隙偏移-兩條各自合理的規則疊出第三種行為-syncreminder被local-commit靜音 | 規則縫隙偏移-兩條各自合理的規則疊出第三種行為-SyncReminder被local-commit靜音 |
+| 記憶索引分類讀寫鏈總審計結論-驗無誤清單與一條龍中斷點 | 記憶索引分類讀寫鏈總審計結論-驗無誤清單與一條龍中斷點 |
+| 跨層bash閘與sessionstart逾時-fd複製非寫檔-開場提醒無聲消失 | 跨層Bash閘與SessionStart逾時-fd複製非寫檔-開場提醒無聲消失 |
+| 路徑解析函式的根層分支是遷移盲點-cwd在claude根時專案分支會長出舊址 | 路徑解析函式的根層分支是遷移盲點-cwd在claude根時專案分支會長出舊址 |
+| 驗收裁判對多階段戰役的等待回合會誤判為完工宣稱-規格檔只綁當前phase | 驗收裁判對多階段戰役的等待回合會誤判為完工宣稱-規格檔只綁當前phase |
+| 驗證探針的副作用與假失敗-heredoc反斜線-假session登記-dry-run留目錄-fallback索引源 | 驗證探針的副作用與假失敗-heredoc反斜線-假session登記-dry-run留目錄-fallback索引源 |
 
 ## 子層
 

@@ -34,20 +34,24 @@ from typing import Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib.atom_index_json import (  # noqa: E402
+    dedup_triggers,
+    delete_atom,
     load_atom_index_json,
     upsert_atom,
 )
 from lib.atom_locations import (  # noqa: E402  V5+ 多根掃描 + Failures filter
     atom_search_roots,
     iter_atom_files_multi,
+    scope_from_index_path,
 )
+from lib.atom_spec import is_atom_file  # noqa: E402
 from lib.atom_io import write_raw  # noqa: E402  走 funnel：EOL-preserving + audit（杜絕 bypass 裸寫）
 
 MEMORY_DIR = Path.home() / ".claude" / "memory"
 CLAUDE_ROOT = MEMORY_DIR.parent
 
 EXCLUDED_DIR_PARTS = {"_reference", "_archived", "_pending_review", "_staging",
-                      "templates", "wisdom", "_drafts", "episodic", "_distant"}
+                      "templates", "wisdom", "_drafts", "episodic", "_distant", "_rejected"}
 EXCLUDED_FILE_NAMES = {"MEMORY.md", "_ATOM_INDEX.md"}
 
 TRIGGER_LINE_RE = re.compile(r"^- Trigger:\s*(.+)$", re.MULTILINE)
@@ -108,7 +112,8 @@ def parse_frontmatter_triggers(text: str) -> Optional[List[str]]:
     m = TRIGGER_LINE_RE.search(text)
     if not m:
         return None
-    return [t.strip() for t in m.group(1).split(",") if t.strip()]
+    # 與索引寫入側同一把去重（大小寫不敏感保序），否則 detect_drift 會永久報 drift
+    return dedup_triggers(m.group(1).split(","))
 
 
 def parse_frontmatter_scope(text: str) -> str:
@@ -127,7 +132,9 @@ def scan_atom_files(memory_dir: Path, claude_root: Path) -> Dict[str, AtomFile]:
     if memory_dir.resolve() == MEMORY_DIR.resolve():
         files_iter = iter_atom_files_multi()
     else:
-        files_iter = memory_dir.rglob("*.md")
+        # 專案層與全域同一套 atom 判定（SKIP_DIRS：_rejected/_drafts/episodic…；
+        # personal/<u>/ 是 atom、personal/auto/<u>/ 候選不是）
+        files_iter = (p for p in memory_dir.rglob("*.md") if is_atom_file(p, memory_dir))
     for md in files_iter:
         # memory 樹下仍用既有 excluded dir/file 過濾；Failures root iter_atom_files_multi 已過濾
         try:
@@ -159,7 +166,7 @@ def load_index_rows(memory_dir: Path) -> List[IndexRow]:
         rows.append(IndexRow(
             name=a.get("name", ""),
             path=a.get("path", "").replace("\\", "/"),
-            triggers=[t.strip() for t in a.get("triggers", []) if t.strip()],
+            triggers=dedup_triggers(a.get("triggers", [])),
             scope=a.get("scope", "global"),
         ))
     return rows
@@ -189,7 +196,7 @@ def detect_drift(atoms_by_path: Dict[str, AtomFile],
         if atom is None:
             rep.missing_frontmatter.append(row.name)
             continue
-        if atom.triggers != row.triggers:
+        if sorted(atom.triggers) != sorted(row.triggers):  # 順序不算漂移，只看集合
             rep.trigger_drift.append({
                 "atom": row.name,
                 "path": row.path,
@@ -221,8 +228,7 @@ def fix_frontmatter_from_index(atoms_by_path: Dict[str, AtomFile],
         text = atom.path.read_text(encoding="utf-8-sig")
         new_text, n = TRIGGER_LINE_RE.subn(new_line, text, count=1)
         if n == 1 and new_text != text:
-            # 走 funnel：EOL-preserving _atomic_write + audit log
-            # （舊版裸 write_text 會在 Windows 翻整檔 EOL，且寫入不留 audit）
+            # 走 funnel：write_text_lf（一律 LF）+ audit log
             write_raw(atom.path, new_text, source="tool:sync-atom-index", op="trigger-align")
             changed.append(atom.rel_path)
     return changed
@@ -249,18 +255,105 @@ def add_to_index_from_frontmatter(atoms_by_path: Dict[str, AtomFile],
     return added
 
 
+_SCOPE_HEADER_RE = re.compile(r"^- Scope:\s*(.+?)\s*$", re.MULTILINE)
+
+
+def fix_index_scope_from_path(memory_dir: Path, claude_root: Path,
+                              index_rows: List[IndexRow]) -> Dict[str, List[str]]:
+    """索引 scope 以 path 為準回寫（讀取端同一套 scope_from_index_path），並清懸空條目。
+
+    - 條目 path 指向不存在的檔 → delete_atom（懸空）
+    - scope 欄 ≠ path 推導（personal/<u>/、roles/<r>/、其餘依層 global|shared）→ upsert 回正
+      並把 .md 檔頭 `- Scope:` 對齊（走 write_raw funnel）
+    這是寫入端曾漏傳 scope（預設 global）留下的固定修法；write_index 缺省已改由 path 推導，
+    本旗標處理存量與未來任何旁路寫入。回 {"dangling_removed": [...], "scope_fixed": [...]}。"""
+    layer = "global" if memory_dir.resolve() == MEMORY_DIR.resolve() else "shared"
+    out = {"dangling_removed": [], "scope_fixed": []}
+    out["path_repaired"] = []
+    for row in index_rows:
+        md = claude_root / row.path
+        path = row.path
+        if path and not md.exists():
+            # 先找「只是搬了位置」的同名檔（跳過 skip 目錄）：找到 → 修 path；真的沒有 → 才算懸空
+            found = [p for p in memory_dir.rglob(f"{row.name}.md") if is_atom_file(p, memory_dir)]
+            if len(found) == 1:
+                path = str(found[0].relative_to(claude_root)).replace("\\", "/")
+                md = found[0]
+                out["path_repaired"].append(f"{row.name}: {row.path} -> {path}")
+            else:
+                if delete_atom(memory_dir, row.name):
+                    out["dangling_removed"].append(row.name)
+                continue
+        expected = scope_from_index_path(path, layer)
+        if row.scope == expected and path == row.path:
+            continue
+        upsert_atom(memory_dir, name=row.name, path=path, triggers=row.triggers, scope=expected)
+        if row.scope == expected:
+            continue
+        try:
+            text = md.read_text(encoding="utf-8-sig")
+            m = _SCOPE_HEADER_RE.search(text)
+            if m and m.group(1) != expected:
+                wr = write_raw(md, text[:m.start()] + f"- Scope: {expected}" + text[m.end():],
+                               source="tool:sync-atom-index", op="fix_scope_from_path")
+                if not getattr(wr, "ok", False):
+                    # write_raw 對未列舉 source／其他失敗回 ok=False 不 raise：浮出、不吞
+                    print(f"[fix-scope] header not rewritten for {row.name}: {getattr(wr, 'error', '')}",
+                          file=sys.stderr)
+        except (OSError, UnicodeDecodeError):
+            pass
+        out["scope_fixed"].append(f"{row.name}: {row.scope} -> {expected}")
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="V5 atom index sync (JSON SoT).")
     parser.add_argument("--fix", action="store_true",
                         help="overwrite frontmatter Trigger from _atom_index.json")
     parser.add_argument("--add-from-frontmatter", action="store_true",
                         help="append atoms with frontmatter Trigger but missing from _atom_index.json")
+    parser.add_argument("--fix-scope-from-path", action="store_true",
+                        help="rewrite index scope from path (personal/roles/layer), drop dangling entries, align .md Scope header")
     parser.add_argument("--check", action="store_true",
                         help="quiet drift check (exit 1 if drift, for PreCommit)")
     parser.add_argument("--memory-dir", type=Path, default=MEMORY_DIR)
+    parser.add_argument("--all-projects", action="store_true",
+                        help="apply to every registered project memory dir (hooks/wg_core.discover_all_project_memory_dirs) instead of --memory-dir; exit 1 if any drift")
     args = parser.parse_args()
 
-    memory_dir: Path = args.memory_dir
+    if args.all_projects:
+        return _run_all_projects(args)
+    return _run_one(args.memory_dir, args)
+
+
+def _project_memory_dirs() -> List[Tuple[str, Path]]:
+    """與執行期同一套專案判定（hooks/wg_core.discover_all_project_memory_dirs）；只取有 JSON 索引者。"""
+    hooks = CLAUDE_ROOT / "hooks"
+    if str(hooks) not in sys.path:
+        sys.path.insert(0, str(hooks))
+    from wg_core import discover_all_project_memory_dirs  # noqa: E402
+    return [(slug, mem) for slug, mem in discover_all_project_memory_dirs()
+            if (mem / "_atom_index.json").exists()]
+
+
+def _run_all_projects(args) -> int:
+    """從 ~/.claude 一鍵掃全部登記專案：不必逐一開專案 session 叫 CC 整理。"""
+    worst = 0
+    summary: List[Dict] = []
+    for slug, mem in _project_memory_dirs():
+        rc = _run_one(mem, args, quiet=True, collector=summary, slug=slug)
+        worst = max(worst, rc)
+    if args.check:
+        bad = [s for s in summary if s.get("has_drift")]
+        if bad:
+            print(json.dumps(bad, ensure_ascii=False, indent=2), file=sys.stderr)
+        return 1 if bad else 0
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return worst
+
+
+def _run_one(memory_dir: Path, args, *, quiet: bool = False,
+             collector: Optional[List[Dict]] = None, slug: str = "") -> int:
     claude_root = memory_dir.parent
 
     atoms_by_path = scan_atom_files(memory_dir, claude_root)
@@ -274,6 +367,13 @@ def main() -> int:
             actions_taken.append(f"added to _atom_index.json: {added}")
             index_rows = load_index_rows(memory_dir)
 
+    if args.fix_scope_from_path:
+        res = fix_index_scope_from_path(memory_dir, claude_root, index_rows)
+        if res["dangling_removed"] or res["scope_fixed"]:
+            actions_taken.append(f"scope-from-path: {res}")
+            index_rows = load_index_rows(memory_dir)
+            atoms_by_path = scan_atom_files(memory_dir, claude_root)
+
     if args.fix:
         changed = fix_frontmatter_from_index(atoms_by_path, index_rows)
         if changed:
@@ -281,6 +381,15 @@ def main() -> int:
             atoms_by_path = scan_atom_files(memory_dir, claude_root)
 
     rep = detect_drift(atoms_by_path, index_rows, claude_root)
+
+    if collector is not None:
+        entry = {"project": slug or memory_dir.parent.parent.name, "memory_dir": str(memory_dir),
+                 "actions": actions_taken, "has_drift": rep.has_drift()}
+        if rep.has_drift():
+            entry["drift"] = rep.to_dict()
+        collector.append(entry)
+    if quiet:
+        return 1 if rep.has_drift() else 0
 
     if args.check:
         if rep.has_drift():

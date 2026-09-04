@@ -18,6 +18,7 @@ from __future__ import annotations
 import inspect
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -91,8 +92,10 @@ def test_discover_layers_real_env_has_local_label():
     # 真實 ~/.claude：_AIDocs/_atoms/ 存在 → local layer 必在
     labels = [l for l, _p, _k in indexer.discover_layers(layer_filter="global")]
     assert indexer.LOCAL_ATOMS_LAYER_LABEL in labels
-    assert indexer.FAILURES_LAYER_LABEL in labels
     assert "global" in labels
+    # 失敗家族已住 memory/Failures/<主題>/（global 遞迴層涵蓋）；獨立 failures 層只在
+    # 舊址 _AIDocs/Failures/ 仍存在時才掛——遷移完成後兩者互斥、不得重複索引
+    assert (indexer.FAILURES_LAYER_LABEL in labels) == indexer.LEGACY_FAILURES_DIR.is_dir()
 
 
 def test_discover_atoms_local_hierarchy(tmp_path):
@@ -218,7 +221,14 @@ class _FakeTable:
         return _FakeQuery(self._rows)
 
     def delete(self, where):
+        # 模擬 LanceDB：述詞沒命中也靜默成功；只有 layer 與 atom_name 都對才真的刪
         self.deleted.append(where)
+        m = re.fullmatch(r"layer = '(.*)' AND atom_name = '(.*)'", where)
+        if not m:
+            return
+        layer, atom = m.group(1), m.group(2)
+        self._rows = [r for r in self._rows
+                      if not (r["layer"] == layer and r["atom_name"] == atom)]
 
 
 def test_delete_stale_keys_removes_orphans():
@@ -227,10 +237,28 @@ def test_delete_stale_keys_removes_orphans():
         {"layer": "global", "atom_name": "gone"},
         {"layer": "global", "atom_name": "gone"},
     ])
-    stats = indexer._delete_stale_keys(table, {"global:keep"})
+    stats = indexer._delete_stale_keys(table, {("global", "keep")})
     assert stats["deleted_atoms"] == 1
     assert stats["deleted_chunks"] == 2
     assert len(table.deleted) == 1 and "atom_name = 'gone'" in table.deleted[0]
+    assert table.count_rows() == 1
+
+
+def test_delete_stale_keys_layer_label_with_colon():
+    # V4 layer 標籤含冒號（shared:c--proj / extra:failures）：述詞必須整段 layer 比對，
+    # 拆錯位會刪 0 列卻回報成功 → 統計要以實刪列數為準
+    table = _FakeTable([
+        {"layer": "shared:c--proj", "atom_name": "keep"},
+        {"layer": "shared:c--proj", "atom_name": "gone"},
+        {"layer": "extra:failures", "atom_name": "gone"},
+        {"layer": "extra:failures", "atom_name": "gone"},
+    ])
+    stats = indexer._delete_stale_keys(table, {("shared:c--proj", "keep")})
+    assert stats["deleted_atoms"] == 2
+    assert stats["deleted_chunks"] == 3
+    assert table.count_rows() == 1
+    assert any("layer = 'shared:c--proj' AND atom_name = 'gone'" == w for w in table.deleted)
+    assert any("layer = 'extra:failures' AND atom_name = 'gone'" == w for w in table.deleted)
 
 
 def test_build_index_incremental_wires_stale_cleanup():

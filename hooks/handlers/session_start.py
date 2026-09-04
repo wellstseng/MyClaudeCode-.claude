@@ -12,6 +12,7 @@ handlers/session_start.py — SessionStart hook handler
 """
 
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timedelta
@@ -27,10 +28,13 @@ from wg_core import (
     read_state, write_state, new_state, _find_active_sibling_state,
     _check_mcp_servers,
     _is_under_claude_dir, is_local_realm_path, is_cross_project_local,
+    iter_realm_category_dirs,
     REALM_AUTOMOVE_MARKER,
+    find_vcs_root, memory_dir_candidates,
 )
 from wg_atoms import (
     parse_memory_index, parse_aidocs_index, extract_aidocs_keywords,
+    filter_visible, scope_from_rel_path,
 )
 from wg_evasion import (
     _load_oscillation_warnings, _detect_rut_patterns, _check_periodic_review_due,
@@ -50,6 +54,33 @@ try:
     from ollama_client import check_long_die_status
 except ImportError:
     check_long_die_status = lambda: None  # noqa: E731
+
+
+def check_always_load_contracts(claude_dir: Path) -> List[str]:
+    """必載檔硬契約哨兵：memory/_meta/always-load-contracts.json 登記的句子在 live 檔缺席 → 告警行。
+
+    契約句被修剪／覆寫時，模型當 session 就失去事前依據（事後閘只看狀態不懂語意）。
+    登記表缺或壞 → 回一行告警（不阻斷）。
+    """
+    reg_path = claude_dir / "memory" / "_meta" / "always-load-contracts.json"
+    try:
+        reg = json.loads(reg_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return [f"[Guardian:Contract⚠] 硬契約登記表讀取失敗（{reg_path.name}：{e}）"]
+    out: List[str] = []
+    for c in reg.get("contracts") or []:
+        live = claude_dir / str(c.get("live", ""))
+        try:
+            text = live.read_text(encoding="utf-8", errors="ignore") if live.exists() else ""
+        except OSError:
+            text = ""
+        missing = [m for m in (c.get("must_contain") or []) if m not in text]
+        if missing:
+            out.append(
+                f"[Guardian:Contract⚠] {c.get('live')} 缺硬契約「{c.get('id')}」"
+                f"（缺：{'、'.join(missing)}）→ {c.get('fix', '比對 template 回復')}"
+            )
+    return out
 
 
 def _check_se_sentinel_residual(lines: List[str], min_age_s: float = 60.0) -> None:
@@ -175,7 +206,7 @@ def _regenerate_role_filtered_memory_index(
         trig_str = ", ".join(triggers) if triggers else ""
         lines.append(f"| {name} | {rel} | {trig_str} | {scope} |")
     try:
-        target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        target.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     except OSError as e:
         _atom_debug_error("regenerate_memory_md", e)
 
@@ -258,7 +289,7 @@ def _refresh_vector_flag(
         return "cleared"
     try:
         flag.parent.mkdir(parents=True, exist_ok=True)
-        flag.write_text("ready", encoding="utf-8")
+        flag.write_text("ready", encoding="utf-8", newline="\n")
     except OSError:
         pass
     return "kept"
@@ -292,6 +323,30 @@ def _prune_aec_files(max_age_days: int = 7) -> int:
                         pruned += 1
                 except Exception:
                     continue
+    # 殘檔帳本 aec-tempfiles/<sid>.jsonl：過期且「帳上路徑全都已不在磁碟」才清——
+    # 只要還有一個殘檔在，帳本就得留著讓 HUD 繼續列（帳本存在的意義就是追到處置為止）。
+    try:
+        ledgers = list((WORKFLOW_DIR / "aec-tempfiles").glob("*.jsonl"))
+    except Exception:
+        ledgers = []
+    for p in ledgers:
+        try:
+            if p.stat().st_mtime >= cutoff:
+                continue
+            alive = False
+            for line in p.read_text(encoding="utf-8").splitlines():
+                try:
+                    path = json.loads(line).get("path", "")
+                except Exception:
+                    continue
+                if path and os.path.exists(path):
+                    alive = True
+                    break
+            if not alive:
+                p.unlink()
+                pruned += 1
+        except Exception:
+            continue
     return pruned
 
 
@@ -336,6 +391,55 @@ def _health_advisory(last_run_path) -> list:
         ]
 
 
+def _scope_layout_advisory(project_mem_dir) -> list:
+    """專案記憶尚未依 scope 分層整理 → 開場一行說明改動＋整理入口。
+
+    記憶系統升級後（personal 只本人、專案規則進 shared 記提出者、他專案不注入），其他機器上
+    的既有專案不會自己整理；「已整理」＝ _atom_index.json.layout 標記或 shared/_taxonomy.json
+    （lib.atom_locations.scope_layout_classified）。純判定、fail-open。
+    """
+    try:
+        if not project_mem_dir or not Path(project_mem_dir).is_dir():
+            return []
+        from atom_locations import scope_layout_classified
+        if scope_layout_classified(Path(project_mem_dir)):
+            return []
+        return [
+            "[Guardian:ScopeLayout] 記憶系統已改為 scope 分層：personal 只給本人、針對專案的規則進 shared "
+            "並記提出者、他專案 atom 不再注入。本專案的記憶尚未依此整理（無 layout 標記／shared/_taxonomy.json）。"
+            "使用者說「整理記憶分類」→ 走 /memory classify：plan 出建議表 → 使用者確認 personal 去向 → "
+            "apply（搬檔、索引 scope 回寫、標記）→ 提醒把 .claude/memory 上傳版控。"
+        ]
+    except Exception as e:  # noqa: BLE001
+        _atom_debug_error("session_start:scope_layout_advisory", e)
+        return []
+
+
+def _followup_advisory() -> list:
+    """回訪到期 → 開場自動跑 tools/followup-check.py，把檢查結果＋自足交接推進 context。
+
+    存在理由：「一週後再看數據」在 session 關掉後必然被遺忘；登記表 workflow/followups.json
+    以「接手者零記憶」寫交接，到期後使用者任何一次開 CC 都會看到並能直接行動。
+    每日提醒一次（--mark-shown），PASS 自動結案（--auto-close），首次整份、之後精簡（--brief）。
+    純子程序、fail-open：失敗只 debug log，不阻斷 SessionStart。無到期項回 []。
+    """
+    try:
+        import subprocess
+        reg = WORKFLOW_DIR / "followups.json"
+        if not reg.exists():
+            return []
+        r = subprocess.run(
+            [sys.executable, str(CLAUDE_DIR / "tools" / "followup-check.py"),
+             "--run", "--auto-close", "--brief", "--mark-shown"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=25,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        out = (r.stdout or "").strip()
+        return [out] if out else []
+    except Exception as e:
+        _atom_debug_error("session_start:followup_advisory", e)
+        return ["[Guardian:Followup] ⚠ 回訪檢查器執行失敗（見 atom-debug log）——手動跑 python tools/followup-check.py --run"]
+
+
 def _unpushed_advisory() -> list:
     """本地有已 commit 未 push 的東西 → advisory 行（無則回 []，不佔 context）。
 
@@ -352,7 +456,7 @@ def _unpushed_advisory() -> list:
         r = subprocess.run(
             ["git", "-C", str(CLAUDE_DIR), "rev-list", "--count", "@{u}..HEAD"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=5)
+            timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if r.returncode != 0:  # 無 upstream / detached HEAD → 不是異常，不吵
             return []
         ahead = int((r.stdout or "0").strip() or 0)
@@ -364,6 +468,176 @@ def _unpushed_advisory() -> list:
         ]
     except Exception as e:
         _atom_debug_error("session_start:unpushed_advisory", e)
+        return []
+
+
+def _index_conflict_advisory(cwd: str) -> list:
+    """開場 advisory：上個 session 的 pull/rebase 卡在索引三檔衝突、還沒解就關掉 → 這裡浮出一行。
+
+    exists()-first 省錢：先一次 `git rev-parse --git-dir`（worktree 相容），只有 MERGE_HEAD／
+    CHERRY_PICK_HEAD／rebase-merge／rebase-apply 任一存在（真的卡在合併中）才跑 `git ls-files -u`。
+    唯讀 git；非 repo／git 不在／任何失敗 → []。PreToolUse 的 check_merge_driver 會在下一個
+    `rebase --continue`／`commit` 前自動 --resolve，這行只是讓人先知道現況。
+    """
+    try:
+        if not cwd or not Path(cwd).is_dir():
+            return []
+        vcs = find_vcs_root(Path(cwd))  # 零子行程：非工作區直接零行；svn WC（含住在 git repo 裡的）走 svn 分支
+        if vcs is None:
+            return []
+        if vcs[0] == "svn":
+            return _svn_index_conflict_advisory(cwd, vcs[1])
+        r = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=2, cwd=cwd, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if r.returncode != 0:
+            return []
+        gitdir = Path((r.stdout or "").strip())
+        if not gitdir.is_absolute():
+            gitdir = Path(cwd) / gitdir
+        if not any((gitdir / n).exists()
+                   for n in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "rebase-merge", "rebase-apply")):
+            return []
+        r = subprocess.run(
+            ["git", "ls-files", "-u", "-z"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=2, cwd=cwd, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if r.returncode != 0:
+            return []
+        index_names = {"MEMORY.md", "_ATOM_INDEX.md", "_atom_index.json", "_INDEX.md", "_local_catalog.md"}
+        names = sorted({
+            entry.split("\t", 1)[1].rsplit("/", 1)[-1]
+            for entry in (r.stdout or "").split("\0") if "\t" in entry
+        } & index_names)
+        if not names:
+            return []
+        return [
+            f"[Guardian:IndexConflict] ⚠ 索引三檔尚未合併（{', '.join(names)}）"
+            "→ python ~/.claude/tools/merge-atom-index.py --resolve 後 git rebase --continue"
+        ]
+    except Exception as e:
+        _atom_debug_error("session_start:index_conflict_advisory", e)
+        return []
+
+
+def _svn_index_conflict_advisory(cwd: str, root: Path) -> list:
+    """SVN 工作副本：update 停在索引三檔衝突會留下 <檔>.mine；memory dir 候選裡有就提示一行（零子行程）。"""
+    names = sorted({
+        n for d in memory_dir_candidates(Path(cwd), root)
+        for n in ("MEMORY.md", "_ATOM_INDEX.md", "_atom_index.json") if (d / f"{n}.mine").exists()
+    })
+    if not names:
+        return []
+    return [
+        f"[Guardian:IndexConflict] ⚠ SVN 索引三檔尚未解（{', '.join(names)}）"
+        "→ 在 CC 下 svn commit 前 hook 會自動解，或手動 python ~/.claude/tools/merge-atom-index.py --resolve"
+    ]
+
+
+def _personal_sync_advisory(project_mem_dir, user: str) -> list:
+    """本人 personal atom 的版控同步狀態 → 開場最多三行（無事零 context）。
+
+    存在理由：personal 層的設計是「可上版控、僅本人可搜」（可見性由索引 scope=personal:<user>
+    控管）。但索引三檔跟著 repo 走、personal 檔卻可能留在本機（沒 commit、或被 .gitignore 擋掉）
+    → 他機索引懸空、兩機 hook 重建索引互相加回/拿掉。以前靠人傳話「請把 personal 上傳」；
+    這裡讓每個人的 CC 在自己機器上看到自己的缺口，自己補。
+
+    三種訊號（各自獨立、可同時出）：
+      1. personal/<user>/ 被 .gitignore 擋住 → 提示移除該行
+      2. 本人 personal 檔未 commit（untracked / modified）→ 提示收尾一起 commit
+      3. 索引列了本人 personal atom 但本機無檔 → 多半留在本人另一台機器未 push
+
+    唯讀 git；非 repo／無 user／git 不在 → []。自身出錯不阻斷 SessionStart。
+    """
+    try:
+        if not project_mem_dir or not user:
+            return []
+        mem = Path(project_mem_dir)
+        if not mem.is_dir():
+            return []
+        try:
+            if mem.resolve() == Path(MEMORY_DIR).resolve():
+                return []  # 全域核心 repo 對外公開發布，personal 依 .gitignore 留本機是刻意設計；只管專案層
+        except OSError:
+            pass
+        personal_dir = mem / "personal" / user
+
+        def _git(*args, timeout=5):
+            return subprocess.run(
+                ["git", "-C", str(mem), *args],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=timeout,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+
+        top = _git("rev-parse", "--show-toplevel")
+        if top.returncode != 0:  # 不是 repo → 不吵
+            return []
+        try:
+            rel = personal_dir.resolve().relative_to(Path(top.stdout.strip()).resolve()).as_posix()
+        except Exception:
+            rel = personal_dir.as_posix()
+
+        # ── 3. 索引懸空（先算：決定本機無目錄時要不要繼續）──
+        dangling: list = []
+        idx = mem / "_atom_index.json"
+        if idx.exists():
+            try:
+                atoms = json.loads(idx.read_text(encoding="utf-8")).get("atoms", [])
+                prefix = f"memory/personal/{user}/"
+                for a in atoms:
+                    ap = str(a.get("path", ""))
+                    if ap.startswith(prefix) and not (mem.parent / ap).exists():
+                        dangling.append(a.get("name") or Path(ap).stem)
+            except Exception as e:  # noqa: BLE001
+                _atom_debug_error("session_start:personal_sync_index", e)
+
+        if not personal_dir.is_dir() and not dangling:
+            return []
+
+        out: list = []
+
+        # ── 1. 被 .gitignore 擋住 ──
+        # --no-index：不受目錄內已追蹤檔干擾；探測目錄內虛擬檔名（對目錄本身判定不穩）
+        ign = _git("check-ignore", "-q", "--no-index", "--", str(personal_dir / "_probe.md"))
+        if ign.returncode == 0:
+            out.append(
+                f"[Guardian:PersonalSync] ⚠ {rel}/ 被 .gitignore 擋住——personal 層現行設計是"
+                "「可上版控、僅本人可搜」；擋掉會讓索引在他機懸空、兩機互相加回/拿掉。"
+                "移除 .gitignore 中對應行，把該目錄一起 commit。"
+            )
+
+        # ── 2. 未 commit ──
+        if personal_dir.is_dir() and ign.returncode != 0:
+            st = _git("status", "--porcelain=v1", "--untracked-files=all", "--", str(personal_dir))
+            pending = []
+            for line in (st.stdout or "").splitlines():
+                if len(line) < 4:
+                    continue
+                path = line[3:].strip().strip('"')
+                if " -> " in path:
+                    path = path.split(" -> ", 1)[1]
+                if path.endswith(".access.json"):
+                    continue
+                pending.append(Path(path).stem)
+            if pending:
+                shown = ", ".join(pending[:3]) + ("…" if len(pending) > 3 else "")
+                out.append(
+                    f"[Guardian:PersonalSync] 你有 {len(pending)} 個 personal atom 尚未上版控（{shown}）"
+                    "——只有本人搜得到，但要 commit + push 才會跟到你的其他機器；索引已列它們，"
+                    f"他機會懸空。收尾時 `git add {rel}/` 一起 commit。"
+                )
+
+        if dangling:
+            shown = ", ".join(dangling[:3]) + ("…" if len(dangling) > 3 else "")
+            out.append(
+                f"[Guardian:PersonalSync] 索引列了你 {len(dangling)} 顆 personal atom 但本機無檔（{shown}）"
+                f"——多半留在你另一台機器未 push；到那台跑 `git add {rel}/` + commit + push。"
+            )
+        return out
+    except Exception as e:  # noqa: BLE001
+        _atom_debug_error("session_start:personal_sync_advisory", e)
         return []
 
 
@@ -442,7 +716,7 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         # trigger 比對注入，故閘門落點在此、非注入迴圈。外部專案（cwd∉~/.claude）
         # 濾掉 local-realm atom（index path 前綴 _AIDocs/_atoms/）；core（含 feedback-*
         # 所在的 _AIDocs/Failures/）不受影響。**例外**：is_cross_project_local 為真者
-        # （storage 在 _atoms 但屬 CROSS_PROJECT_LOCAL_DOMAINS，如 Continuity）保留——
+        # （storage 在 _atoms 但屬 CROSS_PROJECT_LOCAL_DOMAINS；清單目前為空、機制保留）保留——
         # 解開「儲存位置綁死注入範圍」，對偶 feedback-*。直接用既有 3-tuple 的 path 過濾，
         # 不查 realm map、不改 tuple 形狀。is_local_realm_path 為 None（lib import 失敗）→
         # 不過濾（fail-open 回退至 pre-S2 全注入，安全）。
@@ -493,11 +767,26 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                 project_atoms_merged.append((name, rel_path, triggers))
                 existing_names.add(name)
 
+        # scope 可見性（SPEC §8.1）：候選池只留本人看得到的——personal 只給本人、
+        # role 只給持有者；V3 / V4 佈局一視同仁。UPS 六條檢索路全從此池取，不再各自過濾。
+        global_atoms = filter_visible(global_atoms, v4_user, v4_roles)
+        project_atoms_merged = filter_visible(project_atoms_merged, v4_user, v4_roles)
+        atom_scopes = {n: scope_from_rel_path(p, "global") for n, p, _t in global_atoms}
+        atom_scopes.update({n: scope_from_rel_path(p, "shared") for n, p, _t in project_atoms_merged})
+        project_slug = ""
+        if project_root:
+            try:
+                project_slug = cwd_to_project_slug(str(project_root.resolve()))
+            except OSError:
+                project_slug = cwd_to_project_slug(str(project_root))
+
         state["atom_index"] = {
             "global": [(n, p, t) for n, p, t in global_atoms],
             "project": [(n, p, t) for n, p, t in project_atoms_merged],
             "project_memory_dir": str(project_mem_dir) if project_mem_dir else "",
             "project_root": str(project_root) if project_root else "",
+            "project_slug": project_slug,
+            "scopes": atom_scopes,
         }
         state["injected_atoms"] = []
         state["phase"] = "working"
@@ -557,8 +846,17 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                 str((CLAUDE_DIR / p).resolve()).lower()
                 for _n, p, _t in global_atoms if p
             }
+            # 磁碟側：memory/ 根層 *.md ＋ 各範疇資料夾（memory/<範疇>/**、含 Failures）
+            # 遞迴；`_` 前綴目錄（_reference/_INDEX 等）與 skip 名單由 iter_realm_category_dirs 剪掉。
+            _disk_candidates = list(MEMORY_DIR.glob("*.md"))
+            if iter_realm_category_dirs is not None:
+                for _cat_dir in iter_realm_category_dirs(MEMORY_DIR):
+                    _disk_candidates += [
+                        f for f in _cat_dir.rglob("*.md")
+                        if not any(part.startswith("_") for part in f.relative_to(_cat_dir).parts)
+                    ]
             _disk_orphans = [
-                f.stem for f in MEMORY_DIR.glob("*.md")
+                f.stem for f in _disk_candidates
                 if not f.name.startswith("_") and f.name != MEMORY_INDEX
                 and str(f.resolve()).lower() not in _idx_paths
             ]
@@ -614,6 +912,10 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         # ── 未推送 commit ─────────────────────────────────────
         # SessionEnd 晉升自動提交的 push 走背景、失敗當下無人知 → 這裡補可見性。
         lines.extend(_unpushed_advisory())
+        lines.extend(_index_conflict_advisory(cwd))
+        lines.extend(_followup_advisory())
+        lines.extend(_scope_layout_advisory(project_mem_dir))
+        lines.extend(_personal_sync_advisory(project_mem_dir, v4_user))
 
         if v4_user:
             lines.append(
@@ -822,6 +1124,12 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             )
     except Exception:
         pass
+
+    # 必載檔硬契約哨兵（登記表驅動；USER.md 已由 user-init.sh 從 USER-{user}.md 拷好）
+    try:
+        lines.extend(check_always_load_contracts(CLAUDE_DIR))
+    except Exception as e:
+        print(f"always-load contract check error: {e}", file=sys.stderr)
 
     write_state(session_id, state)
 

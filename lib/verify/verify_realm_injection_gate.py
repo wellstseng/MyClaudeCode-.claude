@@ -16,16 +16,19 @@ from pathlib import Path
 import pytest  # noqa: F401  (pytest 收集需要)
 
 CLAUDE = Path.home() / ".claude"
-# 外部專案測資必須 platform-aware：r"C:\..." 在 POSIX 是相對路徑，
-# resolve 後落回 cwd（pytest rootdir=~/.claude）之下 → 被誤判為內部
+# 外部專案測資 platform-aware：r"C:\..." 在 POSIX 是相對路徑，resolve 後落回 rootdir 之下被誤判為內部
 EXTERNAL_PROJECT = r"C:\Projects\SomeApp" if sys.platform == "win32" else "/opt/Projects/SomeApp"
+EXTERNAL_X = r"C:\Projects\X" if sys.platform == "win32" else "/opt/Projects/X"
 for _p in (CLAUDE / "hooks", CLAUDE / "lib", CLAUDE):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
+import atom_locations  # noqa: E402  (monkeypatch CROSS_PROJECT_LOCAL_DOMAINS 的宿主)
 from wg_core import (  # noqa: E402
     _is_under_claude_dir, is_local_realm_path, is_cross_project_local,
 )
+
+CROSS = frozenset({"Continuity"})  # 測試用清單：驗證機制，不依賴 live 清單內容
 
 
 def _apply_gate(atoms, cwd):
@@ -45,17 +48,26 @@ ATOMS = [
 ]
 
 
-def test_gate_external_project_filters_local():
+def test_gate_external_project_filters_local(monkeypatch):
+    monkeypatch.setattr(atom_locations, "CROSS_PROJECT_LOCAL_DOMAINS", CROSS)
     out = _apply_gate(ATOMS, EXTERNAL_PROJECT)
     names = {n for n, _, _ in out}
     assert "decisions" in names           # core 保留
     assert "feedback-x" in names          # _AIDocs/Failures/ core 保留（不誤殺）
     assert "brain" not in names           # local 濾掉
     assert "gdoc-harvester" not in names  # local 濾掉
-    assert "handoff-q" in names           # 解綁：Continuity（cross-project local）外部專案仍保留
+    assert "handoff-q" in names           # 解綁：清單內 Lv1 根（cross-project local）外部專案仍保留
 
 
-def test_gate_cross_project_local_predicate():
+def test_gate_external_project_live_list_empty_filters_all_local():
+    # live 清單為空（跨專案知識一律住 core）→ 外部專案 local 全濾，含 Continuity 路徑
+    assert atom_locations.CROSS_PROJECT_LOCAL_DOMAINS == frozenset()
+    out = _apply_gate(ATOMS, EXTERNAL_PROJECT)
+    assert {n for n, _, _ in out} == {"decisions", "feedback-x"}
+
+
+def test_gate_cross_project_local_predicate(monkeypatch):
+    monkeypatch.setattr(atom_locations, "CROSS_PROJECT_LOCAL_DOMAINS", CROSS)
     # storage 在 _atoms 但屬 CROSS_PROJECT_LOCAL_DOMAINS → 跨專案；其餘 local → 否
     assert is_cross_project_local("_AIDocs/_atoms/Continuity/handoff-q.md") is True
     assert is_cross_project_local("_AIDocs/_atoms/World/brain.md") is False
@@ -70,10 +82,25 @@ def test_gate_under_claude_keeps_local():
         assert names == {"decisions", "feedback-x", "brain", "gdoc-harvester", "handoff-q"}, cwd
 
 
+def test_gate_external_project_cwd_keeps_category_core(tmp_path):
+    """專案 cwd（<tmp>/proj，非 ~/.claude）：memory/<範疇>/ 與 memory/Failures/<主題>/ 的核心
+    atom 全留、_AIDocs/_atoms/ local 全濾——注入閘只看 path 前綴，與範疇資料夾深度無關。"""
+    proj = tmp_path / "proj"
+    (proj / ".claude" / "memory").mkdir(parents=True)
+    atoms = [
+        ("git-a", "memory/版控/Git/git-a.md", ["上GIT"]),
+        ("feedback-x", "memory/Failures/驗證與實證/feedback-x.md", ["驗證"]),
+        ("brain", "_AIDocs/_atoms/World/brain.md", ["腦內世界"]),
+        ("memdev", "_AIDocs/_atoms/MemDev/MemoryIndex/regen.md", ["caption"]),
+    ]
+    out = _apply_gate(atoms, str(proj))
+    assert {n for n, _, _ in out} == {"git-a", "feedback-x"}
+
+
 def test_is_under_claude_dir_predicate():
     assert _is_under_claude_dir(str(CLAUDE)) is True
     assert _is_under_claude_dir(str(CLAUDE / "tools")) is True
-    assert _is_under_claude_dir(EXTERNAL_PROJECT) is False
+    assert _is_under_claude_dir(EXTERNAL_X) is False
     assert _is_under_claude_dir("") is False
     # 旁系路徑 ~/.claude-foo 必不算內部（parents 比對，非 startswith）
     assert _is_under_claude_dir(str(CLAUDE.parent / (CLAUDE.name + "-foo"))) is False

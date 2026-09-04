@@ -25,8 +25,6 @@ SERVICE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SERVICE_DIR))
 # import wg_core for centralized path resolution
 sys.path.insert(0, str(Path.home() / ".claude" / "hooks"))
-# Add ~/.claude so `import lib.*` (e.g. lib.atom_locations) resolves
-sys.path.insert(0, str(Path.home() / ".claude"))
 
 from config import load_config, VECTORDB_DIR
 from indexer import build_index, create_embedder, get_index_status
@@ -208,6 +206,9 @@ class VectorServiceHandler(BaseHTTPRequestHandler):
         user = params.get("user", [""])[0] or None
         roles_raw = params.get("roles", [""])[0]
         roles = [r.strip() for r in roles_raw.split(",") if r.strip()] or None
+        # layers=global,shared:c--proj,...：只搜這幾層（write-gate 去重用）
+        layers_raw = params.get("layers", [""])[0]
+        layers = [l.strip() for l in layers_raw.split(",") if l.strip()] or None
 
         results = search(
             query=q,
@@ -218,6 +219,7 @@ class VectorServiceHandler(BaseHTTPRequestHandler):
             embedder=_embedder,
             user=user,
             roles=roles,
+            layers=layers,
         )
         self._send_json(results)
 
@@ -235,6 +237,8 @@ class VectorServiceHandler(BaseHTTPRequestHandler):
         user = params.get("user", [""])[0] or None
         roles_raw = params.get("roles", [""])[0]
         roles = [r.strip() for r in roles_raw.split(",") if r.strip()] or None
+        layers_raw = params.get("layers", [""])[0]
+        layers = [l.strip() for l in layers_raw.split(",") if l.strip()] or None
 
         results = ranked_search(
             query=q,
@@ -246,6 +250,7 @@ class VectorServiceHandler(BaseHTTPRequestHandler):
             embedder=_embedder,
             user=user,
             roles=roles,
+            layers=layers,
         )
         self._send_json(results)
 
@@ -264,6 +269,8 @@ class VectorServiceHandler(BaseHTTPRequestHandler):
         user = params.get("user", [""])[0] or None
         roles_raw = params.get("roles", [""])[0]
         roles = [r.strip() for r in roles_raw.split(",") if r.strip()] or None
+        layers_raw = params.get("layers", [""])[0]
+        layers = [l.strip() for l in layers_raw.split(",") if l.strip()] or None
 
         results = ranked_search_sections(
             query=q,
@@ -276,6 +283,7 @@ class VectorServiceHandler(BaseHTTPRequestHandler):
             embedder=_embedder,
             user=user,
             roles=roles,
+            layers=layers,
         )
         self._send_json(results)
 
@@ -481,7 +489,7 @@ def run_server(port: int = 3849):
     # Write PID file for management
     pid_file = VECTORDB_DIR / "service.pid"
     VECTORDB_DIR.mkdir(parents=True, exist_ok=True)
-    pid_file.write_text(str(os.getpid()))
+    pid_file.write_text(str(os.getpid()), newline="\n")
 
     def cleanup(signum=None, frame=None):
         print(f"\n[service] Shutting down...", file=sys.stderr)

@@ -30,7 +30,7 @@ from ollama_client import get_client
 from wg_core import CLAUDE_DIR, MEMORY_DIR, discover_memory_layers
 # V5+ Session β: Failures layer 注入 + stems filter（對拍 lib/atom_locations）
 from lib.atom_locations import (  # noqa: E402
-    FAILURES_DIR, LOCAL_ATOMS_DIR, atom_search_roots, failures_atom_stems,
+    FAILURES_DIR, LEGACY_FAILURES_DIR, LOCAL_ATOMS_DIR, atom_search_roots, failures_atom_stems,
 )
 # 遙測欄位（last_used / read_hits / confirmations）住 <atom>.access.json sidecar，
 # 統一經 lib.atom_access 讀取（.md frontmatter 不再攜帶這些欄位）
@@ -89,14 +89,22 @@ def discover_layers(
 
     if _accept("global"):
         # 全域 atom 根走 lib.atom_locations.atom_search_roots() 單一來源：
-        # memory/（global）+ _AIDocs/Failures/（feedback-* 等）+ _AIDocs/_atoms/
-        # （local realm 階層目錄，遞迴掃描；_atoms 本身是根、不受 `_` 前綴排除規則影響）
+        # memory/（global，遞迴已含 memory/Failures/<主題>/）+ 舊址 _AIDocs/Failures/
+        # （尚未遷入的 feedback-*，存在才掛）+ _AIDocs/_atoms/（local realm 階層目錄，
+        # 遞迴掃描；_atoms 本身是根、不受 `_` 前綴排除規則影響）
         for root in atom_search_roots():
             if root == MEMORY_DIR:
                 layers.append(("global", MEMORY_DIR, "recursive"))
-            elif root == FAILURES_DIR:
-                if FAILURES_DIR.is_dir():
-                    layers.append((FAILURES_LAYER_LABEL, FAILURES_DIR, "recursive"))
+                # 本人跨專案 personal 層 memory/personal/<user>/：獨立 layer 標籤，
+                # 不併入 global（global 對全員可見）；auto/ 與 `_` 前綴夾不是層。
+                personal_root = MEMORY_DIR / "personal"
+                if personal_root.is_dir():
+                    for pd in sorted(personal_root.iterdir()):
+                        if pd.is_dir() and pd.name != "auto" and not pd.name.startswith("_"):
+                            layers.append((f"personal:global:{pd.name}", pd, "recursive"))
+            elif root in (FAILURES_DIR, LEGACY_FAILURES_DIR):
+                if root.is_dir():
+                    layers.append((FAILURES_LAYER_LABEL, root, "recursive"))
             elif root == LOCAL_ATOMS_DIR:
                 if LOCAL_ATOMS_DIR.is_dir():
                     layers.append((LOCAL_ATOMS_LAYER_LABEL, LOCAL_ATOMS_DIR, "recursive"))
@@ -182,6 +190,8 @@ def discover_atoms(
             rel_parts = md_file.relative_to(mem_dir).parts
             if any(part.startswith("_") for part in rel_parts[:-1]):
                 continue
+            if layer_name == "global" and rel_parts[:1] == ("personal",):
+                continue  # 全域 personal 子夾走 personal:global:<user> 層，不進 global
             if md_file.name in SKIP_FILENAMES:
                 continue
             if any(md_file.name.startswith(p) for p in SKIP_PREFIXES):
@@ -678,13 +688,9 @@ def build_index(
             # Delete changed atoms first, then add new
             try:
                 table = db.open_table(TABLE_NAME)
-                changed_atoms = {f"{r['layer']}:{r['atom_name']}" for r in records}
-                for ak in changed_atoms:
-                    layer_val, atom_val = ak.split(":", 1)
-                    # Escape single quotes to prevent query breakage
-                    layer_val = layer_val.replace("'", "''")
-                    atom_val = atom_val.replace("'", "''")
-                    table.delete(f"layer = '{layer_val}' AND atom_name = '{atom_val}'")
+                changed_atoms = {(r["layer"], r["atom_name"]) for r in records}
+                for layer_val, atom_val in changed_atoms:
+                    _delete_atom_rows(table, layer_val, atom_val)
                 table.add(records)
             except Exception:
                 # Table doesn't exist or other error → full write
@@ -703,7 +709,7 @@ def build_index(
     if incremental and layer_filter in (None, "all"):
         try:
             table = db.open_table(TABLE_NAME)
-            current_keys = {f"{ln}:{fp.stem}" for ln, fp, _rp in atoms}
+            current_keys = {(ln, fp.stem) for ln, fp, _rp in atoms}
             stale_stats = _delete_stale_keys(table, current_keys, verbose=verbose)
         except Exception as e:
             # fail-open 但浮訊號（可觀測性鐵律：降級不阻斷但要告知）
@@ -729,42 +735,58 @@ def build_index(
     return stats
 
 
+def _delete_atom_rows(table, layer_val: str, atom_val: str) -> int:
+    """刪掉一顆 atom 在 table 的全部 chunk，回傳實際刪除列數。
+
+    layer 與 atom_name 必須分開傳：layer 標籤本身含冒號（shared:c--proj、
+    extra:failures…），合成 "layer:atom" 字串再拆會拆錯位、述詞永遠比不中。
+    刪除數用 count_rows 前後差算，不用「預期數」——LanceDB 述詞沒命中也會
+    靜默成功。
+    """
+    layer_q = layer_val.replace("'", "''")
+    atom_q = atom_val.replace("'", "''")
+    before = table.count_rows()
+    table.delete(f"layer = '{layer_q}' AND atom_name = '{atom_q}'")
+    return before - table.count_rows()
+
+
 def _delete_stale_keys(
     table,
     current_keys: set,
     verbose: bool = False,
 ) -> Dict[str, Any]:
-    """刪掉 table 中 (layer:atom_name) 不在 current_keys 的殘留 chunk。
+    """刪掉 table 中 (layer, atom_name) 不在 current_keys 的殘留 chunk。
 
+    current_keys 是 (layer, atom_name) tuple 集合。
     cleanup_stale_chunks（CLI 全清）與 build_index 增量順帶清理共用的核心。
     """
     total = table.count_rows()
     rows = table.search().select(["layer", "atom_name"]).limit(total).to_list()
 
-    db_keys: Dict[str, int] = {}
+    db_keys: Dict[Tuple[str, str], int] = {}
     for r in rows:
-        k = f"{r.get('layer', '')}:{r.get('atom_name', '')}"
+        k = (r.get("layer", ""), r.get("atom_name", ""))
         db_keys[k] = db_keys.get(k, 0) + 1
 
     stale = [k for k in db_keys if k not in current_keys]
     deleted_chunks = 0
-    for k in stale:
-        layer_val, atom_val = k.split(":", 1)
-        layer_val = layer_val.replace("'", "''")
-        atom_val = atom_val.replace("'", "''")
+    failed = 0
+    for layer_val, atom_val in stale:
         try:
-            table.delete(f"layer = '{layer_val}' AND atom_name = '{atom_val}'")
-            deleted_chunks += db_keys[k]
+            n = _delete_atom_rows(table, layer_val, atom_val)
+            deleted_chunks += n
             if verbose:
-                print(f"  cleanup: removed {k} ({db_keys[k]} chunks)")
+                print(f"  cleanup: removed {layer_val}:{atom_val} ({n} chunks)")
         except Exception as e:
+            failed += 1
             if verbose:
-                print(f"  cleanup: failed {k}: {e}")
+                print(f"  cleanup: failed {layer_val}:{atom_val}: {e}")
 
     return {
         "db_atoms_before": len(db_keys),
-        "deleted_atoms": len(stale),
+        "deleted_atoms": len(stale) - failed,
         "deleted_chunks": deleted_chunks,
+        "failed_atoms": failed,
     }
 
 
@@ -788,7 +810,7 @@ def cleanup_stale_chunks(
         include_distant=config.get("index_distant", False),
         additional_dirs=additional_dirs,
     )
-    current_keys = {f"{ln}:{fp.stem}" for ln, fp, _rp in current}
+    current_keys = {(ln, fp.stem) for ln, fp, _rp in current}
 
     try:
         db = _get_db()

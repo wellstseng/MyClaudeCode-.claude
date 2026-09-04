@@ -4,19 +4,25 @@ handlers/pre_tool_use.py — PreToolUse hook handler
 對 Write/Edit 進行 atom 格式/Confidence gate + memory 路徑防呆 + svn test block。
 """
 
+import fnmatch
 import json
+import os
 import re
+import subprocess
 import sys
+import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from wg_core import (
-    WORKFLOW_DIR,
+    CLAUDE_DIR, WORKFLOW_DIR,
     output_json, output_nothing,
     check_memory_path_block, check_svn_test_block,
-    check_cross_realm_write, check_cross_realm_mcp_cmd,
+    check_cross_realm_write, check_cross_realm_mcp_cmd, check_cross_realm_bash,
     read_state, get_transcript_path, append_guard_log,
     _atom_debug_log,
+    find_vcs_root, memory_dir_candidates,
 )
 
 # sub-agent 注入 budget（緊湊，守 token 紅線；2-3 顆最高活化）
@@ -107,7 +113,8 @@ def _check_feedback_routing_advisory(
 ) -> Optional[str]:
     """V5+: 偵測 memory/feedback-*.md Write/Edit → 回 advisory（不阻擋）。
 
-    feedback-* atoms 已遷移至 _AIDocs/Failures/；走 atom_write MCP 會自動正確路由。
+    feedback-* atoms 物理居 memory/Failures/<主題>/（舊址 _AIDocs/Failures/ 遷移中）；
+    走 atom_write MCP 自動路由。
     """
     if tool_name not in ("Write", "Edit"):
         return None
@@ -121,9 +128,10 @@ def _check_feedback_routing_advisory(
     return (
         "[Guardian:RoutingAdvice] 偵測 memory/feedback-* 寫入。\n"
         f"路徑：{fp_raw}\n"
-        "feedback-* atoms 已遷移至 _AIDocs/Failures/。請改用：\n"
+        "feedback-* atoms 物理居 memory/Failures/<主題>/（舊址 _AIDocs/Failures/ 遷移中）；"
+        "走 atom_write MCP 自動路由。請改用：\n"
         "  mcp__workflow-guardian__atom_write(scope=\"global\", title=\"feedback-...\", ...)\n"
-        "MCP 會自動路由到 _AIDocs/Failures/（含索引同步 + access.json）。\n"
+        "MCP 會自動路由到 memory/Failures/<主題>/（含索引同步 + access.json）。\n"
         "詳見 _AIDocs/SPEC_ATOM_V5.md「Atom 存放擴展」段。"
     )
 
@@ -301,7 +309,7 @@ def _pan_deny_file(session_id: str, turn_seq: int) -> Path:
 def _pan_touch_marker(marker: Path) -> None:
     try:
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text("armed", encoding="utf-8")
+        marker.write_text("armed", encoding="utf-8", newline="\n")
     except OSError:
         pass
 
@@ -320,7 +328,7 @@ def _pan_bump_counter(session_id: str, turn_seq: int) -> Optional[int]:
                 count = 0
         count += 1
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"count": count}), encoding="utf-8")
+        path.write_text(json.dumps({"count": count}), encoding="utf-8", newline="\n")
         return count
     except Exception:
         return None
@@ -465,6 +473,554 @@ def _check_pre_action_notice(
         return None, None
 
 
+# ─── Git 隱私硬閘（Bash/PowerShell `git commit` 前擋隱私檔進版控歷史）──────────
+# chokepoint 選 commit（寫進歷史的不可逆點；add 錯了還能 unstage）。deny 為硬性、
+# 不走「阻擋 N 次放行」——隱私是正確性閘，非收尾儀式。判定：staged（+ commit -a
+# 時的 tracked modified）repo 相對路徑比對 deny globs。清單設計上「不全也能運作」：
+# .gitignore 是第一道，本閘只兜「沒被 ignore 的明顯隱私檔」；可由 workflow/config.json
+# privacy 段增補（deny_globs 追加、enabled 關閉）。fail-open：git 不可用/逾時不擋。
+_PRIVACY_DEFAULT_DENY_GLOBS = [
+    # 通用憑證/秘密檔（任何 repo 都不該進歷史）
+    ".credentials*", "*.pem", "*.key", "*.p12", "*.pfx",
+    "id_rsa*", "id_ed25519*", "id_ecdsa*",
+    ".env", ".env.*", "*.secret", "*.secrets", "secrets.json", "secrets.yml",
+    # Claude Code 本機隱私檔（settings.local / .claude.json 含本機權限與 MCP 憑證）
+    "settings.local.json", ".claude.json",
+]
+# 僅當 git root 是 ~/.claude 本身才加掛（他專案裡同名資料夾是正常檔案，不得誤擋）
+_PRIVACY_CLAUDE_ROOT_GLOBS = [
+    "history.jsonl", "projects/*", "shell-snapshots/*", "todos/*",
+    "statsig/*", "file-history/*", "session-env/*",
+]
+# git 全域旗標中「帶參數」者（掃 subcommand 時連值一起跳過）
+_GIT_VALUE_FLAGS = {"-C", "-c", "--git-dir", "--work-tree", "--exec-path", "--namespace"}
+
+
+def _shell_tokens(seg: str) -> List[str]:
+    """最小 quote-aware 切詞：引號內整段保留（含空白）、引號本身剝掉；不解跳脫。
+    目的只有一個——`git -C "C:\\My Repo" pull` 的路徑不被 str.split 切碎。"""
+    out: List[str] = []
+    buf: List[str] = []
+    quote = ""
+    for ch in seg:
+        if quote:
+            if ch == quote:
+                quote = ""
+            else:
+                buf.append(ch)
+        elif ch in "\"'":
+            quote = ch
+        elif ch.isspace():
+            if buf:
+                out.append("".join(buf))
+                buf = []
+        else:
+            buf.append(ch)
+    if buf:
+        out.append("".join(buf))
+    return out
+
+
+_CD_HEADS = {"cd", "chdir", "pushd", "set-location", "sl"}
+
+
+def _vcs_segments(command: str, subcommands: set, exe_names: Tuple[str, ...],
+                  value_flags: set) -> List[Tuple[str, List[str]]]:
+    """拆 shell 指令為片段，回傳其中 <exe> subcommand ∈ subcommands 的 (repo_cd, tokens)。
+    exe_names 如 ("git", "git.exe")；也認路徑尾綴（`C:/x/git.exe`）與大小寫。
+    tokens 從 subcommand 起算（tokens[0] 即 subcommand）。repo_cd 依序取：
+    `git -C <path>` 的 path → 同一條命令裡前面 `cd <path>` 段的 path → ""（caller 用 tool cwd）。
+    支援：`&& || ; | 換行` 切段、引號路徑、`cd X && git …`／`cd X; git …`、
+    PowerShell `Set-Location`。保守解析：認不出就當非目標（寧漏勿誤擋）。"""
+    suffixes = tuple(f"{sep}{n}" for n in exe_names for sep in ("/", "\\"))
+    out: List[Tuple[str, List[str]]] = []
+    last_cd = ""
+    for seg in re.split(r"&&|\|\||;|\||\n", command or ""):
+        tokens = _shell_tokens(seg)
+        if not tokens:
+            continue
+        if tokens[0].lower() in _CD_HEADS:
+            args = [t for t in tokens[1:] if not t.startswith("-") and t.lower() != "/d"]
+            if args:
+                last_cd = args[0]
+            continue
+        exe_idx = next(
+            (idx for idx, t in enumerate(tokens)
+             if t.lower() in exe_names or t.lower().endswith(suffixes)),
+            None,
+        )
+        if exe_idx is None:
+            continue
+        repo_cd = ""
+        j = exe_idx + 1
+        sub = ""
+        while j < len(tokens):
+            t = tokens[j]
+            if t in value_flags:
+                if t == "-C" and j + 1 < len(tokens):
+                    repo_cd = tokens[j + 1]
+                j += 2
+                continue
+            if t.startswith("-"):
+                j += 1
+                continue
+            sub = t
+            break
+        if sub.lower() in subcommands:
+            out.append((repo_cd or last_cd, tokens[j:]))
+    return out
+
+
+def _git_segments(command: str, subcommands: set) -> List[Tuple[str, List[str]]]:
+    return _vcs_segments(command, subcommands, ("git", "git.exe"), _GIT_VALUE_FLAGS)
+
+
+_SVN_VALUE_FLAGS = {"--config-dir", "--config-option", "--username", "--password"}
+
+
+def _svn_segments(command: str, subcommands: set) -> List[Tuple[str, List[str]]]:
+    return _vcs_segments(command, subcommands, ("svn", "svn.exe"), _SVN_VALUE_FLAGS)
+
+
+def _git_commit_segments(command: str) -> List[Tuple[str, List[str]]]:
+    """薄包裝：只取 git commit 段（隱私閘用）。"""
+    return _git_segments(command, {"commit"})
+
+
+def _resolve_run_cwd(repo_cd: str, cwd: str) -> str:
+    """把 `-C`／`cd` 抓到的路徑解成子行程 cwd：展開 ~；相對路徑以 tool cwd 為基準。"""
+    if not repo_cd:
+        return cwd
+    p = os.path.expanduser(repo_cd)
+    if not os.path.isabs(p) and cwd:
+        p = os.path.join(cwd, p)
+    return p
+
+
+def _git_lines(args: List[str], cwd: str) -> Optional[List[str]]:
+    """跑 git 取行清單；任何失敗回 None（fail-open 訊號，caller 不得誤當空清單）。"""
+    try:
+        r = subprocess.run(
+            ["git"] + args, capture_output=True, text=True, timeout=3,
+            cwd=cwd or None, encoding="utf-8", errors="replace",
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
+        if r.returncode != 0:
+            return None
+        return [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+    except Exception:
+        return None
+
+
+def _privacy_globs(config: Dict[str, Any], repo_root: str) -> List[str]:
+    globs = list(_PRIVACY_DEFAULT_DENY_GLOBS)
+    try:
+        if repo_root and Path(repo_root).resolve() == (Path.home() / ".claude").resolve():
+            globs += _PRIVACY_CLAUDE_ROOT_GLOBS
+    except Exception:
+        pass
+    extra = (config.get("privacy") or {}).get("deny_globs") or []
+    globs += [str(g) for g in extra if g]
+    return globs
+
+
+def _privacy_match(rel_path: str, globs: List[str]) -> Optional[str]:
+    """repo 相對路徑（posix、casefold）比對：pattern 含 / 比對全路徑，否則比對 basename。
+    fnmatch 的 * 可跨 /（等效 **）。回命中的 pattern 或 None。"""
+    rel = rel_path.replace("\\", "/").casefold()
+    base = rel.rsplit("/", 1)[-1]
+    for g in globs:
+        pat = g.replace("\\", "/").casefold()
+        target = rel if "/" in pat else base
+        if fnmatch.fnmatchcase(target, pat):
+            return g
+    return None
+
+
+# ─── git commit 口令閘（USER.md 縮寫指令契約的程式化版本）───────────────────
+# 「上GIT」＝commit＋push 一氣；口令下達前不碰 git——使用者要先看 diff 再下令。
+# 事後閘（SyncReminder）只看得到「髒不髒」，模型 local commit 就能讓它閉嘴；本閘把
+# 「口令前不 commit」放到動手前：本回合使用者原話沒有任何版控口令 → deny。
+# fail-open：state 缺失（sidechain／resume／subagent）或本 session 尚無 user prompt → 放行並落 stderr。
+_COMMIT_ORDER_DEFAULT_KEYWORDS = (
+    "上GIT", "上 GIT", "上傳GIT", "上乾淨", "全上", "上版", "上SVN",
+    "執P", "執驗上P", "commit", "提交", "push",
+)
+
+
+# heredoc 內文不是 shell 指令（文件補丁／內嵌 python 常含「git commit」字樣）；剝掉再拆段，
+# 否則口令閘會把文字當成 commit 段誤擋。隱私閘不需要：它接著查 staged，無檔即靜默。
+_HEREDOC_BODY_RE = re.compile(
+    r"<<-?[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n.*?\n[ \t]*\2[ \t]*(?=\n|$)",
+    re.S,
+)
+
+
+def _strip_heredoc_bodies(command: str) -> str:
+    return _HEREDOC_BODY_RE.sub("<<HEREDOC_STRIPPED", command or "")
+
+
+def _commit_order_keyword_hit(prompt: str, keywords) -> Optional[str]:
+    low = (prompt or "").lower()
+    for k in keywords:
+        if k and k.lower() in low:
+            return k
+    return None
+
+
+def check_git_commit_order(
+    tool_name: str, tool_input: Dict[str, Any], config: Dict[str, Any],
+    state: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    """Bash/PowerShell `git commit` 且本回合使用者原話無版控口令 → deny 訊息；否則 None。"""
+    if tool_name not in ("Bash", "PowerShell"):
+        return None
+    cfg = (config.get("guard") or {}).get("commit_order") or {}
+    if not cfg.get("enabled", True):
+        return None
+    command = tool_input.get("command", "") or ""
+    if "git" not in command or "commit" not in command:
+        return None
+    try:
+        if not _git_commit_segments(_strip_heredoc_bodies(command)):
+            return None
+        prompts = (state or {}).get("recent_user_prompts") or []
+        if not prompts:
+            try:
+                sys.stderr.write("[Guardian:CommitOrder] 無 user prompt 紀錄，口令閘 fail-open\n")
+            except OSError:
+                pass
+            return None
+        keywords = cfg.get("keywords") or list(_COMMIT_ORDER_DEFAULT_KEYWORDS)
+        if _commit_order_keyword_hit(prompts[-1], keywords):
+            return None
+        return (
+            "[Guardian:CommitOrder] 本回合使用者原話沒有版控口令（上GIT／上乾淨／全上／執P…），"
+            "已擋下 git commit。\n"
+            "契約（USER.md 縮寫指令）：口令前不碰 git——先在收尾報告列「改了哪些檔＋驗了什麼／沒驗什麼」，"
+            "等使用者看過 diff 下「上GIT」，再 commit → push 一氣做完；不得先 commit 再等 push。\n"
+            "確為使用者本回合要求：引用其原話請他重下口令；長期口令調整 workflow/config.json "
+            "guard.commit_order.keywords（enabled=false 停用本閘）。"
+        )
+    except Exception as e:
+        try:
+            sys.stderr.write(f"[Guardian:CommitOrder] 檢查異常（fail-open）：{e}\n")
+        except OSError:
+            pass
+    return None
+
+
+def check_git_privacy(
+    tool_name: str, tool_input: Dict[str, Any], cwd: str, config: Dict[str, Any]
+) -> Optional[str]:
+    """Bash/PowerShell `git commit` → staged（+-a 的 tracked modified）比對隱私 deny globs。
+    命中回 deny 訊息；否則 None。fail-open：git 查詢失敗一律放行。"""
+    if tool_name not in ("Bash", "PowerShell"):
+        return None
+    if not (config.get("privacy") or {}).get("enabled", True):
+        return None
+    command = tool_input.get("command", "") or ""
+    if "git" not in command or "commit" not in command:
+        return None   # 快篩，省 regex/子行程
+    try:
+        for repo_cd, commit_tokens in _git_commit_segments(command):
+            run_cwd = _resolve_run_cwd(repo_cd, cwd)
+            files = _git_lines(
+                ["diff", "--cached", "--name-only", "--diff-filter=ACMR"], run_cwd
+            )
+            if files is None:
+                continue   # fail-open
+            if any(
+                re.fullmatch(r"-[a-zA-Z]*a[a-zA-Z]*", t) or t == "--all"
+                for t in commit_tokens
+            ):
+                extra = _git_lines(["diff", "--name-only", "--diff-filter=ACMR"], run_cwd)
+                files += extra or []
+            if not files:
+                continue
+            root_lines = _git_lines(["rev-parse", "--show-toplevel"], run_cwd)
+            repo_root = root_lines[0] if root_lines else ""
+            globs = _privacy_globs(config, repo_root)
+            hits = []
+            for f in dict.fromkeys(files):
+                pat = _privacy_match(f, globs)
+                if pat:
+                    hits.append((f, pat))
+            if hits:
+                lines = [
+                    "[Guardian:GitPrivacy] 待 commit 內容含隱私檔，已擋下（隱私檔不得進版控歷史）：",
+                ]
+                lines += [f"  ✗ {f} — 命中 deny glob `{p}`" for f, p in hits]
+                lines += [
+                    "處置：`git restore --staged <檔>` 移出後重 commit；該檔確非隱私 → 調整 "
+                    "workflow/config.json privacy.deny_globs（或 privacy.enabled=false 停用本閘）"
+                    "；長期正解是把它加進 .gitignore。",
+                ]
+                return "\n".join(lines)
+    except Exception as e:
+        try:
+            sys.stderr.write(f"[Guardian:GitPrivacy] 檢查異常（fail-open）：{e}\n")
+        except OSError:
+            pass
+    return None
+
+
+# ─── 索引三檔合併驅動閘（advisory-only，永不 deny）─────────────────────────
+# 多機共享記憶庫：兩機各加 atom 後 pull/rebase，索引三檔（MEMORY.md 計數表／_ATOM_INDEX.md／
+# _atom_index.json）同區塊各加一列必衝突。兩層自動化（workflow/config.json merge_driver）：
+#   (A) auto_install：合併類 git 指令（pull/merge/rebase/cherry-pick/stash pop|apply）前，
+#       本機未裝語意合併驅動 → 自動 `merge-atom-index.py --install`（git 全域設定，各機一次）。
+#   (B) auto_resolve：解衝突收尾指令（rebase/merge/cherry-pick --continue、commit、stash pop|apply）
+#       前，索引三檔仍 unmerged → 先 `--resolve`（語意合併 stages 並 git add），再放行原指令。
+#       不含 `git add`：使用者自己 add 索引檔即 git 已解除 stage，B 在此多餘。
+# 唯一權威＝`git ls-files -u`（index-only、涵蓋 stash／worktree）。全程 fail-open、總時限 2.5s、
+# Windows-safe（CREATE_NO_WINDOW；hook 跑在 pythonw 下，子行程直譯器改用同目錄 python.exe）。
+_INDEX_FILE_NAMES = frozenset({"MEMORY.md", "_ATOM_INDEX.md", "_atom_index.json", "_INDEX.md", "_local_catalog.md"})
+# 用 hook 自己的檔案位置定位工具，不靠 HOME 推導（HOME 被覆寫的環境下 CLAUDE_DIR 會指錯地方）
+_MERGE_TOOL = Path(__file__).resolve().parents[2] / "tools" / "merge-atom-index.py"
+_MERGE_GATE_BUDGET_S = 2.5
+_MERGE_RESOLVE_SUBS = {"rebase", "merge", "cherry-pick", "commit", "stash"}
+_MERGE_INSTALL_SUBS = {"pull", "merge", "rebase", "cherry-pick", "stash"}
+_MERGE_MANUAL_RESOLVE = "手動 python ~/.claude/tools/merge-atom-index.py --resolve"
+_MERGE_MANUAL_INSTALL = "手動 python ~/.claude/tools/merge-atom-index.py --install"
+
+
+def _hook_python_exe() -> str:
+    """子行程直譯器：hook 在 pythonw.exe 下跑，spawn sys.executable 會沒有 stdout → 改用同目錄 python.exe。"""
+    exe = Path(sys.executable)
+    if exe.name.lower() == "pythonw.exe":
+        sib = exe.with_name("python.exe")
+        if sib.exists():
+            return str(sib)
+    return str(exe)
+
+
+def _run_capture(args: List[str], cwd: str, timeout: float) -> subprocess.CompletedProcess:
+    """A/B 共用的 Windows-safe 子行程：capture、UTF-8、errors=replace、timeout、不閃窗。
+    不吞例外（TimeoutExpired 由 caller 轉成 ⚠ advisory）。"""
+    return subprocess.run(
+        args, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=timeout, cwd=cwd or None,
+        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+    )
+
+
+def _stash_pop_or_apply(tokens: List[str]) -> bool:
+    return any(t.lower() in ("pop", "apply") for t in tokens[1:])
+
+
+def _is_resolve_trigger(tokens: List[str]) -> bool:
+    sub = tokens[0].lower()
+    if sub == "commit":
+        return True
+    if sub in ("rebase", "merge", "cherry-pick"):
+        return "--continue" in tokens
+    if sub == "stash":
+        return _stash_pop_or_apply(tokens)
+    return False
+
+
+def _is_install_trigger(tokens: List[str]) -> bool:
+    sub = tokens[0].lower()
+    if sub in ("pull", "merge", "rebase", "cherry-pick"):
+        return True
+    if sub == "stash":
+        return _stash_pop_or_apply(tokens)
+    return False
+
+
+def _unmerged_index_files(run_cwd: str, timeout: float) -> Optional[List[str]]:
+    """`git ls-files -u -z` 解出仍 unmerged 的索引三檔 repo 相對路徑。
+    None＝查不到（非 repo／git 失敗）→ caller 當「無資訊」跳過；[]＝沒有。"""
+    if not run_cwd or not os.path.isdir(run_cwd):
+        return None
+    r = _run_capture(["git", "ls-files", "-u", "-z"], run_cwd, timeout)
+    if r.returncode != 0:
+        return None
+    found: List[str] = []
+    for entry in (r.stdout or "").split("\0"):
+        if "\t" not in entry:
+            continue
+        path = entry.split("\t", 1)[1]
+        if path.rsplit("/", 1)[-1] in _INDEX_FILE_NAMES and path not in found:
+            found.append(path)
+    return found
+
+
+_SVN_RESOLVE_SUBS = {"commit", "ci", "resolve", "resolved"}
+_SVN_ACCEPT_PICKS = {"base", "mine-full", "theirs-full", "mine-conflict", "theirs-conflict", "mf", "tf", "mc", "tc"}
+
+
+def _is_svn_resolve_trigger(tokens: List[str]) -> bool:
+    """svn commit/ci 一律；svn resolve 只在沒明確選邊時（--accept working/postpone 或未給）——
+    使用者已指定 mine-full/theirs-full 等就是他的決定，不搶先合併。svn update 不是觸發（無驅動可裝）。"""
+    sub = tokens[0].lower()
+    if sub in ("commit", "ci"):
+        return True
+    if sub not in ("resolve", "resolved"):
+        return False
+    for i, t in enumerate(tokens):
+        if t.startswith("--accept="):
+            val = t.split("=", 1)[1]
+        elif t == "--accept" and i + 1 < len(tokens):
+            val = tokens[i + 1]
+        else:
+            continue
+        if val.lower() in _SVN_ACCEPT_PICKS:
+            return False
+    return True
+
+
+def _svn_unmerged_index_files(run_cwd: str, timeout: float) -> Optional[List[str]]:
+    """svn 工作副本裡 update 後仍衝突的索引三檔（相對 WC 根）。
+    純檔案系統先找 .svn（不是 svn WC → None、零子行程），再只對 memory dir 候選跑 `svn status --xml`
+    （整個 WC 的 status 要 3～6 秒，超出預算）。None＝查不到；[]＝沒有。"""
+    if not run_cwd or not os.path.isdir(run_cwd):
+        return None
+    vcs = find_vcs_root(Path(run_cwd))
+    if not vcs or vcs[0] != "svn":
+        return None
+    root = vcs[1]
+    dirs = memory_dir_candidates(Path(run_cwd), root)
+    if not dirs:
+        return []
+    r = _run_capture(["svn", "--non-interactive", "status", "--xml", "--", *map(str, dirs)], str(root), timeout)
+    if r.returncode != 0 or not (r.stdout or "").strip():
+        return None
+    found: List[str] = []
+    for ent in ET.fromstring(r.stdout).iter("entry"):
+        ws = ent.find("wc-status")
+        if ws is None or ws.get("item") != "conflicted":
+            continue
+        p = Path(ent.get("path", ""))
+        if p.name not in _INDEX_FILE_NAMES:
+            continue
+        try:
+            rel = (p if p.is_absolute() else root / p).resolve().relative_to(root.resolve()).as_posix()
+        except (OSError, ValueError):
+            continue
+        if rel not in found:
+            found.append(rel)
+    return found
+
+
+def _resolve_json(stdout: str) -> Optional[Dict[str, Any]]:
+    """--resolve 的 stdout 契約是單行 JSON；保守取最後一個非空行解析。"""
+    for ln in reversed((stdout or "").splitlines()):
+        ln = ln.strip()
+        if ln:
+            try:
+                d = json.loads(ln)
+                return d if isinstance(d, dict) else None
+            except ValueError:
+                return None
+    return None
+
+
+def check_merge_driver(
+    tool_name: str, tool_input: Dict[str, Any], cwd: str, config: Dict[str, Any]
+) -> Optional[str]:
+    """Bash/PowerShell git 指令前的索引三檔合併自動化。回 advisory 字串或 None；永不 deny。
+    省錢階梯：工具名 → 字串含 git → 拆段命中 → 才動子行程；(B) 命中後不再跑 (A)。"""
+    if tool_name not in ("Bash", "PowerShell"):
+        return None
+    mcfg = config.get("merge_driver") or {}
+    auto_resolve = bool(mcfg.get("auto_resolve", True))
+    auto_install = bool(mcfg.get("auto_install", True))
+    if not (auto_resolve or auto_install):
+        return None
+    command = tool_input.get("command", "") or ""
+    low = command.lower()
+    if "git" not in low and "svn" not in low:
+        return None
+    try:
+        git_segs = _git_segments(command, _MERGE_RESOLVE_SUBS | _MERGE_INSTALL_SUBS) if "git" in low else []
+        svn_segs = _svn_segments(command, _SVN_RESOLVE_SUBS) if "svn" in low else []
+        if not git_segs and not svn_segs:
+            return None
+        deadline = time.monotonic() + _MERGE_GATE_BUDGET_S
+
+        def _left(cap: float) -> float:
+            return max(0.05, min(cap, deadline - time.monotonic()))
+
+        interp = _hook_python_exe()
+
+        # (B) 解衝突收尾指令 → 索引三檔仍 unmerged（git stage／svn conflicted）就先 --resolve
+        if auto_resolve:
+            tagged = [("git", cd, tk) for cd, tk in git_segs] + [("svn", cd, tk) for cd, tk in svn_segs]
+            for kind, repo_cd, tokens in tagged:
+                is_git = kind == "git"
+                if not (_is_resolve_trigger(tokens) if is_git else _is_svn_resolve_trigger(tokens)):
+                    continue
+                run_cwd = _resolve_run_cwd(repo_cd, cwd)
+                finder = _unmerged_index_files if is_git else _svn_unmerged_index_files
+                try:
+                    unmerged = finder(run_cwd, _left(1.0))
+                except subprocess.TimeoutExpired:
+                    return (f"[Guardian:IndexConflict] ⚠ 索引檔衝突檢查逾時（{'git ls-files' if is_git else 'svn status'}）"
+                            f" → {_MERGE_MANUAL_RESOLVE}")
+                if not unmerged:
+                    continue
+                try:
+                    r = _run_capture(
+                        [interp, str(_MERGE_TOOL), "--resolve", "--cwd", run_cwd, "--quiet"],
+                        run_cwd, _left(_MERGE_GATE_BUDGET_S),
+                    )
+                except subprocess.TimeoutExpired:
+                    return (f"[Guardian:IndexConflict] ⚠ 索引檔自動解逾時（{', '.join(unmerged)}）"
+                            f" → {_MERGE_MANUAL_RESOLVE}")
+                d = _resolve_json(r.stdout)
+                if d is None:
+                    tail = ((r.stderr or "").strip().splitlines() or [f"rc={r.returncode}"])[-1]
+                    return (f"[Guardian:IndexConflict] ⚠ 索引檔自動解未完成：{tail}"
+                            f" → {_MERGE_MANUAL_RESOLVE}")
+                remaining = [str(x) for x in (d.get("remaining") or [])]
+                error = d.get("error")
+                if remaining or error or r.returncode != 0:
+                    why = error or ", ".join(remaining) or f"rc={r.returncode}"
+                    return (f"[Guardian:IndexConflict] ⚠ 索引檔自動解未完成：{why}"
+                            f" → {_MERGE_MANUAL_RESOLVE}")
+                resolved = [str(x) for x in (d.get("resolved") or [])]
+                staged = [str(x) for x in (d.get("staged_user_version") or [])]
+                parts = []
+                if resolved:
+                    parts.append(f"已自動合併並 {'add' if is_git else '標記 resolved'} 索引檔：{', '.join(resolved)}")
+                if staged:
+                    parts.append(f"已{'stage' if is_git else '標記 resolved'} 你解好的版本：{', '.join(staged)}")
+                if not parts:
+                    parts.append("索引三檔已無未合併項")
+                return "[Guardian:IndexConflict] " + "；".join(parts)
+
+        # (A) 合併類 git 指令 → 本機未裝驅動就自動 --install（只對第一個命中段做一次；svn 無驅動可裝）
+        if auto_install:
+            for repo_cd, tokens in git_segs:
+                if not _is_install_trigger(tokens):
+                    continue
+                run_cwd = _resolve_run_cwd(repo_cd, cwd)
+                try:
+                    chk = _run_capture(
+                        [interp, str(_MERGE_TOOL), "--is-installed", "--cwd", run_cwd],
+                        cwd, _left(1.5),
+                    )
+                    if chk.returncode == 0:
+                        return None
+                    ins = _run_capture(
+                        [interp, str(_MERGE_TOOL), "--install", "--quiet"], cwd, _left(1.5),
+                    )
+                except subprocess.TimeoutExpired:
+                    return f"[Guardian:MergeDriver] ⚠ 驅動安裝檢查逾時 → {_MERGE_MANUAL_INSTALL}"
+                if ins.returncode == 0:
+                    return "[Guardian:MergeDriver] 已自動安裝索引三檔合併驅動（git 全域設定，各機一次）"
+                tail = ((ins.stderr or ins.stdout or "").strip().splitlines() or [f"rc={ins.returncode}"])[-1]
+                return f"[Guardian:MergeDriver] ⚠ 驅動安裝失敗：{tail} → {_MERGE_MANUAL_INSTALL}"
+    except Exception as e:
+        try:
+            sys.stderr.write(f"[Guardian:MergeDriver] 檢查異常（fail-open）：{e}\n")
+        except OSError:
+            pass
+    return None
+
+
 def handle_pre_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
     tool_name = input_data.get("tool_name", "")
     tool_input = input_data.get("tool_input", {})
@@ -578,6 +1134,7 @@ def handle_pre_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> N
     _cwd = input_data.get("cwd", "") or ""
     deny_reason = (
         check_cross_realm_write(tool_name, tool_input, _cwd, config)
+        or check_cross_realm_bash(tool_name, tool_input, _cwd, config)
         or check_cross_realm_mcp_cmd(tool_name, tool_input, _cwd, config)
     )
     if deny_reason:
@@ -591,6 +1148,43 @@ def handle_pre_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> N
         return
 
     deny_reason = check_svn_test_block(tool_name, tool_input)
+    if deny_reason:
+        output_json({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": deny_reason,
+            }
+        })
+        return
+
+    # 索引三檔合併驅動閘（advisory-only）——必須在隱私閘之前：resolver 會 git add 索引檔，
+    # 隱私檢查要看到它 stage 完的 index。之後 privacy／PAN 仍可能 deny；已 stage 的索引檔
+    # 是冪等的無害合併結果（下次同指令直接放行），不需回滾。訊息同步落 stderr：
+    # 後面若 deny，stdout 只能給 deny JSON，advisory 不能就此無聲消失。
+    merge_warn = check_merge_driver(tool_name, tool_input, _cwd, config)
+    if merge_warn:
+        try:
+            sys.stderr.write(merge_warn + "\n")
+        except OSError:
+            pass
+
+    # git commit 口令閘（本回合使用者原話無版控口令 → deny；fail-open）
+    _co_sid = input_data.get("session_id", "") or ""
+    _co_state = read_state(_co_sid) if _co_sid else None
+    deny_reason = check_git_commit_order(tool_name, tool_input, config, _co_state)
+    if deny_reason:
+        output_json({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": deny_reason,
+            }
+        })
+        return
+
+    # git commit 隱私硬閘（staged 含隱私檔 → deny；fail-open）
+    deny_reason = check_git_privacy(tool_name, tool_input, _cwd, config)
     if deny_reason:
         output_json({
             "hookSpecificOutput": {
@@ -615,7 +1209,7 @@ def handle_pre_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> N
 
     # 無 deny 才輸出警告（stdout 恆單一 JSON；不帶 permissionDecision——
     # "allow" 會自動核准繞過權限系統，advisory 不得改變放行行為）
-    warn_msgs = [m for m in (coord_warn, pan_warn) if m]
+    warn_msgs = [m for m in (coord_warn, merge_warn, pan_warn) if m]
     if warn_msgs:
         if coord_warn and coord_warn_fp:
             try:

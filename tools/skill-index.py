@@ -125,8 +125,7 @@ def write(skills_dir: Path = SKILLS_DIR, claude_dir: Path = CLAUDE_DIR) -> Tuple
     idx_path = skills_dir / "_skill_index.json"
     new_json = json.dumps(build_index(skills), ensure_ascii=False, indent=2) + "\n"
     if _read(idx_path) != new_json:
-        # newline="\n"：不讓 Windows 預設 translation 把 LF 文件翻成 CRLF（否則
-        # 1 位 marker 改動 → 整檔 EOL flip 的假 diff；repo 無 .gitattributes、人讀檔為 LF）
+        # newline="\n"：repo 全部 LF，關掉 Windows 的 \n→\r\n 轉譯
         # open() 而非 Path.write_text(newline=)：後者 3.10+ 才支援，macOS 系統 Python 3.9 會 TypeError
         with open(idx_path, "w", encoding="utf-8", newline="\n") as f:
             f.write(new_json)
@@ -140,8 +139,7 @@ def write(skills_dir: Path = SKILLS_DIR, claude_dir: Path = CLAUDE_DIR) -> Tuple
             continue
         new = MARKER_RE.sub(repl, text)
         if new != text:
-            with open(p, "w", encoding="utf-8", newline="\n") as f:  # 見上：防 LF→CRLF flip；open() 相容 3.9
-                f.write(new)
+            p.write_text(new, encoding="utf-8", newline="\n")  # 見上：防 LF→CRLF flip
             changed.append(rel)
     return n, changed
 

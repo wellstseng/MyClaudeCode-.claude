@@ -99,7 +99,7 @@ const TOOL_DEFINITIONS = [
         scope: {
           type: "string",
           enum: ["global", "shared", "role", "personal", "project"],
-          description: "V4 scope. shared=project-wide, role=role-shared (requires `role`), personal=per-user (requires `user` or defaults to current). global=cross-project. project (legacy)=transparently mapped to shared. Defaults to shared.",
+          description: "V4 scope. shared=project-wide, role=role-shared (requires `role`), personal=per-user (requires `user` or defaults to current). global=cross-project. project (legacy)=transparently mapped to shared. Defaults to shared. REALM GATE: when called from a project working dir, scope=global is REJECTED (all modes, skip_gate cannot bypass) if title/triggers/knowledge/actions mention any project-specific name (the project's top-level folder names, CLAUDE.md / Workspace_Map member names, repo-paths {codes}, absolute paths under the project root, or 「此專案/本專案」) — use scope=shared + project_cwd instead; feedback-* titles then land in <project>/.claude/memory/failures/<domain>/.",
         },
         role: {
           type: "string",
@@ -108,6 +108,10 @@ const TOOL_DEFINITIONS = [
         user: {
           type: "string",
           description: "Personal subdir owner. Required when scope=personal; falls back to current OS user.",
+        },
+        cross_project: {
+          type: "boolean",
+          description: "scope=personal only. true = the user's CROSS-PROJECT personal preference, stored at ~/.claude/memory/personal/<user>/ and visible to that user in every project (default false = personal-in-project at {proj}/.claude/memory/personal/<user>/, visible only in that project). Calls made from ~/.claude itself land cross-project automatically.",
         },
         audience: {
           type: "array", items: { type: "string" },
@@ -127,7 +131,15 @@ const TOOL_DEFINITIONS = [
         },
         domain: {
           type: "string",
-          description: "Hierarchical sub-path for realm=local atoms (slash-separated, max depth 7, e.g. 'Tools' or 'OS/Windows/WSL'). Lv1 roots: World (brain-world) | Tools (external tools / env troubleshooting) | MemDev (memory-system / Guardian dev), or a new root. Go deeper only when a NARROW topic has large known content volume. Empty/invalid → 'Else' (catch-all).",
+          description: "Category path under the layer root: '<Lv1>[/<Lv2>]'. REQUIRED for mode=create when scope=global (non-local realm), for feedback-* titles (Lv1 = failure topic → memory/Failures/<topic>/), and for scope=shared (→ shared/<Lv1>/). Lv1 is a CLOSED list (memory/_meta/taxonomy.json): 版控(vcs) | 工作流(workflow) | 思考與決策(thinking) | 驗證與實證(verify) | dotnet | OS-Windows(windows) | 文字與格式(text) | 設計通則(design) | 行為契約(conduct) | CC與原子記憶契約(cc-memory); EN slug/aliases accepted and snapped to the canonical name (e.g. 'vcs/git' → 版控/Git). Lv2 is free (created on demand). Unknown Lv1 → rejected unless allow_new_category=true. Ignored for append/replace (existing atom located via index). For realm=local this is instead the hierarchical local domain (e.g. 'MemDev' or 'OS/Windows/WSL'; roots World|Tools|MemDev; empty/invalid → 'Else').",
+        },
+        dry_run: {
+          type: "boolean",
+          description: "Preview without writing. create: runs the full gate chain (domain/category snap, [臨] rule, write-gate dedup, build+validate, budget) and reports the landing path/category — no file, no index, no conflict-detector side effects. append/replace: locates the existing atom and reports what would change. Default false.",
+        },
+        allow_new_category: {
+          type: "boolean",
+          description: "Allow `domain` to open a NEW Lv1 category not in taxonomy.json (still subject to reserved-name / charset checks). Default false. Prefer an existing Lv1; new Lv1s should be rare and deliberate.",
         },
         subdir: {
           type: "string",
@@ -160,11 +172,11 @@ const TOOL_DEFINITIONS = [
         },
         project_cwd: {
           type: "string",
-          description: "Project root path (required for scope=shared/role/personal)",
+          description: "Project root path (required for scope=shared/role/personal). For scope=global it feeds the realm gate (project-name scan); omitted → the MCP process cwd (= session cwd) is used.",
         },
         skip_gate: {
           type: "boolean",
-          description: "Skip write-gate quality check (for [固] or explicit user request)",
+          description: "Skip the write-gate QUALITY/DEDUP check only (for [固] or explicit user request). Does NOT skip realm/scope checks: the project-name realm gate for scope=global and the category/domain gate always run.",
         },
         skip_conflict_check: {
           type: "boolean",
@@ -223,8 +235,9 @@ const TOOL_DEFINITIONS = [
     name: "atom_edit_meta",
     description:
       "Surgically edit an atom's metadata (Trigger / Related / Tags) in place — " +
-      "no full-file rebuild. Locates <atom_name>.md via the same scope resolution as " +
-      "atom_promote (global memory, project layers, _AIDocs/Failures for feedback-*), then " +
+      "no full-file rebuild. Locates <atom_name>.md via py lib/atom_io.locate_atom (single " +
+      "authority: global memory/ + memory/Failures/ + _AIDocs/_atoms/; project shared → " +
+      "personal(current user) → role when scope=project), then " +
       "delegates to lib/atom_io.edit_metadata through the audit funnel. " +
       "Pass any subset of triggers/related/tags; at least one is required. " +
       "Each provided field fully replaces that field's existing value.",
@@ -233,6 +246,8 @@ const TOOL_DEFINITIONS = [
       properties: {
         atom_name: { type: "string", description: "Atom filename without .md extension" },
         scope: { type: "string", enum: ["global", "project"], description: "Scope to search in" },
+        role: { type: "string", description: "Optional: also try the project's roles/<role>/ layer when scope=project" },
+        user: { type: "string", description: "Optional: personal layer owner when scope=project (default current OS user)" },
         triggers: {
           type: "array", items: { type: "string" },
           description: "Replacement Trigger keywords (optional). Replaces the whole Trigger line.",
@@ -253,8 +268,10 @@ const TOOL_DEFINITIONS = [
   {
     name: "anti_evasion_report",
     description:
-      "結構化提交收尾檢核 (a)(b)(c)(d)；內容走 Anti-Evasion HUD、chat 只留折疊 chip。" +
-      "動 core 檔並宣告完成時由 Stop 閘要求。四參都 required；未發生填「無」。" +
+      "結構化提交收尾檢核 (a)–(i)；內容走 Anti-Evasion HUD、chat 只留折疊 chip。" +
+      "動 core 檔並宣告完成時由 Stop 閘要求。九參都 required；未發生填「無」。" +
+      "順序：先把值得留的知識 atom_write 寫完、再呼叫本 tool——報告是收尾檢核不是待辦清單，" +
+      "(d)「尚未寫／見下一動」或 (h)「下一動＝寫 atom」會被 Stop 擋回、要求補寫後重新提交。" +
       "本 tool 只回 chip、不寫 state（one-writer：state/持久化由 Python PostToolUse 獨佔）。",
     inputSchema: {
       type: "object",
@@ -262,9 +279,14 @@ const TOOL_DEFINITIONS = [
         a: { type: "string", description: "缺失發現與修補清單（`- 檔:行 — 改了什麼`）；無則「無」。必寫" },
         b: { type: "string", description: "AI 逃避通報（忽略/偷埋現象）；僅發生時填、否則「無」" },
         c: { type: "string", description: "Token 累積警示（Auto-Handoff 預警則附接續 prompt）；僅發生時填、否則「無」" },
-        d: { type: "string", description: "衍生暫存清單（預設直接刪）；無則「無」。必寫" },
+        d: { type: "string", description: "記憶收錄帳：填之前先掃五個來源——①使用者指正/退回/重申的話（→ feedback）②重試≥2 次或查了才懂的機制/踩坑 ③外查來的事實（帶日期）④我做的取捨/契約/偏好 ⑤既有 atom 被證錯或要補的。逐項 `- <項目> → 已寫入 atom <名>`（atom_write 已完成）或 `- <項目> → 不寫（一句理由）`；判定不寫也要留痕。⛔ 不接受「尚未寫／待補／見下一動」——那是把記憶推給下一回合，會被拒收並擋 Stop；值得寫就在呼叫本 tool 之前寫完。無則「無」。必寫" },
+        e: { type: "string", description: "未告知決策＋未驗證假設：擅自的取捨（默默選了方案、跳過步驟、動了請求之外的檔）與做事時依賴但未驗證的假設；使用者沒看執行過程就不會知道的事都算。無則「無」" },
+        f: { type: "string", description: "靜默狀態改變：對話輸出沒交代的環境副作用——安裝套件、改 config、重啟服務、建排程/cron、仍在跑的背景程序或 agent。無則「無」" },
+        g: { type: "string", description: "版控收尾：本 session 改動哪些已 commit（hash 一句）、哪些未上及理由（併發 session 進度／待拍板／隱私）。無改動則「無」" },
+        h: { type: "string", description: "收尾判定：單句——「可關閉」或「下一動＝…」。下一動只列使用者要做的事（重啟驗證、拍板）；寫 atom／補測試／commit 是你自己能做的，先做完再提交。必寫" },
+        i: { type: "string", description: "衍生暫存清單：一行一路徑 `<路徑> — <備註>`（絕對或相對 cwd，可 glob）。只列「你自己產生的暫存／中間產物、此刻尚存、留給使用者裁決」的（scratchpad 腳本、.bak、一次性 log、undo 檔）；已刪的不列、純說明不列（預設完工即刪）。⛔ 絕不列正式產出：改了還沒 commit 的 code／doc／atom／索引／CHANGELOG 屬 (a)(b)/(g) 未同步事項，不是暫存——這些路徑會被拒收並回警。Python 端解析進 per-session 殘檔帳本，HUD 以 exists() 列尚存者供保留/刪除。無則「無」。必寫" },
       },
-      required: ["a", "b", "c", "d"],
+      required: ["a", "b", "c", "d", "e", "f", "g", "h", "i"],
     },
   },
 ];

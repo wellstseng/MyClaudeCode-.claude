@@ -21,9 +21,11 @@ from wg_episodic import _check_output_quality
 from wg_extraction import _is_lease_valid  # noqa: F401
 from wg_evasion import (
     is_test_command, detect_test_failure, aec_severity, crosscheck_aec_severity,
+    _aec_blank, aec_pending_items,
 )
 from wg_atoms import _trigger_incremental_index
 from wg_extraction import is_plan_filename
+from handlers import aec_ledger
 from handlers._shared import (
     _is_ephemeral_path,
     WISDOM_AVAILABLE, wisdom_track_retry,
@@ -187,7 +189,7 @@ def _write_aec_report_file(session_id: str, turn_seq: int, report: Dict[str, Any
         d.mkdir(parents=True, exist_ok=True)
         p = d / f"{session_id}-t{turn_seq}.json"
         tmp = p.with_suffix(".tmp")
-        tmp.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
         tmp.replace(p)
     except OSError as e:
         _atom_debug_error("post_tool_use:aec_report_write", e)
@@ -307,6 +309,7 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
     # 寫入原子性，不涵蓋整段 R-M-W；要全程上鎖需把 lock 提出 write_state 重構
     # 所有 caller，改動過大，接受此窗（同 turn 內 PostToolUse 序列執行，實際窗極小）。
     dirty = False
+    aec_reject_msgs: List[str] = []   # anti_evasion_report 分支填；尾端併入 advisories 回給模型
 
     # ─── 救援日誌：工具呼叫命中已注入 atom 的高特異 token → rescue-log ───
     try:
@@ -330,6 +333,13 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
     if tool_name in ("Edit", "Write") and file_path:
         _maybe_auto_roll_changelog(file_path, config)
         _maybe_sync_skill_index(file_path, config)
+
+    if tool_name in ("Edit", "Write", "NotebookEdit") and file_path:
+        # 殘檔帳本：工具寫進系統 tempdir（scratchpad 等）的檔 → 進帳，HUD 以 exists() 列尚存者。
+        try:
+            aec_ledger.record_temp_write(session_id, file_path, int(state.get("turn_seq", 0)))
+        except Exception as e:
+            _atom_debug_error("post_tool_use:aec_ledger_write", e)
 
     if (
         tool_name in ("Edit", "Write", "NotebookEdit")
@@ -478,6 +488,9 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                 ft.append({
                     "tool": "Bash",
                     "cmd": command[:200],
+                    # cmd 截 200 字會把串在後段的 pytest 截掉 → 綠的 pytest 對不上、永遠清不掉；
+                    # 記錄時就用全文判定一次
+                    "pytest": "pytest" in command.lower(),
                     "summary": failure,
                     "at": _now_iso(),
                     # 供 Stop 端 outcome 歸因「只認本 turn 失敗」（sync/test-fail
@@ -493,7 +506,11 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                 after = [
                     f for f in before
                     if not f.get("cmd", "").startswith(cmd_prefix[:40])
-                    and not (is_pytest_success and "pytest" in f.get("cmd", "").lower())
+                    and not (is_pytest_success and (
+                        f.get("pytest")
+                        or "pytest" in f.get("cmd", "").lower()
+                        or "short test summary" in f.get("summary", "")   # legacy 無 flag 者看 pytest 輸出特徵
+                    ))
                 ]
                 if len(after) != len(before):
                     state["failing_tests"] = after
@@ -505,9 +522,16 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         # session_id 用原始 input_data["session_id"]（與 modified_files 的 session_id 戳
         # 同源）＝sibling 隔離關鍵：Stop 閘以 turn_seq+session_id 雙鍵讀，隔壁 session 的
         # emit 不誤放行本 session。turn_seq 由 UserPromptSubmit 每真 prompt +1。
-        a, b, c, d = (str(tool_input.get(k, "") or "") for k in ("a", "b", "c", "d"))
+        _AEC_KEYS = ("a", "b", "c", "d", "e", "f", "g", "h", "i")
+        vals = {k: str(tool_input.get(k, "") or "") for k in _AEC_KEYS}
+        a, b = vals["a"], vals["b"]
+        # (i) 是給使用者裁決的路徑清單：「無（…括號解釋…）」一律正規化成「無」，
+        # 模型的多嘴說明（執行期狀態檔、已刪了什麼）不得變成 HUD 上要人裁決的一列。
+        if _aec_blank(vals["i"]):
+            vals["i"] = "無"
+        i_paths = vals["i"]
         turn_seq = int(state.get("turn_seq", 0))
-        sev = aec_severity(a, b, c, d)
+        sev = aec_severity(a, b)
         # (b) 欄 cross-check：hook 實測到退避但模型自評「無」→ 升 real-evasion +
         # 附 hook 證據（升級只發生在 Python one-writer；Node chip 純內容判定，
         # 顯示可能不同步——report 檔 + Stop fallback 為準）。
@@ -516,15 +540,54 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         report = {
             "session_id": session_id,
             "turn_seq": turn_seq,
-            "a": a, "b": b, "c": c, "d": d,
+            **vals,
             "severity": sev,
             "at": _now_iso(),
         }
         if upgraded:
             report["severity_upgraded_by"] = "hook:evasion-crosscheck"
             report["hook_evidence"] = evidence[-5:]
+            # (b) 卡片只渲染 b 欄；升級卻留「無」會出現「紅框指著空卡」（可觀測性
+            # 鐵律：訊號必須帶內容浮出）。把 hook 證據寫進 b，模型原自評另存 b_model。
+            report["b_model"] = b
+            ev_lines = "；".join(
+                f"turn {e.get('turn_seq', '?')}『{e.get('phrase', '')}』"
+                for e in evidence[-5:] if e.get("phrase")
+            )
+            report["b"] = (
+                f"模型自評「{b or '無'}」，但 hook 實測 {len(evidence)} 筆退避命中：{ev_lines}"
+                "（cross-check 升級，不信自評）"
+            )
+        # (d)/(h) pending：把「記憶寫入」推到之後（尚未寫／見下一動／下一動＝寫 atom）。
+        # 報告是收尾檢核，不是待辦清單——落 d_pending 供 HUD 標紅，並回告模型當回合補寫；
+        # Stop 端讀 d_pending 擋一次（AEC-Pending Gate），逼 atom_write 後重新 emit。
+        pending = aec_pending_items(vals["d"], vals["h"])
+        if pending:
+            report["d_pending"] = pending
+            aec_reject_msgs.append(
+                f"[Guardian:AEC-Pending] (d)/(h) 有 {len(pending)} 項把記憶寫入推到之後：\n"
+                + "\n".join(f"  ✗ {x}" for x in pending)
+                + "\n值得寫就現在 atom_write 寫完，再重新呼叫 anti_evasion_report 把該項改成"
+                "「→ 已寫入 atom <名>」（或「→ 不寫（理由）」）；否則 Stop 會擋。"
+            )
         state["anti_evasion_report"] = report
         _write_aec_report_file(session_id, turn_seq, report)
+        # 殘檔帳本：(i) 一行一路徑宣告 + session scratchpad 掃描 → 進帳（HUD 讀帳本 + exists()）。
+        # (i) 裡的受保護路徑（VCS 追蹤檔 / memory、_AIDocs / 索引類）拒收並回告模型——
+        # 「已改未 commit 的正式檔」屬 (a)(b)/(g) 未同步事項，不是衍生暫存；靜默丟掉會讓模型一直錯報。
+        try:
+            _cwd = state.get("session", {}).get("cwd", "") or input_data.get("cwd", "")
+            _rejected: List[Dict[str, str]] = []
+            aec_ledger.collect_at_completion(session_id, _cwd, i_paths, turn_seq, rejected=_rejected)
+            if _rejected:
+                aec_reject_msgs.append(
+                    "[Guardian:AEC-Ledger] (i) 衍生暫存清單拒收受保護路徑（正式產出不是暫存，"
+                    "不得進 HUD 刪除候選）：\n"
+                    + "\n".join(f"  ✗ {r['path']} — {r['reason']}" for r in _rejected)
+                    + "\n未 commit 的正式檔請改列於 (a)/(b)/(g)；(i) 只放你自己產生的暫存／中間產物。"
+                )
+        except Exception as e:
+            _atom_debug_error("post_tool_use:aec_ledger_collect", e)
         _maybe_spawn_hud(sev, state, config)
         dirty = True
 
@@ -536,7 +599,7 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             _atom_debug_error("post_tool_use:docdrift_prune", e)
             pass
 
-    advisories = []
+    advisories = list(aec_reject_msgs)
     if state:
         for key, prefix in [
             ("_path_enforcement_advisory", "[Guardian:PathEnforce]"),

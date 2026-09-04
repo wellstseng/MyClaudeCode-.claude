@@ -66,11 +66,14 @@ def _mf(path, session_id=_SID):
     return {"path": path, "tool": "Edit", "session_id": session_id}
 
 
-def _emit(turn_seq, session_id=_SID, severity="routine", a="無", b="無", c="無", d="無"):
-    return {
+def _emit(turn_seq, session_id=_SID, severity="routine", a="無", b="無", **fields):
+    rec = {
         "turn_seq": turn_seq, "session_id": session_id,
-        "a": a, "b": b, "c": c, "d": d, "severity": severity, "at": "now",
+        "a": a, "b": b, "severity": severity, "at": "now",
     }
+    for k in ("c", "d", "e", "f", "g", "h", "i"):
+        rec[k] = fields.get(k, "無")
+    return rec
 
 
 # ─── emit 閘：滿足 / 未滿足 ───────────────────────────────────────
@@ -160,13 +163,13 @@ def test_aec_severity(a, b, expected):
 
 
 def test_aec_severity_trailing_punct_full_fields():
-    """完整四欄（c/d 亦帶尾標點/括註）dogfood 現場案例：(b)「無。」須 blank → notable、非 real-evasion。"""
+    """資訊欄亦帶尾標點/括註的 dogfood 現場案例：(b)「無。」須 blank → notable、非 real-evasion。"""
     assert aec_severity("無程式修補。x", "無。", "無。", "無（略）") == "notable"
 
 
-def test_aec_severity_cd_informational():
-    """(c)/(d) 非空不升級 severity（severity 只衡量退避訊號 (a)/(b)）。"""
-    assert aec_severity("無", "無", "token 警示!", "temp/foo") == "routine"
+def test_aec_severity_informational_fields_ignored():
+    """(c)–(i) 資訊欄非空不升級 severity（severity 只衡量退避訊號 (a)/(b)）。"""
+    assert aec_severity("無", "無", "token 警示!", "有記憶未寫", "偷改了", "裝了套件", "未上", "下一動=x", "temp/foo") == "routine"
 
 
 @pytest.mark.parametrize("v,blank", [
@@ -231,7 +234,8 @@ def test_ptu_emit_writes_state_and_file(monkeypatch, tmp_path):
     + notable+HUD死 → aec_hud_fallback。"""
     state = _drive_ptu(
         monkeypatch, tmp_path,
-        {"a": "- x.py:10 — fix", "b": "無", "c": "無", "d": "無"},
+        {"a": "- x.py:10 — fix", "b": "無", "c": "無", "d": "無", "e": "無",
+         "f": "無", "g": "無", "h": "可關閉", "i": "無"},
     )
     aec = state.get("anti_evasion_report")
     assert aec and aec["turn_seq"] == 7 and aec["session_id"] == _SID
@@ -248,8 +252,104 @@ def test_ptu_routine_no_fallback(monkeypatch, tmp_path):
     """routine emit → 落檔但窗死不 fallback（無退避訊號、可事後由歷史格瀏覽）。"""
     state = _drive_ptu(
         monkeypatch, tmp_path,
-        {"a": "無", "b": "無", "c": "無", "d": "無"},
+        {"a": "無", "b": "無", "c": "無", "d": "無", "e": "無",
+         "f": "無", "g": "無", "h": "可關閉", "i": "無"},
     )
     assert state["anti_evasion_report"]["severity"] == "routine"
     assert (tmp_path / "aec-report" / f"{_SID}-t7.json").exists()
     assert not state.get("aec_hud_fallback")
+
+
+# ─── AEC-Pending：(d)/(h) 把「記憶寫入」推到之後 ─────────────────────────────
+# 真實案例（2026-09-03 d38eaff2-t8）：(d) 寫「→ 尚未寫（見下一動）」、(h)「下一動=寫一顆 dotnet
+# atom」，回合照樣結束，使用者再問一次才補寫。閘門：post_tool_use 落 d_pending、Stop 擋一次。
+
+from wg_evasion import aec_pending_items  # noqa: E402
+
+_D_REAL = (
+    "- 「WinForms X」→ 已寫進 MapWindow 註解與 DocIndex；屬 dotnet 跨專案知識，值得 atom → 尚未寫（見下一動）\n"
+    "- 使用者 app bin 被鎖 → 既有 atom 已涵蓋，不重寫"
+)
+_H_REAL = "下一動=寫一顆 dotnet atom（ContextMenuStrip Closed 裡不可 Dispose）；使用者重啟 client 驗"
+
+_PENDING_CASES = [
+    # (d, h, expected_count, why)
+    (_D_REAL, _H_REAL, 2, "真實案例：(d) 尚未寫（見下一動）+ (h) 下一動=寫 atom"),
+    ("- X → 待補 atom", "可關閉", 1, "待補"),
+    ("- X → 之後再寫", "可關閉", 1, "之後再寫"),
+    ("- X → TODO", "可關閉", 1, "TODO"),
+    ("- X → 已寫入 atom Y", "可關閉", 0, "已寫入"),
+    ("- 未記錄的踩坑 X → 已寫入 atom Y", "可關閉", 0, "項目段含「未記錄」但結論段已寫入 → 不算"),
+    ("- Z → 不寫（之後有需要再補）", "可關閉", 0, "不寫定論優先"),
+    ("- Z → 併入既有 atom W（已 append）", "可關閉", 0, "已 append"),
+    ("無", "可關閉", 0, "空"),
+    ("無", "下一動＝使用者重啟 client 驗刪房", 0, "(h) 使用者動作不算"),
+    ("無", "下一動＝補寫 feedback atom", 1, "(h) 模型自己的 atom 工作"),
+]
+
+
+@pytest.mark.parametrize("d,h,n,why", _PENDING_CASES, ids=[c[3] for c in _PENDING_CASES])
+def test_aec_pending_items(d, h, n, why):
+    assert len(aec_pending_items(d, h)) == n, why
+
+
+@pytest.mark.skipif(not __import__("shutil").which("node"), reason="node not available")
+def test_aec_pending_py_js_parity():
+    """MIRROR 守法：Node aecPendingItems 對同一組 fixture 的結果與 Python 逐項相同。"""
+    import subprocess
+    root = HOOKS_DIR.parent
+    js = root / "tools" / "workflow-guardian-mcp" / "lib" / "anti-evasion.js"
+    cases = [[c[0], c[1]] for c in _PENDING_CASES]
+    script = (
+        "const ae=require(process.argv[1]);const cases=JSON.parse(process.argv[2]);"
+        "console.log(JSON.stringify(cases.map(([d,h])=>ae.aecPendingItems(d,h))));"
+    )
+    res = subprocess.run(
+        ["node", "-e", script, str(js), json.dumps(cases, ensure_ascii=False)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    assert res.returncode == 0, res.stderr
+    got = json.loads(res.stdout)
+    want = [aec_pending_items(d, h) for d, h in cases]
+    assert got == want
+
+
+def test_ptu_emit_pending_marks_report(monkeypatch, tmp_path):
+    """emit 帶「尚未寫」→ report/state 落 d_pending（HUD 標紅、Stop 閘讀）。"""
+    state = _drive_ptu(
+        monkeypatch, tmp_path,
+        {"a": "無", "b": "無", "c": "無", "d": _D_REAL, "e": "無",
+         "f": "無", "g": "無", "h": _H_REAL, "i": "無"},
+    )
+    aec = state["anti_evasion_report"]
+    assert len(aec["d_pending"]) == 2
+    data = json.loads((tmp_path / "aec-report" / f"{_SID}-t7.json").read_text(encoding="utf-8"))
+    assert data["d_pending"] == aec["d_pending"]
+
+
+def test_ptu_emit_clean_no_pending_key(monkeypatch, tmp_path):
+    state = _drive_ptu(
+        monkeypatch, tmp_path,
+        {"a": "無", "b": "無", "c": "無", "d": "- X → 已寫入 atom Y", "e": "無",
+         "f": "無", "g": "無", "h": "可關閉", "i": "無"},
+    )
+    assert "d_pending" not in state["anti_evasion_report"]
+
+
+def test_stop_pending_blocks_once(driven, capsys):
+    """本回合 emit 帶 d_pending → Stop 擋（AEC-Pending）；同 turn 已擋過 → 放行（不無限 nag）。"""
+    rec = _emit(5, d=_D_REAL, h=_H_REAL)
+    rec["d_pending"] = ["- … → 尚未寫（見下一動）", "(h) 下一動=寫一顆 dotnet atom"]
+    out = driven([_mf(_CORE)], capsys, turn_seq=5, anti_evasion_report=rec)
+    assert "[Guardian:AEC-Pending]" in out and "尚未寫" in out
+    out2 = driven([_mf(_CORE)], capsys, turn_seq=5, anti_evasion_report=rec,
+                  aec_pending_gate_turn=5)
+    assert "AEC-Pending" not in out2
+
+
+def test_stop_pending_sibling_not_blocked(driven, capsys):
+    """隔壁 session 的 pending 報告（session_id 不符）不擋本 session；本 session 也未 emit → 走 ScanReport。"""
+    rec = _emit(5, session_id="other")
+    rec["d_pending"] = ["x"]
+    out = driven([_mf(_CORE)], capsys, turn_seq=5, anti_evasion_report=rec)
+    assert "AEC-Pending" not in out

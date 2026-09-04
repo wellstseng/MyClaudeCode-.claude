@@ -13,6 +13,7 @@ Survives hook timeout — runs ~60s on GTX 1050 Ti.
 
 import json
 import re
+import subprocess
 import sys
 import time
 import urllib.request
@@ -436,7 +437,7 @@ def _write_state_atomic(state_path: Path, state: dict) -> bool:
     """Atomic write: temp file → rename. Returns True on success."""
     tmp = state_path.with_suffix(".tmp")
     try:
-        with open(tmp, "w", encoding="utf-8") as f:
+        with open(tmp, "w", encoding="utf-8", newline="\n") as f:
             json.dump(state, f, ensure_ascii=False, indent=2)
         tmp.replace(state_path)
         return True
@@ -526,6 +527,9 @@ def _flush_item_to_atom(content: str, triggers: list, *,
     dedup_dir（`_drafts/` 被 sync-atom-index 排除 → 不入索引、不注入、不計數）。草稿待人工
     檢視/手動晉升；真有值的知識在工作中已正規記錄（changelog / atom_write）。
     content 推 slug、路徑去重 + -N 防撞。Returns 'wrote' | 'deduped' | 'failed'。
+
+    範疇寫入閘豁免：`_drafts/` 草稿牢籠不是 atom（不入索引、不注入），不經
+    memory/<範疇>/ 分類；晉升為 atom 時才走 atom_write（屆時必給 domain）。
     """
     content = content.strip()
     triggers = [t.strip() for t in (triggers or []) if t and str(t).strip()] or ["auto-capture"]
@@ -696,8 +700,71 @@ def _failure_dedup_hit(existing_text: str, content: str) -> bool:
     return False
 
 
+def _failure_topic(content: str, tags: list, ftype: str, config: dict) -> str:
+    """失敗紀錄的主題（＝核心 Lv1 名）：classify_category(layer=failures) 命中 → 用；
+    unsure/error → taxonomy failure_type_fallback[ftype]（env→OS-Windows、silent→驗證與實證…）。
+    **永不拒**：失敗紀錄漏寫代價 > 分錯主題。taxonomy 整個缺 → 回 ""（caller 落家族根）。"""
+    try:
+        from lib.atom_locations import classify_category
+        from lib.atom_taxonomy import failure_type_fallback
+    except Exception as e:  # noqa: BLE001 — lib 缺就退根，不擋寫入
+        _atom_debug_log("failure_writeback", f"classify unavailable: {e!r}", config)
+        return ""
+    # 只拿敘事段當 name、根因當 trigger：骨架用語「根因」本身是 思考與決策 的詞庫詞，
+    # 不剝掉會讓每條失敗都命中該主題。
+    narrative, root_cause = _split_root_cause(content)
+    triggers = [str(t) for t in (tags or [])] + ([root_cause] if root_cause else [])
+    try:
+        r = classify_category(narrative[:200], triggers, layer="failures", config=config)
+        if r.get("status") in ("lex", "llm") and r.get("category"):
+            return str(r["category"]).split("/", 1)[0]
+        _atom_debug_log("failure_writeback",
+                        f"classify {r.get('status')} ({r.get('reason')}) → fallback[{ftype}]", config)
+        return failure_type_fallback(ftype) or ""
+    except Exception as e:  # noqa: BLE001 — taxonomy 缺/壞：stderr 已由 loader 浮出
+        _atom_debug_log("failure_writeback", f"classify failed: {e!r}; landing at family root", config)
+        return ""
+
+
+def _failure_target(failures_dir: Path, ftype: str, topic: str) -> Path:
+    """<failures_dir>/<主題>/<type>-<主題slug>.md；無主題 → <failures_dir>/<type>.md（舊扁平）。
+    檔名帶主題 slug：index 以 name 為鍵，不同主題的同型檔不能同 stem。"""
+    stem = _FAILURE_TYPE_FILE[ftype].removesuffix(".md")
+    if not topic:
+        return failures_dir / _FAILURE_TYPE_FILE[ftype]
+    return failures_dir / topic / f"{stem}-{slugify(topic)}.md"
+
+
+def _failure_index_upsert(target: Path, ftype: str, config: dict) -> None:
+    """新建失敗檔同時 upsert 索引（否則 audit 報未索引）。全域家族 → memory/_atom_index.json；
+    專案層 → <mem>/_atom_index.json。失敗只記 debug log，不擋。"""
+    try:
+        from lib.atom_io import write_index
+        from lib.atom_locations import GLOBAL_MEMORY_DIR
+        t = target.resolve()
+        gm = GLOBAL_MEMORY_DIR.resolve()
+        if t.is_relative_to(gm):
+            base, root, scope = gm, gm.parent, "global"
+        else:
+            base = next((p for p in t.parents if (p / "_atom_index.json").exists()), None)
+            if base is None:
+                _atom_debug_log("failure_writeback", f"no _atom_index.json above {target}", config)
+                return
+            root, scope = base.parent, "shared"
+        triggers = [s.strip() for s in _FAILURE_TRIGGERS[ftype].split(",") if s.strip()]
+        res = write_index(base, target.stem, t.relative_to(root).as_posix(), triggers,
+                          source="hook:extract-worker", scope=scope)
+        if not res.ok:
+            _atom_debug_log("failure_writeback", f"index upsert failed: {res.error}", config)
+    except Exception as e:  # noqa: BLE001
+        _atom_debug_log("failure_writeback", f"index upsert error: {e!r}", config)
+
+
 def _failure_writeback(ctx: dict, items: list) -> None:
-    """將萃取的失敗記錄寫入對應 failure atom 檔。"""
+    """將萃取的失敗記錄寫入對應 failure atom 檔（<failures_dir>/<主題>/<type>-<主題>.md）。
+
+    主題經 _failure_topic（classify → fallback，永不拒）；新建檔同時 upsert 索引。
+    """
     cwd = ctx.get("cwd", "")
     config = ctx.get("config", {})
 
@@ -710,11 +777,12 @@ def _failure_writeback(ctx: dict, items: list) -> None:
         if ftype not in _FAILURE_TYPE_FILE:
             ftype = "assumption"
 
-        target = failures_dir / _FAILURE_TYPE_FILE[ftype]
         content = item.get("content", "").strip()
         tags = item.get("domain_tags", [])
         if not content or len(content) < 10:
             continue
+        topic = _failure_topic(content, tags, ftype, config)
+        target = _failure_target(failures_dir, ftype, topic)
 
         # Dedup：與目標檔案既有條目比對（新骨架始末行 + 舊單行格式）
         if target.exists() and _failure_dedup_hit(
@@ -745,6 +813,7 @@ def _failure_writeback(ctx: dict, items: list) -> None:
                 continue
         else:
             _create_failure_atom(target, ftype, entry_block)
+            _failure_index_upsert(target, ftype, config)
         written += 1
 
     if written:
@@ -753,18 +822,65 @@ def _failure_writeback(ctx: dict, items: list) -> None:
             f"Wrote {written} failure entries to {failures_dir}",
             config,
         )
+        _failure_catalog_sync(failures_dir, config)
+
+
+def _failure_catalog_sync(failures_dir: Path, config: dict) -> None:
+    """失敗家族寫入後接上目錄重產（MEMORY.md / _INDEX.md / 橋接檔）。
+
+    這條寫入鏈不經 MCP funnel，原本寫完只 upsert _atom_index.json，目錄與橋接檔
+    要等下次 MCP 寫入或人工跑 sync-memory-index 才更新（一條龍中斷）。同步跑、
+    收 stderr、失敗只 debug log（fail-open）。專案層 failures 走 --memory-dir。"""
+    try:
+        script = CLAUDE_DIR / "tools" / "sync-memory-index.py"
+        if not script.exists():
+            return
+        argv = [sys.executable, str(script), "--write"]
+        mem_dir = failures_dir.parent
+        try:
+            is_global = mem_dir.resolve() == (CLAUDE_DIR / "memory").resolve()
+        except OSError:
+            is_global = False
+        if not is_global:
+            argv += ["--memory-dir", str(mem_dir)]
+        r = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=40,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if r.returncode != 0:
+            _atom_debug_log("failure_writeback",
+                            f"catalog sync exit {r.returncode}: {(r.stderr or '')[-300:]}", config)
+    except Exception as e:  # noqa: BLE001
+        _atom_debug_log("failure_writeback", f"catalog sync error: {e!r}", config)
+    # 向量庫增量重建（MCP 寫入鏈由 funnel.triggerVectorReindex 做；這條鏈原本沒接）
+    try:
+        from wg_atoms import _trigger_incremental_index
+        _trigger_incremental_index(config)
+    except Exception as e:  # noqa: BLE001
+        _atom_debug_log("failure_writeback", f"vector incremental error: {e!r}", config)
+
+
+# 每型固定 Trigger：health 的 REQUIRED_METADATA 含 Trigger，缺了整檔判格式錯（腦內世界標 🤢）
+_FAILURE_TRIGGERS = {
+    "env": "環境踩坑, 環境陷阱, env trap, 路徑問題, 工具鏈",
+    "assumption": "假設錯誤, 誤判, 直覺假設, wrong assumption, 前提錯",
+    "silent": "靜默失敗, silent failure, 沒報錯, 無聲吞掉, 假成功",
+    "cognitive": "認知偏差, 認知模式, cognitive pattern, 思考陷阱",
+}
 
 
 def _create_failure_atom(path: Path, ftype: str, first_block: str) -> None:
     """建立最小 failure atom 檔（專案層首次寫入用）。first_block 為多區塊骨架。
 
     走 atom_io.write_raw funnel（failures 子族不符 V4 build_atom_content
-    規範 — 用 Type/Created 而非 Trigger/Last-used，故走 raw escape hatch）。
+    規範 — 用 Type/Created 而非 Last-used，故走 raw escape hatch；Trigger 仍必填）。
+    範疇閘：不經 write_atom，主題由 caller（_failure_topic）決定、路徑已含 <主題>/；
+    索引 upsert 由 _failure_index_upsert 補。
     """
     content = (
         f"# {_FAILURE_TITLES.get(ftype, ftype)}\n\n"
         f"- Scope: project\n"
         f"- Confidence: [臨]\n"
+        f"- Trigger: {_FAILURE_TRIGGERS.get(ftype, _FAILURE_TRIGGERS['assumption'])}\n"
         f"- Type: procedural\n"
         f"- Created: {datetime.now().strftime('%Y-%m-%d')}\n\n"
         f"## 知識\n\n{first_block}\n\n"
@@ -861,7 +977,7 @@ def _legacy_main():
         state["last_updated"] = _now_iso()
         tmp = state_path.with_suffix(".tmp")
         try:
-            with open(tmp, "w", encoding="utf-8") as f:
+            with open(tmp, "w", encoding="utf-8", newline="\n") as f:
                 json.dump(state, f, ensure_ascii=False, indent=2)
             tmp.replace(state_path)
         except OSError:

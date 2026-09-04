@@ -303,7 +303,7 @@ def _write_state_atomic(state_path: Path, state: dict) -> bool:
     """Atomic write: temp → rename."""
     tmp = state_path.with_suffix(".tmp")
     try:
-        with open(tmp, "w", encoding="utf-8") as f:
+        with open(tmp, "w", encoding="utf-8", newline="\n") as f:
             json.dump(state, f, ensure_ascii=False, indent=2)
         tmp.replace(state_path)
         return True
@@ -324,6 +324,32 @@ def _slug_from_statement(statement: str) -> str:
     slug = re.sub(r'[^\w\u4e00-\u9fff-]', '-', statement[:40])
     slug = re.sub(r'-+', '-', slug).strip('-').lower()
     return slug or "auto-decision"
+
+
+_PROJECT_RULE_MARKERS = (
+    "此專案", "本專案", "這個專案", "專案內", "上傳", "上傳到", "發布", "publish", "deploy",
+    "commit", "svn", "git", "必須", "禁止", "不得", "一律",
+)
+
+
+def _is_project_rule(statement: str, slug: str, triggers: List[str], cwd: str, l2_scope: str) -> bool:
+    """內容是「針對專案的規則」而非個人偏好 ⇒ 該落 shared 並記提出者。
+    三個訊號任一成立：L2 判 shared/project；語句含專案規則標記詞；提到專案專名
+    （借 realm_gate 的專名推導：對 scope=global 會拒的內容，就是專案專屬內容）。"""
+    if str(l2_scope or "").lower() in ("shared", "project"):
+        return True
+    text = statement or ""
+    low = text.lower()
+    if any(m.lower() in low for m in _PROJECT_RULE_MARKERS):
+        return True
+    if cwd:
+        try:
+            from lib.realm_gate import check_global_write
+            if check_global_write(cwd, title=slug, triggers=triggers, knowledge=[text]):
+                return True
+        except Exception as e:  # noqa: BLE001 — 專名推導失敗只失去這一路訊號
+            _atom_debug_error("user-extract:project_rule_gate", e)
+    return False
 
 
 def _write_atom_via_mcp(
@@ -357,34 +383,86 @@ def _write_atom_via_mcp(
     slug = _slug_from_statement(statement)
     knowledge_lines = [f"- [臨] {statement}", f"<!-- src: {turn_id} -->"]
 
-    # cwd 在 ~/.claude 之下時 funnel realm 閘會拒 scope=personal（~/.claude 本身
-    # 即 global root），改走 scope=global 才寫得進去。
+    # 落點三分：cwd 在 ~/.claude → global（~/.claude 本身即 global root）；
+    # 專案內且內容是「專案規則」（提到專案專名／此專案／上傳／發布／必須／禁止…，或 L2 判 shared）
+    # → shared 並記提出者（Author=使用者，日後異議找 Author）；其餘 → 本人×專案 personal。
     in_claude_dir = _is_under_claude_dir(cwd) if cwd else False
-    write_scope = "global" if in_claude_dir else "personal"
-
-    # Pre-check existence for dedup parity with prior behaviour.
-    # personal scope → memory/personal/{user}/{slug}.md；global → memory/{slug}.md
-    project_root = find_project_root(cwd) if cwd else None
     if in_claude_dir:
-        target_dir = CLAUDE_DIR / "memory"
-    elif project_root:
-        target_dir = Path(project_root) / ".claude" / "memory" / "personal" / user
+        write_scope = "global"
+    elif _is_project_rule(statement, slug, triggers, cwd, scope):
+        write_scope = "shared"
     else:
-        target_dir = CLAUDE_DIR / "memory" / "personal" / user
-    pre_path = target_dir / f"{slug}.md"
-    if pre_path.exists():
+        write_scope = "personal"
+
+    # 去重預檢：用 funnel 的正規定位（locate_atom）找既有檔。核心層 atom 住
+    # memory/<範疇>/[Lv2]/，自算扁平路徑永遠 miss、去重形同死碼。
+    pre_path = None
+    try:
+        from lib.atom_io import locate_atom
+        loc = locate_atom(slug, write_scope, project_cwd=cwd or None, user=user)
+        if getattr(loc, "ok", False) and getattr(loc, "path", None) and Path(loc.path).exists():
+            pre_path = Path(loc.path)
+    except Exception as e:  # noqa: BLE001 — 定位失敗只失去去重，不擋寫入
+        _atom_debug_error("user-extract:locate", e)
+    if pre_path is not None:
         try:
             existing = pre_path.read_text(encoding="utf-8")
             if statement in existing:
                 return "deduped"
         except (OSError, UnicodeDecodeError):
             pass
-        # Append counter to title (funnel will slugify-by-title)
+        # 同名不同意 → 改名（funnel 以 title slugify）
         for i in range(2, 10):
             alt_slug = f"{slug}-{i}"
-            if not (target_dir / f"{alt_slug}.md").exists():
+            if not (pre_path.parent / f"{alt_slug}.md").exists():
                 slug = alt_slug
                 break
+
+    # 範疇寫入閘（scope=global create 必給 domain）：程式寫手自行分類（詞庫 → 本地 LLM，
+    # lib.atom_locations.classify_category）；unsure/error → **拒寫**，候選改進
+    # _pending.candidates.md（前綴 [category REJECT|ERROR]）+ stderr 浮訊號，不落 Else。
+    domain = None
+    realm = None
+    if write_scope == "global":
+        # realm 分類（core 全專案注入 / local 只在 ~/.claude 注入）：MCP 寫入鏈在 js 端
+        # 會自動分，hook 寫入鏈原本一律落 core、靠 SessionEnd sweep 事後搬——同一顆
+        # atom 依寫入路徑落點不同。改成寫前就分，與 MCP 對齊。安全預設 core。
+        try:
+            from lib.atom_locations import classify_realm
+            rc = classify_realm(slug, triggers)
+            if rc.get("realm") == "local" and rc.get("domain") and not rc.get("protected"):
+                realm, domain = "local", rc["domain"]
+        except Exception as e:  # noqa: BLE001 — 分不出就走 core（原行為）
+            _atom_debug_error("user-extract:classify_realm", e)
+    if write_scope == "global" and realm is None:
+        try:
+            from lib.atom_locations import classify_category
+            cls = classify_category(slug, triggers, layer="core", excerpt=statement, config=config)
+        except Exception as e:  # noqa: BLE001 — 分類器本身炸＝error 態
+            cls = {"status": "error", "category": None, "reason": repr(e)}
+        if cls.get("status") in ("lex", "llm") and cls.get("category"):
+            domain = cls["category"]
+        else:
+            tag = "ERROR" if cls.get("status") == "error" else "REJECT"
+            print(f"[category] {tag} user-extract '{slug}': {cls.get('reason', '')}",
+                  file=sys.stderr)
+            _write_pending_candidate(l2_result, candidate, user, cwd,
+                                     prefix=f"[category {tag}]")
+            return "rejected"
+    if write_scope == "shared":
+        # shared create 也過範疇閘（shared/<Lv1>/）：分不出範疇就退回 personal，
+        # 不丟知識、不拒寫（專案規則只是暫時掛在本人名下，存量分流時再搬）。
+        try:
+            from lib.atom_locations import classify_category
+            cls = classify_category(slug, triggers, layer="shared", excerpt=statement, config=config)
+        except Exception as e:  # noqa: BLE001
+            cls = {"status": "error", "category": None, "reason": repr(e)}
+        if cls.get("status") in ("lex", "llm") and cls.get("category"):
+            domain = cls["category"]
+        else:
+            print(f"[category] shared→personal fallback user-extract '{slug}': {cls.get('reason', '')}",
+                  file=sys.stderr)
+            write_scope = "personal"
 
     try:
         result = write_atom(
@@ -398,7 +476,9 @@ def _write_atom_via_mcp(
             project_cwd=cwd or None,
             mode="create",
             source="hook:user-extract",
-            author="auto-extracted-v4.1",
+            author=user,  # 提出此規則的使用者；來源標記走知識段的 <!-- src: turn --> 與 audit source
+            domain=domain,
+            realm=realm,
         )
     except Exception as e:
         _atom_debug_error("user-extract:_write_atom", e)
@@ -414,9 +494,10 @@ def _write_atom_via_mcp(
 
 
 def _write_pending_candidate(
-    l2_result: Dict, candidate: Dict, user: str, cwd: str,
+    l2_result: Dict, candidate: Dict, user: str, cwd: str, prefix: str = "",
 ) -> bool:
-    """Write conf 0.70-0.92 candidate to _pending.candidates.md."""
+    """Write conf 0.70-0.92 candidate to _pending.candidates.md.
+    `prefix`（如 "[category REJECT]"）：範疇閘拒寫的候選沿用同檔，前綴標明原因。"""
     project_root = find_project_root(cwd) if cwd else None
     if project_root:
         auto_dir = Path(project_root) / ".claude" / "memory" / "personal" / "auto" / user
@@ -432,10 +513,11 @@ def _write_pending_candidate(
     turn_id = candidate.get("turn_id", "")
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    entry = f"- [{now}] conf={conf:.2f} scope={scope} turn={turn_id}: {statement}\n"
+    lead = f"{prefix} " if prefix else ""
+    entry = f"- {lead}[{now}] conf={conf:.2f} scope={scope} turn={turn_id}: {statement}\n"
 
     try:
-        with open(pending_file, "a", encoding="utf-8") as f:
+        with open(pending_file, "a", encoding="utf-8", newline="\n") as f:
             f.write(entry)
         return True
     except OSError:
@@ -449,7 +531,7 @@ def _append_merge_history(session_id: str, action: str, details: str = "") -> No
     log_path = WORKFLOW_DIR / "_merge_history.log"
     try:
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(log_path, "a", encoding="utf-8") as f:
+        with open(log_path, "a", encoding="utf-8", newline="\n") as f:
             f.write(f"[{ts}] action={action} session={session_id} {details}\n")
     except OSError:
         pass
@@ -662,6 +744,7 @@ def run_user_extraction(ctx: Dict[str, Any]) -> Dict[str, Any]:
     # 先寫 atom 再存 state，讓每筆 confirmed_extraction 帶 write_result，
     # UPS 宣告時能區分成功/失敗（可觀測性鐵律：寫入失敗必須浮出訊號）。
     write_failed: List[str] = []
+    category_rejected: List[str] = []
     for ext in confirmed_extractions:
         result = _write_atom_via_mcp(ext, ext, session_id, user, config)
         ext["write_result"] = result
@@ -669,6 +752,8 @@ def run_user_extraction(ctx: Dict[str, Any]) -> Dict[str, Any]:
             dedup_hit += 1
         elif result == "failed":
             write_failed.append(ext.get("statement", "")[:80])
+        elif result == "rejected":  # 範疇閘分不出 → 候選已進 _pending.candidates.md
+            category_rejected.append(ext.get("statement", "")[:80])
 
     # Save state with confirmed_extractions (含 write_result)
     if confirmed_extractions:
@@ -678,6 +763,8 @@ def run_user_extraction(ctx: Dict[str, Any]) -> Dict[str, Any]:
             fresh_state.setdefault("confirmed_extractions", []).extend(confirmed_extractions)
             if write_failed:
                 fresh_state.setdefault("user_extract_write_failed", []).extend(write_failed)
+            if category_rejected:
+                fresh_state.setdefault("user_extract_category_rejected", []).extend(category_rejected)
             fresh_state["last_updated"] = datetime.now().astimezone().isoformat()
             _write_state_atomic(state_path, fresh_state)
 

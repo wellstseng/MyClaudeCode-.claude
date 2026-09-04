@@ -162,3 +162,12 @@ memory/_meta/atom_io_audit.jsonl
 .last-update-result.json
 channels/
 paste-cache/
+
+# ─── merge union (upstream) ───
+workflow/cross-project-index-cache.json
+memory/personal/
+memory/_meta/atom_io_audit.jsonl.*
+workflow/companion-state-*.tmp
+workflow/aec-tempfiles/
+chrome/
+journals/

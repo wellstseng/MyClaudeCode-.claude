@@ -1,7 +1,7 @@
 # Tools — 工具與領域知識索引
 
 > 跨專案工具操作知識、領域特定知識
-> 最近更新：2026-05-28（V5 GA + Session α/β：feedback-* atoms 遷移到 `_AIDocs/Failures/` + `lib/atom_locations.py` 為 atom 物理位置單一規則來源 + 補回 unity-mcp-setup）
+> 最近更新：2026-05-28（V5 GA + Session α/β：feedback-* atoms 遷移到 `_AIDocs/Failures/` + `lib/atom_locations.py` 為 atom 物理位置單一規則來源）
 
 ---
 
@@ -18,3 +18,4 @@
 | 7 | bm25-global-layer.md | V5 全域 atom BM25 檢索層（取代 Vector daemon 殺雞用牛刀） | BM25, 全域檢索, atom 注入, char-bigram, k1, b, vector global_layer, V5 P5a |
 | 8 | unity-mcp-setup.md | Unity MCP 安裝/配置 SOP（CoplayDev/unity-mcp + ~/.claude.json 設定 + 踩坑） | Unity MCP 安裝, mcp__unity-mcp, CoplayDev/unity-mcp, MCPForUnity, 8080, Unity Editor 自動化 |
 | 9 | （補完候選） | atom-locations 設計（FAILURES_DIR + iter_atom_files_multi + failures_write_target，commit `89ccb2d`/Session β）— 暫由 [lib/atom_locations.py](../../lib/atom_locations.py) docstring + [SPEC_ATOM_V5 §2.1](../SPEC_ATOM_V5.md) 替代，未獨立文件化 | atom 位置, 路由, FAILURES_DIR, 多根掃描, single source of truth |
+| 9 | hook-injection-probe.md | 用真 hook 進程驗 atom 注入效果的探針 SOP（SessionStart→UPS 順序、標記統計、判讀規則、最小腳本、清理與陷阱、injection-turns.jsonl 欄位、effect-report／followup-check 配套） | hook 探針, 實機驗證, workflow-guardian.py, UserPromptSubmit, SessionStart, additionalContext, Context budget, trim dropped, budget fallback, same-topic, injection-turns.jsonl, memory-effect-report, followup-check, 兄弟 state, _ensure_state |

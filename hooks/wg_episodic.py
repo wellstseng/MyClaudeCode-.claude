@@ -21,7 +21,7 @@ from wg_core import (
     cwd_to_project_slug, get_project_memory_dir,
     resolve_episodic_dir, get_transcript_path,
     _now_iso, _atom_debug_log, _atom_debug_error,
-    sanitize_harness_noise,
+    sanitize_harness_noise, is_rut_whitelisted,
 )
 from wg_extraction import is_plan_content
 
@@ -464,11 +464,18 @@ def _generate_episodic_atom(
         knowledge_lines.append(f"- [{ki['classification'].strip('[]')}] {ki['content']}")
 
     # 覆轍信號 — record cross-session retry patterns
+    # 索引/編年類高頻正常改動檔（wg_core.RUT_FILE_WHITELIST_DEFAULT）不產生信號：
+    # 同檔改 ≥3 次對這類檔是常態，非「表面修復」證據（降噪非關警報，略過必留 log）
     rut_signals = []
     edit_counts = state.get("edit_counts", {})
     for fpath, cnt in edit_counts.items():
         if cnt >= 3:
             short = Path(fpath).name
+            if is_rut_whitelisted(short, config):
+                _atom_debug_log(
+                    "RUT", f"whitelist skip same_file_3x:{short} (episodic-gen)", config
+                )
+                continue
             rut_signals.append(f"same_file_3x:{short}")
     if state.get("wisdom_retry_count", 0) >= 2:
         rut_signals.append("retry_escalation")
@@ -565,7 +572,8 @@ def _generate_episodic_atom(
     )
 
     # episodic atom 走 funnel write_raw（在 SKIP_DIRS 不算 V4 atom，
-    # 但仍經 audit log 確保 PreToolUse 強制門禁可放行）
+    # 但仍經 audit log 確保 PreToolUse 強制門禁可放行）。
+    # 範疇寫入閘豁免：episodic/ 不是 atom（不入索引、不注入），不經 memory/<範疇>/ 分類。
     write_raw(atom_path, content, source="hook:episodic", op="episodic_create")
     # 同步建立 access.json 旁路檔（first_seen=今天，後續注入時 increment_read_hits）
     try:

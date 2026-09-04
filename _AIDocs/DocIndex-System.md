@@ -1,6 +1,6 @@
 # 原子記憶系統 — 全檔案索引
 
-> 最近同步：2026-07-25（V5.1 ultra-opt：RRF 融合 + memory-eval + recall-miss + Depends/Evidence）
+> 最近同步：2026-08-31（對外四文件改寫；hook 表補齊 wg_parallel/wg_research/wg_coordination/wg_handoff/version_guard/acceptance_spec；拔已刪的 quick-extract.py、notification.py）
 > 目標：讓 Claude Code AI 能了解自己，以利後續升級、迭代、進化
 > V5 概覽：[`SPEC_ATOM_V5.md`](SPEC_ATOM_V5.md)
 
@@ -28,20 +28,21 @@ settings.json（hook 配置 + 權限白名單）
   └─ codex_companion.py（subprocess 模型 in-process state）
   ↓
 CLAUDE.md @import
-  ├─ IDENTITY.md（AI 人格 — 收尾檢核 4 項硬契約）
+  ├─ IDENTITY.md（AI 人格 — 收尾檢核硬契約）
   ├─ USER.md（使用者偏好）
   ├─ MEMORY.md（atom 索引人類可讀版 — **core-only**；本地範疇段抽到 _local_catalog.md）
-  └─ rules/core.md
+  ├─ rules/core.md
+  └─ rules/coding-style.md（寫碼傾向：結構／極簡／節奏／自檢）
   ↓
 SessionStart hook（cwd∈~/.claude 才注入 memory/_local_catalog.md 本地範疇 catalog）
   ↓
 Session Ready
   ↓
 [UserPromptSubmit] ×N → trigger → BM25 全域層 → Vector fallback → atom 注入 + Evasion
-[PreToolUse] → Write/Edit/Bash matcher → atom format gate + memory path block + cross-realm write block + SVN test block
+[PreToolUse] → Write/Edit/Bash matcher → atom format gate + memory path block + cross-realm write block + SVN test block + 索引三檔合併閘（git 自動 --install／git・svn 自動 --resolve）
 [PostToolUse] → file tracking + 增量索引 + test-fail 偵測 + _CHANGELOG auto-roll（matcher 無 Read）
 [Stop] → sync 閘門 + TestFailGate + Evasion Detection + transcript 單次 tail-read（含 accessed_files 回收）
-[Stop async] → quick-extract.py (qwen3:1.7b 5s → hot_cache.json)
+[Stop] 另掛 codex_companion.py（驗收裁判 enforce 閘）+ lang_guard.py（英文漂移提醒）
 [PreCompact] → state snapshot + injected_atoms 快照
 [PostCompact] → stash 壓縮前 atom 緊湊內文 + pending_reinjection flag（不注入）
 [PostToolBatch] → 見 flag 一次性重注入壓縮前 atom 內文（閉 mid-turn auto-compact 缺口；選配 #4）
@@ -57,8 +58,8 @@ Session Ready
 | IDENTITY.md / USER.md | AI 行為契約（直接維護單一真相）/ 使用者偏好實例 | @import | gitignored, per-user |
 | IDENTITY-{user}.md / USER-{user}.md | 個人擴充槽（IDENTITY 選配）/ USER 編輯點 | 啟用時 @import / 每啟動拷成 USER.md | per-user |
 | BOOTSTRAP.md | 首次設定引導（IDENTITY/USER 為空時觸發） | 條件觸發 | 共用 |
-| settings.json | 8 hook events + 權限白名單 | Claude Code 讀取 | per-user |
-| version.json | atom_memory + guardian 版本標識 | 文件用 | 共用 |
+| settings.json | 9 hook events + 權限白名單 | Claude Code 讀取 | per-user |
+| version.json | 版本標識（guardian / atom_memory / release_date / release_theme）+ 三個網頁介面位置（web.dashboard / anti_evasion_hud / brain_world）；程式只讀 guardian、atom_memory（paths.js） | Dashboard 標題 + 文件用 | 共用 |
 | workflow/config.json | Guardian / Vector / Decay / Capture 全參數 | hook 每次讀取 | 共用 |
 | memory/_meta/forbidden-phrases.json | 禁語 single source | IDENTITY + wg_evasion 共用 | 共用 |
 | mcp-servers.template.json | MCP server 清單（Install-forAI 用） | 安裝時讀 | 共用 |
@@ -67,49 +68,55 @@ Session Ready
 
 | 模組 | 職責 |
 |------|------|
-| core.md | 知識庫維護 + 原子記憶分類 + 同步工作流 + 對話續航（合併單檔） |
+| core.md | 治理原則 + 知識庫 + 記憶寫入/Realm/Scope + 對話（只留事前規則；Sync/並行/研究 fan-out/domain/版本 warn 已由 hook・MCP 強制，不重述） |
 
-## 4. Hook 系統（dispatcher + handlers + 7 wg_*）
+## 4. Hook 系統（dispatcher + 9 事件 handlers + 13 wg_* + 5 standalone hook）
 
 | 檔案 | 行數 | 職責 |
 |------|------|------|
 | workflow-guardian.py | 20 | 薄 shim（5 行可執行 code）轉發 `dispatcher.main()` |
 | dispatcher.py | ~75 | 純路由：讀 stdin event → 找 handler → 呼叫 |
 | handlers/_shared.py | — | 跨 handler 共用 helper |
-| handlers/session_start.py | — | init state + 去重 + bootstrap + Vector bg subprocess |
+| handlers/aec_ledger.py | — | per-session 殘檔帳本唯一 writer（`workflow/aec-tempfiles/<sid>.jsonl`）：tempdir 寫入 / (d) 一行一路徑解析 / scratchpad 掃描；HUD 讀端以 exists() 判尚存。`protected_reason()` 拒收正式檔（VCS 追蹤 / `memory`、`_AIDocs` 下 / 索引、CHANGELOG、核心 md），(d) 拒收回告模型、drain 對其刪除決策注入 ⛔ |
+| handlers/session_start.py | — | init state + 去重 + bootstrap + Vector bg subprocess + 各式 advisory（含 `_index_conflict_advisory`：repo 卡在 rebase/merge 且索引三檔未合併 → 一行提示） |
 | handlers/user_prompt_submit.py | — | UPS orchestrator：串聯 ups_* 四段 + 收尾（2026-06-12 拆分）+ UPS 被 kill 哨兵（`workflow/ups-sentinel/`，殘留→告警）+ AEC (d) 刪除決策後驗（exists() 實查→重注入/告警） |
 | handlers/ups_gates.py | — | UPS detect 段：evasion 追蹤 + V4.1 + long_die + hot cache + atom-write guard |
 | handlers/ups_context.py | — | UPS context 段：session context + wisdom + parallel + AIDocs + JIT |
 | handlers/ups_search.py | — | UPS search 段：RECALL（trigger → BM25 → Vector〔全空 fallback / 專案層 enrichment：trigger 命中 <3 才打〕）+ supersedes + RRF 三路融合 × ACT-R 個別化 decay（`fusion:"legacy"` 可回退；含分心懲罰 `compute_injection_rank`，Memory Governance A） |
 | handlers/ups_inject.py | — | UPS inject 段：hot/cold + budget + related spread（含 `_filter_related_by_relevance` 最小集裁切，Memory Governance C）+ 效用晉升提示 |
-| handlers/pre_tool_use.py | — | Write/Edit atom format gate + memory path block + cross-realm write block（外部專案 session 禁寫核心層子目錄+根層敏感檔）+ Bash 全域 MCP 變更閘 + SVN test block |
+| handlers/pre_tool_use.py | — | Write/Edit atom format gate + memory path block + cross-realm write block（外部專案 session 禁寫核心層子目錄+根層敏感檔）+ Bash 全域 MCP 變更閘 + SVN test block + 索引三檔合併閘 `check_merge_driver`（合併類 git 指令前自動 `--install`、續行類 git 指令與 `svn commit/resolve` 前自動 `--resolve`，warn-only）+ git commit 隱私閘 |
 | handlers/post_tool_use.py | — | file tracking + 增量索引 + read tracking + test-fail + changelog auto-roll + AEC one-writer（emit 收訖 + (b) 欄 cross-check：hook 證據 vs 自評「無」→ 升 real-evasion） |
 | handlers/stop.py | — | sync 閘門 + Fix Escalation + TestFailGate + Evasion（觸發落 `Logs/guard-evasion.jsonl` + `evasion_events` 證據暫存）+ outcome 三值計數 |
 | handlers/session_end.py | — | Episodic + 萃取 + 衝突偵測 + Wisdom 反思 + selective forgetting（`apply_selective_forget` 隔離 `_distant/`，預設 dry-run，Memory Governance D）+ outcome unknown 比率遙測（`workflow/outcome_stats.jsonl` → 連續偏高 marker → SessionStart advisory）+ 失念偵測（`wg_recall_miss` → `Logs/recall-miss.jsonl`） |
 | handlers/pre_compact.py | — | state snapshot + injected_atoms 快照 |
 | handlers/post_compact.py | — | 壓縮後 stash 壓縮前 atom 緊湊內文 + pending flag（不注入；選配 #4） |
 | handlers/post_tool_batch.py | — | idle early-exit；見 flag 一次性 additionalContext 重注入 + 清 flag（選配 #4） |
-| handlers/notification.py | — | 通知處理 |
 | wg_core.py | — | 路徑唯一真相 + state IO + token budget 單一來源（2026-06-12 集中） + log rotation + PreToolUse guards |
 | wg_atoms.py | — | trigger（any/count_trigger_hits 原語）+ BM25 + ACT-R + vector search + atom 晉升 |
-| wg_extraction.py | — | per-turn 萃取 + worker + hot cache + user-extract + content classify |
+| wg_extraction.py | — | 失敗萃取 + worker spawn + user-extract L0 + content classify（per-turn / hot cache 已停產） |
 | wg_episodic.py | — | episodic 生成 + 衝突 + 品質回饋 |
 | wg_evasion.py | — | Evasion Guard + Test-Fail + ScanReport + 自評整合 + `crosscheck_aec_severity`（(b) 欄 cross-check 純函式）+ `flush_outcome_stats`（unknown 比率遙測） |
 | wg_docdrift.py | — | src → _AIDocs 映射 drift 偵測（觸發落 `Logs/guard-docdrift.jsonl`） |
 | lang_guard.py | — | P8b 英文回應漂移攔截（standalone Stop hook；觸發落 `Logs/guard-lang.jsonl`） |
 | wg_roles.py | — | V4 sub-layer 探勘 shim |
+| wg_handoff.py | — | Auto-Handoff 四層自動交接（stub 六區塊 / token 預警；pre_compact / post_tool_batch / stop / session_end 共用） |
+| wg_coordination.py | — | 跨 session 衝突預警（同檔互寫 warn / git add -A 收尾預警 / late-collision）→ `Logs/session-coordination/` |
+| wg_parallel.py | — | 多 agent 並行訊號計分 → `[Parallel:Suggest]` 注入 |
+| wg_research.py | — | 知識檢索型請求偵測 → 兩階段 fan-out 提示（命中時抑制 Parallel 建議） |
+| version_guard.py | — | live 檔版本操作脈絡殘留掃描（standalone PostToolUse，warn-only） |
+| acceptance_spec.py | — | 驗收規格工件分級啟動（standalone PostToolUse，advisory） |
+| run-hidden.py / run-bash-hidden.py | — | Windows 下不閃視窗地 spawn 子程序 / 跑 .sh hook |
 | wg_rescue.py | — | 救援日誌：注入 atom 高特異 token watch + 工具呼叫命中 → `Logs/rescue-log.jsonl`（純字串比對） |
 | wg_recall_miss.py | — | 失念偵測（recall-miss）：SessionEnd 比對「失敗證據 × 庫中未注入 atom trigger」（≥2 非泛用詞）→ `Logs/recall-miss.jsonl`；浮出走效果報表 D 節 + 週健檢黃燈 |
 | codex_companion.py | — | Codex Companion hook：in-process state + spawn audit.py subprocess |
 | extract-worker.py | — | SessionEnd 萃取子程序 |
 | user-extract-worker.py | — | L1/L2 使用者決策萃取 |
-| quick-extract.py | — | Stop async 快篩 |
 | wisdom_engine.py | — | 2 硬規則 + 3 反思指標 + Bayesian arch sensitivity |
 | ensure-mcp.py | — | MCP server 可用性確認 |
 | user-init.sh | — | 多人 USER.md 初始化 |
 | webfetch-guard.sh | — | WebFetch 安全護欄 |
 
-## 5. Skills（<!-- skill-count -->23<!-- /skill-count --> 個 active；記憶系統 skill + 1 個外部/通用 skill〔karpathy-guidelines〕；**init-roles / conflict-review 於 P8a 2026-07-01 單人環境降 dormant → `skills/_archived/`，不計入此數**）
+## 5. Skills（<!-- skill-count -->21<!-- /skill-count --> 個 active；記憶系統 skill + 1 個外部/通用 skill〔karpathy-guidelines〕；**init-roles / conflict-review 於 P8a 2026-07-01 單人環境降 dormant → `skills/_archived/`，不計入此數**）
 
 V5 把 commands/*.md 遷到 skills/{name}/SKILL.md 結構（對齊 Anthropic 官方「commands merged into skills」）。Legacy `commands/` 全刪除。
 
@@ -147,9 +154,12 @@ V5 把 commands/*.md 遷到 skills/{name}/SKILL.md 結構（對齊 Anthropic 官
 ### MCP Server（5 tool）
 - `workflow-guardian-mcp/server.js`（+ 11 lib 模組，原 4394 行單檔純機械拆分）— stdio MCP + dashboard port 3848
   - `atom_write` / `atom_move` / `atom_promote` / `atom_edit_meta`（4 個 atom 業務 tool；`atom_edit_meta`=元資料外科編輯 → [SPEC_ATOM_V5 §3.4](SPEC_ATOM_V5.md)）
-  - `anti_evasion_report`（收尾檢核 (a)(b)(c)(d) emit → Anti-Evasion HUD；**one-writer**：MCP tool 只回 chip，Python `post_tool_use` 獨佔寫 state + 落 `workflow/aec-report/`；HUD 頁 `lib/{anti-evasion,aec-hud-html}.js` 服）
+  - `anti_evasion_report`（收尾檢核九欄 (a)–(i) emit → Anti-Evasion HUD；**one-writer**：MCP tool 只回 chip，Python `post_tool_use` 獨佔寫 state + 落 `workflow/aec-report/`；HUD 頁 `lib/{anti-evasion,aec-hud-html}.js` 服）
+    - 殘檔帳本 `workflow/aec-tempfiles/<sid>.jsonl`（`handlers/aec_ledger.py` 唯一 writer：tempdir 寫入 / (d) 一行一路徑 / Stop 掃 scratchpad 三來源進帳）；HUD「本 session 尚存殘檔」面板走 `GET /api/aec/tempfiles/<sid>`（Node 讀帳本 + 當下 exists() 過濾，檔案系統為權威、不做 TTL）；保留/刪除決策檔 `aec-decision/<sid>-p<pathhash>.json` 帶 `path` 供 drain 後驗；受保護路徑（`aec_ledger.protected_reason()`：tempdir 放行 → `memory`/`_AIDocs` 段 → 索引／CHANGELOG／核心 md 檔名 → VCS 追蹤）三道拒收：(d) 解析拒收並 additionalContext 回告、`ledger_append` 末道、drain 刪除決策改注入 ⛔ 拒絕
   - `atom_write` 的 `knowledge` 陣列 block-aware：單一元素以豎線（markdown 表格）或三反引號（程式碼 fence）開頭者整段原樣輸出、不加 bullet、前後補空行（規則 SoT → [SPEC_ATOM_V5 §11](SPEC_ATOM_V5.md)）
   - 內部 IPC 4 個（`workflow_signal` / `workflow_status` / `memory_queue_add` / `memory_queue_flush`）已內化為 Stop gate hook 自動偵測
+
+### 發布
 
 ### Vector Service（port 3849；專案層 + episodic + cross-session dedup 用）
 - service.py — HTTP daemon（`ThreadingHTTPServer`：長請求不再 block `/health` 致 starter 誤殺；`POST /index/incremental` 為寫後重索引路由〔MCP funnel 呼叫，順跑 stale chunk 清理〕）
@@ -175,7 +185,8 @@ V5 把 commands/*.md 遷到 skills/{name}/SKILL.md 結構（對齊 Anthropic 官
 - atom_spec.py — atom 格式規則純函式（slugify / build_atom_content / validate / SKIP_DIRS / VALID_SCOPES），audit/health/atom_io 共用 import
 - atom_io.py — 知識內容寫入 funnel（`write_atom` / `write_raw` / `write_index_full`），對拍 server.js byte-identical
 - atom_access.py — 遙測 funnel（`<atom>.access.json` 旁路檔，schema atom-access-v2）；`init_access` / `increment_read_hits` / `increment_confirmation` / `record_promotion` / `bulk_read`
-- atom_io_cli.py — thin CLI bridge（stdin JSON → write_* → stdout WriteResult）給 MCP server.js spawn
+- atom_io_cli.py — thin CLI bridge（stdin JSON → write_* → stdout WriteResult）給 MCP server.js spawn；action `realm_check` 供 atom_write 對 scope=global 先問 realm 閘
+- realm_gate.py — 「專案專屬內容不得落 global」realm 閘：`project_terms(root)` 機械化推導專名（頂層資料夾 / CLAUDE.md、Workspace_Map 成員表 / repo-paths {代號}）+ 專案絕對路徑 + 「此專案」字面；`check_global_write` 命中即拒並附 `scope=shared, project_cwd` 修正與落點；cwd∈~/.claude 或無 cwd 不啟動
 - atom_index_json.py — `_atom_index.json` JSON SoT API（load / save / upsert / delete / regenerate_md / migrate / validate）
 - ollama_extract_core.py — 萃取共用核心 + SessionBudgetTracker（240 tok/session, CJK-aware）
 
@@ -192,7 +203,9 @@ V5 把 commands/*.md 遷到 skills/{name}/SKILL.md 結構（對齊 Anthropic 官
 - conflict-review.py — Pending Queue 後端（list / approve / reject，is_management 雙向認證 guard）
 - atom-move.py — 跨層原子搬遷工具（mv + 更新 Scope + 同步索引 + 處理 inbound refs）
 - sync-atom-index.py — atom frontmatter Trigger ↔ `_atom_index.json` 一致性同步
-- sync-memory-index.py — 從 `_atom_index.json` 雙輸出渲染：`MEMORY.md`（core-only，@import）+ `_local_catalog.md`（本地範疇 Lv1 根，hook 注）+ **V6 各層按需 `_INDEX.md`**（有子層 ∨ atom≥2）；`--check` 兩檔 + `_INDEX.md` 深樹 round-trip、stale 清理、caption preserve 跨檔；sweep 搬後補觸發 `--write`
+- sync-memory-index.py — 從 `_atom_index.json` 雙輸出渲染：`MEMORY.md`（Lv1 範疇目錄，@import）+ `_local_catalog.md`（本地範疇 Lv1 根，hook 注）+ 兩根各層按需 `_INDEX.md`（有子層 ∨ atom≥2）；硬規則 memory/ 根不容平鋪 atom（`--check` exit 1／`--write` 拒）；`--memory-dir <proj>` 專案模式只 upsert 該專案 MEMORY.md 的 `<!-- atom-catalog -->` 區塊（不生 `_INDEX.md`），`--write` 成功後接 `normalize-eol.auto_project_eol`（專案記憶樹轉 LF＋git `.gitattributes` 區塊／svn `svn:eol-style`；config `eol.auto_normalize_project`、`--no-eol` 可關）；caption preserve 跨檔；atom 寫入後由 `funnel.js syncMemoryIndex([memoryDir])` 背景觸發 `--write`——這就是專案樹 LF 的自動掛點
+- merge-atom-index.py — 索引三檔（`MEMORY.md`／`_ATOM_INDEX.md`／`_atom_index.json`）的 git 合併驅動：多機各自新增 atom 後 rebase/merge 的「同區塊各加一列」衝突與 CRLF 整檔衝突，改為拿三份 blob 做語意三方（JSON 以 path 為 key 逐條合、triggers 聯集；MD 表列同鍵；MEMORY.md 範疇計數 = ours+theirs−base、表外文字仍 merge-file；根層衍生索引檔 `_INDEX.md`／`_local_catalog.md` 走通用表格文件三方 `merge_table_doc`，根層 `.gitattributes` 綁定），不從磁碟重建（driver 執行當下工作樹只有 HEAD 側 atom）；`--install` 各機一次寫 global git config + `~/.config/git/attributes`（`**/.claude/memory/*` 三檔 `merge=atomindex`），根層 repo 自帶 `.gitattributes`（全庫 `text eol=lf`，行尾由 repo 規則統一、不靠 driver）；`--status` 自檢；`--resolve [--cwd]` 備案：git 已停在衝突時把同一套驅動套在三檔的 unmerged stage（:1/:2/:3）上寫回並 add（只在工作樹仍等於 git 原始衝突輸出時覆蓋；殘留寫回含標記不 add），stdout 單行 JSON `{resolved,staged_user_version,skipped,remaining,installed,error}`；**SVN 工作副本**同一支 `--resolve`（cwd 最近的 VCS 根是 `.svn`）：只掃 memory dir 候選的 `svn status --xml`，拿 `svn info --xml` 給的 `.mine`／`.r舊`／`.r新` 當 ours／base／theirs 跑同一套驅動，寫回並 `svn resolve --accept working`，仍含標記視為未動過；PreToolUse `check_merge_driver` 在合併類 git 指令前自動 `--install`、續行類 git 指令與 `svn commit/resolve` 前自動 `--resolve`。契約與 SOP：`MultiMachineMemorySync.md`；守衛 `tools/verify/verify_merge_atom_index.py`（含 svnadmin 本地倉 e2e）、`hooks/verify/verify_merge_driver_gate.py`
+- normalize-eol.py — 換行統一 LF 工具：`--root`（根層追蹤檔，dirty 檔 index 以 HEAD 正規化保持純 EOL）/`--check`（結果守衛，index 與工作樹殘留即 exit 1）/`--memory-dir --write-gitattributes`（專案記憶樹＋寫入 `.gitattributes` 區塊：`.claude/memory/** text eol=lf` + 索引三檔 `merge=atomindex`）/`--memory-dir --auto`（`auto_project_eol`：依最近 VCS 根自動——git 同上、svn 對已版控文字檔 `svn:eol-style=LF` 冪等、無 VCS 只轉檔；`sync-memory-index` 專案模式 `--write` 後自動呼叫）/`--all-projects`；守衛 `tools/verify/verify_normalize_eol.py`；來源 lint `hooks/verify/verify_lf_writes.py`（寫檔點缺 `newline` 控制即 FAIL）
 - cleanup-projects-residue.py — projects/{slug}/memory/ 殘骸清理工具
 
 ### 常駐可觀測
@@ -230,11 +243,11 @@ V5 把 commands/*.md 遷到 skills/{name}/SKILL.md 結構（對齊 Anthropic 官
 
 - **MEMORY.md**（always loaded via @import，**core-only**）— core atom 主表（人類可讀）+ 末尾一行指標；本地範疇段已抽出（2026-06-04 catalog 層 realm 拆分）
 - **_local_catalog.md**（`memory/`，`_` 前綴非 atom）— 本地範疇 catalog；**V6 階層化**：always-load 只列 Lv1 根（World/Tools/MemDev/OS/Else）+ 遞迴計數 + drill 指標，深層走各層按需 `_INDEX.md`（O(根數) 不隨 atom 量膨脹）。僅核心環境由 SessionStart hook 注入，外部專案零負擔。由 `sync-memory-index.py` 與 MEMORY.md 同步雙輸出
-- **_atom_index.json**（JSON SoT）— 機器源真相，<!-- atom-total -->131<!-- /atom-total --> atoms 完整索引
+- **_atom_index.json**（JSON SoT）— 機器源真相，<!-- atom-total -->173<!-- /atom-total --> atoms 完整索引
 - **_ATOM_INDEX.md**（自動生成 mirror）— 人類可讀備援 parser
-- **全域 Atoms** = **core**（住 `memory/`：decisions / decisions-architecture / preferences / workflow-rules·icld·svn·parallel-agents / toolchain·-ollama / goal-driven-verify-loop / 自己flag-維護動作直接做完 / escalation-hook-false-fire辨識 / 併發-session-共用工作樹…）+ **feedback + 失敗模式**（feedback-* / cognitive-patterns / memory-pipeline-silent-failure-2026-05，物理在 `_AIDocs/Failures/`）+ **local**（realm=local，住 `_AIDocs/_atoms/<domain 多段階層>/`，只在 cwd∈~/.claude 注入；World / Tools / MemDev / OS / Continuity / Vision）。各房實際計數以 `_atom_index.json` path 前綴為準（勿在此複製數字）。**V6 sweep 自動搬遷**：`memory-index-caption-regen` 於 2026-06-04 由 core 經 LLM fallback 判 local 自動搬到 `MemDev/MemoryIndex/`（記憶系統內部知識，判 local 正確）；OS root 為 wsl2 dogfood 新增；`realm-範疇分區機制-v5` 亦已由 core 搬入 local/MemDev
-- **_AIDocs/_atoms/**（realm=local）— 非核心範疇 atom（多段階層 domain：World / Tools / MemDev / OS / Else，如 `OS/Windows/WSL/`）；scope 仍 global、外部專案不注入（例外：`CROSS_PROJECT_LOCAL_DOMAINS` 如 `Continuity` 跨專案注入）。各層按需 `_INDEX.md`（`_` 前綴非 atom）。見 SPEC_ATOM_V5 §2.2 V6 塊
-- **_AIDocs/Failures/**（atom 子族） — feedback-* + 失敗模式 atom（跨專案踩坑記錄，屬 core）
+- **全域 Atoms** = **core**（住 `memory/<範疇>/[<Lv2>/]`，Lv1 閉合清單 `memory/_meta/taxonomy.json`：版控／工作流／思考與決策／驗證與實證／dotnet／OS-Windows／文字與格式／設計通則／行為契約／CC與原子記憶契約）+ **失敗家族**（feedback-* / cognitive-patterns / memory-pipeline-* 等，住 `memory/Failures/<主題>/`，主題同一套 Lv1；參考文件在 `memory/Failures/_reference/`）+ **local**（realm=local，住 `_AIDocs/_atoms/<domain 多段階層>/`，只在 cwd∈~/.claude 注入；MemDev / World / Vision / Tools / OS）。各房實際計數以 `_atom_index.json` path 前綴為準（勿在此複製數字）。memory/ 根下不容平鋪 atom（`sync-memory-index --check`／`memory-audit` layout error 守）；寫入一律先分類再落地（`atom_write` `domain` 必填）
+- **_AIDocs/_atoms/**（realm=local）— 非核心範疇 atom（多段階層 domain，如 `OS/Windows/WSL/`）；scope 仍 global、外部專案不注入（`CROSS_PROJECT_LOCAL_DOMAINS` 現為空集合，機制保留）。各層按需 `_INDEX.md`（`_` 前綴非 atom）。見 SPEC_ATOM_V5 §2.2
+- **memory/Failures/<主題>/**（atom 子族） — feedback-* + 失敗模式 atom（跨專案踩坑記錄，屬 core）；程式失敗回寫落 `<主題>/<type>-<topic-slug>.md`
 - **templates/** — icld-sprint-template 等（仍由 workflow-icld atom 引用）
 - **_reference/**（手動讀取）— SPEC 等深度規格
 - **wisdom/**（live state）— DESIGN.md + reflection_metrics.json + causal_graph.json
@@ -249,7 +262,7 @@ V5 把 commands/*.md 遷到 skills/{name}/SKILL.md 結構（對齊 Anthropic 官
 | 路徑 | 用途 |
 |------|------|
 | `.claude/memory/MEMORY.md` | 專案 atom 索引 |
-| `.claude/memory/*.md` | 專案 atoms（V4 三層 scope：shared / role / personal） |
+| `.claude/memory/shared/<Lv1>/*.md` | 專案 shared atoms（create 必給 `domain`；Lv1 = 核心 taxonomy ∪ `shared/_taxonomy.json` domains）；role / personal 各自子樹；MEMORY.md 由 `sync-memory-index --memory-dir` upsert `<!-- atom-catalog -->` 區塊 |
 | `.claude/memory/shared/_roles.md` | V4 管理職白名單（雙向認證） |
 | `.claude/memory/shared/_pending_review/` | 敏感 atom 等管理職裁決 |
 | `.claude/memory/episodic/` | 自動生成（gitignored） |
@@ -262,10 +275,13 @@ V5 把 commands/*.md 遷到 skills/{name}/SKILL.md 結構（對齊 Anthropic 官
 
 ## 9. 對外文件
 
-- README.md — GitHub 入口（設計理念 + 架構 + Token 影響 + 安裝）
-- Install-forAI.md — AI 代跑安裝指南（V5 GA 對齊）
-- TECH.md — 技術深度文件（架構 / 流程圖 / 子系統，以代碼為真源）
-- _AIDocs/ — 知識庫（Architecture / context-memory-governance / SPEC_ATOM_V5 / SPEC_ATOM_V4 / DevHistory / Failures / ClaudeCodeInternals / Tools）
+- README.md — 人讀入口：是什麼 / 平常在做什麼 / 核心理念 + 與原生 CC 差異（零技術名詞）
+- Install.md — 人讀安裝指南：版控庫網址、在 ~/.claude 貼 prompt 由 AI 代跑、驗證、專案 3 步、啟動檔維護
+- Install-forAI.md — AI 代跑安裝指南：前置需求逐項附替代方案與降級邏輯、合併安裝、驗證、升級、FAQ、網頁介面
+- TECH.md — 技術深度文件（按現況排章：理念 / 差異 / 一回合流程 / 資料層 / 檢索注入 / 寫入積累 / 守門收尾 / 可觀測 / 服務與網頁 / 目錄樹 / 設定 / 版本歷史；以代碼為真源）
+- version.json — 版本標識 + 網頁介面位置
+- _AIDocs/ — 知識庫（Architecture / context-memory-governance / SPEC_ATOM_V5 / SPEC_ATOM_V4 / DevHistory / Research / ClaudeCodeInternals / Tools；失敗家族 atom 在 memory/Failures/）
+- _AIDocs/MultiMachineMemorySync.md — 多機記憶同步（AI 讀）：索引三檔三層防線（全 repo LF → 合併驅動 hook 自動裝 → `--resolve` 備案自動觸發）、config、CLI 契約、stage 方向矩陣、支援的 shell 語法、Windows 約束、失敗模式 SOP、手動最後手段、不在保證範圍、設計取捨、驗證方法
 - _AIDocs/context-memory-governance.md — 上下文與記憶治理設計憲法（context rot / 4 失效模式 / memory governance / CLT；注入·萃取自檢 hook 的對齊標的）
 - _AIDocs/DevHistory/v5-overhaul-2026-05/ — V5 升版完整紀錄
 - LICENSE — GPLv3

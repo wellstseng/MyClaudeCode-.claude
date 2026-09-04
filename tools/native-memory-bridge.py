@@ -32,9 +32,12 @@ MEMORY_MD_LINE = (
 
 
 def _slug_from_cwd(cwd: Path) -> str:
-    # harness slug 規則：磁碟代號小寫 + 路徑分隔轉 '-'（c:\Users\x\.claude → c--Users-x--claude）
-    s = str(cwd).replace(":", "").replace("\\", "-").replace("/", "-")
-    return s[0].lower() + s[1:] if s else s
+    # harness slug 規則：每個非英數字元各轉一個 '-'（不合併）、磁碟代號小寫
+    # c:\Users\x\.claude → c--Users-x--claude（":" 與 "\" 各一個 '-'，"." 也是 '-'）
+    import re
+    # 全小寫：對拍 hooks/wg_core.cwd_to_project_slug（Windows 不分大小寫掩蓋了差異，
+    # 但兩套規則並存會在大小寫敏感檔案系統分岔出第二棵樹）
+    return re.sub(r"[^A-Za-z0-9]", "-", str(cwd)).lower()
 
 
 def _core_atoms() -> list[dict]:
@@ -86,10 +89,10 @@ def sync(native_mem: Path, atoms: list[dict], dry_run: bool = False,
         # 該 dir 竟是 atom 索引 dir（不該發生）——寫入會加劇撞名，拒絕
         return {"written": False, "reason": "目標 MEMORY.md 含 atom 索引表頭，拒寫（撞名防護）"}
     if not dry_run:
-        bridge.write_text(content, encoding="utf-8")
+        bridge.write_text(content, encoding="utf-8", newline="\n")
         if need_line:
             new = (old.rstrip("\n") + "\n" if old.strip() else "") + MEMORY_MD_LINE + "\n"
-            mem_md.write_text(new, encoding="utf-8")
+            mem_md.write_text(new, encoding="utf-8", newline="\n")
     return {
         "written": not dry_run,
         "bridge": str(bridge),
@@ -105,7 +108,9 @@ def main() -> int:
     ap.add_argument("--create", action="store_true",
                     help="目標原生目錄不存在時允許建立（首次橋接用）")
     args = ap.parse_args()
-    slug = args.slug or _slug_from_cwd(Path.cwd())
+    # 預設鏡像到 ~/.claude 自己的原生 memory 目錄（核心 atom 屬 ~/.claude 知識），
+    # 不依呼叫者 cwd——由 MCP / sync-memory-index 子程序呼叫時 cwd 常是外部專案。
+    slug = args.slug or _slug_from_cwd(CLAUDE_DIR)
     native_mem = CLAUDE_DIR / "projects" / slug / "memory"
     result = sync(native_mem, _core_atoms(), dry_run=args.dry_run,
                   create=args.create)

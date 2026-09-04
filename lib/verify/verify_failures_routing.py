@@ -2,12 +2,13 @@
 
 不變式：
 1. feedback- 前綴 title → 路由 Failures（既有行為不變）。
-2. 已註冊在 _atom_index.json、path 落 _AIDocs/Failures/ 的非 feedback- atom
-   （cognitive-patterns / memory-pipeline-*）→ 也路由 Failures，append/replace
-   才找得到物理檔（修補前在 memory/ 找不到而失敗，py/js 雙端同病）。
-3. 一般 core atom（decisions 等）→ 不路由。
+2. 已註冊在 _atom_index.json、path 落失敗家族目錄（memory/Failures/ 或舊址
+   _AIDocs/Failures/）的非 feedback- atom（cognitive-patterns）→ 也路由 Failures，
+   append/replace 才找得到物理檔（修補前在 memory/ 找不到而失敗，py/js 雙端同病）。
+3. 一般 core atom（decisions 等）→ 不路由；已住 local 範疇（_AIDocs/_atoms/）的
+   開發面 post-mortem（memory-pipeline-*）→ 不路由（不回搬）。
 
-依賴本 repo 真實 _atom_index.json（Failures 9 atom 為穩定 fixture）。
+依賴本 repo 真實 _atom_index.json（cognitive-patterns 住 memory/Failures/ 為穩定 fixture）。
 """
 
 from __future__ import annotations
@@ -27,9 +28,30 @@ def test_feedback_prefix_routes():
 
 
 def test_registered_failures_stem_routes():
-    # 非 feedback- 前綴但物理在 Failures 的兩顆既有 atom
-    assert is_failures_routed_title("memory-pipeline-silent-failure-2026-05") is True
+    # 非 feedback- 前綴但物理在 memory/Failures/ 的既有 atom → 路由
     assert is_failures_routed_title("cognitive-patterns") is True
+    # 開發面 post-mortem 已住 local MemDev（_AIDocs/_atoms/）→ 不路由、不回搬
+    assert is_failures_routed_title("memory-pipeline-silent-failure-2026-05") is False
+
+
+def test_local_feedback_atom_not_reclaimed(tmp_path, monkeypatch):
+    """顯式守衛：feedback- 前綴但 index path 已在 _AIDocs/_atoms/ → 不路由（append 在 local 樹找檔）；
+    index 未註冊的 feedback- 新標題 → 照路由。真實 repo 案例：feedback-memory-system-doc-sync 住 MemDev。"""
+    from lib import atom_locations as aloc
+    import json
+    assert is_failures_routed_title("feedback-memory-system-doc-sync") is False
+    mem = tmp_path / "memory"
+    mem.mkdir()
+    (mem / "_atom_index.json").write_text(json.dumps({"version": "1.0", "atoms": [
+        {"name": "feedback-local-one", "path": "_AIDocs/_atoms/MemDev/feedback-local-one.md",
+         "triggers": ["x"], "scope": "global"},
+        {"name": "feedback-core-one", "path": "memory/Failures/工作流/feedback-core-one.md",
+         "triggers": ["x"], "scope": "global"},
+    ]}), encoding="utf-8")
+    monkeypatch.setattr(aloc, "GLOBAL_MEMORY_DIR", mem)
+    assert is_failures_routed_title("feedback-local-one") is False
+    assert is_failures_routed_title("feedback-core-one") is True
+    assert is_failures_routed_title("feedback-never-seen") is True
 
 
 def test_plain_core_atom_not_routed():
