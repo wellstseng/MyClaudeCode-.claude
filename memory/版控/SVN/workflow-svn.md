@@ -31,7 +31,7 @@
 - [固] 二進位檔衝突 → 建議用 TortoiseSVN 或選擇版本
 - [固] Pre-update 必做 `svn status` 檢查本地 .cs 修改
 - [固] 自動化/背景執行 svn update 或 merge 必帶 --non-interactive：stdin 為 null 時遇文字衝突會停在互動提示 (p) postpone… 永久掛死（行程活著、無輸出、工作副本已標 C）。2026-08-13 實踩：背景 update _CHANGELOG.md 卡 >120s，收掉行程 + svn cleanup + 手工解衝突後才續行。--non-interactive 下衝突自動 postpone，事後以 svn resolved 處理
-- [臨] 「衝突不自動解決」的例外：記憶索引三檔（MEMORY.md／_ATOM_INDEX.md／_atom_index.json）——svn update 停在這三檔衝突後，CC 下 `svn commit / ci / resolve` 前 PreToolUse hook 自動跑 `merge-atom-index.py --resolve`（語意三方、寫回、`svn resolve --accept working`），不需要使用者確認；只有 MEMORY.md 表外手寫段兩側同改才留 `<<<<<<<` 標記交人判斷。其他檔的衝突仍走「AI 分析＋使用者確認」。細節 [[記憶索引三檔多機合併必衝突-裝-merge-atom-index-驅動-勿手合]]。
+- [觀] 「衝突不自動解決」的例外：記憶索引三檔（MEMORY.md／_ATOM_INDEX.md／_atom_index.json）——svn update 停在這三檔衝突後，CC 下 `svn commit / ci / resolve` 前 PreToolUse hook 自動跑 `merge-atom-index.py --resolve`（語意三方、寫回、`svn resolve --accept working`），不需要使用者確認；只有 MEMORY.md 表外手寫段兩側同改才留 `<<<<<<<` 標記交人判斷。其他檔的衝突仍走「AI 分析＋使用者確認」。細節 [[記憶索引三檔多機合併必衝突-裝-merge-atom-index-驅動-勿手合]]。
 
 ## 行動
 
