@@ -23,12 +23,12 @@ _TEST_CMD_RE = re.compile(
 )
 
 _FAILURE_PATTERNS = [
-    re.compile(r"^=+.*\b\d+\s+failed", re.MULTILINE),
-    re.compile(r"\b\d+\s+failed[,\s]"),
+    re.compile(r"^=+.*\b[1-9]\d*\s+failed", re.MULTILINE),
+    re.compile(r"\b[1-9]\d*\s+failed[,\s]"),
     re.compile(r"^FAILED\s", re.MULTILINE),
     re.compile(r"\bSyntaxError\b"),
     re.compile(r"\berror\s+TS\d+:"),
-    re.compile(r"Tests:\s+\d+\s+failed"),
+    re.compile(r"Tests:\s+[1-9]\d*\s+failed"),
     re.compile(r"^---\s+FAIL:", re.MULTILINE),
     re.compile(r"test result:\s+FAILED"),
 ]

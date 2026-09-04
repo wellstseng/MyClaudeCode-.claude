@@ -156,3 +156,9 @@ tasks/
 
 # codex-bridge runtime state
 workflow/codex-bridge/
+
+# ─── merge union (mac line) ───
+memory/_meta/atom_io_audit.jsonl
+.last-update-result.json
+channels/
+paste-cache/

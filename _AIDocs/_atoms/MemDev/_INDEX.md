@@ -38,6 +38,8 @@
 | 自動萃取層淨值審查-調整式拔除-2026-07 | 自動萃取層淨值審查-調整式拔除-2026-07 |
 | 衝突偵測-block-資格閘-複驗一致-分區感知-待審出路 | 衝突偵測-block-資格閘-複驗一致-分區感知-待審出路 |
 | 跨session協調-衝突預警機制與cc原生現況 | 跨session協調-衝突預警機制與CC原生現況 |
+| dedup-stage-牢籠去蕪設計-信任模型隔離與substring-only首版 | dedup-stage-牢籠去蕪設計-信任模型隔離與substring-only首版 |
+| post-mortem-write-raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用 | post-mortem-write_raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用 |
 
 ## 子層
 

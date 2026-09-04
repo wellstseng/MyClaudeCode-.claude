@@ -138,9 +138,12 @@
       "path": "_AIDocs/_atoms/Tools/gdoc-harvester.md",
       "triggers": [
         "harvester",
-        "收割",
         "Google Docs",
-        "Google Sheets"
+        "Sheets",
+        "收割",
+        "Playwright",
+        "cookie",
+        "export"
       ],
       "scope": "global"
     },
@@ -199,9 +202,13 @@
       "path": "memory/workflow-icld.md",
       "triggers": [
         "ICLD",
-        "Sprint",
         "閉環",
-        "功能拆解"
+        "Sprint",
+        "功能拆解",
+        "開發計畫",
+        "大型新功能",
+        "新系統規劃",
+        "規格書"
       ],
       "scope": "global"
     },
@@ -330,15 +337,7 @@
         "改 server.js",
         "memory system",
         "文件同步",
-        "doc sync",
-        "寫入記憶",
-        "atom 設計",
-        "atom 顆粒",
-        "指標型",
-        "GUID硬編碼",
-        "環境相依",
-        "gitignore",
-        "memory path"
+        "doc sync"
       ],
       "scope": "global"
     },
@@ -553,10 +552,17 @@
       "name": "goal-driven-verify-loopkarpathy-吸收",
       "path": "memory/goal-driven-verify-loopkarpathy-吸收.md",
       "triggers": [
+        "寫程式",
+        "寫扣",
+        "實作",
+        "refactor",
+        "重構",
+        "fix bug",
+        "修 bug",
+        "add validation",
         "成功標準",
-        "驗收",
-        "verify loop",
-        "goal-driven"
+        "verify",
+        "驗收"
       ],
       "scope": "global"
     },
@@ -648,9 +654,14 @@
       "name": "自己flag的維護動作直接做完不要反問",
       "path": "memory/自己flag的維護動作直接做完不要反問.md",
       "triggers": [
+        "更新atom",
+        "維護",
+        "同步",
         "反問",
         "要不要我",
         "該做就做",
+        "推進",
+        "收尾",
         "follow-through"
       ],
       "scope": "global"
@@ -726,11 +737,7 @@
         "anchoring",
         "context poisoning",
         "錯誤發展",
-        "錯誤認知",
-        "記憶汙染",
-        "知識汙染",
-        "上下文腐化",
-        "selective forgetting"
+        "錯誤認知"
       ],
       "scope": "global"
     },
@@ -816,12 +823,7 @@
         "WriteResult",
         "腳本寫 atom",
         "funnel 寫入",
-        "一次性整理腳本",
-        "代理訊號",
-        "fail-soft",
-        "未檢回傳值",
-        "批次寫入驗收",
-        "post-mortem"
+        "一次性整理腳本"
       ],
       "scope": "global"
     },
@@ -2236,6 +2238,175 @@
         "1:1",
         "路徑不要動",
         "全部維持"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "catclaw-agent-routing-boundaries",
+      "path": "memory/catclaw-agent-routing-boundaries.md",
+      "triggers": [
+        "catclaw",
+        "project-agent",
+        "channel 綁定",
+        "boundProject",
+        "cron subagent",
+        "atom scope",
+        "掛載"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "dedup-stage-牢籠去蕪設計-信任模型隔離與substring-only首版",
+      "path": "_AIDocs/_atoms/MemDev/dedup-stage-牢籠去蕪設計-信任模型隔離與substring-only首版.md",
+      "triggers": [
+        "dedup",
+        "去蕪",
+        "DedupStage",
+        "draft",
+        "草稿",
+        "_drafts",
+        "截斷",
+        "truncate",
+        "soft-delete",
+        "牢籠",
+        "taxonomy",
+        "近重複",
+        "sweep"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "feedback-memory-structure",
+      "path": "_AIDocs/Failures/feedback-memory-structure.md",
+      "triggers": [
+        "寫入記憶",
+        "atom 設計",
+        "atom 顆粒",
+        "指標型",
+        "scope 敏感",
+        "GUID硬編碼",
+        "環境相依",
+        "gitignore",
+        "git rm",
+        "memory path",
+        "_staging"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "mac-缺-python-用-wrapper-指向-python3",
+      "path": "memory/mac-缺-python-用-wrapper-指向-python3.md",
+      "triggers": [
+        "python",
+        "python3",
+        "spawn python ENOENT",
+        "atom_write",
+        "funnel",
+        "vector service",
+        "xcode-select",
+        "AtomFunnelBlock",
+        "command not found python"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "merge-時-sot-索引檔-ours-策略誤清-catalog-post-mortem",
+      "path": "memory/merge-時-sot-索引檔-ours-策略誤清-catalog-post-mortem.md",
+      "triggers": [
+        "catalog 誤清",
+        "_INDEX.md 被刪",
+        "index 磁碟不一致",
+        "SoT 衝突解",
+        "_atom_index.json merge",
+        "sync-memory-index",
+        "atoms 隱形",
+        "衝突檔 ours",
+        "衍生索引",
+        "post-mortem"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "post-mortem-write-raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用",
+      "path": "_AIDocs/_atoms/MemDev/post-mortem-write-raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用.md",
+      "triggers": [
+        "write_raw",
+        "atom_io",
+        "VALID_SOURCES",
+        "WriteResult",
+        "ok=False",
+        "靜默失敗",
+        "未檢回傳值",
+        "funnel",
+        "fail-soft",
+        "invalid source",
+        "代理訊號",
+        "post-mortem",
+        "批次寫入驗收",
+        "sync-atom-index"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "upstream-merge-mac-適配工作流",
+      "path": "memory/upstream-merge-mac-適配工作流.md",
+      "triggers": [
+        "upstream merge",
+        "整併",
+        "fork 同步",
+        "merge upstream",
+        "衝突解",
+        "checkout --ours",
+        "settings 接線",
+        "python 3.9",
+        "write_text newline",
+        "測資可移植"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "品質完整性判定須讀完整內容-勿從截斷採樣斷言",
+      "path": "memory/品質完整性判定須讀完整內容-勿從截斷採樣斷言.md",
+      "triggers": [
+        "斷言品質",
+        "沒垃圾",
+        "沒讀完整",
+        "excerpt",
+        "截斷",
+        "採樣",
+        "完整內容",
+        "品質判定",
+        "完整性",
+        "重複偵測",
+        "去蕪",
+        "從根源驗證",
+        "post-mortem",
+        "盲點"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "記憶汙染與上下文腐化-注入萃取自檢",
+      "path": "memory/記憶汙染與上下文腐化-注入萃取自檢.md",
+      "triggers": [
+        "上下文腐化",
+        "context rot",
+        "記憶汙染",
+        "知識汙染",
+        "累積知識",
+        "焦點模糊",
+        "回應偏門",
+        "越做越小",
+        "多session",
+        "接續",
+        "大型專案",
+        "注入",
+        "萃取",
+        "context engineering",
+        "memory governance",
+        "selective forgetting",
+        "上下文工程",
+        "偏離目標"
       ],
       "scope": "global"
     }

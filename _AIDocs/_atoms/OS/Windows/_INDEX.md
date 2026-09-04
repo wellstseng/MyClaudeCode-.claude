@@ -6,7 +6,7 @@
 
 | Atom | 說明 |
 |------|------|
-| windows-cc-hook-閃-console-pythonw-修-layer-1勿只補巢狀-creationflags | Windows CC hook 閃 console — pythonw 修 layer-1，勿只補巢狀 creationflags |
+| windows-cc-hook-閃-console-pythonw-修-layer-1勿只補巢狀-creationflags | windows-cc-hook-閃-console-pythonw-修-layer-1勿只補巢狀-creationflags |
 
 ## 子層
 
