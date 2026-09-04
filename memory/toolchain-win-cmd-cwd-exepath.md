@@ -3,7 +3,7 @@
 - Scope: global
 - Author: wellstseng
 - Confidence: [臨]
-- Trigger: NoDefaultCurrentDirectoryInExePath, not recognized as an internal or external command, cmd 找不到 bat, msvcbuild, bare name 執行
+- Trigger: NoDefaultCurrentDirectory, not recognized as an internal, cmd 找不到 bat, msvcbuild, bare name 執行
 - Created-at: 2026-06-12
 
 - Related: vscode-csdevkit-鎖目錄擋-git-mv-逐子項繞過

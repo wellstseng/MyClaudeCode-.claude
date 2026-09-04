@@ -30,6 +30,7 @@
 - [固] 生成檔衝突（Proto/Binding/Design）→ 建議接受遠端版本後重新生成
 - [固] 二進位檔衝突 → 建議用 TortoiseSVN 或選擇版本
 - [固] Pre-update 必做 `svn status` 檢查本地 .cs 修改
+- [固] 自動化/背景執行 svn update 或 merge 必帶 --non-interactive：stdin 為 null 時遇文字衝突會停在互動提示 (p) postpone… 永久掛死（行程活著、無輸出、工作副本已標 C）。2026-08-13 實踩：背景 update _CHANGELOG.md 卡 >120s，收掉行程 + svn cleanup + 手工解衝突後才續行。--non-interactive 下衝突自動 postpone，事後以 svn resolved 處理
 
 ## 行動
 

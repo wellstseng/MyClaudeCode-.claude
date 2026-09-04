@@ -6,6 +6,8 @@
 - Trigger: offline build, nuget-offline, RID restore, runtime pack, NU1101, SelfContained, dotnet publish -r, fetch-nuget, 離線建置
 - Created-at: 2026-07-02
 
+- Related: dotnet-major-版本與-vs-版本硬綁定-sln檔頭決定開哪版
+
 ## 知識
 
 - [臨] SDK 10（10.0.300 實測）下 `dotnet restore -r <RID>` 強制把 runtime pack（Microsoft.NETCore.App.Runtime.{rid}，連 WindowsDesktop/AspNetCore 家族也拉）納入 restore 圖，`/p:SelfContained=false` 擋不掉；`/p:DisableTransitiveFrameworkReferenceDownloads=true` 只能去掉 WindowsDesktop/AspNetCore 兩家族，NETCore.App.Runtime 仍必拉。影響：離線 NuGet 源（titan/orbit nuget-offline 模式）若排除 runtime pack，neutral build/test 離線 OK 但 RID restore/publish 必 NU1101

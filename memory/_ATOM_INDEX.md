@@ -13,14 +13,14 @@
 | feedback-tooling-reliability | _AIDocs/Failures/feedback-tooling-reliability.md | codex, codex companion, codex CLI, gpt-5, bg subprocess, DEVNULL, ready flag, subprocess Popen, MCP, 安裝 MCP, 安裝 skill, silent failure, probe burst, 規則唯一來源 | global |
 | feedback-rigor-standards | _AIDocs/Failures/feedback-rigor-standards.md | 縝密, 漏掉, 沒看到, max thinking, high thinking, 外包思考, 規範, rigor, 前例, precedent, 既有 drift | global |
 | gdoc-harvester | _AIDocs/_atoms/Tools/gdoc-harvester.md | harvester, 收割, Google Docs, Google Sheets | global |
-| preferences | memory/preferences.md | 偏好, 執P, 執驗上P, 上GIT | global |
+| preferences | memory/preferences.md | 偏好, 風格, 習慣, 語言, 回應, 執P, 執驗上P, 上GIT, Obsidian | global |
 | toolchain-ollama | memory/toolchain-ollama.md | ollama, dual-backend, rdchat, qwen3, embedding, 萃取品質, thinking, Open WebUI | global |
 | toolchain | memory/toolchain.md | 工具鏈, 環境設定, MCPControl, MCP新增, npm全域, 螢幕截圖, Excel MCP, LanceDB, MSYS2, cp950, PowerShell截圖, 向量服務 | global |
 | workflow-icld | memory/workflow-icld.md | ICLD, Sprint, 閉環, 功能拆解 | global |
 | workflow-rules | memory/workflow-rules.md | 工作流程, 大型任務, 分階段, SOP, 任務拆分, 上版, GIT, Phase | global |
-| workflow-svn | memory/workflow-svn.md | svn, svn-update, TortoiseSVN | global |
+| workflow-svn | memory/workflow-svn.md | svn, svn-update, TortoiseSVN, 衝突, conflict | global |
 | memory-pipeline-silent-failure-2026-05 | _AIDocs/Failures/memory-pipeline-silent-failure-2026-05.md | memory-review, memory-health, confirmations, episodic, 晉升, 自我迭代, 衰減掃描, 覆轍偵測 | global |
-| cognitive-patterns | _AIDocs/Failures/cognitive-patterns.md | 過度工程, 代理指標, proxy metric, AI看不懂, AI在打轉, 品質回饋, 自我合理化, 編造規則, 籠統話術, 訂規保留, 設計慣例, 截斷, 採樣, 完整內容, 品質判定, excerpt | global |
+| cognitive-patterns | _AIDocs/Failures/cognitive-patterns.md | 過度工程, 代理指標, proxy metric, AI看不懂, AI在打轉, 品質回饋, 自我合理化, 編造規則, 籠統話術, 訂規保留, 設計慣例 | global |
 | feedback-atom-write-initial-confidence | _AIDocs/Failures/feedback-atom-write-initial-confidence.md | atom_write, 初次寫, 信心度, [固], [臨], [觀], confidence, knowledge 行, 隨手寫 [固] | global |
 | workflow-parallel-agents | memory/workflow-parallel-agents.md | 多 agent, 平行 agent, sub-agent, 並行, 並行加速, 拆 agent, 多開 agent, 分頭, 多檔調查, 批量重構, 全面審視, 跨檔比較, parallel agents | global |
 | atom-table-support | _AIDocs/_atoms/MemDev/atom-table-support.md | atom_write, 表格, table, markdown 表格, code fence, 程式碼 fence, knowledge block, block 渲染, dogfood | global |
@@ -53,7 +53,7 @@
 | escalation-hook-在-edit-count-proxy-上-false-fire-的辨識無真實失敗迴圈時不盲從不編造 | memory/escalation-hook-在-edit-count-proxy-上-false-fire-的辨識無真實失敗迴圈時不盲從不編造.md | fix-escalation, DeepPostMortem, deep-post-mortem, 反覆重試, retry, 同檔多次修改, proxy, false positive, 偵測到高effort失敗, post-mortem 要求, 偵測到重複修正, escalation hook | global |
 | write-raw-對未列舉-source-靜默回-okfalse-不-raise呼叫端必檢查回傳值 | _AIDocs/_atoms/MemDev/write-raw-對未列舉-source-靜默回-okfalse-不-raise呼叫端必檢查回傳值.md | write_raw, atom_io, VALID_SOURCES, source 白名單, 靜默失敗, ok=False, WriteResult, 腳本寫 atom, funnel 寫入, 一次性整理腳本, 代理訊號, fail-soft, 未檢回傳值, 批次寫入驗收, post-mortem | global |
 | atom-move-v5-sot-correct-化與半遷移工具辨識 | _AIDocs/_atoms/MemDev/atom-move-v5-sot-correct-化與半遷移工具辨識.md | atom-move, atom 搬移, 資料夾搬移, 記憶系統工具, SoT 損壞, 半遷移工具, sidecar 搬移 | global |
-| scope-shared-無主題子夾路由-專案靠-project-hooks-sweep-分層 | _AIDocs/_atoms/MemDev/scope-shared-無主題子夾路由-專案靠-project-hooks-sweep-分層.md | scope=shared, 主題子夾, 專案 atom 分層, _resolve_target, project_hooks, classify-project-atoms, _unclassified, shared 扁平落根, project delegate hook, 專案記憶分類 | global |
+| scope-shared-無主題子夾路由-專案靠-project-hooks-sweep-分層 | _AIDocs/_atoms/MemDev/scope-shared-無主題子夾路由-專案靠-project-hooks-sweep-分層.md | scope=shared, 主題子夾, 專案 atom 分層, _resolve_target, project_hooks, classify-project-atoms, _unclassified, shared 扁平落根, project delegate hook, 專案記憶分類, atom_write append 失敗, Atom not found, locate_existing_atom, 落點 vs 定位, subdir atom, subdir, scope 沿用, atom-move scope, memory/projects 分區, trigger 長度 | global |
 | jarvis-企業-ai-平台發想文件指標 | _AIDocs/_atoms/Vision/jarvis-企業-ai-平台發想文件指標.md | JARVIS, 企業平台, AI 協作平台, 編排核心, 願景, 前瞻設計, vision-doc, 平台發想, 記憶系統當核心缺什麼 | global |
 | 自動萃取層淨值審查-調整式拔除-2026-07 | _AIDocs/_atoms/MemDev/自動萃取層淨值審查-調整式拔除-2026-07.md | auto-capture, DedupStage, 淨值審查, 調整式拔除, 草稿, _drafts, 注入縮量, usefulness, turn-global, Wilson, write-only, 記憶效益 | global |
 | feedback-live-檔與記憶不留版本操作脈絡歷史歸專門檔 | _AIDocs/Failures/feedback-live-檔與記憶不留版本操作脈絡歷史歸專門檔.md | 版本殘留, 版本標記, V2.x, v[X.X], V5 Pxx, Phase, Sprint, Wave, 里程碑, milestone, stderr 前綴, spec 錨, 執行流程字串, 變更叙事, 自我更正鏈, 歷史脈絡, 方案代號, 操作日期, commit hash, CHANGELOG, timeless, 註解版本, atom 過時 claim, docstring 版本 | global |
@@ -87,7 +87,7 @@
 | toolchain-batch-cmd-crlf-encoding | memory/toolchain-batch-cmd-crlf-encoding.md | batch, bat, cmd, 批次檔, 閃退, 亂碼, CRLF, LF, 換行, Write工具, adb push, chcp, BOM, 編碼 | global |
 | toolchain-ps51-getcontent-utf8-file-corruption | memory/toolchain-ps51-getcontent-utf8-file-corruption.md | Get-Content, Set-Content, UTF-8, 中文檔案, PowerShell 改檔, 編碼損毀, hot reload 改檔 | global |
 | toolchain-svn-powershell-中文log編碼 | memory/toolchain-svn-powershell-中文log編碼.md | svn, svn commit, 中文log, 中文訊息, commit message, 亂碼, -m, -F, git-bash, MSYS, revprop, 中文檔名, 上傳SVN, PowerShell svn | global |
-| toolchain-win-cmd-cwd-exepath | memory/toolchain-win-cmd-cwd-exepath.md | NoDefaultCurrentDirectoryInExePath, not recognized as an internal or external command, cmd 找不到 bat, msvcbuild, bare name 執行 | global |
+| toolchain-win-cmd-cwd-exepath | memory/toolchain-win-cmd-cwd-exepath.md | NoDefaultCurrentDirectory, not recognized as an internal, cmd 找不到 bat, msvcbuild, bare name 執行 | global |
 | unity-mcp-自動化工具鏈 | memory/unity-mcp-自動化工具鏈.md | unity-mcp, Unity重編, Unity recompile, refresh_unity, AssetDatabase.Refresh, Unity自動化, batchmode, Unity MCP | global |
 | wells-workflow-brake-mechanism | memory/wells-workflow-brake-mechanism.md | 工作流洞見, 煞車, 重試, retry, 越改越爛, hook | global |
 | wells-workflow-copilot-not-driver | memory/wells-workflow-copilot-not-driver.md | 工作流洞見, 副駕, copilot, 人機協作, 決策權 | global |
@@ -119,3 +119,20 @@
 | 禁語-hook-不開引用豁免誤報噪音-vs-契約破洞不對稱 | _AIDocs/_atoms/MemDev/禁語-hook-不開引用豁免誤報噪音-vs-契約破洞不對稱.md | 禁語, 退避語, evasion hook, wg_evasion, 誤報, false positive, 引用豁免, detect_evasion, forbidden-phrases | global |
 | 衝突偵測-block-資格閘-複驗一致-分區感知-待審出路 | _AIDocs/_atoms/MemDev/衝突偵測-block-資格閘-複驗一致-分區感知-待審出路.md | conflict detector, 衝突偵測, CONTRADICT, write-check, _pending_review, 待審, conflict-review, /conflict pending, 跨專案誤報, 偵測不穩定, skip_conflict_check, 分區感知 | global |
 | 跨session協調-衝突預警機制與cc原生現況 | _AIDocs/_atoms/MemDev/跨session協調-衝突預警機制與cc原生現況.md | 跨 session 溝通, session 協調, 衝突預警, CoordWarn, wg_coordination, session_message, 收件匣, coordination, 多 session 併行, session 互踩, add -A 預警, late-collision, Agent Teams | global |
+| titan-c-port-是-titan-行為的現成權威來源勿從零重寫 | memory/titan-c-port-是-titan-行為的現成權威來源勿從零重寫.md | titan 移植, C# port, goo_log, log.lua, LogSchema, GooLogBridge, titan C 原始碼, 41 符號, Titan.Log, Titan.Lua | global |
+| sqlx-讀取端三個踩點字串定序tinyint-當-booldesc-的-enum | memory/sqlx-讀取端三個踩點字串定序tinyint-當-booldesc-的-enum.md | Sqlx, MysqlxClient, unknown type: Bytes, utf8mb3, utf8mb4_0900_as_cs, collation, TINYINT bool, DESC, SHOW INDEX, X protocol, MysqlxUtils.Column | global |
+| titan-c-移植鐵則-優先用csharp設施-架構為師細節可精進 | memory/titan-c-移植鐵則-優先用csharp設施-架構為師細節可精進.md | titan 移植, TitanC, C 移植, goo_log, log.c, 移植鐵則, C# 設施, port, 照抄, 簡化 | global |
+| feedback-提議機制時要標示成熟度-風險分析不等於現在就建 | _AIDocs/Failures/feedback-提議機制時要標示成熟度-風險分析不等於現在就建.md | 做太多, 還不需要, YAGNI, 過度工程, 退掉, 提議機制, 風險分析, 預先優化, 限流器, 防禦性機制 | global |
+| feedback-回答先給重點-結論一句話-細節按需展開 | _AIDocs/Failures/feedback-回答先給重點-結論一句話-細節按需展開.md | 回答, 回應, 講重點, 簡單明瞭, 太長, 講太多, 冗長, 報告, 說明, 結論, TLDR | global |
+| feedback-程式註解一律白話簡單明瞭 | _AIDocs/Failures/feedback-程式註解一律白話簡單明瞭.md | 註解, comment, 程式註解, 白話, doc comment, summary 註解, 檔頭註解, 註解風格 | global |
+| wells-design-測試專用成員走internal繞道-runtime-api-乾淨 | memory/wells-design-測試專用成員走internal繞道-runtime-api-乾淨.md | internal, InternalsVisibleTo, 測試專用, public 成員, runtime 乾淨, API 表面, 監控屬性, 測試探針 | global |
+| dotnet-major-版本與-vs-版本硬綁定-sln檔頭決定開哪版 | memory/dotnet-major-版本與-vs-版本硬綁定-sln檔頭決定開哪版.md | NETSDK1209, net10, .NET 10, VS 2026, Visual Studio 18, TFM 升級, LTS 升級, sln 檔頭, VisualStudioVersion, IDE 建不起來, CLI 能建 VS 不能建 | global |
+| winforms-關閉階段-async-續體不執行-formclosing-殺process必須同步 | memory/winforms-關閉階段-async-續體不執行-formclosing-殺process必須同步.md | FormClosing, ApplicationExit, fire-and-forget, StopAsync, process 殘留, 關閉不殺, WinForms 關閉, await 續體, Kill, ServerLauncher | global |
+| toolchain-http-server-無charset-中文頁亂碼-量測假訊號 | memory/toolchain-http-server-無charset-中文頁亂碼-量測假訊號.md | python -m http.server, charset, 亂碼, mojibake, 本機預覽, SVG 驗證, getBBox, meta charset, latin-1 | global |
+| feedback-註解一律白話-不堆術語 | _AIDocs/Failures/feedback-註解一律白話-不堆術語.md | 註解, comment, 白話, 術語, summary 註解, 程式註解, doc comment | global |
+| hotfix-ilruntime-traps | memory/hotfix-ilruntime-traps.md | ILRuntime, hotfix #if, UNITY_EDITOR, DefineConstants, isEditor, 預處理指令, hotfix旗標, BRM_ILR_Hotfix | global |
+| luajit-ffi-函式指標型別三種等價寫法-ctype相等比較不可靠 | memory/luajit-ffi-函式指標型別三種等價寫法-ctype相等比較不可靠.md | luajit, ffi, cdef, 函式指標, function pointer, typedef, ffi.cast, ffi.typeof, ctype, goo.cdef, titangoo | global |
+| luajit-cdef-typedef重複宣告沉默忽略-只有具名struct-tag會炸 | memory/luajit-cdef-typedef重複宣告沉默忽略-只有具名struct-tag會炸.md | ffi.cdef, cdef, typedef, redefine, pcall ffi.cdef, luajit, 熱更 re-require, goo.bind, fp_typedef | global |
+| mongodb-replacement-upsert-不併filter等值鍵 | memory/mongodb-replacement-upsert-不併filter等值鍵.md | mongodb, upsert, ReplaceOne, replacement, filter, nUpserted, 查無, UpdateOne, $set, mongo 寫入消失 | global |
+| lua-弱表探測字串無效-字串是值不是物件-驗回收用堆積量測 | memory/lua-弱表探測字串無效-字串是值不是物件-驗回收用堆積量測.md | weak table, 弱表, __mode, collectgarbage, GC 驗證, 記憶體洩漏, ffi.string 回收, pb.decode GC | global |
+| feedback-移植轉寫類任務-忠實1比1-勿擅自對齊他版權威或加料 | _AIDocs/Failures/feedback-移植轉寫類任務-忠實1比1-勿擅自對齊他版權威或加料.md | 移植, 改成C#, 轉寫, port, rewrite, 翻譯腳本, python 轉 C#, 忠實移植, 1:1, 路徑不要動, 全部維持 | global |

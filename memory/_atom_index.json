@@ -1447,8 +1447,8 @@
       "name": "toolchain-win-cmd-cwd-exepath",
       "path": "memory/toolchain-win-cmd-cwd-exepath.md",
       "triggers": [
-        "NoDefaultCurrentDirectoryInExePath",
-        "not recognized as an internal or external command",
+        "NoDefaultCurrentDirectory",
+        "not recognized as an internal",
         "cmd 找不到 bat",
         "msvcbuild",
         "bare name 執行"
@@ -1955,6 +1955,287 @@
         "add -A 預警",
         "late-collision",
         "Agent Teams"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "titan-c-port-是-titan-行為的現成權威來源勿從零重寫",
+      "path": "memory/titan-c-port-是-titan-行為的現成權威來源勿從零重寫.md",
+      "triggers": [
+        "titan 移植",
+        "C# port",
+        "goo_log",
+        "log.lua",
+        "LogSchema",
+        "GooLogBridge",
+        "titan C 原始碼",
+        "41 符號",
+        "Titan.Log",
+        "Titan.Lua"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "sqlx-讀取端三個踩點字串定序tinyint-當-booldesc-的-enum",
+      "path": "memory/sqlx-讀取端三個踩點字串定序tinyint-當-booldesc-的-enum.md",
+      "triggers": [
+        "Sqlx",
+        "MysqlxClient",
+        "unknown type: Bytes",
+        "utf8mb3",
+        "utf8mb4_0900_as_cs",
+        "collation",
+        "TINYINT bool",
+        "DESC",
+        "SHOW INDEX",
+        "X protocol",
+        "MysqlxUtils.Column"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "titan-c-移植鐵則-優先用csharp設施-架構為師細節可精進",
+      "path": "memory/titan-c-移植鐵則-優先用csharp設施-架構為師細節可精進.md",
+      "triggers": [
+        "titan 移植",
+        "TitanC",
+        "C 移植",
+        "goo_log",
+        "log.c",
+        "移植鐵則",
+        "C# 設施",
+        "port",
+        "照抄",
+        "簡化"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "feedback-提議機制時要標示成熟度-風險分析不等於現在就建",
+      "path": "_AIDocs/Failures/feedback-提議機制時要標示成熟度-風險分析不等於現在就建.md",
+      "triggers": [
+        "做太多",
+        "還不需要",
+        "YAGNI",
+        "過度工程",
+        "退掉",
+        "提議機制",
+        "風險分析",
+        "預先優化",
+        "限流器",
+        "防禦性機制"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "feedback-回答先給重點-結論一句話-細節按需展開",
+      "path": "_AIDocs/Failures/feedback-回答先給重點-結論一句話-細節按需展開.md",
+      "triggers": [
+        "回答",
+        "回應",
+        "講重點",
+        "簡單明瞭",
+        "太長",
+        "講太多",
+        "冗長",
+        "報告",
+        "說明",
+        "結論",
+        "TLDR"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "feedback-程式註解一律白話簡單明瞭",
+      "path": "_AIDocs/Failures/feedback-程式註解一律白話簡單明瞭.md",
+      "triggers": [
+        "註解",
+        "comment",
+        "程式註解",
+        "白話",
+        "doc comment",
+        "summary 註解",
+        "檔頭註解",
+        "註解風格"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "wells-design-測試專用成員走internal繞道-runtime-api-乾淨",
+      "path": "memory/wells-design-測試專用成員走internal繞道-runtime-api-乾淨.md",
+      "triggers": [
+        "internal",
+        "InternalsVisibleTo",
+        "測試專用",
+        "public 成員",
+        "runtime 乾淨",
+        "API 表面",
+        "監控屬性",
+        "測試探針"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "dotnet-major-版本與-vs-版本硬綁定-sln檔頭決定開哪版",
+      "path": "memory/dotnet-major-版本與-vs-版本硬綁定-sln檔頭決定開哪版.md",
+      "triggers": [
+        "NETSDK1209",
+        "net10",
+        ".NET 10",
+        "VS 2026",
+        "Visual Studio 18",
+        "TFM 升級",
+        "LTS 升級",
+        "sln 檔頭",
+        "VisualStudioVersion",
+        "IDE 建不起來",
+        "CLI 能建 VS 不能建"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "winforms-關閉階段-async-續體不執行-formclosing-殺process必須同步",
+      "path": "memory/winforms-關閉階段-async-續體不執行-formclosing-殺process必須同步.md",
+      "triggers": [
+        "FormClosing",
+        "ApplicationExit",
+        "fire-and-forget",
+        "StopAsync",
+        "process 殘留",
+        "關閉不殺",
+        "WinForms 關閉",
+        "await 續體",
+        "Kill",
+        "ServerLauncher"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "toolchain-http-server-無charset-中文頁亂碼-量測假訊號",
+      "path": "memory/toolchain-http-server-無charset-中文頁亂碼-量測假訊號.md",
+      "triggers": [
+        "python -m http.server",
+        "charset",
+        "亂碼",
+        "mojibake",
+        "本機預覽",
+        "SVG 驗證",
+        "getBBox",
+        "meta charset",
+        "latin-1"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "feedback-註解一律白話-不堆術語",
+      "path": "_AIDocs/Failures/feedback-註解一律白話-不堆術語.md",
+      "triggers": [
+        "註解",
+        "comment",
+        "白話",
+        "術語",
+        "summary 註解",
+        "程式註解",
+        "doc comment"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "hotfix-ilruntime-traps",
+      "path": "memory/hotfix-ilruntime-traps.md",
+      "triggers": [
+        "ILRuntime",
+        "hotfix #if",
+        "UNITY_EDITOR",
+        "DefineConstants",
+        "isEditor",
+        "預處理指令",
+        "hotfix旗標",
+        "BRM_ILR_Hotfix"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "luajit-ffi-函式指標型別三種等價寫法-ctype相等比較不可靠",
+      "path": "memory/luajit-ffi-函式指標型別三種等價寫法-ctype相等比較不可靠.md",
+      "triggers": [
+        "luajit",
+        "ffi",
+        "cdef",
+        "函式指標",
+        "function pointer",
+        "typedef",
+        "ffi.cast",
+        "ffi.typeof",
+        "ctype",
+        "goo.cdef",
+        "titangoo"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "luajit-cdef-typedef重複宣告沉默忽略-只有具名struct-tag會炸",
+      "path": "memory/luajit-cdef-typedef重複宣告沉默忽略-只有具名struct-tag會炸.md",
+      "triggers": [
+        "ffi.cdef",
+        "cdef",
+        "typedef",
+        "redefine",
+        "pcall ffi.cdef",
+        "luajit",
+        "熱更 re-require",
+        "goo.bind",
+        "fp_typedef"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "mongodb-replacement-upsert-不併filter等值鍵",
+      "path": "memory/mongodb-replacement-upsert-不併filter等值鍵.md",
+      "triggers": [
+        "mongodb",
+        "upsert",
+        "ReplaceOne",
+        "replacement",
+        "filter",
+        "nUpserted",
+        "查無",
+        "UpdateOne",
+        "$set",
+        "mongo 寫入消失"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "lua-弱表探測字串無效-字串是值不是物件-驗回收用堆積量測",
+      "path": "memory/lua-弱表探測字串無效-字串是值不是物件-驗回收用堆積量測.md",
+      "triggers": [
+        "weak table",
+        "弱表",
+        "__mode",
+        "collectgarbage",
+        "GC 驗證",
+        "記憶體洩漏",
+        "ffi.string 回收",
+        "pb.decode GC"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "feedback-移植轉寫類任務-忠實1比1-勿擅自對齊他版權威或加料",
+      "path": "_AIDocs/Failures/feedback-移植轉寫類任務-忠實1比1-勿擅自對齊他版權威或加料.md",
+      "triggers": [
+        "移植",
+        "改成C#",
+        "轉寫",
+        "port",
+        "rewrite",
+        "翻譯腳本",
+        "python 轉 C#",
+        "忠實移植",
+        "1:1",
+        "路徑不要動",
+        "全部維持"
       ],
       "scope": "global"
     }

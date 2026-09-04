@@ -5,7 +5,7 @@
 - Trigger: 工具鏈, 環境設定, MCPControl, MCP新增, npm全域, 螢幕截圖, Excel MCP, LanceDB, MSYS2, cp950, PowerShell截圖, 向量服務
 - Type: procedural
 - Tags: toolchain, environment, commands
-- Related: toolchain-ollama, decisions, feedback-global-install, cc-能力查證反編譯實跑-binary, codex-log-bloat-analytics, guardian-dashboard-孤兒佔埠與新碼重啟, wsl2-0x80070569-gpo鎖診斷繞法vhdx救援移除, headless-chrome-svg轉png-windows踩坑, bash-呼叫-msbuild-用-dash-參數, windows-python-write-text-缺-newline-把-lf-翻-crlf-整檔假-diff, winget-升不動-powershell-msi-與-msix-通道分裂, failures, hotfix-ilruntime-traps, obsidian-sync-hook-全域同步-stdin-json-測試陷阱, unity-mcp-自動化工具鏈, toolchain-batch-cmd-crlf-encoding, dotnet-inline-cant-cross-delegate, dotnet-mysqldata-collation-id-相容, vscode-csdevkit-鎖目錄擋-git-mv-逐子項繞過
+- Related: toolchain-ollama, decisions, feedback-global-install, cc-能力查證反編譯實跑-binary, codex-log-bloat-analytics, guardian-dashboard-孤兒佔埠與新碼重啟, wsl2-0x80070569-gpo鎖診斷繞法vhdx救援移除, headless-chrome-svg轉png-windows踩坑, bash-呼叫-msbuild-用-dash-參數, windows-python-write-text-缺-newline-把-lf-翻-crlf-整檔假-diff, winget-升不動-powershell-msi-與-msix-通道分裂, failures, hotfix-ilruntime-traps, obsidian-sync-hook-全域同步-stdin-json-測試陷阱, unity-mcp-自動化工具鏈, toolchain-batch-cmd-crlf-encoding, dotnet-inline-cant-cross-delegate, dotnet-mysqldata-collation-id-相容, vscode-csdevkit-鎖目錄擋-git-mv-逐子項繞過, dotnet-major-版本與-vs-版本硬綁定-sln檔頭決定開哪版
 
 ## 知識
 

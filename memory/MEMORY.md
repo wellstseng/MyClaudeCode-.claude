@@ -54,7 +54,19 @@
 | wells-review-report-format-分類條列-簡扼說明改動 | wells-review-report-format-分類條列-簡扼說明改動 |
 | winforms-多選資料夾-net-8-無-multiselect-須走-ifileopendialog | WinForms 多選資料夾 — .NET 8 無 Multiselect 須走 IFileOpenDialog |
 | winget-升不動-powershell-msi-與-msix-通道分裂 | winget 升不動 PowerShell — MSI 與 MSIX 通道分裂 |
-| feedback-* | 行為校正（11 atoms） → [`_AIDocs/Failures/`](../_AIDocs/Failures/) |
+| titan-c-port-是-titan-行為的現成權威來源勿從零重寫 | titan C# port 是 titan 行為的現成權威來源（勿從零重寫） |
+| sqlx-讀取端三個踩點字串定序tinyint-當-booldesc-的-enum | Sqlx 讀取端三個踩點：字串定序、TINYINT 當 bool、DESC 的 ENUM |
+| titan-c-移植鐵則-優先用csharp設施-架構為師細節可精進 | titan-c-移植鐵則-優先用csharp設施-架構為師細節可精進 |
+| wells-design-測試專用成員走internal繞道-runtime-api-乾淨 | wells-design-測試專用成員走internal繞道-runtime-api-乾淨 |
+| dotnet-major-版本與-vs-版本硬綁定-sln檔頭決定開哪版 | dotnet-major-版本與-vs-版本硬綁定-sln檔頭決定開哪版 |
+| winforms-關閉階段-async-續體不執行-formclosing-殺process必須同步 | winforms-關閉階段-async-續體不執行-formclosing-殺process必須同步 |
+| toolchain-http-server-無charset-中文頁亂碼-量測假訊號 | toolchain-http-server-無charset-中文頁亂碼-量測假訊號 |
+| hotfix-ilruntime-traps | Hotfix ILRuntime 陷阱 |
+| luajit-ffi-函式指標型別三種等價寫法-ctype相等比較不可靠 | luajit-ffi-函式指標型別三種等價寫法-ctype相等比較不可靠 |
+| luajit-cdef-typedef重複宣告沉默忽略-只有具名struct-tag會炸 | luajit-cdef-typedef重複宣告沉默忽略-只有具名struct-tag會炸 |
+| mongodb-replacement-upsert-不併filter等值鍵 | mongodb-replacement-upsert-不併filter等值鍵 |
+| lua-弱表探測字串無效-字串是值不是物件-驗回收用堆積量測 | lua-弱表探測字串無效-字串是值不是物件-驗回收用堆積量測 |
+| feedback-* | 行為校正（16 atoms） → [`_AIDocs/Failures/`](../_AIDocs/Failures/) |
 | memory-pipeline-silent-failure-2026-05 | 記憶機制靜默失效（confirmations 零增 + episodic 停擺） → [`_AIDocs/Failures/memory-pipeline-silent-failure-2026-05.md`](../_AIDocs/Failures/memory-pipeline-silent-failure-2026-05.md) |
 | cognitive-patterns | 認知模式偏差（Cognitive Patterns） → [`_AIDocs/Failures/cognitive-patterns.md`](../_AIDocs/Failures/cognitive-patterns.md) |
 

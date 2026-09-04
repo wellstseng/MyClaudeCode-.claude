@@ -5,7 +5,7 @@
 - Confidence: [臨]
 - Trigger: MySql.Data, MySQL, collation, KeyNotFoundException, SetFieldEncoding, net8 升級, connector
 - Created-at: 2026-07-02
-- Related: titan-dotnet-split, toolchain
+- Related: titan-dotnet-split, toolchain, sqlx-讀取端三個踩點字串定序tinyint-當-booldesc-的-enum
 
 ## 知識
 

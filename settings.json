@@ -39,6 +39,7 @@
       "C:\\Users\\wellstseng\\.claude\\journals"
     ]
   },
+  "model": "fable[1m]",
   "hooks": {
     "SessionStart": [
       {
@@ -233,10 +234,12 @@
       }
     ]
   },
+  "enabledPlugins": {
+    "unity@claude-plugins-official": true
+  },
+  "effortLevel": "high",
   "autoUpdatesChannel": "latest",
-  "switchModelsOnFlag": true,
   "skipDangerousModePermissionPrompt": true,
   "skipWorkflowUsageWarning": true,
-  "effortLevel": "high",
-  "model": "claude-fable-5[1m]"
+  "switchModelsOnFlag": true
 }

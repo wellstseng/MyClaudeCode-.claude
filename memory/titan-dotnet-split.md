@@ -19,7 +19,7 @@
 - Created-at: 2026-06-13
 
 
-- Related: csharp-port, dotnet-inline-cant-cross-delegate, dotnet-mysqldata-collation-id-相容, titan-lua-socket-rpc機制-兩版同構
+- Related: csharp-port, dotnet-inline-cant-cross-delegate, dotnet-mysqldata-collation-id-相容, titan-lua-socket-rpc機制-兩版同構, titan-c-port-是-titan-行為的現成權威來源勿從零重寫, titan-c-移植鐵則-優先用csharp設施-架構為師細節可精進, dotnet-major-版本與-vs-版本硬綁定-sln檔頭決定開哪版
 
 
 

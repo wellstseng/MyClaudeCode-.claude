@@ -12,7 +12,7 @@
 
 - Created-at: 2026-06-19
 
-- Related: toolchain, titan-dotnet-split, dotnet-interface-devirt-pgo
+- Related: toolchain, titan-dotnet-split, dotnet-interface-devirt-pgo, winforms-關閉階段-async-續體不執行-formclosing-殺process必須同步
 
 
 

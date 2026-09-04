@@ -7,7 +7,7 @@
 - Confirmations: 50
 - Type: procedural
 - Tags: failure, pitfall, debug, quality-feedback
-- Related: decisions, toolchain, fix-escalation, wells-workflow-brake-mechanism
+- Related: decisions, toolchain, fix-escalation, wells-workflow-brake-mechanism, winforms-關閉階段-async-續體不執行-formclosing-殺process必須同步
 
 ## 知識
 

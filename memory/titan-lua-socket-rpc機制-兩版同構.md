@@ -5,7 +5,7 @@
 - Confidence: [觀]
 - Trigger: titan, gate, proxy, goo_rpc, goo_gate, lua socket, lua連線, entities.lua, rpc機制, fire-and-forget, channel pull, titan_net_id
 - Created-at: 2026-07-15
-- Related: orbit-hotfix-lua-direction, titan-dotnet-split, lua-bridge, dotnet-interface-devirt-pgo
+- Related: orbit-hotfix-lua-direction, titan-dotnet-split, lua-bridge, dotnet-interface-devirt-pgo, titan-c-port-是-titan-行為的現成權威來源勿從零重寫, luajit-ffi-函式指標型別三種等價寫法-ctype相等比較不可靠, lua-弱表探測字串無效-字串是值不是物件-驗回收用堆積量測
 
 ## 知識
 

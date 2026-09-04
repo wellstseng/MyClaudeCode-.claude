@@ -1,6 +1,7 @@
 # Hotfix ILRuntime 陷阱
 
 - Confidence: [固]
+- Trigger: ILRuntime, hotfix #if, UNITY_EDITOR, DefineConstants, isEditor, 預處理指令, hotfix旗標, BRM_ILR_Hotfix
 - Related: preferences, toolchain
 
 ## 知識
