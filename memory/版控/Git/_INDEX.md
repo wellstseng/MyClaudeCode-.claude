@@ -12,6 +12,7 @@
 | git-已push-commit-勿改寫-雙-push-url-gitlab-main-force-保護致遠端分叉 | git 已push commit 勿改寫 — 雙 push-url + GitLab main force 保護致遠端分叉 |
 | sed-i-在-crlf-repo-會整檔改換行 | sed -i 在 CRLF repo 會整檔改換行 |
 | upstream-merge-mac-適配工作流 | upstream-merge-mac-適配工作流 |
+| upstream合併-實例檔誤track會蓋本地實例-vector增量搶跑道 | upstream合併-實例檔誤track會蓋本地實例-vector增量搶跑道 |
 | worktree-session-驗證前先同步目標分支 | worktree-session-驗證前先同步目標分支 |
 | 併發-session-共用工作樹-收尾選擇性-staging-勿-git-add-a | 併發 session 共用工作樹-收尾選擇性 staging 勿 git add -A |
 | 混改檔hunk級選擇性staging | 混改檔hunk級選擇性staging |

@@ -9,8 +9,6 @@
 | handoff-綜觀品質與抗失真寫法 | handoff-綜觀品質與抗失真寫法 |
 | preferences | 使用者偏好（補充） |
 | workflow-icld | 增量式閉環開發（ICLD） |
-| workflow-icld | 增量式閉環開發（ICLD） |
 | workflow-rules | 工作流規則（全域） |
 | 汰舊刪腳本要-grep-全-repo-實際呼叫點 | 汰舊刪腳本要 grep 全 repo 實際呼叫點 |
-| 跨session資訊失真機制與對策 | 跨session資訊失真機制與對策 |
 | 跨session資訊失真機制與對策 | 跨session資訊失真機制與對策 |

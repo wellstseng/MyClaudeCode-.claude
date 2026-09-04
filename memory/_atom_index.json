@@ -4044,6 +4044,22 @@
         "memory path"
       ],
       "scope": "global"
+    },
+    {
+      "name": "upstream合併-實例檔誤track會蓋本地實例-vector增量搶跑道",
+      "path": "memory/版控/Git/upstream合併-實例檔誤track會蓋本地實例-vector增量搶跑道.md",
+      "triggers": [
+        "upstream merge",
+        "fork 同步",
+        "IDENTITY 被蓋",
+        "實例檔",
+        "instance 檔",
+        "vector 全量重建",
+        "already_running",
+        "index race",
+        "去識別化"
+      ],
+      "scope": "global"
     }
   ]
 }
