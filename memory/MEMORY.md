@@ -15,7 +15,7 @@
 | 行為契約 | 5 | `memory/行為契約/_INDEX.md` |
 | CC與原子記憶契約 | 15 | `memory/CC與原子記憶契約/_INDEX.md` |
 | Failures | 34 | `memory/Failures/_INDEX.md` |
-| OS-macOS | 1 | `memory/OS-macOS/mac-缺-python-用-wrapper-指向-python3.md` |
+| OS-macOS | 2 | `memory/OS-macOS/_INDEX.md` |
 | lua | 3 | `memory/lua/_INDEX.md` |
 | 協作 | 6 | `memory/協作/_INDEX.md` |
 | 參考與環境 | 8 | `memory/參考與環境/_INDEX.md` |

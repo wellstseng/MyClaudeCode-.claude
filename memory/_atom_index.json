@@ -5123,6 +5123,22 @@
         "統一LF"
       ],
       "scope": "global"
+    },
+    {
+      "name": "雲端同步資料夾內不放sqlite-googledb是drive鏡像會間歇disk-io-error",
+      "path": "memory/OS-macOS/雲端同步資料夾內不放sqlite-googledb是drive鏡像會間歇disk-io-error.md",
+      "triggers": [
+        "GoogleDB",
+        "Google Drive",
+        "雲端同步",
+        "sqlite",
+        "disk I/O error",
+        "OperationalError",
+        "download-archive",
+        "gallery-dl",
+        "輸出資料夾"
+      ],
+      "scope": "global"
     }
   ]
 }

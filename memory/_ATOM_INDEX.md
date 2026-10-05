@@ -299,3 +299,4 @@
 | sessionstart的提示只有模型看得到-要使用者做決定就寫成叫模型用askuserquestion問的指示-問到有答案為止不要只提示一次 | memory/CC與原子記憶契約/sessionstart的提示只有模型看得到-要使用者做決定就寫成叫模型用askuserquestion問的指示-問到有答案為止不要只提示一次.md | SessionStart 提示, 只提示一次, 只邀請一次, AskUserQuestion, advisory, 使用者沒被問到, 首次設定, 尚未接上, 需要使用者決定, onboarding 提示, declined | global |
 | gitignore未釘根層的規則在不分大小寫檔案系統會吃掉同名開頭的檔-identity-星號md誤傷identity開頭的atom | memory/版控/Git/gitignore未釘根層的規則在不分大小寫檔案系統會吃掉同名開頭的檔-identity-星號md誤傷identity開頭的atom.md | gitignore, core.ignorecase, 被忽略的 atom, 索引有檔案沒有, broken_refs, _INDEX.md drift, 乾淨 clone 索引不一致, check-ignore | global |
 | identity-變動需同步更新-identity-template-且所有文件 | memory/文字與格式/identity-變動需同步更新-identity-template-且所有文件.md | identity, identity.template, LF格式, 統一LF | global |
+| 雲端同步資料夾內不放sqlite-googledb是drive鏡像會間歇disk-io-error | memory/OS-macOS/雲端同步資料夾內不放sqlite-googledb是drive鏡像會間歇disk-io-error.md | GoogleDB, Google Drive, 雲端同步, sqlite, disk I/O error, OperationalError, download-archive, gallery-dl, 輸出資料夾 | global |
