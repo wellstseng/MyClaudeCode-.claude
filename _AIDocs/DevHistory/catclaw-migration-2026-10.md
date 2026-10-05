@@ -59,6 +59,18 @@
 - **`audit-skill.py`、`run_verify.py` 都吃系統 Python**：本機是 3.9，新語法要留意。
 - **macOS + numpy 2.0 的 `matmul` RuntimeWarning 是誤報**，相似度數值正常。
 
+## 現況與再遷移
+
+2026-10-05 的遷移是預防性的：CatClaw 繼續當主力，Claude Code 這邊是靜止副本，排程工具未啟用。兩邊會持續分岔，之後可能再遷一次。
+
+- 再遷移前跑 `07_drift_report.py`（唯讀）：比對具名 atom（對匯入帳本）、ext 碎片（對清單）、技能／工具／腳本／人格檔（對雜湊基準）、排程定義（去掉執行狀態欄位）。
+- 具名 atom 匯入腳本對「來源有變」的 atom 是整顆覆寫目標，Claude 端改過的同一顆會被蓋掉。
+- 技能已轉換格式，不可整包重新複製；只能依漂移報告逐檔處理。
+- 切換腳本的資料同步用「來源較新才覆蓋」，避免舊憑證蓋掉已刷新的副本。
+- 進行中狀態與逐類做法記在 `memory/_staging/catclaw-migration/STATUS.md`（不進版控）。
+
+整併遠端 `main` 時另外發現的機器差異：共用的 `workflow/config.json` 沒有本機覆寫機制，模型名稱以最後推送的那台為準；本機用 Ollama 別名對齊 embedding 模型名稱。健康檢查只確認 Ollama 連得上、不確認模型存在，模型名稱不符時向量搜尋會全空而無告警。
+
 ## 一次性腳本
 
 放在 `memory/_staging/catclaw-migration/`（不入版控）：路徑改寫、碎片分群、具名 atom 匯入、合併草稿匯入。兩支匯入腳本以 ledger 記錄來源雜湊，可重跑補差量。

@@ -64,6 +64,8 @@ memory/wisdom/causal_graph.json
 memory/_meta/atom_io_audit.jsonl*
 memory/_promotion_audit.jsonl
 policy-limits.json
+# 桌面版 App 同步進來的第三方技能（每機自持）
+skills/synced/
 
 # ─── Codex Companion runtime state ────────────────────────
 workflow/companion-state-*.json

@@ -4060,6 +4060,22 @@
         "去識別化"
       ],
       "scope": "global"
+    },
+    {
+      "name": "catclaw-遷移到-claude-code-的落點與踩坑",
+      "path": "_AIDocs/_atoms/MemDev/catclaw-遷移到-claude-code-的落點與踩坑.md",
+      "triggers": [
+        "CatClaw 遷移",
+        "wendy 專案",
+        "ext 碎片",
+        "專案記憶匯入",
+        "tool:migrate",
+        "MEMORY.md 發現",
+        "trigger 逗號",
+        "cronctl",
+        "批次匯入 atom"
+      ],
+      "scope": "global"
     }
   ]
 }

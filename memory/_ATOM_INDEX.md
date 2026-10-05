@@ -238,3 +238,4 @@
 | wells-workflow-tell-ai-what-you-hate | memory/工作流/wells-workflow-tell-ai-what-you-hate.md | AI 行為糾正, feedback atom, 偏好設定, 行為校正, 不喜歡, 別這樣做 | global |
 | feedback-memory-system-doc-sync | _AIDocs/_atoms/MemDev/feedback-memory-system-doc-sync.md | 原子記憶系統, 記憶系統修正, 記憶系統修改, 記憶系統開發, 改 hook, 改 wg_, 改 server.js, memory system, 文件同步, doc sync, 寫入記憶, atom 設計, atom 顆粒, 指標型, GUID硬編碼, 環境相依, gitignore, memory path | global |
 | upstream合併-實例檔誤track會蓋本地實例-vector增量搶跑道 | memory/版控/Git/upstream合併-實例檔誤track會蓋本地實例-vector增量搶跑道.md | upstream merge, fork 同步, IDENTITY 被蓋, 實例檔, instance 檔, vector 全量重建, already_running, index race, 去識別化 | global |
+| catclaw-遷移到-claude-code-的落點與踩坑 | _AIDocs/_atoms/MemDev/catclaw-遷移到-claude-code-的落點與踩坑.md | CatClaw 遷移, wendy 專案, ext 碎片, 專案記憶匯入, tool:migrate, MEMORY.md 發現, trigger 逗號, cronctl, 批次匯入 atom | global |
