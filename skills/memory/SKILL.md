@@ -1,12 +1,12 @@
 ---
 name: memory
-description: 原子記憶系統綜合工具 — health/peek/undo/review/score 五合一。用於檢查記憶健康、檢視自動萃取、撤銷誤寫、自我迭代、Session 評分。
+description: 原子記憶系統綜合工具 — health/review/score 三主力 + classify（專案記憶 scope 分層整理，SessionStart 出 [Guardian:ScopeLayout] 或使用者說「整理記憶分類」時用）+ peek/undo（僅查自動萃取歷史殘留）。用於檢查記憶健康、自我迭代、Session 評分。
 ---
 
 # /memory — 記憶系統綜合工具
 
-> 合併 `/memory-health`、`/memory-peek`、`/memory-undo`、`/memory-review`、`/memory-session-score` 五個 command 為單一 skill。
-> 全域 Skill，適用任何專案。
+> 單一 skill 統整 health / peek / undo / review / score 五個 subcommand
+> （peek/undo 僅查自動萃取歷史殘留）。全域 Skill，適用任何專案。
 
 ---
 
@@ -14,14 +14,36 @@ description: 原子記憶系統綜合工具 — health/peek/undo/review/score �
 
 ```
 /memory health [--json]
-/memory peek [--since=24h]
-/memory undo [last | --since=24h | --all-from-today]
+/memory peek [--since=24h]        # 僅查歷史殘留（自動萃取管線已裁撤）
+/memory undo [last | --since=24h | --all-from-today]   # 同上
 /memory review
 /memory score [--last | --since=24h | --top-n=10]
+/memory classify                  # 專案記憶依 scope 分層整理（personal 只本人／專案規則進 shared）
 ```
 
 第一個 token 為 subcommand。從 `$ARGUMENTS` 解析。
 若無 subcommand → 預設 `health`。
+
+---
+
+### classify → 專案記憶 scope 分層整理
+
+觸發：SessionStart 出現 `[Guardian:ScopeLayout]`、或使用者說「整理記憶分類」。在專案根執行。
+
+1. **plan（腳本）**：
+   ```bash
+   python ~/.claude/tools/classify-project-scope.py plan
+   ```
+   輸出 JSON：`personal[]`（每顆 personal 存量：slug／owner／第一句／`suggest` shared|personal／理由）、`index`（scope 錯標、懸空、trigger 漂移數）、`shared_flat`、`classified`。
+2. **問使用者（唯一要人判的一步）**：把 `personal[]` 做成表（編號｜第一句摘要｜建議去向），用 AskUserQuestion 問「照建議／有例外列編號」。去向四選一：`shared`（專案規則，Author 記提出者）／`personal`（留本人×專案）／`cross_project`（本人跨專案，搬到 `~/.claude/memory/personal/<user>/`）／`reject`（一次性任務，移 `_rejected/`）。先用兩三句白話說明這次改動：personal 只給本人、專案規則要進 shared 別人才看得到、他專案的記憶不再注入。
+3. **apply（腳本）**：把決定寫成 `{slug: 去向}` JSON 檔（放 scratchpad），
+   ```bash
+   python ~/.claude/tools/classify-project-scope.py apply --decisions <file> --dry-run   # 先看
+   python ~/.claude/tools/classify-project-scope.py apply --decisions <file>             # 實搬 + 索引回寫 + 標記
+   ```
+   沒有 personal 存量時直接 `apply` 空決定 `{}` 或 `mark` 即可打標記。
+4. **上傳**：提醒使用者把 `.claude/memory/` 的變動上該專案的版控（git/svn；personal/ 依專案 .gitignore 規則）。
+5. 判「已整理」：`status` 回 `classified=true`（`_atom_index.json.layout=="scope-v2"` 或 `shared/_taxonomy.json` 存在），之後 SessionStart 不再提示。
 
 ---
 
@@ -50,6 +72,8 @@ description: 原子記憶系統綜合工具 — health/peek/undo/review/score �
    ```bash
    python ~/.claude/tools/memory-audit.py [--project-dir $PROJECT_MEM_DIR] [--json]
    ```
+   - `layout` error＝全域 `memory/` 根下有平鋪 atom（範疇資料夾必備）→ `python ~/.claude/tools/atom-categorize.py plan`（出草案）→ `apply --map <json>` 歸位，不手動 mv。
+   - 專案層 `MEMORY.md 行數` 在該專案 index 仍含平鋪 `shared/<slug>.md` 時只報 **info**（尚未遷移）；遷移（`atom-categorize.py plan|apply --memory-dir $PROJECT_MEM_DIR`）後才套 40 行上限。專案 MEMORY.md 的 `<!-- atom-catalog -->` 區塊由 `sync-memory-index.py --write --memory-dir $PROJECT_MEM_DIR` 維護。
 
 3. **atom-health-check**（並行 2 個工具）：
    ```bash
@@ -84,15 +108,21 @@ description: 原子記憶系統綜合工具 — health/peek/undo/review/score �
 
    L1 反向連結**不在此處理** — SessionEnd `atom-health-check --fix-refs` 已全庫機械補齊，此處只治 L2 死連結，別重覆跑。
 
-### peek → V4.1 自動萃取檢視
+### peek → 自動萃取檢視（僅歷史殘留）
+
+> ⚠️ auto-capture 自動萃取管線已裁撤（`per_turn` 與 `session_end_flush` 停用；
+> 裁決見 atom [[自動萃取層淨值審查-調整式拔除-2026-07]]），不再產生新草稿。
+> 回報 `{"written":0,"pending":0}` 為預期現況、非故障。本命令僅供查詢舊殘留。
 
 ```bash
 python ~/.claude/tools/memory-peek.py $ARGS
 ```
 
-`$ARGS` 為 `--since=...` 等使用者傳入參數。列最近 24h（或自訂時段）自動萃取的 atom + pending candidates + trigger 原因。
+`$ARGS` 為 `--since=...` 等使用者傳入參數。列指定時段內自動萃取的 atom + pending candidates + trigger 原因（現況只有歷史殘留會出現）。
 
-### undo → V4.1 撤銷自動萃取
+### undo → 撤銷自動萃取（僅歷史殘留）
+
+> ⚠️ 同 peek：管線已裁撤，無新寫入可撤。`memory-undo.py` 對舊殘留仍可運作。
 
 ```bash
 python ~/.claude/tools/memory-undo.py $ARGS

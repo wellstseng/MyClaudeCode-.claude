@@ -16,6 +16,7 @@ Fast path: config disabled → exit(0)。stateless（無 flag，每輪自我校�
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -44,7 +45,7 @@ def _append_trigger_log(payload: Dict[str, Any]) -> None:
             "at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
         }
         entry.update(payload)
-        with open(TRIGGER_LOG_PATH, "a", encoding="utf-8") as f:
+        with open(TRIGGER_LOG_PATH, "a", encoding="utf-8", newline="\n") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception:
         pass
@@ -195,6 +196,10 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
 
 
 def main() -> None:
+    # 備援裁判子 session（headless claude judge）內不做語言檢查
+    if os.environ.get("CLAUDE_COMPANION_JUDGE"):
+        sys.exit(0)
+
     # Force UTF-8 on Windows
     if sys.platform == "win32":
         for stream in (sys.stdout, sys.stderr):

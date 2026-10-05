@@ -1,0 +1,53 @@
+# 全域決策
+
+- Scope: global
+- Confidence: [固]
+- Trigger: 決策, 記憶系統, 原子記憶, guardian, hooks, MCP, 架構細節, context budget
+- Last-used: 2026-05-28
+- Related: decisions-architecture, toolchain, toolchain-ollama
+
+## 知識
+
+### 核心架構
+- [固] 雙 LLM：Claude Code（雲端決策）+ Ollama（本地語意處理）
+- [固] 專案自治層：每專案 `{project_root}/.claude/memory/` + project_hooks.py delegate
+- [固] 管線概覽：Intent→Trigger→Vector→Section→Budget→注入（詳見 _reference/internal-pipeline.md）
+
+### V3 三層即時管線
+- [觀] Stop async hook（quick-extract.py）→ qwen3:1.7b 快篩 5s → hot_cache.json → systemMessage
+- [觀] PostToolUse mid-turn injection: 讀 hot cache → additionalContext 即時注入（同 turn 內可見）
+- [觀] UserPromptSubmit hot cache 快速路徑: 優先讀 hot cache → 命中則減少 vector search 依賴
+- [觀] deep extract（extract-worker.py）完成後覆寫 hot cache，重置 injected=False
+
+### SessionStart 風暴修復
+- [觀] SessionStart 去重: 同 cwd 60s 內 active state → 複用（resume 合併，startup 跳過 vector init）
+- [觀] 孤兒清理分層 TTL: prompt_count=0 working→10m, prompt_count>0 working→30m, done+已同步→1h, done+待同步→4h
+- [觀] 清理觸發點: SessionStart + SessionEnd 雙觸發（避免非正常結束時殘留累積）
+- [觀] Vector service 非阻塞: fire-and-forget subprocess + vector_ready.flag
+
+### 跨 Session 鞏固（v3 雙欄位）
+- [固] 晉升門檻（雙軌）：
+  - Primary: Confirmations（跨 session 萃取命中）[臨]→[觀] ≥4, [觀]→[固] ≥10
+  - Auxiliary: ReadHits（注入讀取）[臨]→[觀] ≥20, [觀]→[固] ≥50
+  - 7 天豁免：migration 後 Confirmations 未達標時，ReadHits/5 ≥ 門檻可 fallback
+> 架構細節（核心架構 / V3 管線 / SessionStart 風暴修復）已移至 `decisions-architecture.md`
+
+### 跨 Session 鞏固（效用驅動）
+- [固] 晉升門檻（SYNC: server.js toolAtomPromote / wg_atoms._self_iterate_atoms / lib.atom_access）：
+  - 效用 Wilson 軌為**唯一自動晉升路徑**：效用 Wilson 下界（Beta-Bernoulli α=useful_hits/β=used_fail；succ=α−1,fail=β−1,n=succ+fail）≥ promote_lb(0.6) 且 n ≥ min_n(3)，z=wilson_z(1.28)；降級候選 ≤ demote_lb(0.35) 且 n ≥ demote_min_n(5)（不自動降，列裁決）；旋鈕值以 workflow/config.json usefulness 段為準；慢衰減 λ=0.97（SessionEnd）
+  - Confirmations 軌已除役（唯一資料源 per-turn extraction 停產，全庫 confirmation_events=0）
+  - ReadHits（注入讀取）：純曝光計數、不參與晉升（防純注入頻率晉升劣化品質，Xiong 2505.16067）
+  - 旋鈕：workflow/config.json usefulness.{promote_lb,demote_lb,min_n,wilson_z,decay_lambda,rare_token_min,lexical_overlap_min}
+
+### 品質機制
+- [固] 自我迭代精簡為 3 條：品質函數（Hook）、證據門檻（Claude）、震盪偵測（Hook）
+
+### Fix Escalation
+- [固] 同一問題修正第 2 次起 → 6 Agent 精確修正會議
+- [固] Guardian 自動偵測 retry_count ≥ 2 → 注入信號
+
+## 行動
+
+- 記憶寫入走 write-gate 品質閘門
+- 向量搜尋 fallback：Ollama → sentence-transformers → keyword
+- Guardian 閘門最多阻止 2 次，第 3 次強制放行

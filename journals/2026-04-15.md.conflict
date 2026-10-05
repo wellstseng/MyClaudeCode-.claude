@@ -1,0 +1,90 @@
+# 2026-04-15 工作日誌
+
+## 總結
+
+更新知識庫內容，支援日報、週報、月報模式，並調整日誌存儲路徑。 完成 CoreModule 3.0.3 版本更新，並調整 TSG 家族與 Rpc/Protobuf 模組結構。 新增 TSLG Client 設定，支持連線與登入功能，並移除 GateApp 模組。
+
+2 專案 · 3 sessions · 36 prompts · 15 檔 · 4 commits
+
+- **Orbit** (4 commits): chore: bump CoreModule 3.0.2 -> 3.0.3；docs: update knowledge base for TSG family + Gate v0 refact…；feat: Orbit GateApp v0 - TSLG Client can connect and LOGIN；refactor: unify TSG family under CoreModule/Tsg/ + decouple…
+- **TSLG.Develop**: 改 11 檔（未 commit）
+
+| Sessions | Prompts | 改檔 | Commits |
+|:--:|:--:|:--:|:--:|
+| 3 | 36 | 15 | 4 |
+
+---
+
+## Orbit
+`c:\Projects\Orbit` · git
+
+**Sessions (2)** · 14 prompts · 4 改檔 · general(13) build(1)
+- `16:50–…`
+- `18:44–…`
+
+**Commits (4)**
+- `7182467` chore: bump CoreModule 3.0.2 -> 3.0.3
+- `23813de` docs: update knowledge base for TSG family + Gate v0 refactor
+- `2401737` feat: Orbit GateApp v0 - TSLG Client can connect and LOGIN
+- `746ebff` refactor: unify TSG family under CoreModule/Tsg/ + decouple Rpc/Protobuf submodules
+
+**修改檔案 (4)**
+- `C:/Users/wellstseng/.claude/tools/journal-aggregate.py`
+- `C:/Users/wellstseng/.claude/commands/journal.md`
+- `C:/Users/wellstseng/.claude/.gitignore`
+- `C:/Users/wellstseng/.claude/settings.local.json`
+
+**知識 (23)**
+- /journal 支援 daily/week/range/month 模式。range 逐日產出有記錄之日報，跳過無記錄日。month 產整月彙整。
+- 日誌預設存 ~/.claude/journals/，Obsidian 鏡射至 C:\Users\wellstseng\Obsidian\工作日誌\{日報|週報|月報}\。
+- ~/.claude/journals/ 超過 60 天自動清理，Obsidian 端留作長期歸檔。
+- /journal 支援 range(任意區間逐日)、week、month 模式。Range 逐日遍歷，無記錄跳過，不產合併檔。
+- Obsidian 鏡射路徑：C:\Users\wellstseng\Obsidian\工作日誌\。子資料夾：日報/、週報/、月報/。
+- 檔名規範：日報 YYYY-MM-DD.md、週報 week-YYYY-Wn.md、月報 month-YYYY-MM.md。
+- /journal 支援 4 種模式：今日 (/journal)、指定日 (/journal YYYY-MM-DD)、週報 (/journal week YYYY-MM-DD)、範圍 (/journal range start end)、月報 (/journal month YYYY-MM)。
+- 預設日誌路徑 ~/.claude/journals/。Obsidian 鏡射路徑 C:\Users\wellstseng\Obsidian\工作日誌\。
+- Obsidian 鏡射子資料夾：日報/、週報/、月報/。檔名規範：日報 {YYYY-MM-DD}.md、週報 week-{YYYY}-W{W}.md、月報 month-{YYYY}-{MM}.md。
+- /journal 支援 4 種模式：`/journal` (今日), `/journal YYYY-MM-DD` (指定日), `/journal week` (本週), `/journal month YYYY-MM` (整月)。`range` 模式逐日產出，跳過無記錄日。
+- Obsidian 鏡射路徑 `C:\Users\wellstseng\Obsidian\工作日誌\`，子資料夾 `日報/`, `週報/`, `月報/`。Env var `CLAUDE_JOURNAL_OBSIDIAN_DIR` 控制，寫入失敗僅 warning。
+- 清理策略：`~/.claude/journals/` 自動清理 >60 天舊日誌，Obsidian 端不執行清理，僅作長期歸檔。
+- `/journal` 產 `YYYY-MM-DD.md`，`/journal week` 產 `week-YYYY-WNN.md`，`/journal month` 產 `month-YYYY-MM.md`，`range` 逐日產有記錄之日報。
+- 僅 `~/.claude/journals/` 執行 60 天自動清理，Obsidian 端留作長期歸檔不做清理。
+- Obsidian 工作日誌路徑：C:\Users\wellstseng\Obsidian\工作日誌\，子資料夾：日報/、週報/、月報/。
+
+---
+
+## TSLG.Develop
+`c:\Projects\TSLG\Develop` · git
+
+**Sessions (1)** · 22 prompts · 11 改檔 · general(12) debug(6) build(2) design(1) recall(1)
+- `15:16–…`
+
+**修改檔案 (11)**
+- `Server/BotApp/BotApp.csproj`
+- `Server/Shared/Shared.csproj`
+- `Client/BRM_ILR_Hotfix/Game/scenes/SceneLogin_Proxy.cs`
+- `Client/BRM_ILR_Hotfix/BRM.ILR.HotFixProj.csproj`
+- `Client/BRM_ILR_Hotfix/Game/ui/Popup/UIPopupLoginServer.cs`
+- `Client/BRM_ILR_Hotfix/Game/ui/Login/UIPopupAgeTips.cs`
+- `Client/BRM_ILR_Hotfix/initiators/NetworkInitiator.cs`
+- `C:/Users/wellstseng/.claude/memory/hotfix-ilruntime-traps.md`
+- `C:/Users/wellstseng/.claude/memory/MEMORY.md`
+- `Client/Assets/Game/scripts/conf/ConfigLogin.cs`
+- `Client/BRM_ILR_Hotfix/Game/ui/Login/UILogin.cs`
+
+**知識 (21)**
+- CoreModule 3.0.2 僅依賴 BotApp, GateApp, Shared 三個 csproj。GateApp 不在任何 .sln 中。
+- Client 端 NetCore 僅被 TitanStack/src/ 內 3 個檔案引用，外部 Assets 無使用。
+- 設計決策：GateApp 將移除，NetCore 上層呼叫鏈 (Login UI/連線/Event) 將重建。
+- GateTestClient.csproj 依賴 GateApp/Protocol/ 4 檔。為保留 smoke test，決定搬遷至 GateTestClient/Protocol/ (Option A)。否決 B (留半空殼困惑) 與 C (失 smoke test)。搬遷需改 6 檔。
+- StackCore 路徑：Client/Assets/Addons/TitanStack/src/。API: Create(go, dispFn), SendLogin(user, pw, json), OnLoginReply(success, errno)
+- Orbit GateApp 協議：LOGIN msg type = 121。StackCore RC4 key/Checksum 已硬編對齊
+- dotnet build AllServers.sln -c Release: 0 Error, 10130 Warning (obsolete), 耗時 27 秒
+- TitanStack API 位於 Client/Assets/Addons/TitanStack/src/StackCore.cs，SendLogin(user,pw,json) 與 OnLoginReply(success,errno) 已實作。
+- LOGIN msg type = 121 與 Orbit GateApp 對齊，RC4 key 與 Header checksum 硬編對齊。
+- TitanStack API: StackCore.Create(go, dispFn) -> Connect(host, port, timeout) -> SendLogin(user, pwd, json) -> OnLoginReply(success, errno)
+- Startup chain: GameStarter.GameStart() -> BRHotFix.InitMgrs / SceneInitHotfix.Start. No StackCore callers in Assets/.
+- TitanStack API 位於 Assets/Addons/TitanStack/src/。StackCore.Create(go, dispFn) -> RegisterClientEventHandler -> Connect -> SendLogin -> OnLoginReply。LOG
+- BotApp.csproj / Shared.csproj 版本 3.0.3。dotnet build AllServers.sln -c Release 結果 0 Error, 10130 Warning (既存 obsolete)。
+- StackCore API: Create -> RegisterClientEventHandler -> Connect -> SendLogin -> OnLoginReply. LOGIN msg type = 121. RC4/Checksum hardcoded for Orbit Ga
+- dotnet build AllServers.sln -c Release: 0 Errors, 10130 Warnings (obsolete), 27s. GateTestClient leaves .vs/ lock files requiring VS close before rm -

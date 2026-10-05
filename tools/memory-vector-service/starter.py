@@ -49,7 +49,7 @@ def _slog(msg: str, log_path: Path = SERVICE_LOG) -> None:
     """Starter 動作記錄：時間戳行附加到 service log（失敗不擋流程）。"""
     try:
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(log_path, "a", encoding="utf-8") as f:
+        with open(log_path, "a", encoding="utf-8", newline="\n") as f:
             f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [starter] {msg}\n")
     except Exception:
         pass
@@ -80,11 +80,63 @@ def _port_free(port: int) -> bool:
         sock.close()
 
 
+# pid 身分指紋：cmdline 必須同時含這兩段才視為本服務
+# （單獨 "service.py" 太寬——verify_vector_service.py 等檔名也含該子字串）。
+_SERVICE_CMDLINE_MARKS = ("memory-vector-service", "service.py")
+
+
+def _pid_cmdline(pid: int) -> Optional[str]:
+    """取 pid 的 command line；取不到回 None（呼叫端保守不殺）。
+
+    Windows 免 psutil：PowerShell CIM 為主，wmic 為備（部分 Win11 已移除 wmic）。
+    POSIX：讀 /proc/<pid>/cmdline。
+    """
+    if sys.platform == "win32":
+        candidates = [
+            ["powershell", "-NoProfile", "-Command",
+             f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine"],
+            ["wmic", "process", "where", f"processid={pid}", "get", "commandline"],
+        ]
+        for cmd in candidates:
+            try:
+                out = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=10,
+                    creationflags=0x08000000,  # CREATE_NO_WINDOW
+                ).stdout.strip()
+                if out:
+                    return out
+            except Exception:
+                continue
+        return None
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+        return raw.replace(b"\0", b" ").decode("utf-8", "replace").strip() or None
+    except OSError:
+        return None
+
+
 def _kill_stale_pid(pid_file: Path = PID_FILE) -> Optional[int]:
-    """殺掉 pid file 指向的 hang 死服務。回被殺的 pid，無 pid file / 失敗回 None。"""
+    """殺掉 pid file 指向的 hang 死服務。回被殺的 pid；無 pid file / 失敗 / 身分不符回 None。
+
+    殺前驗證 pid 身分（Windows PID 會重用，殘留 pid file 可能指向無辜程序）：
+    cmdline 須含 memory-vector-service + service.py 才殺；取不到 cmdline →
+    保守不殺 + 落 log；cmdline 屬他程序 → 不殺、清掉過期 pid file。
+    """
     try:
         pid = int(pid_file.read_text(encoding="utf-8").strip())
     except Exception:
+        return None
+    cmdline = _pid_cmdline(pid)
+    if cmdline is None:
+        _slog(f"pid {pid} cmdline unverifiable; refusing to kill (fail-safe)")
+        return None
+    if not all(mark in cmdline for mark in _SERVICE_CMDLINE_MARKS):
+        _slog(f"pid {pid} belongs to another process ({cmdline[:120]!r}); "
+              "not killing; removing stale pid file")
+        try:
+            pid_file.unlink()
+        except OSError:
+            pass
         return None
     try:
         os.kill(pid, signal.SIGTERM)
@@ -118,7 +170,7 @@ def _spawn_service(port: int, service_script: Path = SERVICE_SCRIPT,
     啟動失敗原因不再進 DEVNULL 黑洞）。"""
     try:
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_f = open(log_path, "a", encoding="utf-8")
+        log_f = open(log_path, "a", encoding="utf-8", newline="\n")
         kw: Dict[str, Any] = {
             "stdin": subprocess.DEVNULL, "stdout": log_f, "stderr": log_f,
         }
@@ -150,6 +202,7 @@ def ensure_service(
     h = _health(port)
     if h == "ok":
         _write_flag(flag_path)
+        _kick_incremental_index(port)
         return {"ready": True, "action": "already_up", "wait_s": 0.0, "killed_pid": None}
 
     killed_pid = None
@@ -163,7 +216,8 @@ def ensure_service(
     else:
         try:
             lock_path.parent.mkdir(parents=True, exist_ok=True)
-            lock_path.write_text(str(time.time()), encoding="utf-8")
+            with open(lock_path, "w", encoding="utf-8", newline="\n") as _f:
+                _f.write(str(time.time()))
         except Exception:
             pass
         _rotate_log(log_path)
@@ -182,6 +236,7 @@ def ensure_service(
     wait_s = round(time.time() - t0, 1)
     if ready:
         _write_flag(flag_path)
+        _kick_incremental_index(port)
         try:
             lock_path.unlink(missing_ok=True)
         except Exception:
@@ -190,10 +245,27 @@ def ensure_service(
     return {"ready": ready, "action": action, "wait_s": wait_s, "killed_pid": killed_pid}
 
 
+def _kick_incremental_index(port: int) -> None:
+    """服務就緒後補打增量索引：把 git pull 拉進來、尚未入庫的 atom 立即納入語意召回
+    （trigger/BM25 讀 .md 即時生效，但向量端過去只在 atom 寫入/SessionEnd 才補索引，
+    pull 後首個 session 的語意召回會漏掉新 atom）。庫無變動時 indexer 逐檔比對
+    file_hash 全 skip（零 embedding、零寫入），成本僅掃檔算 hash。
+    fail-open：索引已在跑（already_running）或請求失敗都不影響啟動流程，只落 log。"""
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/index/incremental",
+            data=b"{}", headers={"Content-Type": "application/json"}, method="POST")
+        urllib.request.urlopen(req, timeout=2)
+        _slog("kicked incremental index (post-ready)")
+    except Exception as e:
+        _slog(f"incremental index kick failed (fail-open): {e}")
+
+
 def _write_flag(flag_path: Path = FLAG_PATH) -> None:
     try:
         flag_path.parent.mkdir(parents=True, exist_ok=True)
-        flag_path.write_text("ready", encoding="utf-8")
+        with open(flag_path, "w", encoding="utf-8", newline="\n") as _f:
+            _f.write("ready")
     except Exception:
         pass
 
@@ -201,7 +273,7 @@ def _write_flag(flag_path: Path = FLAG_PATH) -> None:
 def _log_probe(rec: Dict[str, Any], probe_log: Path = PROBE_LOG) -> None:
     try:
         probe_log.parent.mkdir(parents=True, exist_ok=True)
-        with open(probe_log, "a", encoding="utf-8") as f:
+        with open(probe_log, "a", encoding="utf-8", newline="\n") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     except Exception:
         pass

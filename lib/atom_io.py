@@ -24,13 +24,18 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from .atom_spec import (
-    SKIP_DIRS, MEMORY_INDEX, ATOM_INDEX, VALID_CONFIDENCE, VALID_SCOPES,
+    SKIP_DIRS, MEMORY_INDEX, VALID_CONFIDENCE, VALID_SCOPES,
     build_atom_content, slugify, validate_atom_content, render_knowledge_lines,
+    knowledge_sections_bytes, knowledge_budget_error,
 )
 from .atom_locations import (
     CLAUDE_DIR, GLOBAL_MEMORY_DIR, FAILURES_DIR,
     is_failures_routed_title, failures_write_target, local_write_target,
+    atom_search_roots, locate_existing_atom, project_subdir_target,
+    core_write_target, failures_topic_target, project_category_target,
+    find_separator_variant, classify_realm,
 )
+from .atom_taxonomy import gate_enabled as _taxonomy_gate_enabled
 
 
 # ─── Constants ────────────────────────────────────────────────────────────────
@@ -47,7 +52,9 @@ VALID_SOURCES = frozenset({
     "hook:extract-worker",
     "tool:atom-move",
     "tool:atom-set-realm",  # V5+ Realm 維度：core⇄local 範疇搬移（_AIDocs/_atoms/ path 唯一寫者）
-    "tool:atom-health-audit",  # atom 體質審視工具
+    "tool:atom-categorize",  # 核心層批次歸類搬遷（memory/<範疇>/、memory/Failures/<主題>/；plan/apply/undo）
+    "tool:conflict-review",  # _pending_review 核可 → shared/<Lv1>/ 落地 + index upsert
+    "tool:atom-health-check",  # atom 健康診斷 / 反向參照修補
     "tool:atom-heal",  # 記憶自癒（腦內世界 P3）：機械修反向連結 / LLM 提案修死連結
     "tool:changelog-roll",
     "tool:memory-audit",  # memory-audit demote/compact/log_evolution 修補
@@ -97,50 +104,71 @@ def _gen_audit_id() -> str:
 
 
 def _audit_log(entry: Dict[str, Any]) -> None:
-    """Append JSONL entry to atom_io_audit.jsonl（best-effort）。"""
+    """Append JSONL entry to atom_io_audit.jsonl（best-effort），>10MB 輪替。"""
     try:
         AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
-        with open(AUDIT_LOG, "a", encoding="utf-8") as f:
+        with open(AUDIT_LOG, "a", encoding="utf-8", newline="\n") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        if AUDIT_LOG.stat().st_size > 10 * 1024 * 1024:
+            _rotate_audit_log()
     except OSError:
         pass
 
 
-def _detect_eol(path: Path) -> str:
-    """偵測既有檔的主要行尾，供 byte-stable 覆寫。
-
-    讀不到 / 新檔 → os.linesep（維持現行 Windows=CRLF 慣例，避免新 atom 行尾翻轉）。
-    """
+def _rotate_audit_log() -> None:
+    """輪替 atom_io_audit.jsonl（保留 3 份），對拍 memory-write-gate._rotate_log。"""
+    for i in range(2, 0, -1):
+        src = Path(f"{AUDIT_LOG}.{i}")
+        dst = Path(f"{AUDIT_LOG}.{i + 1}")
+        if src.exists():
+            if i == 2:
+                try:
+                    src.unlink()
+                except OSError:
+                    pass
+            else:
+                try:
+                    src.rename(dst)
+                except OSError:
+                    pass
     try:
-        raw = path.read_bytes()
+        AUDIT_LOG.rename(Path(f"{AUDIT_LOG}.1"))
     except OSError:
-        return os.linesep
-    if b"\r\n" in raw:
-        return "\r\n"
-    if b"\n" in raw:
-        return "\n"
-    return os.linesep
+        pass
 
 
-def _atomic_write(path: Path, content: str) -> None:
-    """tmp + rename 落檔，與 server.js 行為等價。
+def normalize_lf(text: str) -> str:
+    """把任何換行（\\r\\n、孤立 \\r）統一成 \\n。"""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
-    EOL byte-stable（reformat blast radius 根治）：先把 content 正規化成純 LF，
-    再套用「既有檔的行尾慣例」，並以 newline="" 寫入關閉平台轉譯。
-    否則 Windows 預設 newline=None 會把每個 \\n 翻成 os.linesep——caller 混寫的
-    既有 CRLF（如 server.js append 用 Node 原樣讀 \\r\\n 再拼 \\n）會被二次翻成
-    CR CR LF，整檔行尾全變 → git 視為全行更動（append 2 行卻 48 行 diff 的根因）。
-    既有 CRLF 檔偵測為 CRLF→原樣保留，僅真正新增的行進 diff。
+
+def write_text_lf(path: Path, content: str) -> None:
+    """tmp + rename 落檔，內容一律 LF、UTF-8。
+
+    本 repo 全部 LF（.gitattributes eol=lf）。newline="" 關掉平台轉譯，寫出的位元組就是
+    content 正規化後的樣子；Windows 預設 newline=None 會把 \\n 翻成 \\r\\n，這裡不允許。
+    tmp 後綴帶 PID+TID：併發 session 寫同一檔不互踩（固定 .tmp 會 truncate 競態成半空檔）。
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    eol = _detect_eol(path)
-    body = content.replace("\r\n", "\n").replace("\r", "\n")
-    if eol != "\n":
-        body = body.replace("\n", eol)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp, "w", encoding="utf-8", newline="") as f:
-        f.write(body)
-    os.replace(str(tmp), str(path))
+    body = normalize_lf(content)
+    import threading as _threading
+    tmp = path.with_suffix(
+        f"{path.suffix}.tmp.{os.getpid()}.{_threading.get_ident()}"
+    )
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="") as f:
+            f.write(body)
+        os.replace(str(tmp), str(path))
+    except OSError:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
+_atomic_write = write_text_lf  # 既有呼叫名（atom_access、changelog-roll 等 import 這個名字）
 
 
 def _find_project_root(cwd: Optional[str]) -> Optional[Path]:
@@ -172,45 +200,93 @@ def _resolve_target(
     title: Optional[str] = None,
     realm: Optional[str] = None,
     domain: Optional[str] = None,
+    subdir: Optional[str] = None,
+    mode: Optional[str] = None,
+    allow_new_category: bool = False,
+    enforce_cwd_scope: bool = False,
+    cross_project: bool = False,
 ) -> Dict[str, Any]:
-    """回傳 {dir, base, index_dir, index_root, scope_label, routed_to_*, error}。
+    """回傳 {dir, base, index_dir, index_root, search_roots, scope_label, category, routed_to_*, error}。
+
+    enforce_cwd_scope（MCP 寫入路徑開）：scope=global 但 project_cwd 落在某專案 root（非
+    ~/.claude）→ 拒——專案內寫全域知識用 scope=shared；force_global 逃生門。程式寫手
+    （hooks）不開此閘：它們的 cwd 語意已由各自呼叫端處理。
+
+    `dir` = **新 atom 的落點**；`search_roots` = **既有 atom 的定位範圍**（append/replace 用，
+    含子夾）——兩者刻意分離：append/replace 不因子夾而找不到檔。
+
+    範疇寫入閘（mode="create" 且 taxonomy.gate_enabled）：核心層／失敗家族／專案 shared 的
+    create 落點一律「先分類再落地」——`domain`（"<Lv1>[/<Lv2>]"，正名／slug／別名皆可）必填，
+    經 core_write_target／failures_topic_target／project_category_target snap 回正名；缺或
+    未知 Lv1 → error（unclassified_error 列全部 Lv1；allow_new_category=True 才准開新 Lv1）。
+    不猜、不落 Else；本函式**永不自動分類**（程式寫手在呼叫前自行 classify_category）。
+    mode≠create（append/replace/locate）→ 閘不啟動、domain 不影響落點（既有檔靠 index 定位）。
+    gate 關（遷移期／專案過渡）→ 退回扁平舊落點。role/personal/_pending_review 路由不受閘影響。
 
     對拍 server.js:777 resolveMemDir + 1095-1101 sensitive audience routing。
     V5+ 擴展（皆 global scope 內疊加，與 scope 正交）：
-      - title 前綴 feedback- → 物理路由 _AIDocs/Failures/（routed_to_failures）
-      - realm=local → 物理路由 _AIDocs/_atoms/<domain>/（routed_to_local；realm 由 path 推導，不存欄位）
+      - feedback- 標題 → memory/Failures/<主題>/（routed_to_failures）
+      - realm=local → _AIDocs/_atoms/<domain>/（routed_to_local；realm 由 path 推導，不存欄位）
     兩者索引皆仍在 memory/_atom_index.json（index_root=CLAUDE_DIR，單一來源）。
-    realm 只在 scope=global 生效（local atom 維持 scope=global，realm 與 scope 正交）。
     """
     if force_global:
         scope = "global"
 
+    # subdir（相對 memory root 的 create 落點）僅 scope=shared 支援；
+    # 其他 scope 給了就明確報錯，不靜默忽略。
+    if subdir and scope != "shared":
+        return {"error": f"subdir is only supported for scope=shared (got scope={scope})"}
+
+    gate = (mode == "create") and _category_gate_enabled()
+
+    if scope == "global" and enforce_cwd_scope and not force_global and project_cwd:
+        proj_root = _find_project_root(project_cwd)
+        if proj_root is not None:
+            try:
+                r = proj_root.resolve()
+                home = CLAUDE_DIR.resolve()
+                inside_core = (r == home or home in r.parents)
+            except OSError:
+                inside_core = False
+            if not inside_core:
+                return {"error":
+                        f"scope=global rejected: cwd={project_cwd} is inside project root={proj_root}; "
+                        "use scope=shared/role/personal for project knowledge (omit project_cwd "
+                        "when writing cross-project knowledge from a project)"}
+
     if scope == "global":
-        if is_failures_routed_title(title):
-            return {
-                **failures_write_target(),
-                "scope_label": "global",
-                "routed_to_failures": True, "routed_to_pending": False,
-                "routed_to_local": False,
-                "error": None,
-            }
-        if realm == "local":
-            return {
-                **local_write_target(domain),
-                "scope_label": "global",
-                "routed_to_failures": False, "routed_to_pending": False,
-                "routed_to_local": True,
-                "error": None,
-            }
-        GLOBAL_MEMORY_DIR.mkdir(parents=True, exist_ok=True)
-        return {
-            "dir": GLOBAL_MEMORY_DIR, "base": GLOBAL_MEMORY_DIR,
-            "index_dir": GLOBAL_MEMORY_DIR, "index_root": CLAUDE_DIR,
-            "scope_label": "global",
-            "routed_to_failures": False, "routed_to_pending": False,
-            "routed_to_local": False,
+        # global 的三個物理居所（memory/ + memory/Failures/ + _AIDocs/_atoms/）一律
+        # 全納入定位範圍，不隨 create 落點縮窄——否則 realm/domain 給錯（或沒給）的
+        # append/replace 會在錯的子樹找檔。對拍 server.js append/replace 的 find-fallback。
+        global_roots = atom_search_roots()
+        common = {
+            "search_roots": global_roots, "scope_label": "global", "category": None,
+            "routed_to_failures": False, "routed_to_pending": False, "routed_to_local": False,
             "error": None,
         }
+        if is_failures_routed_title(title):
+            target = None
+            if domain or gate:
+                target, err = failures_topic_target(domain, allow_new_category)
+                if err and gate:
+                    return {"error": err}
+            if target is None:
+                target = failures_write_target()
+            return {**common, **target, "routed_to_failures": True}
+        if realm == "local":
+            return {**common, **local_write_target(domain), "routed_to_local": True}
+        target = None
+        if domain or gate:
+            target, err = core_write_target(domain, allow_new_category)
+            if err and gate:
+                return {"error": err}
+        if target is None:
+            GLOBAL_MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+            target = {
+                "dir": GLOBAL_MEMORY_DIR, "base": GLOBAL_MEMORY_DIR,
+                "index_dir": GLOBAL_MEMORY_DIR, "index_root": CLAUDE_DIR,
+            }
+        return {**common, **target}
 
     if scope not in ("shared", "role", "personal"):
         return {"error": f"Unknown scope: {scope}"}
@@ -220,54 +296,120 @@ def _resolve_target(
     if scope == "personal" and not user:
         return {"error": "scope=personal requires 'user' parameter"}
 
+    if scope == "personal":
+        # 本人跨專案 personal：~/.claude/memory/personal/<user>/。索引在全域 _atom_index.json，
+        # path 前綴 memory/personal/<user>/ → 讀取端（filter_visible）只給本人。
+        # 觸發：明給 cross_project，或 cwd 不在任何專案／在 ~/.claude 子樹。
+        _root = _find_project_root(project_cwd) if project_cwd else None
+        _under_home = _root is None
+        if _root is not None:
+            try:
+                _r = _root.resolve()
+                _home = CLAUDE_DIR.resolve()
+                _under_home = (_r == _home or _home in _r.parents)
+            except OSError:
+                _under_home = False
+        if cross_project or _under_home:
+            pg_dir = GLOBAL_MEMORY_DIR / "personal" / user
+            return {
+                "dir": pg_dir, "base": GLOBAL_MEMORY_DIR, "index_dir": GLOBAL_MEMORY_DIR,
+                "index_root": CLAUDE_DIR, "search_roots": [pg_dir],
+                "scope_label": f"personal:{user}", "category": None,
+                "routed_to_failures": False, "routed_to_pending": False, "routed_to_local": False,
+                "personal_global": True, "error": None,
+            }
+
     root = _find_project_root(project_cwd)
     if not root:
         return {"error": f"No project root found for scope={scope} cwd={project_cwd!r}"}
-    # ~/.claude itself is global; reject V4 sub-scopes (P1 雙層防護)
+    # ~/.claude 本身或其子樹（子目錄自帶 .git 也算）沒有 V4 子層；改用 scope=global
     try:
-        if root.resolve() == CLAUDE_DIR.resolve():
-            return {"error": "cwd is ~/.claude itself; use scope=global for cross-project knowledge"}
+        r = root.resolve()
+        home = CLAUDE_DIR.resolve()
+        if r == home or home in r.parents:
+            return {"error": f"scope={scope} rejected: cwd={project_cwd} is under ~/.claude itself; "
+                             "use scope=global for cross-project knowledge"}
     except OSError:
         pass
 
     base = root / ".claude" / "memory"
+    category = None
     if scope == "shared":
-        target_dir = base / "shared"
+        if subdir:
+            # 一 repo 多專案分區佈局（memory/projects/<專案名>/ 等）一次寫到位；
+            # 逐段沙盒化 + 保護段拒絕在 project_subdir_target 內。
+            target_dir, sub_err = project_subdir_target(base, subdir)
+            if sub_err:
+                return {"error": f"invalid subdir: {sub_err}"}
+        else:
+            target_dir = base / "shared"
         scope_label = "shared"
+        # shared 的定位範圍 = 整個 memory root：實體檔常被歸位到 shared/ 的
+        # 兄弟子夾（projects/<X>/…）。personal/roles/_drafts 等受保護子樹由
+        # locate_existing_atom 的段層級 skip（_LOCATE_SKIP_DIRS）排除，
+        # 跨 scope 保護不因放寬而失守。
+        search_roots = [base]
     elif scope == "role":
         target_dir = base / "roles" / role
         scope_label = f"role:{role}"
+        # role/personal 維持窄根：不得跨角色/跨使用者。
+        search_roots = [target_dir]
     else:  # personal
         target_dir = base / "personal" / user
         scope_label = f"personal:{user}"
+        # personal/auto/<user>/（extract-worker 自動草稿）落在 target_dir 之外 → 自然排除。
+        search_roots = [target_dir]
 
     routed_to_pending = False
+    routed_to_failures = False
     if scope == "shared" and audience and any(
         a.strip().lower() in SENSITIVE_AUDIENCE for a in audience
     ):
         target_dir = base / "shared" / "_pending_review"
         routed_to_pending = True
+    elif scope == "shared" and not subdir and slugify(title or "").startswith("feedback-"):
+        # 專案層失敗家族：feedback-* 落 <base>/failures/<主題>[/<Lv2>]/（對拍全域
+        # memory/Failures/<主題>/；主題清單 = 核心 Lv1 ∪ 專案 shared/_taxonomy.json domains，
+        # 走 project_category_target 同一套 snap）。hook 端 resolve_failures_dir 同址。
+        target_dir = base / "failures"
+        routed_to_failures = True
+        if domain or gate:
+            target, err = project_category_target(base, domain, allow_new_category,
+                                                  root_dir=target_dir)
+            if err and gate:
+                return {"error": err}
+            if target is not None:
+                target_dir = target["dir"]
+                category = f"failures/{target['category']}"
+    elif scope == "shared" and (domain or gate):
+        # 專案層同規則：shared create 先分類再落地 → <shared 或 subdir 分區>/<Lv1>[/<Lv2>]/。
+        # 敏感 audience 的 _pending_review 路由優先於範疇（待審草稿不分類）。
+        target, err = project_category_target(base, domain, allow_new_category,
+                                              root_dir=target_dir)
+        if err and gate:
+            return {"error": err}
+        if target is not None:
+            target_dir = target["dir"]
+            category = target["category"]
 
     target_dir.mkdir(parents=True, exist_ok=True)
     return {
         "dir": target_dir, "base": base,
         "index_dir": base, "index_root": base.parent,
-        "scope_label": scope_label,
-        "routed_to_failures": False, "routed_to_pending": routed_to_pending,
+        "search_roots": search_roots,
+        "scope_label": scope_label, "category": category,
+        "routed_to_failures": routed_to_failures, "routed_to_pending": routed_to_pending,
         "routed_to_local": False,
         "error": None,
     }
 
 
+def _category_gate_enabled() -> bool:
+    """範疇寫入閘開關（workflow/config.json taxonomy.gate_enabled）；測試 monkeypatch 此處。"""
+    return _taxonomy_gate_enabled()
+
+
 # ─── Index update（對拍 server.js:953 appendToIndex） ─────────────────────────
-
-
-def _resolve_index_path(mem_dir: Path) -> Path:
-    """優先 _ATOM_INDEX.md，否則 MEMORY.md（對拍 server.js:827）。"""
-    atom_idx = mem_dir / ATOM_INDEX
-    if atom_idx.exists():
-        return atom_idx
-    return mem_dir / MEMORY_INDEX
 
 
 def write_index(
@@ -276,10 +418,16 @@ def write_index(
     rel_path: str,
     triggers: Iterable[str],
     source: str,
+    scope: Optional[str] = None,
 ) -> WriteResult:
     """更新或追加 atom 條目到 _atom_index.json (SoT)，並回寫 _ATOM_INDEX.md mirror。
 
-    對拍 server.js:953 appendToIndex；JSON 為唯一機器源。
+    對拍 server.js:953 appendToIndex；JSON 為唯一機器源
+    （atom_index_json 同 package，import 恆成功；MD 由其自動 regen）。
+
+    scope：明給則用；None → **沿用索引既有條目的 scope**（replace/edit_metadata
+    不得重設專案層 scope）；新條目由 path 推導（scope_from_index_path）。trigger 逐項驗長度上限
+    （TRIGGER_MAX_LEN）——超長在寫入當下拒絕，不留給後續 validate_index 才爆。
     """
     if source not in VALID_SOURCES:
         return WriteResult(ok=False, error=f"invalid source: {source}",
@@ -288,67 +436,47 @@ def write_index(
     audit_id = _gen_audit_id()
     triggers_list = list(triggers)
 
-    # write JSON via lib/atom_index_json (auto-regen MD mirror)
-    try:
-        from .atom_index_json import upsert_atom
-        upsert_atom(
-            mem_dir=base_dir,
-            name=slug,
-            path=rel_path,
-            triggers=triggers_list,
-            scope="global",
+    from .atom_index_json import (
+        upsert_atom, load_atom_index_json, TRIGGER_MAX_LEN,
+    )
+    too_long = [t for t in triggers_list if len(t) > TRIGGER_MAX_LEN]
+    if too_long:
+        return WriteResult(
+            ok=False, audit_id=audit_id,
+            error=f"trigger too long (>{TRIGGER_MAX_LEN}): "
+                  + ", ".join(repr(t) for t in too_long),
         )
-        index_path = base_dir / "_atom_index.json"
-        _audit_log({
-            "audit_id": audit_id,
-            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "op": "index", "source": source,
-            "path": str(index_path), "slug": slug,
-        })
-        return WriteResult(ok=True, path=index_path, audit_id=audit_id)
-    except ImportError:
-        pass  # fall through to legacy MD write
-
-    index_path = _resolve_index_path(base_dir)
-    trigger_str = ", ".join(triggers_list)
-    new_row = f"| {slug} | {rel_path} | {trigger_str} |"
-
-    try:
-        content = index_path.read_text(encoding="utf-8")
-    except (OSError, FileNotFoundError):
-        content = "\n".join([
-            "# Atom Index", "",
-            "> Session 啟動時先讀此索引。比對 Trigger → Read 對應 atom。",
-            "| Atom | Path | Trigger |",
-            "|------|------|---------|",
-            "",
-        ])
-
-    escaped = re.escape(slug)
-    existing_re = re.compile(rf"^\|\s*{escaped}\s*\|.*$", re.MULTILINE)
-    if existing_re.search(content):
-        content = existing_re.sub(new_row, content, count=1)
-    else:
-        lines = content.split("\n")
-        insert_idx = -1
-        found_sep = False
-        for i, line in enumerate(lines):
-            if line.startswith("|------"):
-                found_sep = True
-                continue
-            if found_sep and not line.startswith("|"):
-                insert_idx = i
-                break
-        if insert_idx >= 0:
-            lines.insert(insert_idx, new_row)
-            content = "\n".join(lines)
-        else:
-            content = content.rstrip() + "\n" + new_row + "\n"
-
-    _atomic_write(index_path, content)
+    if scope is None:
+        try:
+            for a in load_atom_index_json(base_dir).get("atoms", []):
+                if a.get("name") == slug:
+                    scope = a.get("scope")
+                    break
+        except (OSError, ValueError):
+            pass
+    if not scope:
+        # 新條目且呼叫端沒給 scope：由 path 推導（personal/<u>/ → personal:<u>、roles/<r>/ →
+        # role:<r>、其餘依索引層 global|shared），不再一律預設 "global"——那正是專案層
+        # 索引長出 45 條 scope=global 錯標的源頭；讀取端同一套規則（scope_from_index_path）。
+        try:
+            from .atom_locations import scope_from_index_path, GLOBAL_MEMORY_DIR
+            _layer = "global" if base_dir.resolve() == GLOBAL_MEMORY_DIR.resolve() else "shared"
+            scope = scope_from_index_path(rel_path, _layer)
+        except (ImportError, OSError):
+            scope = "global"
+    upsert_atom(
+        mem_dir=base_dir,
+        name=slug,
+        path=rel_path,
+        triggers=triggers_list,
+        scope=scope,
+    )
+    index_path = base_dir / "_atom_index.json"
     _audit_log({
-        "audit_id": audit_id, "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "op": "index", "source": source, "path": str(index_path), "slug": slug,
+        "audit_id": audit_id,
+        "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "op": "index", "source": source,
+        "path": str(index_path), "slug": slug,
     })
     return WriteResult(ok=True, path=index_path, audit_id=audit_id)
 
@@ -443,7 +571,7 @@ def append_atom_file(
 
     供 server.js toolAtomWrite(mode=append) spawn 用：js 端已處理 legacy fallback /
     Failures / local-realm 路由得到 file_path，內容拼接與落檔統一走 py（單一實作，
-    EOL 由 _atomic_write byte-stable）。對拍 write_atom(mode=append) 拼接行為。
+    落檔一律 LF，由 write_text_lf 保證）。對拍 write_atom(mode=append) 拼接行為。
     不更新 access.json / index（caller 沿既有 spawnAtomAccess / appendToIndex 流程）。
     """
     audit_id = _gen_audit_id()
@@ -463,7 +591,60 @@ def append_atom_file(
     if err:
         return WriteResult(ok=False, audit_id=audit_id,
                            error=f"Validation failed after append: {err}")
+    # 大小預算硬拒（append 是 atom 肥大化的實際路徑：一次一點、累積成山）。
+    # 以「拼接後」的 knowledge 區總量計——existing 已超額者任何 append 都會被拒，
+    # 逼迫先瘦身（結論留 atom、個案敘事外移文件）再追加。
+    budget_err = knowledge_budget_error(knowledge_sections_bytes(content))
+    if budget_err:
+        return WriteResult(ok=False, audit_id=audit_id,
+                           error=f"Budget rejected after append: {budget_err}")
     return write_raw(fp, content, source=source, op=op)
+
+
+_META_KV_LINE_RE = re.compile(r"^-\s+[\w-]+:\s*.*$")
+
+
+def _insert_meta_line(text: str, line: str) -> Optional[str]:
+    """把 `- Key: value` 插到 metadata 區塊末（H1 後第一段連續 `- Key:` 行）。
+
+    輸出一律 LF（輸入若含 CRLF 先正規化）；找不到區塊回 None。
+    """
+    eol = "\n"
+    lines = normalize_lf(text).split(eol)
+    last_meta = -1
+    seen_h1 = False
+    for i, ln in enumerate(lines):
+        if not seen_h1:
+            if ln.startswith("# "):
+                seen_h1 = True
+            continue
+        if _META_KV_LINE_RE.match(ln):
+            last_meta = i
+        elif last_meta >= 0:
+            break  # 區塊結束
+    if last_meta < 0:
+        return None
+    lines.insert(last_meta + 1, line)
+    return eol.join(lines)
+
+
+def _scope_from_frontmatter(text: str) -> Optional[str]:
+    """frontmatter `- Scope:` → VALID_SCOPES 值；legacy `project` 對映 `shared`；缺/非法 → None。"""
+    m = re.search(r"^-\s*Scope:\s*(\S+)", text, re.MULTILINE)
+    if not m:
+        return None
+    val = m.group(1).strip().lower()
+    if val == "project":
+        val = "shared"
+    return val if val in VALID_SCOPES else None
+
+
+def _index_has_entry(base_dir: Path, slug: str) -> bool:
+    try:
+        from .atom_index_json import load_atom_index_json
+        return any(a.get("name") == slug for a in load_atom_index_json(base_dir).get("atoms", []))
+    except (OSError, ValueError, ImportError):
+        return False
 
 
 def edit_metadata(
@@ -501,7 +682,9 @@ def edit_metadata(
     had_bom = raw.startswith(b"\xef\xbb\xbf")
     text = raw.decode("utf-8-sig")
 
-    # ── Surgical replace（每個非 None 欄位，只改那一行，count=1；找不到不靜默） ──
+    # ── Surgical replace（每個非 None 欄位，只改那一行，count=1）；欄位行不存在則
+    #    插到 metadata 區塊（H1 後連續 `- Key: value` 行）末尾——舊模板生的檔常缺
+    #    Trigger 行，拒寫會讓它永遠補不齊。沒有 metadata 區塊才回 error。 ──
     fields = {"triggers": triggers, "related": related, "tags": tags}
     new_text = text
     for field_name, values in fields.items():
@@ -514,25 +697,51 @@ def edit_metadata(
         line_re = re.compile(rf"^-\s*{label}:\s*.*$", re.MULTILINE)
         new_text, n = line_re.subn(replacement, new_text, count=1)
         if n == 0:
-            # 找不到該欄位行 → 不靜默 no-op（且 frontmatter 尚未寫，index 也未寫）
-            return WriteResult(
-                ok=False, audit_id=audit_id,
-                error=f"frontmatter field not found: {label}",
-            )
+            inserted = _insert_meta_line(new_text, replacement)
+            if inserted is None:
+                return WriteResult(
+                    ok=False, audit_id=audit_id,
+                    error=f"frontmatter field not found and no metadata block to insert into: {label}",
+                )
+            new_text = inserted
 
     # ── SoT 先行：triggers 變更時先寫 _atom_index.json ──
     if triggers is not None:
-        base_dir = GLOBAL_MEMORY_DIR  # global memory 與 Failures atoms 索引同居此
         slug = Path(file_path).stem
+        fp = Path(file_path).resolve()
         try:
-            rel_path = Path(file_path).resolve().relative_to(
-                CLAUDE_DIR.resolve()).as_posix()
+            in_claude = fp.is_relative_to(CLAUDE_DIR.resolve())
+        except OSError:
+            in_claude = False
+        if in_claude:
+            # global 三居所（memory/ + _AIDocs/Failures/ + _AIDocs/_atoms/）索引同居
+            # GLOBAL_MEMORY_DIR（Failures/_atoms 上溯不到它，不能走 find_index_dir）
+            base_dir = GLOBAL_MEMORY_DIR
+            index_root = CLAUDE_DIR.resolve()
+        else:
+            # 專案層 atom：上溯最近 _atom_index.json = 該專案 memory root
+            from .atom_index_json import find_index_dir
+            base_dir = find_index_dir(fp.parent)
+            if base_dir is None:
+                return WriteResult(
+                    ok=False, audit_id=audit_id,
+                    error=f"no _atom_index.json found at/above: {fp.parent}",
+                )
+            index_root = base_dir.parent.resolve()
+        try:
+            rel_path = fp.relative_to(index_root).as_posix()
         except ValueError:
             return WriteResult(
                 ok=False, audit_id=audit_id,
-                error=f"file not under {CLAUDE_DIR}: {file_path}",
+                error=f"file not under index root {index_root}: {file_path}",
             )
-        idx_res = write_index(base_dir, slug, rel_path, triggers, source)
+        # scope：索引既有條目優先（write_index 對 None 會沿用）；本檔尚未入索引時
+        # 依 frontmatter `Scope`（legacy `project`→`shared`）、再依層別預設，
+        # 不能讓專案層 atom 首次登錄就被預設成 global。
+        scope_for_index: Optional[str] = None
+        if not _index_has_entry(base_dir, slug):
+            scope_for_index = _scope_from_frontmatter(text) or ("global" if in_claude else "shared")
+        idx_res = write_index(base_dir, slug, rel_path, triggers, source, scope=scope_for_index)
         if not idx_res.ok:
             # index 領先失敗 → 不續寫 frontmatter（避免不可復原 drift）
             return idx_res
@@ -580,12 +789,20 @@ def write_atom(
     today: Optional[str] = None,
     realm: Optional[str] = None,
     domain: Optional[str] = None,
+    subdir: Optional[str] = None,
+    allow_new_category: bool = False,
+    cross_project: bool = False,
 ) -> WriteResult:
     """寫入 atom 的唯一入口。對拍 server.js:1065 toolAtomWrite byte-identical。
 
     Required: title, scope, confidence, triggers, knowledge, mode, source
-    V5+ realm/domain（選填，僅 scope=global 生效）：realm="local" → 物理落
-    _AIDocs/_atoms/<domain>/，realm 由 path 推導不存欄位。預設 core（現狀）。
+    domain（mode=create 必填於 scope=global 非 local／feedback- 標題／scope=shared）：
+    「層根下的 <Lv1>[/<Lv2>]」範疇路徑（正名／slug／別名皆可，snap 回正名）；
+    realm="local" 時則是 _AIDocs/_atoms/ 下的階層 domain。缺或未知 Lv1 → 拒寫並列出
+    全部 Lv1；allow_new_category=True 才准開新 Lv1（仍受保留名／字元集約束）。
+    本函式永不自動分類（source 為 mcp 時 AI 必給；程式寫手在呼叫前自行 classify_category）。
+    append/replace 忽略 domain（既有檔由 index 定位），給了只 stderr 提示不阻斷。
+    subdir（選填，僅 scope=shared）：create 分區根改 `<memory root>/<subdir>/`，範疇落其下。
     """
     audit_id = _gen_audit_id()
 
@@ -610,9 +827,38 @@ def write_atom(
         return WriteResult(ok=False, audit_id=audit_id,
                            error=f"Unknown scope: {scope}")
 
+    # trigger 長度在寫入當下即驗（create/replace 會回寫索引 triggers；append 不動
+    # 既有 triggers，legacy 超長 atom 的 append 不受牽連）。
+    if mode in ("create", "replace"):
+        from .atom_index_json import TRIGGER_MAX_LEN
+        too_long = [t for t in triggers if len(t) > TRIGGER_MAX_LEN]
+        if too_long:
+            return WriteResult(
+                ok=False, audit_id=audit_id,
+                error=f"trigger too long (>{TRIGGER_MAX_LEN} chars): "
+                      + ", ".join(repr(t) for t in too_long)
+                      + " — shorten the trigger; it would poison every later "
+                        "validate_index run (atom_move exit 2).")
+
+    # ── Realm gate：專案專屬內容不得落 global（所有 mode；skip_gate 跳不過）──
+    # 裁決在 lib/realm_gate.py 單源；cwd 缺（純程式寫手無 session 脈絡）或 cwd∈~/.claude
+    # → 閘不啟動。force_global 為 migration／測試逃生門。
+    if scope == "global" and not force_global:
+        from .realm_gate import check_global_write
+        gate_err = check_global_write(project_cwd, title=title, triggers=triggers,
+                                      knowledge=knowledge, actions=actions, domain=domain)
+        if gate_err:
+            return WriteResult(ok=False, audit_id=audit_id, error=gate_err)
+
     # ── Resolve target dir ──
+    if mode in ("append", "replace") and domain and realm != "local":
+        # 可觀測性鐵律：忽略但要告知（既有檔靠 index 定位，domain 不改落點）
+        print(f"[atom_io] mode={mode}: domain={domain!r} ignored (existing atom located via index)",
+              file=sys.stderr)
     resolved = _resolve_target(scope, project_cwd, role, user, audience, force_global,
-                               title=title, realm=realm, domain=domain)
+                               title=title, realm=realm, domain=domain, subdir=subdir,
+                               mode=mode, allow_new_category=allow_new_category,
+                               cross_project=cross_project)
     if resolved.get("error"):
         return WriteResult(ok=False, audit_id=audit_id, error=resolved["error"])
     mem_dir = resolved["dir"]
@@ -624,7 +870,32 @@ def write_atom(
     slug = slugify(title)
     file_path = mem_dir / f"{slug}.md"
     index_root = resolved["index_root"]
-    rel_path = file_path.relative_to(index_root).as_posix()
+
+    # append/replace 的實體檔可能不在扁平落點（專案 projects/<X>/、shared/<Domain>/、
+    # local realm _AIDocs/_atoms/<domain>/）→ 索引優先、rglob 為輔定位。
+    # create 反向使用同一定位：同 slug 已存在於子夾 → 拒絕（否則會叉出重複 atom
+    # 並讓索引 path 蹍掉舊檔）；不改 create 落點本身。
+    if mode in ("append", "replace", "create") and not file_path.exists():
+        found, loc_err = locate_existing_atom(
+            slug,
+            index_dir=resolved["index_dir"],
+            index_root=index_root,
+            search_roots=resolved.get("search_roots") or [],
+        )
+        if loc_err:
+            return WriteResult(ok=False, audit_id=audit_id, error=loc_err)
+        if found:
+            if mode == "create":
+                return WriteResult(
+                    ok=False, audit_id=audit_id,
+                    error=f"Atom already exists: {found} (use mode=append/replace)")
+            file_path = found
+
+    try:
+        rel_path = file_path.relative_to(index_root).as_posix()
+    except ValueError:
+        return WriteResult(ok=False, audit_id=audit_id,
+                           error=f"located atom outside index root: {file_path}")
 
     # ── Build content ──
     if mode == "create":
@@ -692,12 +963,9 @@ def write_atom(
     try:
         from . import atom_access
         if mode == "create":
+            # init 一次帶齊 first_seen + last_used（單寫；create 時 sidecar 必為新檔）
             atom_access.init_access(
-                file_path, first_seen=today_str, source=source,
-            )
-            # 同步把 last_used 設為 today（init 只設 first_seen，未設 last_used）
-            atom_access.write_access_field(
-                file_path, field="last_used", value=today_str, source=source,
+                file_path, first_seen=today_str, last_used=today_str, source=source,
             )
         else:  # append / replace
             atom_access.write_access_field(
@@ -708,16 +976,124 @@ def write_atom(
         pass
 
     # ── Update index ──
+    # scope：create 傳 scope_label（與 frontmatter 一致）；replace 傳 None（沿用索引
+    # 既有值，不得把專案層 scope 重設回 global）。
     if mode in ("create", "replace"):
-        write_index(resolved["index_dir"], slug, rel_path, triggers, source)
+        write_index(resolved["index_dir"], slug, rel_path, triggers, source,
+                    scope=scope_label if mode == "create" else None)
 
     # ── Audit log ──
     _audit_log({
         "audit_id": audit_id, "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "op": "write", "source": source, "mode": mode, "scope": scope_label,
-        "slug": slug, "path": str(file_path),
+        "slug": slug, "path": str(file_path), "category": resolved.get("category"),
         "routed_to_pending": routed_to_pending, "skip_gate": skip_gate,
     })
 
     return WriteResult(ok=True, audit_id=audit_id, path=file_path,
-                       routed_to_pending=routed_to_pending, skip_gate=skip_gate)
+                       routed_to_pending=routed_to_pending, skip_gate=skip_gate,
+                       extra={"category": resolved.get("category")})
+
+
+def locate_atom(
+    title: str,
+    scope: str = "shared",
+    *,
+    project_cwd: Optional[str] = None,
+    role: Optional[str] = None,
+    user: Optional[str] = None,
+    audience: Optional[List[str]] = None,
+    force_global: bool = False,
+    realm: Optional[str] = None,
+    domain: Optional[str] = None,
+    subdir: Optional[str] = None,
+    mode: Optional[str] = None,
+    allow_new_category: bool = False,
+    triggers: Optional[List[str]] = None,
+    enforce_cwd_scope: bool = False,
+    cross_project: bool = False,
+) -> WriteResult:
+    """atom 落點與定位的**唯一裁決者**（唯讀；只 mkdir 落點）。MCP js 端 create/append/
+    replace/promote/edit_meta 一律先問這裡，js 不自算任何路徑。
+
+    回 WriteResult：
+      ok=True, path=None ⇒ 既有檔不存在（create 可落；append/replace 給 not-found）
+      ok=True, path=<檔> ⇒ 既有檔（含子夾／local realm／失敗家族）
+      ok=False ⇒ 撞名／scope 或 cwd 解析錯／範疇閘拒寫／分隔符變體撞名（error 已含說明）
+    extra（js 照用、不重算）：
+      target_dir, category, base_dir, index_dir, index_root, scope_label, slug,
+      rel_path（既有檔）／create_rel_path（新檔相對 index_root），
+      routed_to_failures / routed_to_pending / routed_to_local, realm, domain,
+      auto_realm（scope=global、realm 未給時由 classify_realm 判 local 的命中詞）。
+    """
+    audit_id = _gen_audit_id()
+    if scope == "project":
+        scope = "shared"
+    slug = slugify(title)
+    auto_realm: Optional[List[str]] = None
+    if scope == "global" and realm is None and not is_failures_routed_title(title):
+        # 自動 realm（core 全專案注入／local 只在 ~/.claude）：安全預設 core，核心保護硬擋。
+        try:
+            rc = classify_realm(slug, triggers or [])
+            if rc.get("realm") == "local" and rc.get("domain") and not rc.get("protected"):
+                realm = "local"
+                if not domain:
+                    domain = rc["domain"]
+                auto_realm = list(rc.get("matched") or [])
+        except Exception:  # noqa: BLE001 — 分類器故障 → 維持 core
+            pass
+    resolved = _resolve_target(scope, project_cwd, role, user, audience, force_global,
+                               title=title, realm=realm, domain=domain, subdir=subdir,
+                               mode=mode, allow_new_category=allow_new_category,
+                               enforce_cwd_scope=enforce_cwd_scope,
+                               cross_project=cross_project)
+    if resolved.get("error"):
+        return WriteResult(ok=False, audit_id=audit_id, error=resolved["error"])
+
+    index_root = resolved["index_root"]
+    file_path = resolved["dir"] / f"{slug}.md"
+    try:
+        create_rel = file_path.relative_to(index_root).as_posix()
+    except ValueError:
+        create_rel = None
+    common = {
+        "target_dir": str(resolved["dir"]), "category": resolved.get("category"),
+        "base_dir": str(resolved["base"]), "index_dir": str(resolved["index_dir"]),
+        "index_root": str(index_root), "scope_label": resolved["scope_label"], "slug": slug,
+        "create_rel_path": create_rel,
+        "routed_to_failures": bool(resolved.get("routed_to_failures")),
+        "routed_to_pending": bool(resolved.get("routed_to_pending")),
+        "routed_to_local": bool(resolved.get("routed_to_local")),
+        "personal_global": bool(resolved.get("personal_global")),
+        "realm": "local" if resolved.get("routed_to_local") else ("global" if scope == "global" else None),
+        "domain": domain, "auto_realm": auto_realm,
+    }
+    if not file_path.exists():
+        found, loc_err = locate_existing_atom(
+            slug,
+            index_dir=resolved["index_dir"],
+            index_root=index_root,
+            search_roots=resolved.get("search_roots") or [],
+        )
+        if loc_err:
+            return WriteResult(ok=False, audit_id=audit_id, error=loc_err)
+        if not found:
+            variant = find_separator_variant(resolved.get("search_roots") or [], slug)
+            if variant and mode == "create":
+                return WriteResult(
+                    ok=False, audit_id=audit_id,
+                    error=f'Slug collision: "{variant}" already exists and normalizes to the '
+                          f'same slug "{slug}".\nCreating "{slug}.md" would fork a near-duplicate '
+                          f'atom.\n→ Use mode=append/replace on the existing atom, or rename '
+                          f'"{variant}" to the hyphen convention first.')
+            # 非 create：只回報變體（replace 的 not-found 訊息用），不擋
+            return WriteResult(ok=True, audit_id=audit_id, path=None,
+                               extra={"found": False, "separator_variant": variant, **common})
+        file_path = found
+    try:
+        rel_path = file_path.relative_to(index_root).as_posix()
+    except ValueError:
+        return WriteResult(ok=False, audit_id=audit_id,
+                           error=f"located atom outside index root: {file_path}")
+    return WriteResult(ok=True, audit_id=audit_id, path=file_path,
+                       extra={"found": True, "rel_path": rel_path, **common})

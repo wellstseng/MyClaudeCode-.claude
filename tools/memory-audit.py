@@ -28,7 +28,6 @@ import argparse
 import json
 import os
 import re
-import shutil
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -38,7 +37,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 _CLAUDE_DIR = Path.home() / ".claude"
 if str(_CLAUDE_DIR) not in sys.path:
     sys.path.insert(0, str(_CLAUDE_DIR))
-from lib.atom_io import write_raw  # noqa: E402
+from lib.atom_io import write_raw, write_index_full  # noqa: E402
 
 _AUDIT_SOURCE = "tool:memory-audit"
 
@@ -47,22 +46,47 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lib.atom_spec import (
     SKIP_DIRS, SKIP_PREFIXES, REQUIRED_METADATA, OPTIONAL_METADATA,
     REQUIRED_SECTIONS, KNOWLEDGE_SECTIONS, VALID_CONFIDENCE,
-    INDEX_MAX_LINES, ATOM_MAX_LINES, TRIGGER_MIN, TRIGGER_MAX,
+    INDEX_MAX_LINES, PROJECT_INDEX_MAX_LINES, ATOM_MAX_LINES, TRIGGER_MIN, TRIGGER_MAX,
     MEMORY_INDEX,
+    parse_depends, resolve_depends_path, depends_warnings, evidence_warning,
 )
 from lib.atom_locations import (
-    GLOBAL_MEMORY_DIR, FAILURES_DIR,
+    GLOBAL_MEMORY_DIR, FAILURES_DIR, LEGACY_FAILURES_DIR,
     failures_atom_stems, iter_atom_files_multi,
 )
 # 晉升判定權威來源（server.js 的 py 鏡像）：confirmations 主軌 + usefulness Wilson 下界軌。
 # ReadHits 已退役（純曝光、不參與晉升）。
-from lib.atom_access import read_access, usefulness_promote_eligible
+from lib.atom_access import read_access, usefulness_promote_eligible, move_atom_pair
+# _atom_index.json 為索引唯一機器源：delete/restore 必同步（含 _ATOM_INDEX.md mirror regen）
+from lib.atom_index_json import (
+    delete_atom as index_delete_atom,
+    upsert_atom as index_upsert_atom,
+    load_atom_index_json,
+)
+# 範疇資料夾硬規則：memory/ 根下散檔須歸入 memory/<範疇>/。gate 由 workflow/config.json
+# taxonomy.gate_enabled 控制；模組缺席時視為關閉（不報 layout error）。
+from lib.atom_locations import is_flat_core_path
+try:
+    from lib.atom_taxonomy import gate_enabled
+except ImportError:  # pragma: no cover
+    def gate_enabled() -> bool:
+        return False
+
+def _failures_file_exists(file_name: str) -> bool:
+    """失敗家族檔存在性：memory/Failures/ 樹（含 <主題>/ 子夾）優先，再退舊址 _AIDocs/Failures/。"""
+    for root in (FAILURES_DIR, LEGACY_FAILURES_DIR):
+        if not root.is_dir():
+            continue
+        if (root / file_name).exists() or any(root.rglob(file_name)):
+            return True
+    return False
+
 
 # ─── Audit-specific constants（atom_spec 不需共享的） ────────────────────────
 
-STALENESS_THRESHOLDS: Dict[str, int] = {"[固]": 90, "[觀]": 60, "[臨]": 30}
-# Type-based decay multiplier (procedural ages slower, episodic faster)
-TYPE_DECAY_MULTIPLIER: Dict[str, float] = {"semantic": 1.0, "episodic": 0.8, "procedural": 1.5}
+# 遺忘政策只有一套：hooks/wg_atoms 的 selective forget（score = 0.5·recency + 0.5·usage，
+# score < self_iteration.archive_score_threshold 且非核心保護 → 候選）。本工具的降級候選與
+# --enforce 都委派它，不另設天數門檻。
 # SYNC: server.js atom_promote — confirmations 主軌（suggest only, not gate）。
 # ReadHits 已退役（純曝光、不參與晉升）；usefulness 軌走 lib.atom_access（自帶 lb/min_n 預設）。
 PROMOTION_THRESHOLDS = {
@@ -75,7 +99,8 @@ VALID_PRIVACY = {"public", "internal", "sensitive"}
 
 
 def iter_atom_files(mem_dir: Path):
-    """yield 合法 atom .md（V5+: 若 mem_dir == 全域 memory，自動含 _AIDocs/Failures/）。
+    """yield 合法 atom .md（mem_dir == 全域 memory 時多根掃描：memory/ 含 memory/Failures/、
+    舊址 _AIDocs/Failures/、_AIDocs/_atoms/）。
 
     判定統一委派 lib.atom_locations.iter_atom_files_multi（內部用 lib.atom_spec.is_atom_file
     + failures_atom_stems 過濾參考文件）。非全域 mem_dir 只掃單根。
@@ -168,6 +193,8 @@ class HealthReport:
     duplicates: List[DuplicatePair] = field(default_factory=list)
     distant_count: int = 0
     audit_stats: Dict[str, Any] = field(default_factory=dict)
+    # 壞滅緣（validity conditions）：path 型 Depends 指向已消失路徑的 atoms
+    stale_deps: List[Dict[str, str]] = field(default_factory=list)
 
 
 # ─── Parsing ─────────────────────────────────────────────────────────────────
@@ -223,15 +250,19 @@ def parse_atom_file(path: Path, layer_name: str) -> AtomMetadata:
             break
 
     # Metadata block (lines starting with "- Key: Value")
+    # 空行不結束區塊：conflict-review 核可會在標題下插 `- Decided-by:` 再接原空行，
+    # 舊版在此 break 只讀到一欄 → Scope/Confidence/Trigger 全誤報缺失。
+    # 區塊終點 = 第一個非空、非 `- Key:` 的行（通常是 `## 知識`）。
     in_meta = False
     for line in lines:
-        if line.startswith("- "):
-            m = META_PATTERN.match(line)
-            if m:
-                key, val = m.group(1), m.group(2).strip()
-                atom.raw_metadata[key] = val
-                in_meta = True
-        elif in_meta and line.strip() == "":
+        if line.strip() == "":
+            continue
+        m = META_PATTERN.match(line) if line.startswith("- ") else None
+        if m:
+            key, val = m.group(1), m.group(2).strip()
+            atom.raw_metadata[key] = val
+            in_meta = True
+        elif in_meta:
             break  # end of metadata block
 
     # Extract structured fields
@@ -267,13 +298,6 @@ def parse_atom_file(path: Path, layer_name: str) -> AtomMetadata:
             atom.confirmations = int(atom.raw_metadata.get("Confirmations", "0"))
         except ValueError:
             atom.confirmations = 0
-    if "read_hits" in acc:
-        atom.readhits = int(acc.get("read_hits") or 0)
-    else:
-        try:
-            atom.readhits = int(atom.raw_metadata.get("ReadHits", "0"))
-        except ValueError:
-            atom.readhits = 0
 
     atom.privacy = atom.raw_metadata.get("Privacy", "public")
     atom.source = atom.raw_metadata.get("Source", "")
@@ -362,6 +386,16 @@ def parse_memory_index(path: Path) -> Tuple[List[IndexEntry], int]:
                 in_table = True
                 header_seen = True
                 continue
+            # CC 原生 auto-memory 清單格式：`- [標題](檔.md) — 說明`
+            # （projects/<slug>/memory/MEMORY.md 用此格式，非 atom 表格）
+            m = re.match(r"^- \[[^\]]*\]\(([^)]+\.md)\)", stripped)
+            if m:
+                rel = m.group(1)
+                entries.append(IndexEntry(
+                    atom_name=Path(rel).stem, path=rel,
+                    trigger="", confidence="",
+                ))
+                continue
         else:
             if stripped.startswith("|---") or stripped.startswith("| ---"):
                 continue  # separator
@@ -370,7 +404,11 @@ def parse_memory_index(path: Path) -> Tuple[List[IndexEntry], int]:
             cells = [c.strip() for c in stripped.split("|")]
             cells = [c for c in cells if c]  # remove empties from leading/trailing |
             if len(cells) >= 3:
-                # Legacy 3-col format: | Atom | Path | Trigger | [Confidence]
+                # 3-col format: | Atom | Path | Trigger | [Confidence]
+                # 範疇聚合表（| 範疇 | atom 數 | 深入 |）第二欄是數字或 drill 字串、不是 .md
+                # → 不是 atom 列，跳過不產 entry（atom 真相由 _atom_index.json 提供）
+                if not cells[1].endswith(".md"):
+                    continue
                 entry = IndexEntry(
                     atom_name=cells[0],
                     path=cells[1],
@@ -418,6 +456,11 @@ def validate_format(atom: AtomMetadata) -> List[Issue]:
         if key not in atom.raw_metadata:
             issues.append(Issue(rel, "error", "format", f"缺少必要欄位: {key}"))
 
+    # 清單外欄位（拼錯的欄名會被讀取端靜默忽略，這裡浮出）
+    for key in atom.raw_metadata:
+        if key not in REQUIRED_METADATA and key not in OPTIONAL_METADATA:
+            issues.append(Issue(rel, "warning", "format", f"未知欄位: {key}（lib/atom_spec.OPTIONAL_METADATA 未登記）"))
+
     # Confidence value
     if atom.confidence and atom.confidence not in VALID_CONFIDENCE:
         issues.append(
@@ -451,32 +494,89 @@ def validate_format(atom: AtomMetadata) -> List[Issue]:
             Issue(rel, "info", "trigger", f"Trigger 數量 {trigger_count}（建議 {TRIGGER_MIN}~{TRIGGER_MAX}）")
         )
 
+    # Depends / Evidence（皆 optional；缺欄靜默，格式錯誤僅 warning 不 fail）
+    if "Depends" in atom.raw_metadata:
+        for w in depends_warnings(atom.raw_metadata["Depends"]):
+            issues.append(Issue(rel, "warning", "format", w))
+    if "Evidence" in atom.raw_metadata:
+        ew = evidence_warning(atom.raw_metadata["Evidence"])
+        if ew:
+            issues.append(Issue(rel, "warning", "format", ew))
+
     return issues
 
 
-def check_staleness(atom: AtomMetadata, today: date) -> Optional[Suggestion]:
-    """Check if atom is stale based on Last-used date and atom type."""
-    if not atom.last_used or not atom.confidence:
-        return None
+def check_stale_deps(atom: AtomMetadata) -> List[Dict[str, str]]:
+    """壞滅緣檢查：path 型 Depends 條目指向不存在的路徑（warning 級）。
 
-    base_threshold = STALENESS_THRESHOLDS.get(atom.confidence)
-    if base_threshold is None:
-        return None
-    type_mult = TYPE_DECAY_MULTIPLIER.get(atom.atom_type, 1.0)
-    threshold = int(base_threshold * type_mult)
+    無 Depends 欄一律靜默（optional，向後相容）；自由文字型條目不可驗、跳過。
+    """
+    raw = atom.raw_metadata.get("Depends", "")
+    if not raw or atom.is_claude_native:
+        return []
+    out: List[Dict[str, str]] = []
+    for e in parse_depends(raw):
+        if e["type"] != "path" or not e["value"]:
+            continue
+        resolved = resolve_depends_path(e["value"])
+        if not resolved.exists():
+            out.append({
+                "file": _rel_path(atom.file_path),
+                "dep": e["value"],
+                "resolved": str(resolved),
+            })
+    return out
 
-    days = (today - atom.last_used).days
-    if days <= threshold:
-        return None
 
+def _forget_config() -> Dict[str, Any]:
+    """workflow/config.json（selective forget 旋鈕：self_iteration.decay_half_life_days /
+    archive_score_threshold / forget.*）。缺檔或壞檔 → 空 dict，各處用預設值。"""
+    try:
+        return json.loads((CLAUDE_DIR / "workflow" / "config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _archive_candidate(atom: AtomMetadata, today: date, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """同 hooks/wg_atoms._self_iterate_atoms 的封存判定：archive_score < archive_score_threshold。
+    回 wg_atoms.apply_selective_forget 吃的候選 dict（atom/path/score/last_used/confirmations）。"""
+    from lib.atom_access import read_access, usefulness_stats
+    try:
+        from wg_atoms import archive_score
+    except ImportError:
+        _hooks = CLAUDE_DIR / "hooks"
+        if str(_hooks) not in sys.path:
+            sys.path.insert(0, str(_hooks))
+        from wg_atoms import archive_score
+    si = config.get("self_iteration", {}) or {}
+    half_life = float(si.get("decay_half_life_days", 30))
+    threshold = float(si.get("archive_score_threshold", 0.3))
+    acc = read_access(atom.file_path)
+    has_use = usefulness_stats(acc).get("n", 0) > 0
+    sc = archive_score(acc, datetime.combine(today, datetime.min.time()), half_life,
+                       has_use_evidence=has_use)
+    if sc is None or sc["score"] >= threshold:
+        return None
+    return {"atom": atom.file_path.stem, "path": str(atom.file_path),
+            "score": round(sc["score"], 3), "days_since": sc["days_since"],
+            "last_used": acc.get("last_used"), "confirmations": sc["confirmations"],
+            "threshold": threshold}
+
+
+def check_staleness(atom: AtomMetadata, today: date,
+                    config: Optional[Dict[str, Any]] = None) -> Optional[Suggestion]:
+    """降級候選 = selective forget 的封存候選（與 --enforce 同一判定）。"""
+    if not atom.confidence:
+        return None
+    c = _archive_candidate(atom, today, config if config is not None else _forget_config())
+    if c is None:
+        return None
+    reason = (f"封存分數 {c['score']} < {c['threshold']}（{c['days_since']} 天未用、"
+              f"confirmations={c['confirmations']}）")
     rel = _rel_path(atom.file_path)
-    type_note = f", type={atom.atom_type}" if atom.atom_type != "semantic" else ""
-    if atom.confidence == "[臨]":
-        return Suggestion(rel, atom.confidence, "遙遠記憶", f"Last-used {days} 天前（閾值 {threshold}天{type_note}）")
-    elif atom.confidence == "[觀]":
-        return Suggestion(rel, atom.confidence, "確認或遙遠記憶", f"Last-used {days} 天前（閾值 {threshold}天{type_note}）")
-    else:  # [固]
-        return Suggestion(rel, atom.confidence, "建議人工檢視", f"Last-used {days} 天前（閾值 {threshold}天）")
+    if atom.confidence == "[固]":
+        return Suggestion(rel, atom.confidence, "建議人工檢視", reason)
+    return Suggestion(rel, atom.confidence, "遙遠記憶（--enforce 隔離）", reason)
 
 
 def suggest_promotions(atom: AtomMetadata) -> Optional[Suggestion]:
@@ -507,34 +607,66 @@ def suggest_promotions(atom: AtomMetadata) -> Optional[Suggestion]:
     return None
 
 
+def _index_json_entries(mem_dir: Path) -> Optional[List[IndexEntry]]:
+    """從 mem_dir/_atom_index.json 建 IndexEntry 清單；檔不存在 → None（呼叫端退回 MEMORY.md）。
+    檔存在但損壞時 load 回空清單 → 所有 atom 會被報「未在索引中列出」，讓損壞浮出而非靜默。"""
+    if not (mem_dir / "_atom_index.json").exists():
+        return None
+    data = load_atom_index_json(mem_dir)
+    entries: List[IndexEntry] = []
+    for a in data.get("atoms") or []:
+        if not isinstance(a, dict) or not a.get("name") or not a.get("path"):
+            continue
+        entries.append(IndexEntry(
+            atom_name=str(a["name"]),
+            path=str(a["path"]),
+            trigger=", ".join(a.get("triggers") or []),
+            confidence="",
+        ))
+    return entries
+
+
+_FLAT_SHARED_RE = re.compile(r"^memory/shared/[^/]+\.md$")
+
+
+def _has_flat_shared_entries(index_entries: List[IndexEntry]) -> bool:
+    """專案 index 是否仍含平鋪 shared atom（memory/shared/<slug>.md，無範疇段）＝尚未遷移。"""
+    return any(_FLAT_SHARED_RE.match(e.path.replace("\\", "/")) for e in index_entries)
+
+
 def validate_index(index_path: Path, memory_dir: Path, index_entries: List[IndexEntry]) -> List[Issue]:
     """Cross-reference index entries with actual files."""
     issues: List[Issue] = []
     rel_index = _rel_path(index_path)
 
-    # Get actual atom files (exclude MEMORY.md, SPEC_*, _distant/)
+    # 實際 atom 檔（遞迴；與其餘掃描同源）：atom 實體可居子目錄（memory/<範疇>/、
+    # memory/Failures/<主題>/、專案 shared/<domain>/）或樹外（舊址 _AIDocs/Failures/、
+    # _AIDocs/_atoms/）。global=多根、非 global=rglob 單根。以檔名比對；未登記索引的
+    # atom 一律 warning「未在索引中列出」。
     actual_files: Set[str] = set()
-    for f in memory_dir.iterdir():
-        if f.is_file() and f.suffix == ".md" and f.name != MEMORY_INDEX:
-            if not any(f.name.startswith(p) for p in SKIP_PREFIXES):
-                actual_files.add(f.name)
-    # V5+: 索引 wildcard 也納入 _AIDocs/Failures/ 已登記 atom（feedback-* 等）
-    try:
-        if memory_dir.resolve() == GLOBAL_MEMORY_DIR.resolve():
-            for stem in failures_atom_stems():
-                fp = FAILURES_DIR / f"{stem}.md"
-                if fp.exists():
-                    actual_files.add(fp.name)
-    except OSError:
-        pass
+    tree_stems: Set[str] = set()
+    for p in iter_atom_files(memory_dir):
+        # Claude-native YAML 檔（`---` 開頭）不是 atom：不進 atom 索引、注入端不讀，不報「未在索引中列出」
+        try:
+            if p.read_bytes()[:8].lstrip(b"\xef\xbb\xbf").startswith(b"---"):
+                continue
+        except OSError:
+            pass
+        actual_files.add(p.name)
+        tree_stems.add(p.stem)
 
-    # V5+: atom 實體可居子目錄（專案 shared/<domain>/）或跨層（_AIDocs/Failures、_atoms/）。
-    # actual_files 走扁平 iterdir() → 子目錄 atom 不在其中，index→file 存在性會誤報
-    # 「索引指向不存在的檔案」。補一份遞迴 stem 集作 fallback（委派 iter_atom_files：
-    # global=memory+Failures+_atoms，非 global=rglob 單根，與其餘掃描同源）。
-    # 僅用於 index→file 存在性；file→index 方向仍用扁平 actual_files，避免子目錄
-    # auto-capture atom 全被誤報「未在索引中列出」的洪水。
-    tree_stems: Set[str] = {p.stem for p in iter_atom_files(memory_dir)}
+    try:
+        is_global_mem = memory_dir.resolve() == GLOBAL_MEMORY_DIR.resolve()
+    except OSError:
+        is_global_mem = False
+    layout_gate = bool(gate_enabled())
+
+    # personal/ 在 SKIP_DIRS（掃描報表不計入），但 personal atom 可正式登記於
+    # _atom_index.json 且由 wg_atoms 注入——index→file 存在性檢查必須看得到它們，
+    # 否則每次健檢固定誤報「索引指向不存在的檔案」。僅補存在性口徑，不進掃描報表。
+    personal_root = memory_dir / "personal"
+    if personal_root.is_dir():
+        tree_stems |= {p.stem for p in personal_root.rglob("*.md") if p.is_file()}
 
     # Check index → file
     indexed_files: Set[str] = set()
@@ -559,19 +691,26 @@ def validate_index(index_path: Path, memory_dir: Path, index_entries: List[Index
 
         indexed_files.add(file_name)
 
-        full_path = memory_dir / file_name
+        # entry.path 相對 memory_dir.parent（memory/x.md、memory/版控/Git/x.md、
+        # _AIDocs/_atoms/…）。依序認：完整相對路徑 → memory_dir 根下同名 → 遞迴 stem 集
+        # → 失敗家族（memory/Failures/<主題>/ 或舊址 _AIDocs/Failures/）；全落空才算不存在
         entry_stem = file_name[:-3] if file_name.endswith(".md") else file_name
-        if not full_path.exists() and entry_stem not in tree_stems:
-            # Try relative to parent of memory_dir
-            alt_path = memory_dir.parent / entry.path
-            # V5+: feedback-* / cognitive-patterns 居 _AIDocs/Failures/
-            failures_path = (
-                Path.home() / ".claude" / "_AIDocs" / "Failures" / file_name
+        exists = (
+            (memory_dir.parent / entry.path).exists()
+            or (memory_dir / file_name).exists()
+            or entry_stem in tree_stems
+            or _failures_file_exists(file_name)
+        )
+        if not exists:
+            issues.append(
+                Issue(rel_index, "error", "index", f"索引指向不存在的檔案: {entry.path}")
             )
-            if not alt_path.exists() and not failures_path.exists():
-                issues.append(
-                    Issue(rel_index, "error", "index", f"索引指向不存在的檔案: {entry.path}")
-                )
+
+        # 範疇資料夾硬規則（gate 開啟時才報）：全域 memory/ 根下散檔須歸入 memory/<範疇>/
+        if layout_gate and is_global_mem and is_flat_core_path(entry.path):
+            issues.append(
+                Issue(rel_index, "error", "layout", f"memory/ 根下散檔（需歸入 memory/<範疇>/）: {entry.path}")
+            )
 
     # Check file → index
     for fname in actual_files:
@@ -592,6 +731,10 @@ def detect_duplicates(all_atoms: List[AtomMetadata]) -> List[DuplicatePair]:
             a, b = all_atoms[i], all_atoms[j]
             # Same layer skip
             if a.file_path.parent == b.file_path.parent:
+                continue
+            # 兩個不同專案層之間不算重複：注入候選池只含「全域 + 當前專案」，
+            # 他專案 atom 永遠不會與本專案同時出現在模型眼前
+            if a.layer_name != b.layer_name and "global" not in (a.layer_name, b.layer_name):
                 continue
 
             # Title match — 同 (scope_label, normalized title) 才算重複；
@@ -622,18 +765,11 @@ def detect_duplicates(all_atoms: List[AtomMetadata]) -> List[DuplicatePair]:
 
 
 def search_distant(memory_dir: Path, keyword: str) -> List[Tuple[Path, str]]:
-    """Search _distant/ subdirectories for atoms matching keyword."""
+    """Search every _distant/ under the layer for atoms matching keyword."""
     results: List[Tuple[Path, str]] = []
-    distant_dir = memory_dir / DISTANT_DIR
-
-    if not distant_dir.exists():
-        return results
-
     kw_lower = keyword.lower()
-    for year_month_dir in sorted(distant_dir.iterdir()):
-        if not year_month_dir.is_dir():
-            continue
-        for md_file in sorted(year_month_dir.glob("*.md")):
+    if True:
+        for md_file in _distant_md_files(memory_dir):
             try:
                 text = md_file.read_text(encoding="utf-8-sig")
             except (OSError, UnicodeDecodeError):
@@ -708,11 +844,31 @@ def restore_from_distant(atom_path: Path) -> Tuple[bool, str]:
         except (ImportError, OSError, ValueError):
             pass
         atom_path.unlink()
+        # _distant 側殘留的 access sidecar 一併清除（計數已在 dest 重置歸零）
+        old_access = atom_path.with_suffix(".access.json")
+        if old_access.exists():
+            try:
+                old_access.unlink()
+            except OSError:
+                pass
         # Clean up empty year_month dir
         parent = atom_path.parent
         if parent.is_dir() and not any(parent.iterdir()):
             parent.rmdir()
-        return True, f"已拉回: {dest}（Confidence 重置為 [臨]）"
+        # _atom_index.json SoT 同步（唯一機器源；含 mirror regen）——
+        # 失敗不回滾檔案，但必浮訊號（可觀測性鐵律）
+        index_note = ""
+        try:
+            from lib.atom_spec import parse_frontmatter
+            fm = parse_frontmatter(text)
+            triggers = [t.strip() for t in re.split(r"[,，]", fm.get("Trigger", ""))
+                        if t.strip()]
+            rel = dest.relative_to(memory_dir.parent).as_posix()
+            index_upsert_atom(memory_dir, dest.stem, rel, triggers,
+                              scope=fm.get("Scope", "global") or "global")
+        except (OSError, ValueError) as e:
+            index_note = f"；_atom_index.json 更新失敗: {e}"
+        return True, f"已拉回: {dest}（Confidence 重置為 [臨]）{index_note}"
     except OSError as e:
         return False, f"寫入失敗: {e}"
 
@@ -851,11 +1007,13 @@ def delete_atom(
     mem_dir = None
     for layer_name, mdir in layers:
         if layer_name == layer:
-            candidate = mdir / f"{atom_name}.md"
-            if candidate.exists():
-                atom_path = candidate
-                mem_dir = mdir
-                break
+            # atom 住在範疇資料夾（memory/<範疇>/…），不在層根；以 stem 遍歷整層找
+            for candidate in iter_atom_files(mdir):
+                if candidate.stem == atom_name:
+                    atom_path = candidate
+                    mem_dir = mdir
+                    break
+            break
 
     if atom_path is None:
         return False, f"Atom '{atom_name}' not found in layer '{layer}'"
@@ -922,7 +1080,11 @@ def delete_atom(
                             actions.append(f"  WARNING: {md_file.stem} supersedes deleted atom {atom_name}")
                 new_lines.append(line)
             if changed and not dry_run:
-                md_file.write_text("\n".join(new_lines), encoding="utf-8")
+                # 走 funnel：EOL-preserving + audit（裸 write_text 會翻整檔行尾且無稽核）
+                _r = write_raw(md_file, "\n".join(new_lines),
+                               source=_AUDIT_SOURCE, op="audit_related_clean")
+                if not _r.ok:
+                    actions.append(f"  Related cleanup FAILED for {md_file.stem}: {_r.error}")
     if related_cleaned:
         actions.append(f"  Related references cleaned: {related_cleaned} atom(s)")
 
@@ -944,8 +1106,13 @@ def delete_atom(
                     if dry_run:
                         actions.append("  [DRY-RUN] Would remove MEMORY.md index row")
                     else:
-                        index_path.write_text("\n".join(new_idx_lines), encoding="utf-8")
-                        actions.append("  MEMORY.md index row removed")
+                        # 走 funnel（索引整檔覆寫入口）：EOL-preserving + audit
+                        _r = write_index_full(index_path, "\n".join(new_idx_lines),
+                                              source=_AUDIT_SOURCE)
+                        if not _r.ok:
+                            actions.append(f"  MEMORY.md update failed: {_r.error}")
+                        else:
+                            actions.append("  MEMORY.md index row removed")
             except (OSError, UnicodeDecodeError) as e:
                 actions.append(f"  MEMORY.md update failed: {e}")
 
@@ -964,6 +1131,18 @@ def delete_atom(
             actions.append(f"  {msg}")
             if not ok:
                 return False, "\n".join(actions)
+
+    # 5b. _atom_index.json SoT 同步（唯一機器源；含 _ATOM_INDEX.md mirror 自動 regen）
+    if dry_run:
+        actions.append("  [DRY-RUN] Would remove _atom_index.json entry")
+    else:
+        try:
+            if index_delete_atom(mem_dir, atom_name):
+                actions.append("  _atom_index.json entry removed (mirror regenerated)")
+            else:
+                actions.append("  _atom_index.json: no entry found (unchanged)")
+        except (OSError, ValueError) as e:
+            actions.append(f"  _atom_index.json update FAILED: {e}")
 
     # 6. Trigger incremental re-index
     if not dry_run:
@@ -998,79 +1177,68 @@ def _project_dir_from_args(args: argparse.Namespace) -> Optional[Path]:
 
 
 def enforce_decay(args: argparse.Namespace) -> None:
-    """Execute automated decay: move stale [臨] to _distant/, mark stale [觀] as pending-review."""
+    """--enforce：呼叫 hooks/wg_atoms.apply_selective_forget（唯一遺忘機制）。
+    候選 = 封存分數 < archive_score_threshold 且不在核心保護清單；隔離到原範疇資料夾下的
+    _distant/（含 .access.json sidecar），索引同步移除條目。--dry-run 只列候選不搬。"""
     today = date.today()
-    dry_run = args.dry_run
+    dry_run = bool(args.dry_run)
+    config = _forget_config()
+    try:
+        from wg_atoms import apply_selective_forget
+    except ImportError:
+        _hooks = CLAUDE_DIR / "hooks"
+        if str(_hooks) not in sys.path:
+            sys.path.insert(0, str(_hooks))
+        from wg_atoms import apply_selective_forget
+    # CLI 明示 --enforce = 操作者要求真隔離；config 的 enabled/dry_run 是 SessionEnd 自動跑的預設
+    run_cfg = dict(config)
+    run_cfg["self_iteration"] = dict(config.get("self_iteration", {}) or {})
+    run_cfg["self_iteration"]["forget"] = {
+        **(run_cfg["self_iteration"].get("forget") or {}),
+        "enabled": True, "dry_run": dry_run,
+    }
+
     layers = discover_layers(global_only=args.global_only, project_filter=args.project,
                              project_dir=_project_dir_from_args(args))
     actions: List[str] = []
-
     for layer_name, mem_dir in layers:
+        cands = []
         for md_file in iter_atom_files(mem_dir):
             atom = parse_atom_file(md_file, layer_name)
-            if not atom.last_used or not atom.confidence:
-                continue
-
-            days = (today - atom.last_used).days
-            base_threshold = STALENESS_THRESHOLDS.get(atom.confidence)
-            if base_threshold is None:
-                continue
-            type_mult = TYPE_DECAY_MULTIPLIER.get(atom.atom_type, 1.0)
-            threshold = int(base_threshold * type_mult)
-            if days <= threshold:
-                continue
-
-            rel = _rel_path(atom.file_path)
-
-            if atom.confidence == "[臨]":
-                if dry_run:
-                    actions.append(f"[DRY-RUN] Would move {rel} to _distant/ ({days}d > {threshold}d)")
-                else:
-                    _append_evolution_entry(md_file, f"--enforce 自動淘汰 ({days}d > {threshold}d)")
-                    compact_evolution_logs(md_file)
-                    ok, msg = move_to_distant(md_file)
-                    actions.append(f"{'OK' if ok else 'FAIL'}: {msg}")
-                    _write_audit_entry({"action": "decay", "atom": md_file.stem,
-                                        "layer": layer_name, "confidence": atom.confidence,
-                                        "days_stale": days, "type": atom.atom_type})
-
-            elif atom.confidence == "[觀]":
-                if dry_run:
-                    actions.append(f"[DRY-RUN] Would mark {rel} as pending-review ({days}d > {threshold}d)")
-                else:
-                    # Add pending-review tag
-                    try:
-                        text = md_file.read_text(encoding="utf-8-sig")
-                        if "pending-review" not in text:
-                            # Add Tags line or update existing
-                            if "- Tags:" in text:
-                                text = re.sub(
-                                    r"^(- Tags:\s*)(.+)$",
-                                    r"\1\2, pending-review",
-                                    text, count=1, flags=re.MULTILINE,
-                                )
-                            else:
-                                # Insert after Last-used line
-                                text = re.sub(
-                                    r"^(- Last-used:\s*.+)$",
-                                    r"\1\n- Tags: pending-review",
-                                    text, count=1, flags=re.MULTILINE,
-                                )
-                            md_file.write_text(text, encoding="utf-8")
-                            _append_evolution_entry(md_file, f"標記 pending-review ({days}d > {threshold}d)")
-                            compact_evolution_logs(md_file)
-                            actions.append(f"MARKED: {rel} → pending-review")
-                            _write_audit_entry({"action": "decay", "atom": md_file.stem,
-                                                "layer": layer_name, "confidence": atom.confidence,
-                                                "days_stale": days, "type": atom.atom_type,
-                                                "sub_action": "pending-review"})
-                    except (OSError, UnicodeDecodeError) as e:
-                        actions.append(f"FAIL: {rel} — {e}")
+            c = _archive_candidate(atom, today, config)
+            if c is not None:
+                cands.append(c)
+        if not cands:
+            continue
+        fr = apply_selective_forget(cands, run_cfg, atoms_dir=mem_dir, staging_dir=None)
+        by_name = {c["atom"]: c for c in cands}
+        if fr["mode"] == "dry_run":
+            for name in fr["candidates"]:
+                c = by_name[name]
+                actions.append(f"[DRY-RUN] Would isolate {_rel_path(Path(c['path']))} "
+                               f"(score {c['score']} < {c['threshold']}, {c['days_since']}d)")
+            continue
+        for name in fr["forgotten"]:
+            c = by_name[name]
+            actions.append(f"OK: 已隔離 {_rel_path(Path(c['path']))} → {Path(c['path']).parent.name}/_distant/ "
+                           f"(score {c['score']}, {c['days_since']}d)")
+            try:
+                if index_delete_atom(mem_dir, name):
+                    actions.append(f"  _atom_index.json entry removed: {name}")
+            except (OSError, ValueError) as e:
+                actions.append(f"  _atom_index.json update FAILED: {name} — {e}")
+            _write_audit_entry({"action": "decay", "atom": name, "layer": layer_name,
+                                "score": c["score"], "days_stale": c["days_since"]})
+        for name in fr["skipped"]:
+            actions.append(f"SKIP: {name}（檔不存在或搬移失敗，見 hook debug log）")
+        protected = [n for n in by_name if n not in fr["candidates"]]
+        for name in protected:
+            actions.append(f"PROTECTED: {name}（核心保護清單，不隔離）")
 
     if actions:
         print("\n".join(actions))
     else:
-        print("No stale atoms found requiring action.")
+        print("No archive candidates (score >= threshold or no activity signal).")
 
 
 def move_to_distant(atom_path: Path) -> Tuple[bool, str]:
@@ -1090,8 +1258,11 @@ def move_to_distant(atom_path: Path) -> Tuple[bool, str]:
         return False, f"遙遠記憶已有同名檔案: {dest}"
 
     try:
-        shutil.move(str(atom_path), str(dest))
-        return True, f"已移入遙遠記憶: {dest}"
+        # .md + .access.json sidecar 原子搬移（lib.atom_access 單一來源；
+        # 只搬 .md 會讓計數 sidecar 變孤兒）
+        moved_sidecar = move_atom_pair(atom_path, dest)
+        note = "（含 access sidecar）" if moved_sidecar else ""
+        return True, f"已移入遙遠記憶: {dest}{note}"
     except OSError as e:
         return False, f"移動失敗: {e}"
 
@@ -1107,7 +1278,7 @@ def _write_audit_entry(entry: Dict[str, Any]) -> None:
     entry["ts"] = datetime.now().isoformat(timespec="seconds")
     AUDIT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with open(AUDIT_LOG_PATH, "a", encoding="utf-8") as f:
+        with open(AUDIT_LOG_PATH, "a", encoding="utf-8", newline="\n") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except OSError:
         pass
@@ -1183,19 +1354,33 @@ def discover_layers(
     if global_only:
         return layers
 
-    # Legacy project layers（~/.claude/projects/{slug}/memory/）
-    projects_dir = CLAUDE_DIR / "projects"
-    if projects_dir.is_dir():
-        for proj_dir in sorted(projects_dir.iterdir()):
-            if not proj_dir.is_dir():
+    # 專案層：與執行期同一套判定（hooks/wg_core.discover_all_project_memory_dirs：
+    # registry 優先 + projects/ 舊址須有 atom 索引標記）。自掃 projects/*/memory 會把
+    # CC harness 原生 auto-memory 目錄（grok / hermes / Temp 測試夾）誤當記憶層。
+    try:
+        _hooks = CLAUDE_DIR / "hooks"
+        if str(_hooks) not in sys.path:
+            sys.path.insert(0, str(_hooks))
+        from wg_core import discover_all_project_memory_dirs  # noqa: E402
+        for slug, mem_dir in discover_all_project_memory_dirs():
+            if project_filter and project_filter not in slug:
                 continue
-
-            if project_filter and project_filter not in proj_dir.name:
-                continue
-
-            mem_dir = proj_dir / "memory"
-            if mem_dir.is_dir():
-                layers.append((proj_dir.name, mem_dir))
+            if project_dir is not None and mem_dir.resolve() == Path(project_dir).resolve():
+                continue  # 已以 "project" 身分列在最前
+            layers.append((slug, mem_dir))
+    except Exception as e:  # noqa: BLE001 — 判定器不可用時退回舊址掃描（並告知）
+        print(f"[memory-audit] wg_core discovery unavailable ({e!r}); fallback to projects/ scan",
+              file=sys.stderr)
+        projects_dir = CLAUDE_DIR / "projects"
+        if projects_dir.is_dir():
+            for proj_dir in sorted(projects_dir.iterdir()):
+                if not proj_dir.is_dir():
+                    continue
+                if project_filter and project_filter not in proj_dir.name:
+                    continue
+                mem_dir = proj_dir / "memory"
+                if mem_dir.is_dir() and (mem_dir / "_atom_index.json").exists():
+                    layers.append((proj_dir.name, mem_dir))
 
     return layers
 
@@ -1223,6 +1408,8 @@ def generate_markdown_report(report: HealthReport) -> str:
     lines.append(f"- Promotion candidates: {len(report.promotions)} | Demotion candidates: {len(report.demotions)}")
     if report.duplicates:
         lines.append(f"- Duplicate suspects: {len(report.duplicates)}")
+    if report.stale_deps:
+        lines.append(f"- Stale depends（壞滅緣觸發）: {len(report.stale_deps)}")
     lines.append("")
 
     # Issues
@@ -1264,6 +1451,14 @@ def generate_markdown_report(report: HealthReport) -> str:
         for d in report.duplicates:
             triggers = ", ".join(d.shared_triggers[:5])
             lines.append(f"| {d.file_a} | {d.file_b} | {triggers} | {'Yes' if d.title_match else 'No'} |")
+        lines.append("")
+
+    # 壞滅緣（validity conditions）— 有觸發才出現
+    if report.stale_deps:
+        lines.append("## 壞滅緣（Stale Depends）")
+        lines.append("")
+        for d in report.stale_deps:
+            lines.append(f"- 壞滅緣觸發：atom {d['file']} 依賴 {d['dep']} 已不存在")
         lines.append("")
 
     # Audit Trail Summary
@@ -1311,6 +1506,7 @@ def generate_json_report(report: HealthReport) -> str:
             for d in report.duplicates
         ],
         "audit_stats": report.audit_stats,
+        "stale_deps": report.stale_deps,
     }
     return json.dumps(data, ensure_ascii=False, indent=2)
 
@@ -1352,16 +1548,37 @@ def _infer_scope_from_path(atom_path: Path) -> str:
     return "global"
 
 
+def _distant_dirs(memory_dir: Path) -> List[Path]:
+    """該層所有 `_distant/` 目錄：move_to_distant 把 atom 移到「原範疇資料夾」下的 _distant/，
+    所以 memory/<範疇>/_distant/ 與 memory/_distant/ 都可能存在；全域層另含 _AIDocs/_atoms/**。"""
+    roots = [memory_dir]
+    try:
+        if memory_dir.resolve() == GLOBAL_MEMORY_DIR.resolve():
+            roots.append(CLAUDE_DIR / "_AIDocs" / "_atoms")
+    except OSError:
+        pass
+    found: List[Path] = []
+    for root in roots:
+        if root.is_dir():
+            found.extend(p for p in root.rglob(DISTANT_DIR) if p.is_dir())
+    return found
+
+
+def _distant_md_files(memory_dir: Path) -> List[Path]:
+    """該層 _distant/ 內所有 atom .md：直接放在 _distant/ 下（selective forget）或
+    _distant/<year_month>/ 下（舊版 move_to_distant）兩種布局都算。"""
+    files: List[Path] = []
+    for distant_dir in _distant_dirs(memory_dir):
+        files.extend(distant_dir.glob("*.md"))
+        for ym_dir in distant_dir.iterdir():
+            if ym_dir.is_dir():
+                files.extend(ym_dir.glob("*.md"))
+    return sorted(files)
+
+
 def _count_distant(memory_dir: Path) -> int:
-    """Count atoms in _distant/."""
-    distant_dir = memory_dir / DISTANT_DIR
-    if not distant_dir.exists():
-        return 0
-    count = 0
-    for ym_dir in distant_dir.iterdir():
-        if ym_dir.is_dir():
-            count += sum(1 for f in ym_dir.glob("*.md"))
-    return count
+    """Count atoms isolated under the layer's _distant/ dirs."""
+    return len(_distant_md_files(memory_dir))
 
 
 # ─── Main ────────────────────────────────────────────────────────────────────
@@ -1388,29 +1605,37 @@ def run_audit(args: argparse.Namespace) -> HealthReport:
         index_path = mem_dir / MEMORY_INDEX
         if index_path.exists():
             index_entries, idx_lines = parse_memory_index(index_path)
+            # _atom_index.json 是唯一機器真相；存在時 entries 由它建，MEMORY.md 只作
+            # 人讀索引（僅取行數做上限檢查）。缺 json 才退回 MEMORY.md 表格解析。
+            json_entries = _index_json_entries(mem_dir)
+            if json_entries is not None:
+                index_entries = json_entries
 
-            # Check index line count
-            if idx_lines > INDEX_MAX_LINES:
+            # Check index line count。專案層 index 仍含平鋪 shared atom（memory/shared/<slug>.md，
+            # 尚未跑 atom-categorize 遷移）→ 只報 info：手寫分區規則＋逐顆列表本來就超 40 行，
+            # 遷移完成（index 無平鋪 shared 路徑）才套上限報 warning。
+            # 全域 40（各範疇有 _INDEX.md 可 drill）；專案層 150（逐顆列表就住在 MEMORY.md）
+            max_lines = INDEX_MAX_LINES if layer_name == "global" else PROJECT_INDEX_MAX_LINES
+            if idx_lines > max_lines:
+                level, note = "warning", ""
+                if layer_name != "global" and _has_flat_shared_entries(index_entries):
+                    level = "info"
+                    note = "；專案仍含平鋪 shared atom（未遷移）→ 只報 info，遷移後才套上限"
                 report.issues.append(
                     Issue(
                         _rel_path(index_path),
-                        "warning",
+                        level,
                         "size",
-                        f"MEMORY.md {idx_lines} 行（上限 {INDEX_MAX_LINES}）",
+                        f"MEMORY.md {idx_lines} 行（上限 {max_lines}）{note}",
                     )
                 )
 
             # Validate index ↔ files
             report.issues.extend(validate_index(index_path, mem_dir, index_entries))
         else:
-            # Skip "missing MEMORY.md" error if directory has no atom files at root
-            # (orphan/empty memory dir from deleted project — harmless)
-            has_atoms = any(
-                f.is_file() and f.suffix == ".md"
-                and f.name != MEMORY_INDEX
-                and not any(f.name.startswith(p) for p in SKIP_PREFIXES)
-                for f in mem_dir.iterdir()
-            )
+            # Skip "missing MEMORY.md" error if directory has no atom files anywhere
+            # in its tree (orphan/empty memory dir from deleted project — harmless)
+            has_atoms = any(True for _ in iter_atom_files(mem_dir))
             if has_atoms:
                 report.issues.append(
                     Issue(str(mem_dir), "error", "index", "缺少 MEMORY.md 索引檔")
@@ -1441,6 +1666,9 @@ def run_audit(args: argparse.Namespace) -> HealthReport:
             if promo:
                 report.promotions.append(promo)
 
+            # 壞滅緣（path 型 Depends 存在性）
+            report.stale_deps.extend(check_stale_deps(atom))
+
     # Detect cross-layer duplicates
     report.duplicates.extend(detect_duplicates(all_atoms))
 
@@ -1466,7 +1694,8 @@ def main():
 
     # Decay enforce
     parser.add_argument("--enforce", action="store_true",
-                        help="自動淘汰：[臨]>30d 移入 _distant/，[觀]>60d 標記 pending-review")
+                        help="自動淘汰：走 selective forget（score < archive_score_threshold 且非核心保護）"
+                             "把候選隔離到原範疇資料夾下的 _distant/；搭配 --dry-run 只列候選")
     parser.add_argument("--dry-run", action="store_true",
                         help="搭配 --enforce/--compact-logs，只報告不執行")
 

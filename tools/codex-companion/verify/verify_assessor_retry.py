@@ -22,6 +22,18 @@ COMPANION_DIR = CLAUDE_DIR / "tools" / "codex-companion"
 sys.path.insert(0, str(COMPANION_DIR))
 
 import assessor  # noqa: E402
+import judge_backend  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _force_codex_backend(monkeypatch):
+    """本套件不實際呼叫 codex/claude：釘住 select_backend 走 codex 路徑，
+    否則無 codex 的機器會被 judge_backend 導去真的 claude fallback、繞過 mock（測資可移植性）。"""
+    monkeypatch.setattr(
+        assessor.judge_backend, "select_backend",
+        lambda config: (judge_backend.BACKEND_CODEX, str(config.get("codex_binary", "codex"))),
+    )
+
 
 
 # ─── retry 行為 ──────────────────────────────────────────────────────

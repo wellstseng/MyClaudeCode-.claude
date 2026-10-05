@@ -38,7 +38,7 @@ from pathlib import Path
 for _name in ("stdout", "stderr"):
     _s = getattr(sys, _name)
     if _s is None:
-        setattr(sys, _name, open(os.devnull, "w", encoding="utf-8"))
+        setattr(sys, _name, open(os.devnull, "w", encoding="utf-8", newline="\n"))
     else:
         _s.reconfigure(encoding="utf-8")
 
@@ -48,9 +48,12 @@ WORKFLOW = CLAUDE_DIR / "workflow"
 MEMORY = CLAUDE_DIR / "memory"
 REPORT_DIR = WORKFLOW / "health-reports"
 LAST_RUN = WORKFLOW / "health-last-run.json"
+RECALL_MISS_LOG = CLAUDE_DIR / "Logs" / "recall-miss.jsonl"
 
 FRESH_DAYS = 14        # 管線鮮度門檻：有 session 卻 N 天無管線輸出 = 停擺
 KEEP_REPORTS = 12      # 報告保留份數（~3 個月）
+RECALL_MISS_DAYS = 14  # 失念窗：近 N 天
+RECALL_MISS_MIN = 3    # 同一 atom 失念 ≥ N 次 → 黃燈
 VECTOR_PORT = 3849
 PY = sys.executable
 
@@ -107,6 +110,28 @@ def _promotion_last_ts() -> datetime | None:
     return None
 
 
+def _recall_miss_counts(days: int) -> dict[str, int]:
+    """Logs/recall-miss.jsonl 近 N 天 atom → 失念次數（缺檔/壞行計為零）。"""
+    counts: dict[str, int] = {}
+    cut = datetime.now().astimezone() - timedelta(days=days)
+    try:
+        for line in RECALL_MISS_LOG.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+                at = datetime.fromisoformat(str(rec.get("at", "")))
+            except (json.JSONDecodeError, ValueError, TypeError):
+                continue
+            if at.tzinfo is None:
+                at = at.astimezone()
+            if at >= cut and rec.get("atom"):
+                counts[str(rec["atom"])] = counts.get(str(rec["atom"]), 0) + 1
+    except OSError:
+        pass
+    return counts
+
+
 def collect() -> dict:
     now = datetime.now()
     red: list[str] = []      # 需處理
@@ -143,6 +168,15 @@ def collect() -> dict:
         ok, msg = _run_check(args)
         if not ok:
             red.append(f"{name} drift：{msg}")
+    # 換行殘留（repo 全部 LF；有 CRLF/mixed 就黃燈，修法：python tools/normalize-eol.py --root --include-dirty）
+    ok, msg = _run_check([str(TOOLS / "normalize-eol.py"), "--root", "--check"])
+    if not ok:
+        yellow.append(f"換行殘留（非 LF）：{msg[:300]}")
+    # 專案層索引（全部登記專案，從 ~/.claude 一鍵掃；黃燈：不必逐專案開 session 整理，
+    # 修法同一支：sync-atom-index.py --all-projects --fix-scope-from-path）
+    ok, msg = _run_check([str(TOOLS / "sync-atom-index.py"), "--all-projects", "--check"], timeout=300)
+    if not ok:
+        yellow.append(f"專案層 atom index drift：{msg[:300]}")
 
     # 5. vector
     try:
@@ -170,6 +204,20 @@ def collect() -> dict:
         if n_useful == 0:
             yellow.append("30 天內無任何 atom 效用證據——效用閉環（α/β）或 rescue 管線疑似停擺")
         info.append(f"注入效果：top 有用 {n_useful} / token 稅 {n_tax} / 零曝光候選 {n_dead}")
+
+    # 5c. 失念（recall-miss）：近 14 天同一 atom 反覆「該想起而未想起」→ 黃燈
+    rm = _recall_miss_counts(RECALL_MISS_DAYS)
+    flagged = {a: c for a, c in rm.items() if c >= RECALL_MISS_MIN}
+    if flagged:
+        tops = ", ".join(
+            f"{a}×{c}" for a, c in
+            sorted(flagged.items(), key=lambda x: (-x[1], x[0]))[:5]
+        )
+        yellow.append(
+            f"失念 recall-miss {len(flagged)} atom：{tops}"
+            f"（近 {RECALL_MISS_DAYS} 天 ≥{RECALL_MISS_MIN} 次；"
+            f"檢視 trigger 是否該補詞，詳 memory-effect-report.py D 節）"
+        )
 
     # 6. 管線鮮度（死人偵測核心）
     fresh_cut = now - timedelta(days=FRESH_DAYS)
@@ -205,7 +253,8 @@ def write_report(result: dict) -> Path:
         if not items:
             lines.append("- ✓ 無")
         lines.append("")
-    path.write_text("\n".join(lines), encoding="utf-8")
+    with open(path, "w", encoding="utf-8", newline="\n") as _f:
+        _f.write("\n".join(lines))
     # 輪替：保留最近 KEEP_REPORTS 份
     reports = sorted(REPORT_DIR.glob("health-*.md"))
     for old in reports[:-KEEP_REPORTS]:
@@ -216,11 +265,12 @@ def write_report(result: dict) -> Path:
 def main() -> int:
     result = collect()
     report = write_report(result)
-    LAST_RUN.write_text(json.dumps({
+    with open(LAST_RUN, "w", encoding="utf-8", newline="\n") as _f:
+        _f.write(json.dumps({
         "at": result["at"], "red": len(result["red"]),
         "yellow": len(result["yellow"]),
         "report": str(report),
-    }, ensure_ascii=False), encoding="utf-8")
+    }, ensure_ascii=False))
     if "--json" in sys.argv:
         print(json.dumps(result, ensure_ascii=False, indent=1))
     else:
@@ -231,8 +281,8 @@ def main() -> int:
 
 # REGISTER（一次性，已由安裝流程執行；重灌時照抄）：
 #   schtasks /Create /TN "Claude-Memory-WeeklyHealth" /SC WEEKLY /D MON /ST 09:00
-#     /TR "C:/Users/holylight/AppData/Local/Python/bin/pythonw.exe
-#          C:/Users/holylight/.claude/tools/health-weekly.py"
+#     /TR "C:/Python312/pythonw.exe
+#          C:/Users/wellstseng/.claude/tools/health-weekly.py"
 # 錯過排程（關機）→ 下次開機由 Task Scheduler 設定補跑；SessionStart 死人開關兜底。
 if __name__ == "__main__":
     sys.exit(main())

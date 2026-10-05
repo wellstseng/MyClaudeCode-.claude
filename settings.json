@@ -26,11 +26,22 @@
       "mcp__playwright__browser_select_option",
       "mcp__playwright__browser_fill_form",
       "mcp__playwright__browser_network_requests",
-      "mcp__playwright__browser_evaluate"
+      "mcp__playwright__browser_evaluate",
+      "mcp__MCPControl__computer"
     ],
-    "defaultMode": "bypassPermissions"
+    "defaultMode": "bypassPermissions",
+    "additionalDirectories": [
+      "C:\\Users\\wellstseng\\.claude",
+      "C:\\Users\\wellstseng\\.claude\\projects\\c--projects\\memory",
+      "C:\\Users\\wellstseng",
+      "c:\\tmp",
+      "C:\\Users\\wellstseng\\.claude\\workflow",
+      "C:\\Users\\wellstseng\\.claude\\memory\\_staging",
+      "C:\\Users\\wellstseng\\.claude\\tests",
+      "C:\\Users\\wellstseng\\.claude\\journals"
+    ]
   },
-  "model": "claude-fable-5[1m]",
+  "model": "fable[1m]",
   "hooks": {
     "SessionStart": [
       {
@@ -42,17 +53,17 @@
           },
           {
             "type": "command",
-            "command": "python3 -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/ensure-mcp.py'),run_name='__main__')\"",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/ensure-mcp.py'),run_name='__main__')\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/codex_companion.py'),run_name='__main__')\"",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/codex_companion.py'),run_name='__main__')\"",
             "timeout": 5
           }
         ]
@@ -63,12 +74,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
             "timeout": 8
           },
           {
             "type": "command",
-            "command": "python3 -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/codex_companion.py'),run_name='__main__')\"",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/codex_companion.py'),run_name='__main__')\"",
             "timeout": 3
           }
         ]
@@ -86,11 +97,11 @@
         ]
       },
       {
-        "matcher": "Write|Edit|Bash|Agent|Task",
+        "matcher": "Write|Edit|NotebookEdit|Bash|PowerShell|Agent|Task",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
             "timeout": 5
           }
         ]
@@ -98,21 +109,11 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|Read|Bash|Agent|Task|mcp__workflow-guardian__anti_evasion_report",
+        "matcher": "Edit|Write|Read|NotebookEdit|Bash|Agent|Task|mcp__workflow-guardian__anti_evasion_report",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/obsidian-sync.sh\"",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
             "timeout": 5
           }
         ]
@@ -122,7 +123,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/codex_companion.py'),run_name='__main__')\"",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/codex_companion.py'),run_name='__main__')\"",
             "timeout": 3
           }
         ]
@@ -132,7 +133,27 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/version_guard.py'),run_name='__main__')\"",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/version_guard.py'),run_name='__main__')\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/obsidian-sync.py'),run_name='__main__')\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|NotebookEdit|ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/acceptance_spec.py'),run_name='__main__')\"",
             "timeout": 5
           }
         ]
@@ -143,7 +164,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
             "timeout": 5
           }
         ]
@@ -154,7 +175,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
             "timeout": 5
           }
         ]
@@ -165,7 +186,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
             "timeout": 5
           }
         ]
@@ -176,17 +197,23 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "python3 -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/codex_companion.py'),run_name='__main__')\"",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "python3 -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/lang_guard.py'),run_name='__main__')\"",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/quick-extract.py'),run_name='__main__')\"",
+            "timeout": 30,
+            "async": true
+          },
+          {
+            "type": "command",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/codex_companion.py'),run_name='__main__')\"",
+            "timeout": 150
+          },
+          {
+            "type": "command",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/lang_guard.py'),run_name='__main__')\"",
             "timeout": 5
           }
         ]
@@ -197,12 +224,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": "python3 -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/codex_companion.py'),run_name='__main__')\"",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/codex_companion.py'),run_name='__main__')\"",
             "timeout": 5
           }
         ]
@@ -210,18 +237,12 @@
     ]
   },
   "enabledPlugins": {
-    "discord@claude-plugins-official": true
+    "discord@claude-plugins-official": true,
+    "unity@claude-plugins-official": true
   },
-  "extraKnownMarketplaces": {
-    "claude-plugins-official": {
-      "source": {
-        "source": "github",
-        "repo": "anthropics/claude-plugins-official"
-      }
-    }
-  },
-  "effortLevel": "max",
+  "effortLevel": "high",
   "autoUpdatesChannel": "latest",
   "skipDangerousModePermissionPrompt": true,
-  "theme": "dark"
+  "skipWorkflowUsageWarning": true,
+  "switchModelsOnFlag": true
 }

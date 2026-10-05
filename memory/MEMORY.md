@@ -1,49 +1,24 @@
 # Atom Index — Global
 
-> Hook 自動匹配 trigger 注入相關 atom（完整觸發表見 `_atom_index.json` / `_ATOM_INDEX.md` mirror）。
+> Hook 依 trigger 自動注入 atom；範疇資料夾 `memory/<範疇>/`，深入各層 `_INDEX.md`；機器索引 `_atom_index.json`
 
-| Atom | 說明 |
-|------|------|
-| catclaw-agent-routing-boundaries | catclaw-agent-routing-boundaries |
-| decisions | 全域決策 |
-| decisions-architecture | 架構技術細節 |
-| escalation-hook-在-edit-count-proxy-上-false-fire-的辨識無真實失敗迴圈時不盲從不編造 | escalation-hook 在 edit-count-proxy 上 false-fire 的辨識（無真實失敗迴圈時不盲從不編造） |
-| goal-driven-verify-loopkarpathy-吸收 | goal-driven-verify-loop（karpathy 吸收） |
-| mac-缺-python-用-wrapper-指向-python3 | Mac 缺 python 用 wrapper 指向 python3 |
-| merge-時-sot-索引檔-ours-策略誤清-catalog-post-mortem | merge-時-SoT-索引檔-ours-策略誤清-catalog-post-mortem |
-| preferences | 使用者偏好（補充） |
-| toolchain | 工具鏈實戰記憶 |
-| toolchain-ollama | Ollama Dual-Backend 實戰記憶 |
-| upstream-merge-mac-適配工作流 | upstream-merge-mac-適配工作流 |
-| workflow-icld | 增量式閉環開發（ICLD） |
-| workflow-parallel-agents | 多 agent 並行：拆 ≥2 sub-agent 同 message dispatch 的評估準則 |
-| workflow-rules | 工作流規則（全域） |
-| workflow-svn | SVN 工作流規則 |
-| 併發-session-共用工作樹-收尾選擇性-staging-勿-git-add-a | 併發 session 共用工作樹-收尾選擇性 staging 勿 git add -A |
-| 品質完整性判定須讀完整內容-勿從截斷採樣斷言 | 品質完整性判定須讀完整內容-勿從截斷採樣斷言 |
-| 自己flag的維護動作直接做完不要反問 | 自己flag的維護動作直接做完不要反問 |
-| 記憶汙染與上下文腐化-注入萃取自檢 | 記憶汙染與上下文腐化-注入萃取自檢 |
-| collab-anchor | 協作錨點——個人專案方向守則 |
-| collab-experiment | AI 自主開發實驗協作模式 |
-| experience-vmlx-gemma4-abliterated | vMLX × Gemma 4 31B Abliterated 本地化嘗試（暫停） |
-| feedback-knowledge-doc-iteration | feedback-knowledge-doc-iteration |
-| nodejs-ecosystem | Node.js / TypeScript 生態系知識庫 |
-| reference-claudecode | Claude Code Source 參照 |
-| reference-obsidian-vault | Obsidian Vault 位置 |
-| wells-workflow-infra-before-app | wells-workflow-infra-before-app |
-| wells-workflow-mechanism-over-discipline | wells-workflow-mechanism-over-discipline — 不靠決心靠機制 |
-| wells-workflow-multi-llm-ledger | wells-workflow-multi-llm-ledger |
-| wells-workflow-small-automation-payoff | wells-workflow-small-automation-payoff |
-| wells-workflow-tell-ai-what-you-hate | wells-workflow-tell-ai-what-you-hate |
-| feedback-* | 行為校正（10 atoms） → [`_AIDocs/Failures/`](../_AIDocs/Failures/) |
-| cognitive-patterns | 認知模式偏差（Cognitive Patterns） → [`_AIDocs/Failures/cognitive-patterns.md`](../_AIDocs/Failures/cognitive-patterns.md) |
-| memory-pipeline-silent-failure-2026-05 | 記憶機制靜默失效（confirmations 零增 + episodic 停擺） → [`_AIDocs/Failures/memory-pipeline-silent-failure-2026-05.md`](../_AIDocs/Failures/memory-pipeline-silent-failure-2026-05.md) |
+| 範疇 | atom 數 | 深入 |
+|------|---------|------|
+| 版控 | 14 | `memory/版控/_INDEX.md` |
+| 工作流 | 27 | `memory/工作流/_INDEX.md` |
+| 思考與決策 | 3 | `memory/思考與決策/_INDEX.md` |
+| 驗證與實證 | 7 | `memory/驗證與實證/_INDEX.md` |
+| dotnet | 22 | `memory/dotnet/_INDEX.md` |
+| OS-Windows | 7 | `memory/OS-Windows/_INDEX.md` |
+| 文字與格式 | 9 | `memory/文字與格式/_INDEX.md` |
+| 設計通則 | 5 | `memory/設計通則/_INDEX.md` |
+| 行為契約 | 4 | `memory/行為契約/_INDEX.md` |
+| CC與原子記憶契約 | 8 | `memory/CC與原子記憶契約/_INDEX.md` |
+| Failures | 26 | `memory/Failures/_INDEX.md` |
+| OS-macOS | 1 | `memory/OS-macOS/mac-缺-python-用-wrapper-指向-python3.md` |
+| lua | 3 | `memory/lua/_INDEX.md` |
+| 協作 | 6 | `memory/協作/_INDEX.md` |
+| 參考與環境 | 8 | `memory/參考與環境/_INDEX.md` |
+| 遊戲專案 | 9 | `memory/遊戲專案/_INDEX.md` |
 
 > 本地範疇（僅 ~/.claude 注入）Lv1 根索引見 `_local_catalog.md`，深層 drill 各層 `_INDEX.md`。
-
-> **知識庫查閱**：
-| 知識庫 | 路徑 | 涵蓋主題 |
-|--------|------|----------|
-| Claude Code Internals | _AIDocs/ClaudeCodeInternals/_INDEX.md | harness, hook, MCP, skill |
-| Tools & 領域知識 | _AIDocs/Tools/_INDEX.md | Excel, Unity YAML, GUID |
-| Failures 踩坑記錄 | _AIDocs/Failures/_INDEX.md | 環境陷阱, 假設錯誤 |

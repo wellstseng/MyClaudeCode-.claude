@@ -21,6 +21,8 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from handlers import aec_ledger
+
 from wg_core import (
     _ensure_state, _estimate_tokens, _now_iso, write_state,
     output_json, output_nothing,
@@ -42,7 +44,8 @@ def _write_decision_file(p: Path, data: Dict[str, Any]) -> None:
     """決策檔回寫（atomic tmp→replace）。fail-open。"""
     try:
         tmp = p.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        with open(tmp, "w", encoding="utf-8", newline="\n") as _f:
+            _f.write(json.dumps(data, ensure_ascii=False, indent=2))
         tmp.replace(p)
     except Exception:
         pass
@@ -79,7 +82,8 @@ def _drain_aec_decisions(session_id: str, lines: List[str]) -> None:
         return
     ddir = WORKFLOW_DIR / "aec-decision"
     try:
-        paths = sorted(ddir.glob(f"{session_id}-t*.json"))
+        # 舊式 <sid>-t<turn>-<idx>.json 與新式 <sid>-p<pathhash>.json（HUD 殘檔面板）都撈
+        paths = sorted(ddir.glob(f"{session_id}-*.json"))
     except Exception:
         return
     loaded: List[tuple] = []
@@ -103,7 +107,8 @@ def _drain_aec_decisions(session_id: str, lines: List[str]) -> None:
         ):
             continue
         item = str(data.get("item", ""))
-        target = _decision_item_path(item)
+        # 新式決策檔（HUD 殘檔面板）帶結構化 path → 直接後驗；舊式只有 prose item → 保守解析。
+        target = Path(str(data["path"])) if data.get("path") else _decision_item_path(item)
         if target is None or not target.exists():
             data["verified"] = True     # 已刪 / 無從檢查 → 結案
         elif not data.get("reinjected"):
@@ -122,6 +127,7 @@ def _drain_aec_decisions(session_id: str, lines: List[str]) -> None:
     # ── Phase 2：新決策注入（未 injected 者）──
     deletes: List[str] = []
     keeps: List[str] = []
+    refused: List[str] = []   # 受保護路徑的刪除決策：不注入刪除指令（帳本拒收前的舊帳／任何漏網）
     consumed: List[tuple] = []
     for p, data in loaded:
         if data.get("injected"):
@@ -129,7 +135,12 @@ def _drain_aec_decisions(session_id: str, lines: List[str]) -> None:
         item = str(data.get("item", "")).strip() or f"(idx {data.get('idx')})"
         action = data.get("action")
         if action == "delete":
-            deletes.append(item)
+            why = aec_ledger.protected_reason(str(data.get("path", "") or ""))
+            if why:
+                refused.append(f"{item}（{why}）")
+                data["verified"] = True   # 直接結案，不進後驗 nag
+            else:
+                deletes.append(item)
         elif action == "keep":
             keeps.append(item)
         else:
@@ -140,7 +151,11 @@ def _drain_aec_decisions(session_id: str, lines: List[str]) -> None:
     block = ["[Guardian:AEC-Decision] 使用者於 HUD 對 (d) 暫存清單做了處置："]
     block += [f"  🗑 刪除：{it}" for it in deletes]
     block += [f"  📌 保留：{it}" for it in keeps]
-    block.append("請據此執行——刪除項確認路徑後移除、保留項略過；為 deferred，本回合執行。")
+    block += [f"  ⛔ 拒絕刪除（受保護路徑，正式產出不經 HUD 刪）：{it}" for it in refused]
+    if deletes or keeps:
+        block.append("請據此執行——刪除項確認路徑後移除、保留項略過；為 deferred，本回合執行。")
+    if refused:
+        block.append("拒絕項請一句話告知使用者：該檔屬正式產出，要移除請使用者自行處理。")
     lines.append("\n".join(block))
     for p, data in consumed:   # 標 injected（atomic tmp→replace），防下回合重注入
         data["injected"] = True
@@ -176,13 +191,11 @@ def _ups_sentinel_check_and_arm(
                 "（疑 harness timeout / hook 例外）——該輪記憶注入可能缺失。"
             )
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(
-            json.dumps({
+        with open(p, "w", encoding="utf-8", newline="\n") as _f:
+            _f.write(json.dumps({
                 "turn_seq": int(state.get("turn_seq", 0)) + 1,
                 "at": _now_iso(),
-            }, ensure_ascii=False),
-            encoding="utf-8",
-        )
+            }, ensure_ascii=False))
     except Exception:
         pass
 
@@ -215,6 +228,24 @@ def handle_user_prompt_submit(
     # 被 kill 哨兵：見上輪殘留 → 告警；隨即 arm 本輪（正常結尾 clear）
     _ups_sentinel_check_and_arm(session_id, state, lines)
 
+    # fallback state 重建告警（_ensure_state 標旗，此處消費一次）——
+    # 原 state 遭 TTL 清除 / SessionStart 未跑，已重建最小 atom_index。
+    if state.pop("_fallback_state_rebuilt", None):
+        idx = state.get("atom_index", {})
+        lines.append(
+            f"[Guardian] state 已重建（原 state 遺失/被 TTL 清除）——最小 atom index "
+            f"global={len(idx.get('global', []))} project={len(idx.get('project', []))}，"
+            "trigger 注入已恢復；本 session 早前累積脈絡（modified/accessed）不可復原。"
+        )
+
+    # config.json 解析失敗告警（load_config 標旗；一 session 一次）
+    if config.get("_config_parse_failed") and not state.get("_config_warned"):
+        state["_config_warned"] = True
+        lines.append(
+            "[Guardian:Config⚠] workflow/config.json 解析失敗，本 session 以內建 "
+            "DEFAULTS 運行——請修復 JSON（詳 Logs/atom-debug）。"
+        )
+
     # ─── Detect 段：前置閘（evasion 追蹤 / user decision gate / long_die / atom-write guard）
     run_pre_gates(
         session_id, state, config, clean_prompt, prompt_lower, lines
@@ -232,6 +263,7 @@ def handle_user_prompt_submit(
     (
         matched_with_dir, atom_source, all_atoms,
         sem_atoms, section_hints, alias_injected_projects, intent,
+        caches,
     ) = collect_matched_atoms(
         session_id, state, config, prompt, prompt_lower, lines
     )
@@ -241,6 +273,7 @@ def handle_user_prompt_submit(
         session_id, state, config,
         matched_with_dir, all_atoms, already_injected,
         atom_source, section_hints, lines,
+        caches=caches,
     )
 
     # Fix Escalation Protocol
@@ -354,7 +387,7 @@ def handle_user_prompt_submit(
     _ups_sentinel_clear(session_id)
 
     if lines:
-        lines = _truncate_context_by_activation(lines, budget, atom_source_dirs)
+        lines = _truncate_context_by_activation(lines, budget, atom_source_dirs, config)
         output_json({
             "hookSpecificOutput": {
                 "hookEventName": "UserPromptSubmit",

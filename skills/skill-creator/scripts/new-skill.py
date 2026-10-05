@@ -16,6 +16,8 @@
 
 輸出 JSON 到 stdout (UTF-8)。exit 0 = 成功，1 = 業務失敗，2 = 內部錯誤。
 """
+
+from __future__ import annotations
 import argparse
 import json
 import re
@@ -88,7 +90,8 @@ def create_skill(name: str, pattern: str, description: str, triggers: list[str],
             )
 
     skill_md = target / "SKILL.md"
-    skill_md.write_text(content, encoding="utf-8")
+    with open(skill_md, "w", encoding="utf-8", newline="\n") as _f:
+        _f.write(content)
 
     # 生成 evals/triggers.json 起點（精準觸發驗證用）
     evals_dir = target / "evals"
@@ -104,9 +107,8 @@ def create_skill(name: str, pattern: str, description: str, triggers: list[str],
             {"query": "<填入：近似但不該觸發 2>", "should_trigger": False, "note": "模糊表達不該強行觸發"},
         ],
     }
-    (evals_dir / "triggers.json").write_text(
-        json.dumps(evals_starter, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    with open(evals_dir / "triggers.json", "w", encoding="utf-8", newline="\n") as _f:
+        _f.write(json.dumps(evals_starter, ensure_ascii=False, indent=2))
 
     return {
         "status": "ok",

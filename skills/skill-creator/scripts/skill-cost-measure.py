@@ -8,6 +8,8 @@
 
 輸出 JSON 到 stdout (UTF-8)，錯誤到 stderr。
 """
+
+from __future__ import annotations
 import argparse
 import glob
 import json

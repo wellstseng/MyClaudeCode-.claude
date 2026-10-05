@@ -1,0 +1,6 @@
+{
+  "env": {
+    "CLAUDE_JOURNAL_DIRS": "C:\\Users\\wellstseng\\Obsidian\\工作日誌",
+    "CLAUDE_JOURNAL_VCS_ROOTS": "c:\\Projects\\TSLG\\Develop\\Client;c:\\Projects\\TSLG\\Develop\\Server"
+  }
+}

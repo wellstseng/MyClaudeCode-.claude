@@ -48,6 +48,28 @@ def _write(ddir, sid, turn, idx, action, item, injected=False, session_id=None):
     return p
 
 
+def test_delete_on_protected_path_refused_not_injected_as_delete(ddir, tmp_path, monkeypatch):
+    """HUD 對受保護路徑（memory/ 下、VCS 追蹤）按刪除 → 不注入「🗑 刪除」，改注入 ⛔ 拒絕 + 直接結案（verified）。"""
+    from handlers import aec_ledger as L
+    monkeypatch.setattr(L, "vcs_tracked", lambda p: False)
+    atom = tmp_path / "memory" / "x" / "a.md"; atom.parent.mkdir(parents=True); atom.write_text("x")
+    junk = tmp_path / "junk.log"; junk.write_text("x")
+    ddir.mkdir(parents=True, exist_ok=True)
+    for i, (p, it) in enumerate(((atom, "atom 未 commit"), (junk, "一次性 log"))):
+        rec = {"session_id": _SID, "path": str(p), "item": f"{p} — {it}", "action": "delete",
+               "at": "2026-07-06T00:00:00Z", "injected": False}
+        (ddir / f"{_SID}-p{i:012d}.json").write_text(json.dumps(rec, ensure_ascii=False), encoding="utf-8")
+    lines = []
+    ups._drain_aec_decisions(_SID, lines)
+    blob = lines[0]
+    assert f"🗑 刪除：{junk}" in blob
+    assert f"🗑 刪除：{atom}" not in blob
+    assert "⛔ 拒絕刪除" in blob and str(atom) in blob
+    recs = [json.loads(f.read_text(encoding="utf-8")) for f in sorted(ddir.glob("*.json"))]
+    prot = next(r for r in recs if r["path"] == str(atom))
+    assert prot["injected"] is True and prot["verified"] is True
+
+
 def test_own_delete_and_keep_injected(ddir):
     """本 session delete + keep → 注入含兩項 + 檔標 injected:true。"""
     pd = _write(ddir, _SID, 1, 0, "delete", "tmp/a.txt")
@@ -177,3 +199,25 @@ def test_keep_action_not_verified(ddir, tmp_path):
     ups._drain_aec_decisions(_SID, lines)
     assert lines == []
     assert "verified" not in json.loads(p.read_text(encoding="utf-8"))
+
+
+def test_delete_with_structured_path_verified_by_path(ddir, tmp_path):
+    """新式決策檔（HUD 殘檔面板）帶 path 欄：後驗直接用 path，item 為 prose 也能真驗。"""
+    target = tmp_path / "leftover.tmp"
+    target.write_text("x")
+    ddir.mkdir(parents=True, exist_ok=True)
+    p = ddir / f"{_SID}-pabc123def456.json"
+    p.write_text(json.dumps({
+        "session_id": _SID, "path": str(target), "item": f"{target} — 一次性輸出",
+        "action": "delete", "at": "2026-01-01T00:00:00", "injected": True,
+    }), encoding="utf-8")
+    lines = []
+    ups._drain_aec_decisions(_SID, lines)
+    assert any("仍存在" in ln for ln in lines)          # 仍在 → 重注入
+    data = json.loads(p.read_text(encoding="utf-8"))
+    assert data["reinjected"] is True and not data.get("verified")
+    target.unlink()
+    lines = []
+    ups._drain_aec_decisions(_SID, lines)
+    assert lines == []                                   # 已刪 → 靜默結案
+    assert json.loads(p.read_text(encoding="utf-8"))["verified"] is True

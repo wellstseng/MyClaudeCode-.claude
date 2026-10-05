@@ -16,7 +16,10 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-from wg_core import MEMORY_DIR, EPISODIC_DIR, _atom_debug_error
+from wg_core import (
+    MEMORY_DIR, EPISODIC_DIR, _atom_debug_error,
+    _estimate_tokens, truncate_to_tokens,
+)
 from wg_atoms import (
     any_trigger_hit,
     _search_episodic_context, _build_session_context,
@@ -120,14 +123,27 @@ def build_context(
         except Exception as e:
             print(f"Wisdom prompt error: {e}", file=sys.stderr)
 
-    # ─── Parallel Agent Suggestion ─────────────────
+    # ─── Research Fan-out Suggestion ───────────────
+    # 先於 parallel 判定：research 提示已含並行指示，命中則抑制 parallel 免重複佔位。
+    research_hit = False
     try:
-        from wg_parallel import detect_parallel_opportunity
-        parallel_line = detect_parallel_opportunity(clean_prompt, state, config)
-        if parallel_line:
-            lines.append(parallel_line)
+        from wg_research import detect_research_fanout
+        research_line = detect_research_fanout(clean_prompt, state, config)
+        if research_line:
+            lines.append(research_line)
+            research_hit = True
     except Exception as e:
-        _atom_debug_error("ParallelSuggest", e)
+        _atom_debug_error("ResearchFanout", e)
+
+    # ─── Parallel Agent Suggestion ─────────────────
+    if not research_hit:
+        try:
+            from wg_parallel import detect_parallel_opportunity
+            parallel_line = detect_parallel_opportunity(clean_prompt, state, config)
+            if parallel_line:
+                lines.append(parallel_line)
+        except Exception as e:
+            _atom_debug_error("ParallelSuggest", e)
 
     # ─── _AIDocs keyword matching ──────────────────
     aidocs_state = state.get("aidocs", {})
@@ -157,10 +173,12 @@ def build_context(
         if ref_path.exists():
             try:
                 ref_text = ref_path.read_text(encoding="utf-8")
-                ref_tokens = len(ref_text) // 4
+                ref_tokens = _estimate_tokens(ref_text)
                 jit_budget = min(ref_tokens, 250)
                 if jit_budget <= budget:
-                    lines.append(f"[JIT:InternalPipeline]\n{ref_text[:jit_budget * 4]}")
+                    lines.append(
+                        f"[JIT:InternalPipeline]\n{truncate_to_tokens(ref_text, jit_budget)}"
+                    )
                     budget -= jit_budget
             except (OSError, UnicodeDecodeError):
                 pass

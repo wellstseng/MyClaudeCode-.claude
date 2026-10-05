@@ -2,15 +2,14 @@
 const fs = require("fs");
 const path = require("path");
 const http = require("http");
-const { exec } = require("child_process");
-const { TOOLS_DIR, CLAUDE_DIR } = require("./paths");
+const { TOOLS_DIR, CLAUDE_DIR, PYTHON_EXE } = require("./paths");
 const { crashLog } = require("./log");
 
 /** Run conflict-detector --mode=write-check.
  *  Returns Promise<{verdict, matches, detector_model, skipped, skip_reason, scope}>.
  *  Fail-open: on script error resolves to verdict=ok+skipped=true (do not block writes
  *  when detector infra is down). Longer timeout than write-gate (LLM is slower). */
-function execConflictDetector(content, scope, projectCwd) {
+function execConflictDetector(content, scope, projectCwd, subdir) {
   return new Promise((resolve) => {
     const scriptPath = path.join(TOOLS_DIR, "memory-conflict-detector.py");
     if (!fs.existsSync(scriptPath)) {
@@ -23,7 +22,11 @@ function execConflictDetector(content, scope, projectCwd) {
     if (projectCwd) {
       args.push("--project-cwd", projectCwd);
     }
-    const cp = require("child_process").spawn("python", [scriptPath, ...args], {
+    // 分區感知：incoming 落 projects/<X> 時其他分區相似 atom warn 不 block
+    if (subdir) {
+      args.push("--subdir", subdir);
+    }
+    const cp = require("child_process").spawn(PYTHON_EXE, [scriptPath, ...args], {
       windowsHide: true,
     });
     let out = "", err = "";
@@ -101,27 +104,57 @@ function buildConflictReport({ slug, incomingTitle, incomingContent, matches, de
   return lines.join("\n");
 }
 
-/** Run write-gate Python script for dedup check. Returns Promise<{action, reason}> */
-function execWriteGate(content, classification) {
+/** Run write-gate Python script for dedup check. Returns Promise<{action, reason}>.
+ *  Payload goes over stdin (script's no-args pipe mode) — no shell, no escaping
+ *  surface. Fail-open on any infra error, but crashLog so the degradation is
+ *  visible (可觀測性鐵律). */
+function execWriteGate(content, classification, layers) {
   return new Promise((resolve) => {
     const scriptPath = path.join(TOOLS_DIR, "memory-write-gate.py");
     if (!fs.existsSync(scriptPath)) {
       return resolve({ action: "add", reason: "write-gate script not found, allowing" });
     }
-    // Escape content for CLI: use stdin via echo pipe
-    const escaped = JSON.stringify({ content, classification });
-    const cmd = `echo ${escaped.replace(/"/g, '\\"')} | python "${scriptPath.replace(/\\/g, "/")}"`;
-    exec(cmd, { timeout: 15000 }, (err, stdout) => {
-      if (err || !stdout) {
+    let cp;
+    try {
+      cp = require("child_process").spawn(PYTHON_EXE, [scriptPath], {
+        windowsHide: true,
+        env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+      });
+    } catch (e) {
+      crashLog("write-gate unavailable (spawn failed)", e);
+      return resolve({ action: "add", reason: "write-gate unavailable, allowing" });
+    }
+    let out = "", err = "", timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try { cp.kill(); } catch {}
+    }, 15000);
+    cp.stdout.on("data", (d) => { out += d.toString("utf-8"); });
+    cp.stderr.on("data", (d) => { err += d.toString("utf-8"); });
+    cp.on("close", () => {
+      clearTimeout(timer);
+      if (timedOut || !out) {
+        crashLog("write-gate unavailable",
+          timedOut ? "timeout (15s), killed" : `no output; stderr=${err.slice(0, 200)}`);
         return resolve({ action: "add", reason: "write-gate unavailable, allowing" });
       }
       try {
-        const result = JSON.parse(stdout.trim());
-        resolve(result);
-      } catch {
+        resolve(JSON.parse(out.trim()));
+      } catch (e) {
+        crashLog("write-gate parse error", `${e.message} stderr=${err.slice(0, 200)}`);
         resolve({ action: "add", reason: "write-gate parse error, allowing" });
       }
     });
+    cp.on("error", (e) => {
+      clearTimeout(timer);
+      crashLog("write-gate unavailable (spawn error)", e);
+      resolve({ action: "add", reason: "write-gate unavailable, allowing" });
+    });
+    try {
+      // layers：去重只比這幾層（global + 當前專案自己的層）；不傳 = 全庫比對
+      cp.stdin.write(JSON.stringify({ content, classification, layers: layers || null }));
+      cp.stdin.end();
+    } catch {} // close handler resolves either way
   });
 }
 
@@ -132,28 +165,53 @@ async function appendToIndex(memDir, atomName, relPath, triggers) {
   if (!r.ok) crashLog("appendToIndex funnel (json)", r.error);
 }
 
-/** Trigger vector service re-index (fire and forget) */
+/** Trigger vector service incremental re-index (fire and forget, but surfaced:
+ *  service down / non-2xx goes to crashLog — 可觀測性鐵律, no silent swallow).
+ *  Route SYNC: tools/memory-vector-service/service.py POST /index/incremental
+ *  (no body — handler just kicks a background incremental build). */
 function triggerVectorReindex() {
   try {
     const url = "http://127.0.0.1:3849/index/incremental";
-    const req = http.request(url, { method: "POST", timeout: 3000 }, () => {});
-    req.on("error", () => {}); // ignore
+    const req = http.request(url, { method: "POST", timeout: 3000 }, (res) => {
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        crashLog("vector reindex", `HTTP ${res.statusCode} from POST /index/incremental`);
+      }
+      res.resume();
+    });
+    req.on("timeout", () => { try { req.destroy(new Error("timeout (3s)")); } catch {} });
+    req.on("error", (e) => crashLog("vector reindex unavailable", e));
     req.end();
-  } catch {}
+  } catch (e) {
+    crashLog("vector reindex unavailable", e);
+  }
 }
 
-/** Regenerate MEMORY.md from _ATOM_INDEX (fire and forget).
- *  Only touches global memory — project layers don't have sync-memory-index hookup yet. */
-function syncMemoryIndex() {
+/** Regenerate the atom catalog from _atom_index.json (fire and forget).
+ *  No arg → global memory/MEMORY.md (+ _local_catalog.md + per-level _INDEX.md).
+ *  memoryDir → project layer (<proj>/.claude/memory): sync-memory-index --memory-dir upserts the
+ *  `<!-- atom-catalog -->` block in that project's MEMORY.md (shared/<Lv1>/ rows); it never writes
+ *  _local_catalog.md / _INDEX.md there. Caller: atom-tools after a shared create/replace. */
+function syncMemoryIndex(memoryDir) {
   try {
     const script = path.join(TOOLS_DIR, "sync-memory-index.py");
     if (!fs.existsSync(script)) return;
-    const cp = require("child_process").spawn("python", [script, "--write"], {
-      windowsHide: true, detached: true, stdio: "ignore",
+    const argv = [script, "--write"];
+    if (memoryDir) argv.push("--memory-dir", String(memoryDir));
+    // 背景重產但不靜默：收 stderr、非 0 退出落 crashLog（可觀測性鐵律——橋接檔曾
+    // 13/13 全壞 7 週無人知，就是這條 fire-and-forget 把訊號吞掉）。
+    const cp = require("child_process").spawn(PYTHON_EXE, argv, {
+      windowsHide: true, detached: true, stdio: ["ignore", "ignore", "pipe"],
     });
-    cp.on("error", () => {});
+    let err = "";
+    if (cp.stderr) cp.stderr.on("data", (d) => { if (err.length < 2000) err += String(d); });
+    cp.on("error", (e) => crashLog("sync-memory-index spawn error", e));
+    cp.on("exit", (code) => {
+      if (code !== 0) crashLog("sync-memory-index failed", `exit=${code} stderr=${err.slice(0, 400)}`);
+      else if (err.includes("[native-memory-bridge]")) crashLog("native-memory-bridge warning", err.slice(0, 400));
+      else if (err.includes("eol normalize failed")) crashLog("sync-memory-index eol warning", err.slice(0, 400));
+    });
     cp.unref();
-  } catch {}
+  } catch (e) { crashLog("sync-memory-index unavailable", e); }
 }
 // ─── Atom Funnel Bridge (spawn lib/atom_io_cli) ─────────────────────
 
@@ -168,7 +226,7 @@ function spawnAtomCli(action, payload) {
     let cp;
     try {
       cp = require("child_process").spawn(
-        "python", ["-m", "lib.atom_io_cli"],
+        PYTHON_EXE, ["-m", "lib.atom_io_cli"],
         {
           cwd: CLAUDE_DIR,
           windowsHide: true,
@@ -178,17 +236,28 @@ function spawnAtomCli(action, payload) {
     } catch (e) {
       return resolve({ ok: false, error: `spawn failed: ${e.message}` });
     }
-    let out = "", err = "";
+    let out = "", err = "", timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try { cp.kill(); } catch {}
+    }, 30000);
     cp.stdout.on("data", (d) => { out += d.toString("utf-8"); });
     cp.stderr.on("data", (d) => { err += d.toString("utf-8"); });
     cp.on("close", () => {
+      clearTimeout(timer);
+      if (timedOut) {
+        return resolve({ ok: false, error: `atom_io_cli timeout (30s), killed (action=${action})` });
+      }
       try {
         resolve(JSON.parse(out));
       } catch (e) {
         resolve({ ok: false, error: `cli parse fail: ${e.message} stderr=${err.slice(0, 200)}` });
       }
     });
-    cp.on("error", (e) => resolve({ ok: false, error: `spawn error: ${e.message}` }));
+    cp.on("error", (e) => {
+      clearTimeout(timer);
+      resolve({ ok: false, error: `spawn error: ${e.message}` });
+    });
     try {
       cp.stdin.write(JSON.stringify({ action, ...payload }));
       cp.stdin.end();
@@ -220,22 +289,8 @@ function funnelWriteIndex(baseDir, slug, relPath, triggers, source) {
 // for injection; write path mirrors that compat for append/replace so users
 // aren't blocked while a project's V3→V5 layout migration is still pending.
 // Only triggers for scope=shared, only when V5 path is absent AND legacy path exists.
-function flatLegacyFallback(scope, baseDir, slug, expectedPath) {
-  if (scope !== "shared") return null;
-  if (fs.existsSync(expectedPath)) return null;
-  const candidate = path.join(baseDir, slug + ".md");
-  if (!fs.existsSync(candidate)) return null;
-  try {
-    process.stderr.write(
-      `[atom_write] flat-legacy fallback: writing to ${candidate} ` +
-      `(V5 expects ${expectedPath} — project pending migration)\n`
-    );
-  } catch {}
-  return candidate;
-}
-
 module.exports = {
   execConflictDetector, appendMergeHistory, buildConflictReport, execWriteGate,
   appendToIndex, triggerVectorReindex, syncMemoryIndex, spawnAtomCli,
-  funnelWriteRaw, flatLegacyFallback,
+  funnelWriteRaw,
 };

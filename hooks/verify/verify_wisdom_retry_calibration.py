@@ -107,7 +107,7 @@ def test_confirm_mode_uses_default_threshold(_tmp_reflection):
 def test_plan_path_excluded_regardless_of_approach(_tmp_reflection):
     """計畫檔（plans/）路徑豁免——即使 failing_tests 非空仍早退（先於 failure gate）。"""
     # _is_plan_iteration_path 用 "/plans/" 子串檢查 → 路徑需含 leading 區段
-    plan_path = "C:/Users/holylight/.claude/plans/foo.md"
+    plan_path = "C:/Users/wellstseng/.claude/plans/foo.md"
     state = {
         "wisdom_approach": "direct",
         "modified_files": [{"path": plan_path}] * 5,

@@ -48,7 +48,8 @@ def _read(path: Path) -> str:
 
 def _atomic_write(path: Path, content: str) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
+    with open(tmp, "w", encoding="utf-8", newline="\n") as _f:
+        _f.write(content)
     os.replace(str(tmp), str(path))
 
 

@@ -92,7 +92,8 @@ def main():
             # Mark in state to prevent duplicates
             state["episodic_checkpoint_done"] = True
             state_path = WORKFLOW_DIR / f"state-{sid}.json"
-            state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+            with open(state_path, "w", encoding="utf-8", newline="\n") as _f:
+                _f.write(json.dumps(state, ensure_ascii=False, indent=2))
         else:
             print("[SKIP] Generation returned None (threshold not met)")
     except Exception as e:

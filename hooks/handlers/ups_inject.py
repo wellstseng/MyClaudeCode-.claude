@@ -12,21 +12,96 @@ handlers/ups_inject.py — UserPromptSubmit injection assemble 段
 
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from wg_core import log_promotion_audit, _atom_debug_log
+import json as _json_mod
+import os
+from datetime import datetime
+
+from wg_core import CLAUDE_DIR, log_promotion_audit, _atom_debug_log, _estimate_tokens
 from wg_atoms import (
     AtomEntry,
     _strip_atom_for_injection,
     spread_related, decide_atom_injection, compute_injection_rank,
-    classify_hot_cold, format_cold_inject_line,
+    classify_hot_cold, format_cold_inject_line, atom_status_suffix, pointer_path,
+    _strip_atom_for_injection_impression_only,
     SECTION_INJECT_THRESHOLD, _extract_sections,
     _TURN_BUDGET_LIMIT,
+    read_atom_text, load_access_cached,
 )
+
+# budget skip 連續次數上限：首顆超 budget 不再直接 break（後面可能有塞得下的
+# 小顆/impression fallback），連 impression fallback 都塞不下連續 N 次才停。
+_BUDGET_SKIP_STREAK_MAX = 2
+
+# injection_log state 條目上限（session 累積、超出裁最舊）——供 Stop 取用端
+# 稽核閘（AtomAudit）判定「trigger 命中但僅一行路標注入且未 Read」。
+_INJECTION_LOG_CAP = 100
+
+
+_INJECTION_TURNS_LOG = CLAUDE_DIR / "Logs" / "injection-turns.jsonl"
+
+
+def _append_injection_turn_log(
+    session_id: str, turn_seq: int, records: List[Dict[str, Any]],
+    used_tokens: int, config: Dict[str, Any],
+) -> None:
+    """每 turn 一行落 Logs/injection-turns.jsonl：{at, session_id, turn_seq, ok, fallback,
+    skip, cold, used_tokens, limit}。state 的 injection_log 會被 cap 裁掉且 session 結束後
+    不易聚合；這份持久紀錄供 memory-effect-report「每回合平均全文注入數」欄位。fail-open。"""
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return  # verify 套件以假 session 跑真 ups_inject，不得污染正式統計
+    try:
+        counts = {"ok": 0, "fallback": 0, "skip": 0, "cold": 0, "redundant": 0}
+        for r in records:
+            f = r.get("form")
+            if f in counts:
+                counts[f] += 1
+        row = {
+            "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "session_id": session_id,
+            "turn_seq": turn_seq,
+            **counts,
+            "used_tokens": int(used_tokens),
+            "limit": int(_TURN_BUDGET_LIMIT),
+        }
+        _INJECTION_TURNS_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with _INJECTION_TURNS_LOG.open("a", encoding="utf-8") as fh:
+            fh.write(_json_mod.dumps(row, ensure_ascii=False) + "\n")
+    except Exception as e:  # noqa: BLE001 — 純遙測，不得影響注入
+        _atom_debug_log("BUDGET", f"injection-turns log write error: {e}", config)
+
+
+_REDUNDANCY_MIN_SHARED_DEFAULT = 3  # 與本 turn 已全文注入者 trigger 精確重疊 ≥N → 同題降節錄
+
+
+def _redundancy_cfg(config: Dict[str, Any]) -> Tuple[bool, int]:
+    rg = ((config or {}).get("injection") or {}).get("redundancy_gate") or {}
+    return bool(rg.get("enabled", True)), int(rg.get("min_shared_triggers", _REDUNDANCY_MIN_SHARED_DEFAULT) or 0)
+
+
+def _norm_triggers(triggers) -> set:
+    return {str(t).strip().lower() for t in (triggers or []) if str(t).strip()}
+
+
+def redundant_with(triggers, full_seen: List[Tuple[str, set]], min_shared: int) -> Optional[str]:
+    """同題去冗判定：本 atom 的 trigger 與「本 turn 已全文注入」的某顆精確重疊 ≥ min_shared
+    → 回該顆名稱（由它代表本題），否則 None。只比 trigger 精確字串（小寫），不比子字串——
+    子字串重疊在泛 trigger（workflow-rules 類）上噪音大；全庫實測精確 ≥3 僅 4 對且皆真同題。"""
+    if min_shared <= 0:
+        return None
+    mine = _norm_triggers(triggers)
+    if len(mine) < min_shared:
+        return None
+    for seen_name, seen_set in full_seen:
+        if len(mine & seen_set) >= min_shared:
+            return seen_name
+    return None
 
 
 def _filter_related_by_relevance(
     related_entries: List[Tuple[AtomEntry, Path]], config: Dict[str, Any],
+    access_cache: Optional[Dict[str, Dict]] = None,
 ) -> Tuple[List[Tuple[AtomEntry, Path]], List[Tuple[str, str]]]:
     """Phase C：related-spread 最小高訊號集裁切（憲法 Context Confusion 對策）。
 
@@ -40,14 +115,14 @@ def _filter_related_by_relevance(
     if not ig.get("enabled", True) or not related_entries:
         return related_entries, []
     try:
-        from lib.atom_access import read_access, usefulness_demote_candidate
+        from lib.atom_access import usefulness_demote_candidate
     except Exception:
         return related_entries, []  # fail-open
     skip_demoted = ig.get("skip_demoted", True)
     max_related = int(ig.get("max_related", 6))
     u = (config or {}).get("usefulness") or {}
-    min_n = int(u.get("min_n", 3))
-    z = float(u.get("wilson_z", 1.96))
+    demote_min_n = int(u.get("demote_min_n", 5))
+    z = float(u.get("wilson_z", 1.28))
     demote_lb = float(u.get("demote_lb", 0.35))
 
     skipped: List[Tuple[str, str]] = []
@@ -57,13 +132,15 @@ def _filter_related_by_relevance(
         rdir = (base_dir / rel_path).parent if rel_path else (base_dir / "memory")
         if skip_demoted:
             try:
-                acc = read_access(rdir / f"{rname}.md")
-                if usefulness_demote_candidate(acc, demote_lb=demote_lb, min_n=min_n, z=z):
+                acc = load_access_cached(rdir / f"{rname}.md", access_cache)
+                if usefulness_demote_candidate(acc, demote_lb=demote_lb, min_n=demote_min_n, z=z):
                     skipped.append((rname, "demoted"))
                     continue
             except Exception:
                 pass
-        scored.append((compute_injection_rank(rname, rdir, config), entry, rname))
+        scored.append(
+            (compute_injection_rank(rname, rdir, config, access_cache), entry, rname)
+        )
     scored.sort(key=lambda x: x[0], reverse=True)
     kept = [e for _, e, _ in scored[:max_related]]
     skipped.extend((nm, "min_set_cap") for _, _, nm in scored[max_related:])
@@ -80,35 +157,64 @@ def assemble_injection(
     atom_source: Dict[str, str],
     section_hints: Dict[str, List[Dict]],
     lines: List[str],
+    caches: Optional[Dict[str, Dict]] = None,
 ) -> Tuple[List[str], Dict[str, Path]]:
     """組裝注入內容。mutate state（injected_atoms）/ append lines，
-    回傳 (newly_injected, atom_source_dirs)。"""
+    回傳 (newly_injected, atom_source_dirs)。
+
+    caches：search 段下傳的 {"content", "access"} 讀取快取（None 時自建空 dict，
+    函式仍可獨測）——同 atom 本 prompt 只實讀一次。"""
     newly_injected: List[str] = []
     atom_source_dirs: Dict[str, Path] = {}
     if not matched_with_dir:
         return newly_injected, atom_source_dirs
 
+    content_cache = (caches or {}).get("content")
+    if content_cache is None:
+        content_cache = {}
+    access_cache = (caches or {}).get("access")
+    if access_cache is None:
+        access_cache = {}
+
     atom_lines: List[str] = []
     used_tokens = 0
+    skip_streak = 0  # 連續 budget skip 計數（達 _BUDGET_SKIP_STREAK_MAX 才 break）
+    redundancy_on, redundancy_min = _redundancy_cfg(config)
+    full_seen: List[Tuple[str, set]] = []  # 本 turn 已全文注入 (name, trigger set)，同題去冗比對用
     rescue_pairs: List[Tuple[str, str]] = []  # (atom, 實注入內容) → 救援日誌 watch
+    # 本 turn 注入記錄（name/path/source/form），尾段落 state["injection_log"]。
+    # form: ok=全文 / fallback=印象 / skip=budget 一行 / cold=cold 一行
+    inject_records: List[Dict[str, Any]] = []
+
+    _atom_scopes: Dict[str, str] = (state.get("atom_index") or {}).get("scopes") or {}
+
+    def _record(name_: str, path_: Path, rel_: str, source_: str, form_: str) -> None:
+        inject_records.append({
+            "name": name_,
+            "path": str(path_),
+            "rel": rel_ or f"{name_}.md",
+            "source": source_,
+            "form": form_,
+            "scope": _atom_scopes.get(name_, ""),
+        })
 
     for (name, rel_path, triggers), base_dir in matched_with_dir:
         atom_path = (base_dir / rel_path) if rel_path else (base_dir / "memory" / f"{name}.md")
         if not atom_path.exists():
             continue
         atom_source_dirs[name] = atom_path.parent
-        try:
-            raw_content = atom_path.read_text(encoding="utf-8-sig")
-        except (OSError, UnicodeDecodeError):
+        raw_content = read_atom_text(atom_path, content_cache)
+        if raw_content is None:
             continue
 
         source = atom_source.get(name, "vector")
-        classification = classify_hot_cold(atom_path, source)
+        classification = classify_hot_cold(atom_path, source, access_cache=access_cache)
 
         if classification == "cold":
-            cold_line = format_cold_inject_line(name, raw_content, rel_path)
+            cold_line = format_cold_inject_line(name, raw_content, rel_path, atom_path)
             atom_lines.append(cold_line)
             newly_injected.append(name)
+            _record(name, atom_path, rel_path, source, "cold")
             _atom_debug_log(
                 "BUDGET",
                 f"atom={name} source={source} classification=cold (1-line)",
@@ -116,8 +222,29 @@ def assemble_injection(
             )
             continue
 
+        # 同題去冗：與本 turn 已全文注入者 trigger 重疊 ≥N → 只送表頭＋知識前兩句（節錄），
+        # 註明由誰代表本題。不整張丟（精確度 > 省 token），但不重複講同一件事。
+        if redundancy_on:
+            covered_by = redundant_with(triggers, full_seen, redundancy_min)
+            if covered_by:
+                excerpt = _strip_atom_for_injection_impression_only(raw_content)
+                ex_tokens = _estimate_tokens(excerpt)
+                if used_tokens + ex_tokens <= _TURN_BUDGET_LIMIT:
+                    atom_lines.append(f"[Atom:{name}] (same-topic → {covered_by}, 節錄)\n{excerpt}")
+                    newly_injected.append(name)
+                    rescue_pairs.append((name, excerpt))
+                    used_tokens += ex_tokens
+                    _record(name, atom_path, rel_path, source, "redundant")
+                    _atom_debug_log(
+                        "REDUNDANCY",
+                        f"atom={name} covered_by={covered_by} tokens={ex_tokens} form=excerpt",
+                        config,
+                    )
+                    continue
+                # 連節錄都塞不下 → 落到下方一般 budget 三態（會 skip 成一行路標）
+
         content = _strip_atom_for_injection(raw_content)
-        content_tokens = len(content) // 4
+        content_tokens = _estimate_tokens(content)
 
         if name in section_hints and content_tokens > SECTION_INJECT_THRESHOLD:
             extracted = _extract_sections(content, section_hints[name])
@@ -132,6 +259,9 @@ def assemble_injection(
             newly_injected.append(name)
             rescue_pairs.append((name, inject_content))
             used_tokens += consumed
+            skip_streak = 0
+            full_seen.append((name, _norm_triggers(triggers)))
+            _record(name, atom_path, rel_path, source, "ok")
             _atom_debug_log(
                 "BUDGET",
                 f"atom={name} source={source} tokens={consumed} decision=ok used={used_tokens}/{_TURN_BUDGET_LIMIT}",
@@ -142,30 +272,43 @@ def assemble_injection(
             newly_injected.append(name)
             rescue_pairs.append((name, inject_content))
             used_tokens += consumed
+            skip_streak = 0
+            _record(name, atom_path, rel_path, source, "fallback")
             _atom_debug_log(
                 "BUDGET",
                 f"atom={name} source={source} tokens={consumed} decision=fallback used={used_tokens}/{_TURN_BUDGET_LIMIT}",
                 config,
             )
         else:
+            # skip（連 impression fallback 都塞不下）→ 1-line 指標後 continue：
+            # 排序偏後仍可能有塞得下的小顆；連續 skip 達上限才視為 budget 真枯竭。
             first_line = content.split("\n", 1)[0].strip("# ").strip()
-            display_path = rel_path or f"{name}.md"
-            atom_lines.append(f"[Atom:{name}] {first_line} (full: Read {display_path})")
+            display_path = pointer_path(atom_path)
+            atom_lines.append(
+                f"[Atom:{name}] {first_line}{atom_status_suffix(raw_content)}"
+                f" (full: Read {display_path})"
+            )
             newly_injected.append(name)
+            _record(name, atom_path, rel_path, source, "skip")
+            skip_streak += 1
             _atom_debug_log(
                 "BUDGET",
-                f"atom={name} source={source} decision=skip used={used_tokens}/{_TURN_BUDGET_LIMIT}",
+                f"atom={name} source={source} decision=skip streak={skip_streak} used={used_tokens}/{_TURN_BUDGET_LIMIT}",
                 config,
             )
-            break
+            if skip_streak >= _BUDGET_SKIP_STREAK_MAX:
+                break
 
     # Related-Edge Spreading（+ Phase C 最小高訊號集裁切：剔除已證明低效用、依 rank 保留前 N）
     related_entries = spread_related(
         set(newly_injected), all_atoms, already_injected, max_depth=1,
+        content_cache=content_cache,
     )
-    related_entries, related_skipped = _filter_related_by_relevance(related_entries, config)
+    related_entries, related_skipped = _filter_related_by_relevance(
+        related_entries, config, access_cache=access_cache)
     for _sk_name, _sk_reason in related_skipped:
         _atom_debug_log("RELEVANCE", f"atom={_sk_name}(related) skipped={_sk_reason}", config)
+    skip_streak = 0
     for (rname, rel_path, _triggers), base_dir in related_entries:
         if rname in newly_injected:
             continue
@@ -173,16 +316,16 @@ def assemble_injection(
         if not rpath.exists():
             continue
         atom_source_dirs[rname] = rpath.parent
-        try:
-            raw_content = rpath.read_text(encoding="utf-8-sig")
-        except (OSError, UnicodeDecodeError):
+        raw_content = read_atom_text(rpath, content_cache)
+        if raw_content is None:
             continue
-        related_classification = classify_hot_cold(rpath, "related")
+        related_classification = classify_hot_cold(rpath, "related", access_cache=access_cache)
         if related_classification == "cold":
-            cold_line = format_cold_inject_line(rname, raw_content, rel_path)
+            cold_line = format_cold_inject_line(rname, raw_content, rel_path, rpath)
             cold_line = cold_line.replace(f"[Atom:{rname}] (cold)", f"[Atom:{rname}] (related, cold)", 1)
             atom_lines.append(cold_line)
             newly_injected.append(rname)
+            _record(rname, rpath, rel_path, "related", "cold")
             _atom_debug_log(
                 "BUDGET",
                 f"atom={rname}(related) classification=cold (1-line)",
@@ -199,6 +342,8 @@ def assemble_injection(
             newly_injected.append(rname)
             rescue_pairs.append((rname, inject_content))
             used_tokens += consumed
+            skip_streak = 0
+            _record(rname, rpath, rel_path, "related", "ok")
             _atom_debug_log(
                 "BUDGET",
                 f"atom={rname}(related) classification=hot tokens={consumed} decision=ok used={used_tokens}/{_TURN_BUDGET_LIMIT}",
@@ -209,6 +354,8 @@ def assemble_injection(
             newly_injected.append(rname)
             rescue_pairs.append((rname, inject_content))
             used_tokens += consumed
+            skip_streak = 0
+            _record(rname, rpath, rel_path, "related", "fallback")
             _atom_debug_log(
                 "BUDGET",
                 f"atom={rname}(related) classification=hot tokens={consumed} decision=fallback used={used_tokens}/{_TURN_BUDGET_LIMIT}",
@@ -216,18 +363,35 @@ def assemble_injection(
             )
         else:
             first_line = content.split("\n", 1)[0].strip("# ").strip()
-            atom_lines.append(f"[Atom:{rname}] (related) {first_line} (full: Read {rel_path or rname + '.md'})")
+            atom_lines.append(
+                f"[Atom:{rname}] (related) {first_line}{atom_status_suffix(raw_content)}"
+                f" (full: Read {pointer_path(rpath)})"
+            )
             newly_injected.append(rname)
+            _record(rname, rpath, rel_path, "related", "skip")
+            skip_streak += 1
             _atom_debug_log(
                 "BUDGET",
-                f"atom={rname}(related) classification=hot decision=skip used={used_tokens}/{_TURN_BUDGET_LIMIT}",
+                f"atom={rname}(related) classification=hot decision=skip streak={skip_streak} used={used_tokens}/{_TURN_BUDGET_LIMIT}",
                 config,
             )
-            break
+            if skip_streak >= _BUDGET_SKIP_STREAK_MAX:
+                break
 
     if atom_lines:
         lines.extend(atom_lines)
         state["injected_atoms"] = already_injected + newly_injected
+        # 取用端稽核資料面：session 累積注入記錄（含 source/form），Stop AtomAudit
+        # 閘據此判定「trigger 命中但僅一行路標且未 Read」。turn_seq 在 UPS 收尾才
+        # +1（user_prompt_submit 尾段），此處先 +1 對齊「本 turn」序號。
+        cur_turn = int(state.get("turn_seq", 0)) + 1
+        for rec in inject_records:
+            rec["turn_seq"] = cur_turn
+        inj_log = state.setdefault("injection_log", [])
+        inj_log.extend(inject_records)
+        if len(inj_log) > _INJECTION_LOG_CAP:
+            state["injection_log"] = inj_log[-_INJECTION_LOG_CAP:]
+        _append_injection_turn_log(session_id, cur_turn, inject_records, used_tokens, config)
         if rescue_pairs:
             try:
                 from wg_rescue import record_rescue_watch
@@ -235,7 +399,8 @@ def assemble_injection(
             except Exception as e:
                 _atom_debug_log("RESCUE", f"watch record error: {e}", config)
         _emit_usefulness_hints(
-            session_id, config, newly_injected, matched_with_dir
+            session_id, config, newly_injected, matched_with_dir,
+            caches={"content": content_cache, "access": access_cache},
         )
 
     return newly_injected, atom_source_dirs
@@ -246,6 +411,7 @@ def _emit_usefulness_hints(
     config: Dict[str, Any],
     newly_injected: List[str],
     matched_with_dir: List[Tuple[AtomEntry, Path]],
+    caches: Optional[Dict[str, Dict]] = None,
 ) -> None:
     """ReadHits++ via lib.atom_access (funnel discipline)。
 
@@ -256,14 +422,15 @@ def _emit_usefulness_hints(
     """
     try:
         from lib.atom_access import (
-            increment_read_hits, read_access, usefulness_stats,
+            increment_read_hits, usefulness_stats,
             usefulness_hint_tier,
         )
     except ImportError:
         increment_read_hits = None
-        read_access = None
         usefulness_stats = None
         usefulness_hint_tier = None
+    content_cache = (caches or {}).get("content")
+    access_cache = (caches or {}).get("access")
     confidence_re = re.compile(r"^- Confidence:\s*(\[(?:臨|觀|固)\])", re.MULTILINE)
     PROMOTION_TARGETS = {"[臨]": "[觀]", "[觀]": "[固]"}
     u_cfg = config.get("usefulness", {})
@@ -282,13 +449,16 @@ def _emit_usefulness_hints(
                     increment_read_hits(apath, source="hook:atom-inject")
                 except (OSError, ValueError):
                     pass
-            # 效用導向晉升提示：Wilson 下界接近/已達升門才提示
-            if usefulness_hint_tier is None or read_access is None:
+            # 效用導向晉升提示：Wilson 下界接近/已達升門才提示。
+            # 快取為 increment 前快照——hint tier 只看 α/β（increment 不動），一致。
+            if usefulness_hint_tier is None:
+                break
+            text = read_atom_text(apath, content_cache)
+            if text is None:
                 break
             try:
-                text = apath.read_text(encoding="utf-8-sig")
-                acc = read_access(apath)
-            except (OSError, ValueError, UnicodeDecodeError):
+                acc = load_access_cached(apath, access_cache)
+            except (OSError, ValueError):
                 break
             conf_m = confidence_re.search(text)
             if not conf_m:

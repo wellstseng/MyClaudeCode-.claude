@@ -32,28 +32,49 @@ from typing import Any, Dict, List, Optional
 ATOM_INDEX_JSON = "_atom_index.json"
 ATOM_INDEX_MD = "_ATOM_INDEX.md"
 SCHEMA_VERSION = "1.0"
+TRIGGER_MAX_LEN = 30  # validate_index 與 write funnel 共用（寫入當下即驗，不留到後續操作才爆）
 
 
-def _write_text_preserving_eol(path: Path, content: str) -> None:
-    """tmp + rename 落檔，byte-stable EOL（對拍 atom_io._atomic_write）。
+def find_index_dir(path: Path) -> Optional[Path]:
+    """從 path 往上找最近含 _atom_index.json 的祖先 = index root（memory root）。
 
-    索引檔（_atom_index.json / _ATOM_INDEX.md）每次 upsert 都整檔 regen；若用
-    Path.write_text 預設 newline=None，Windows 會把 \\n 全翻成 os.linesep，使既有
-    CRLF 索引每次都整檔翻行尾（reformat blast 同源）。偵測既有檔行尾原樣套回，
-    newline="" 關平台轉譯——既有行 byte-stable、僅真正變動的列進 diff。
+    單一來源：edit_metadata（專案層 atom 的索引歸屬）與 tools/atom-move.py 共用，
+    取代各處硬編 ~/.claude 或自刻上溯。找不到回 None。
     """
     try:
-        raw = path.read_bytes()
-        eol = "\r\n" if b"\r\n" in raw else ("\n" if b"\n" in raw else os.linesep)
+        cur = Path(path).resolve(strict=False)
     except OSError:
-        eol = os.linesep
+        cur = Path(path)
+    while True:
+        if (cur / ATOM_INDEX_JSON).exists():
+            return cur
+        if cur.parent == cur:
+            return None
+        cur = cur.parent
+
+
+def _write_text_lf(path: Path, content: str) -> None:
+    """tmp + rename 落檔，內容一律 LF（與 atom_io.write_text_lf 同規則；本模組只依賴 stdlib 故自帶一份）。
+
+    索引檔每次 upsert 都整檔 regen；newline="" 關掉平台轉譯，Windows 才不會把 \\n 翻成 \\r\\n。
+    tmp 後綴帶 PID+TID：索引檔全系統共用，併發 session upsert 不互踩。
+    """
     body = content.replace("\r\n", "\n").replace("\r", "\n")
-    if eol != "\n":
-        body = body.replace("\n", eol)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp, "w", encoding="utf-8", newline="") as f:
-        f.write(body)
-    tmp.replace(path)
+    import threading as _threading
+    tmp = path.with_suffix(
+        f"{path.suffix}.tmp.{os.getpid()}.{_threading.get_ident()}"
+    )
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="") as f:
+            f.write(body)
+        tmp.replace(path)
+    except OSError:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def _empty_index() -> Dict[str, Any]:
@@ -77,9 +98,31 @@ def load_atom_index_json(mem_dir: Path) -> Dict[str, Any]:
 def save_atom_index_json(mem_dir: Path, data: Dict[str, Any]) -> None:
     p = mem_dir / ATOM_INDEX_JSON
     p.parent.mkdir(parents=True, exist_ok=True)
-    _write_text_preserving_eol(
+    _write_text_lf(
         p, json.dumps(data, ensure_ascii=False, indent=2, sort_keys=False)
     )
+
+
+def dedup_triggers(triggers, *, lower: bool = False) -> List[str]:
+    """strip + 去空 + 大小寫不敏感保序去重（首見者勝）；lower=True 時輸出一律小寫。
+
+    讀寫兩側共用：索引若同時含 "linemate" 與 "LineMate"，讀取側 .lower() 後會變成
+    兩顆相同 trigger，count_trigger_hits 對單字回 2 而灌水越過跨專案 >=2 門檻。
+    """
+    out: List[str] = []
+    seen = set()
+    for t in triggers or []:
+        if not isinstance(t, str):
+            continue
+        t = t.strip()
+        if not t:
+            continue
+        key = t.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(t.lower() if lower else t)
+    return out
 
 
 def upsert_atom(
@@ -93,7 +136,7 @@ def upsert_atom(
     """Insert or update an atom entry. Returns True if changed."""
     data = load_atom_index_json(mem_dir)
     atoms = data["atoms"]
-    triggers = [t.strip() for t in triggers if t and t.strip()]
+    triggers = dedup_triggers(triggers)
     new_entry: Dict[str, Any] = {
         "name": name,
         "path": path,
@@ -151,7 +194,7 @@ def regenerate_atom_index_md(mem_dir: Path) -> None:
     lines.append("")
 
     md = mem_dir / ATOM_INDEX_MD
-    _write_text_preserving_eol(md, "\n".join(lines))
+    _write_text_lf(md, "\n".join(lines))
 
 
 # ─── Migration: parse legacy _ATOM_INDEX.md → JSON ──────────────────────────
@@ -188,7 +231,7 @@ def parse_legacy_atom_index_md(md_path: Path) -> List[Dict[str, Any]]:
             continue
         name = cells[0]
         path = cells[1]
-        triggers = [t.strip() for t in cells[2].split(",") if t.strip()]
+        triggers = dedup_triggers(cells[2].split(","))
         scope = cells[3] if len(cells) >= 4 else "global"
         atoms.append({
             "name": name,
@@ -255,8 +298,8 @@ def validate_index(mem_dir: Path) -> List[str]:
             errors.append(f"atoms[{i}] triggers not list")
         else:
             for t in a["triggers"]:
-                if len(t) > 30:
-                    errors.append(f"trigger too long (>30): {name}: {t!r}")
+                if len(t) > TRIGGER_MAX_LEN:
+                    errors.append(f"trigger too long (>{TRIGGER_MAX_LEN}): {name}: {t!r}")
     return errors
 
 
@@ -272,6 +315,6 @@ def to_atom_entries(data: Dict[str, Any]) -> List[tuple]:
     for a in data.get("atoms", []):
         name = a.get("name", "")
         path = a.get("path", "")
-        triggers = [t.lower() for t in a.get("triggers", [])]
+        triggers = dedup_triggers(a.get("triggers", []), lower=True)
         entries.append((name, path, triggers))
     return entries

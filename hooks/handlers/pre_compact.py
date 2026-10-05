@@ -46,9 +46,8 @@ def handle_pre_compact(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
             stub_name = ah.get("stub_filename", "next-phase-auto.md")
             if should_write_stub(staging, state, stub_name):
                 staging.mkdir(parents=True, exist_ok=True)
-                (staging / stub_name).write_text(
-                    build_handoff_stub(state, cwd), encoding="utf-8"
-                )
+                with open(staging / stub_name, "w", encoding="utf-8", newline="\n") as _f:
+                    _f.write(build_handoff_stub(state, cwd))
                 state["pending_handoff_emit"] = True
                 state["handoff_stub_path"] = str(staging / stub_name)
                 state["handoff_stub_at"] = _now_iso()

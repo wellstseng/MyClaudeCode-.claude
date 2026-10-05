@@ -5,7 +5,7 @@
 - Confidence: [臨]
 - Trigger: edit_metadata, atom 元資料編輯, atom_edit_meta, trigger 裁減, 改 trigger, atom 晉升, ReadHits, usefulness, 晉升閘, access.json, sidecar, 行尾損壞
 - Created-at: 2026-06-02
-- Related: feedback-tooling-reliability, memory-pipeline-silent-failure-2026-05, atom-usefulness-loop, feedback-memory-system-doc-sync, write-raw-對未列舉-source-靜默回-okfalse-不-raise呼叫端必檢查回傳值, confirmations-已退役-phase2-usefulness-接管晉升
+- Related: feedback-tooling-reliability, memory-pipeline-silent-failure-2026-05, atom-usefulness-loop, feedback-memory-system-doc-sync, write-raw-對未列舉-source-靜默回-okfalse-不-raise呼叫端必檢查回傳值, confirmations-已退役-phase2-usefulness-接管晉升, post-mortem-write-raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用
 
 ## 知識
 
@@ -14,6 +14,7 @@
 - [臨] atom 計數欄（read_hits/confirmations/last_used）存 `<atom>.access.json` sidecar（.md inline 已移除）；讀取走 `lib/atom_access.read_access(path)`。工具若仍讀 .md inline 會全 atom 誤報 missing（atom-health-check.py 已修）。
 - [臨] memory-audit parser 已容忍 `\r\r\n` 雙CR（讀 bytes→正規化→splitlines）並對壞檔 emit「行尾損壞」warning；壞行尾根因（atom_write append 混 EOL）見 [[feedback-tooling-reliability]]。
 - [臨] funnel guard 覆蓋已補齊 `_AIDocs/Failures/` 失敗 atom（feedback-*/cognitive-patterns/memory-pipeline-*）：`wg_core._is_failures_atom_path` 用 `atom_locations.failures_atom_stems()` 比對 `_atom_index.json` 精準擋直 Write/Edit，**不誤擋**同目錄混居的 legacy 失敗筆記（env-traps/silent-failures…未進 index）與 `_INDEX.md`。陷阱：funnel 白名單 `atom_writable_dir_segments()` **不可含 `Failures`**——caller intersect 用 parts_lower，若有人把它改 case-insensitive 會豁免整個 Failures 目錄、廢掉本 guard（覆蓋缺口復發）；故 stems-based gate 是對的、dir 白名單路線錯。另：`failures_atom_stems()` 內相對 import 已改 dual-safe，wg_core 頂層載入 atom_locations 才能呼叫。`edit_metadata` 已進 run_verify（`lib/verify/verify_atom_io_edit_metadata.py` 10 test）+ Failures guard（`hooks/verify/verify_failures_atom_funnel_guard.py` 20 test）。
+- [臨] 行尾現況：edit_metadata 與所有 atom 寫檔一律走 `write_text_lf` 輸出 LF，不再沿用原檔行尾；壞行尾（`\r\r\n`）只剩歷史殘檔會遇到，新寫入不會再產生。
 
 ## 行動
 

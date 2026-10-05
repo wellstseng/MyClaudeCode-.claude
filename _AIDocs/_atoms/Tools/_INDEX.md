@@ -1,6 +1,6 @@
 # _AIDocs/_atoms/Tools — 範疇索引
 
-> 階層 local 範疇索引（自動生成，`_` 前綴非 atom）。機制見 [[realm-範疇分區機制-v5]]。
+> 階層範疇索引（自動生成，`_` 前綴非 atom）。機制見 [[realm-範疇分區機制-v5]]。
 
 ## 本層 atom
 
@@ -10,10 +10,11 @@
 | codex-log-bloat-analytics | codex-log-bloat-analytics |
 | electron-uia-automation | Electron app UI 自動化三層障礙 |
 | gdoc-harvester | gdoc-harvester — Web Harvester 收割工具經驗 |
-| windows-python-write-text-缺-newline-把-lf-翻-crlf-整檔假-diff | Windows Python write_text 缺 newline 把 LF 翻 CRLF 整檔假 diff |
+| heredoc反斜線三連踩post-mortem-含反斜線的腳本一律write成檔再跑 | heredoc反斜線三連踩post-mortem-含反斜線的腳本一律Write成檔再跑 |
+| sync-memory-indexpy-在-windows-直接跑會-cp950-unicodeencodeerror-前綴-pythonioencodingutf-8 | sync-memory-index.py 在 Windows 直接跑會 cp950 UnicodeEncodeError — 前綴 PYTHONIOENCODING=utf-8 |
 
 ## 子層
 
 | 子層 | atom 數 | 深入 |
 |------|---------|------|
-| 自動化流程與協議 | 5 | `_AIDocs/_atoms/Tools/自動化流程與協議/_INDEX.md` |
+| 自動化流程與協議 | 4 | `_AIDocs/_atoms/Tools/自動化流程與協議/_INDEX.md` |

@@ -22,9 +22,15 @@
 | 15 | vector-threshold-calibration-2026-04.md | Wave 3b probe-burst 數據驅動的 ranked-sections min_score 校準（90 query x 6 threshold 矩陣 + 決策） | vector, threshold, calibration, ranked-sections, min_score, probe-burst, 議題 #6, REG-005 |
 | 16 | atom-injection-refactor-2026-04.md | REG-005 atom 注入機制重構收尾（A+B+C+D 4 層 + 觀察期 KEEP 判定 + 設計歸檔） | REG-005, atom, injection, summary-first, budget, hot-cold, related, 4-layer, KEEP, 觀察期 |
 | 17 | v4-archive/ | Wave 4 hooks/_v4_archive 19 檔對照證物（V4 hook 模組退役前最後一版） | v4-archive, hooks, 證物, V4 退役 |
+| 19 | pan-deny-judgement-2026-08-06.md | PAN 預告閘門 warn→deny 終局判讀（四門檻逐筆證據 + 漏偵決定性反證 + 判讀方法學踩坑） | PAN, 預告閘門, pre_action_notice, 翻 deny, 漏偵率, 假陰性, text_blocks, fail_open_no_transcript |
 | 18 | v5-overhaul-2026-05/ | V5 升版完整紀錄（起因 + 4-Wave + Wave 5 全面汰舊 + GA Checklist 驗收 + Session α/β feedback-aidocs 遷移）— 取代原 audit atom | V5, GA, 升版, overhaul, Wave, 全面汰舊, BM25, JSON SoT, Codex subprocess, 114GB, feedback-aidocs, atom_locations |
+| 19 | session-coordination-bus.md | 跨 session 衝突預警多大師計畫紀錄（CC 原生無跨 session 管道查證 + 七席共議仲裁 + PreToolUse additionalContext probe 實測 + Stage 2/3 defer 條件） | session 協調, 衝突預警, coordination, 多大師, CoordWarn, probe, Agent Teams, add -A |
 | 19 | auto-memory-writeback.md | 對談結束自動記憶 writeback 三 stage 開發脈絡（session_end flush 落點路由 + 失敗五區塊骨架 + Deep Post-Mortem Gate；含 edit-count proxy 拔除、獨立預算演化） | session_end flush, 失敗骨架, deep post-mortem, writeback, 落點路由, extract-worker, stop gate, edit-count proxy |
-| 20 | catclaw-migration-2026-10.md | CatClaw → Claude Code 記憶與技能遷移（落點決策、格式轉換規則、碎片篩併流程、遷移中修掉的缺陷、踩坑） | CatClaw, 遷移, migration, ext 碎片, 向量服務自癒, session_end_flush, 專案記憶 |
+| 20 | 核心記憶分類階層化-2026-08.md | 核心記憶分類階層化 S1–S5 編年（起因與使用者原則原文 + 兩根／11 個 Lv1 目標形狀 + 被否決方案與理由 + 五階段 commit／驗證數字 + 附帶修掉的 bug + 遺留議題 + 總管模式協作） | 分類階層化, taxonomy, 範疇資料夾, memory/Failures, MEMORY.md 目錄, 寫入閘, domain 必填, atom-categorize, 兩根, 使用面 開發面, 總管模式, S1–S5 |
+| 20 | memory-system-review-2026-08.md | 原子記憶系統 × CC 原生記憶 × 業界主流三方比對評估（as-built 管線逐檔核對＋優缺點／可補強／該修正各標已處理／待辦＋修前後數據＋單一決策點：積累端 provenance＋週期整併） | 三方比對, 記憶系統評估, RRF, ACT-R, 注入預算, provenance, cross-encoder, 積累端, CC auto-memory, 業界主流, 2026-08 |
+| 21 | injection-budget-investigation-2026-08.md | 注入變弱調查編年（三假設證偽：MEMORY.md 瘦身／分類閘／中文檔名 → 根因 TURN_BUDGET_LIMIT 縮量未回調 → 五次修正各附證據／修法／驗證／commit → 未做與理由 → 回訪四指標 → 教訓） | 注入變弱, TURN_BUDGET_LIMIT, 裁切回填, compute_token_budget, token 分級, 同題去冗, redundancy_gate, 橋接檔 slug, 回訪機制, followup-check, injection-turns.jsonl, 全文率 |
+| 22 | taxonomy-engine-半統一設計-2026-06.md | 分類／去蕪統一引擎設計與執行紀錄（半統一裁決：`score_by_lexicon` 單一計分源 + Realm／Taxonomy adapter 並存；Phase A 核心落地、晉升閘與跨 realm 逃逸閘；DedupStage 已於 `755ce07` 停產；Phase B/C 專案端 thin shim 未執行） | taxonomy, classify, score_by_lexicon, atom_classify, 半統一, adapter, RealmStrategy, TaxonomyStrategy, 逃逸閘, DedupStage, Phase B, thin shim, classify-project-atoms |
+| 23 | catclaw-migration-2026-10.md | CatClaw → Claude Code 記憶與技能遷移（落點決策、格式轉換規則、碎片篩併流程、遷移中修掉的缺陷、踩坑） | CatClaw, 遷移, migration, ext 碎片, 向量服務自癒, session_end_flush, 專案記憶 |
 
 > 2026-05-27 Wave 5 Session 2 已歸檔（移至 `memory/_distant/2026_05_v5_overhaul/`，git 不再追蹤）：`session-logs/` / `memory-cleanup-2026-04/` / `atomic-memory-evolution/` / `ab-test-gemma4/` / `atom-v4/` / `atom-v4-phases/` / `changelog-roll/` / `v41-handoffs/` / `v41-p4-simulation/` / `wg-docdrift/`
 

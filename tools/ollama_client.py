@@ -566,14 +566,12 @@ class OllamaClient:
     def _save_token_to_file(self, backend_name: str, token: str):
         try:
             TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
-            TOKEN_PATH.write_text(
-                json.dumps({
+            with open(TOKEN_PATH, "w", encoding="utf-8", newline="\n") as _f:
+                _f.write(json.dumps({
                     "backend": backend_name,
                     "token": token,
                     "obtained_at": datetime.now().isoformat(),
-                }, ensure_ascii=False),
-                encoding="utf-8",
-            )
+                }, ensure_ascii=False))
         except OSError as e:
             logger.warning("Failed to save token: %s", e)
 
@@ -599,7 +597,8 @@ class OllamaClient:
         """Write marker when long_die triggers — hooks/sessions ask user to disable."""
         try:
             OllamaClient.LONG_DIE_MARKER.parent.mkdir(parents=True, exist_ok=True)
-            OllamaClient.LONG_DIE_MARKER.write_text(json.dumps({
+            with open(OllamaClient.LONG_DIE_MARKER, "w", encoding="utf-8", newline="\n") as _f:
+                _f.write(json.dumps({
                 "type": "long_die",
                 "backend": backend.name,
                 "until": until_str,
@@ -609,7 +608,7 @@ class OllamaClient:
                     f"（可在 config.json 的 ollama_backends.{backend.name}.enabled 手動重新啟用）"
                 ),
                 "created_at": datetime.now().isoformat(timespec="seconds"),
-            }, ensure_ascii=False, indent=2), encoding="utf-8")
+            }, ensure_ascii=False, indent=2))
         except OSError:
             pass
 
@@ -648,10 +647,8 @@ def disable_backend(backend_name: str) -> bool:
         if backend_name not in backends:
             return False
         backends[backend_name]["enabled"] = False
-        CONFIG_PATH.write_text(
-            json.dumps(config, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        with open(CONFIG_PATH, "w", encoding="utf-8", newline="\n") as _f:
+            _f.write(json.dumps(config, indent=2, ensure_ascii=False))
         # Clear marker + reset singleton so next get_client() picks up change
         OllamaClient._clear_long_die_marker()
         global _client_instance
@@ -673,10 +670,8 @@ def enable_backend(backend_name: str) -> bool:
         if backend_name not in backends:
             return False
         backends[backend_name]["enabled"] = True
-        CONFIG_PATH.write_text(
-            json.dumps(config, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        with open(CONFIG_PATH, "w", encoding="utf-8", newline="\n") as _f:
+            _f.write(json.dumps(config, indent=2, ensure_ascii=False))
         OllamaClient._clear_long_die_marker()
         global _client_instance
         _client_instance = None

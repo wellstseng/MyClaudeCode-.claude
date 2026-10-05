@@ -38,7 +38,7 @@ def _save_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     try:
-        with open(tmp, "w", encoding="utf-8") as f:
+        with open(tmp, "w", encoding="utf-8", newline="\n") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         tmp.replace(path)
     except OSError as e:
@@ -304,7 +304,11 @@ def track_retry(state: Dict[str, Any], file_path: str) -> None:
     if not state.get("failing_tests"):
         return
     edits = state.get("modified_files", [])
-    count = sum(1 for m in edits if m.get("path", "").replace("\\", "/") == norm)
+    # modified_files 已 per-path 去重帶 count 欄；legacy 重複 entry 無 count → 各計 1
+    count = sum(
+        int(m.get("count", 1)) for m in edits
+        if m.get("path", "").replace("\\", "/") == norm
+    )
 
     approach = state.get("wisdom_approach", "direct")
     threshold = 4 if approach == "plan" else 2

@@ -29,6 +29,7 @@ stats-cache.json
 workflow/state-*.json
 workflow/state-*.json.bak-*
 workflow/state-*.json.corrupt
+workflow/coord-warn-cache-*.json
 workflow/world-dev.json
 workflow/_*.log
 workflow/guardian-crash.log
@@ -45,16 +46,22 @@ workflow/mcp-version-cache.json
 workflow/aec-report/
 workflow/aec-decision/
 workflow/ups-sentinel/
+workflow/dpm-done/
 workflow/outcome_stats.jsonl
 workflow/outcome-unknown-advisory.json
 workflow/health-reports/
 workflow/health-last-run.json
+workflow/pan-pass/
+workflow/pan-deny/
+workflow/acceptance-spec/
+workflow/acceptance-audit.jsonl*
+workflow/acceptance-backtest.jsonl*
 
 # ─── Per-user / per-machine state (Wave 5 untracked) ─────
 memory/project-registry.json
 memory/wisdom/reflection_metrics.json
 memory/wisdom/causal_graph.json
-memory/_meta/atom_io_audit.jsonl
+memory/_meta/atom_io_audit.jsonl*
 memory/_promotion_audit.jsonl
 policy-limits.json
 
@@ -63,6 +70,7 @@ workflow/companion-state-*.json
 workflow/companion-assessment-*.json
 workflow/companion-metrics-*.json
 workflow/companion.pid
+workflow/companion-backend.json
 
 # ─── Runtime logs (atom-debug, hook output) ───────────────
 Logs/
@@ -141,10 +149,28 @@ Thumbs.db
 memory/mail-sorting.md
 sessions/
 
-# ─── 本地保留（merge union）───
-.last-update-result.json
-# ─── Runtime / session artifacts ─────────────────────────
-channels/
+# --- Session/Task/Codex runtime state (wellstseng local) ---
 history.jsonl
-paste-cache/
 tasks/
+.codex/
+
+# codex-bridge runtime state
+workflow/codex-bridge/
+
+# ─── merge union (mac line) ───
+memory/_meta/atom_io_audit.jsonl
+.last-update-result.json
+channels/
+paste-cache/
+
+# ─── merge union (upstream) ───
+workflow/cross-project-index-cache.json
+memory/personal/
+memory/_meta/atom_io_audit.jsonl.*
+workflow/companion-state-*.tmp
+workflow/aec-tempfiles/
+chrome/
+journals/
+
+# vendor deps（各機 npm install，不進版控）
+node_modules/
