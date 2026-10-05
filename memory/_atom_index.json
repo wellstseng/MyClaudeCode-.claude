@@ -2324,7 +2324,9 @@
         "批改多檔",
         "git status 多出檔",
         "autocrlf",
-        "機械式取代"
+        "機械式取代",
+        "perl -pi",
+        "LF 變 CRLF"
       ],
       "scope": "global"
     },
@@ -2370,16 +2372,15 @@
         "幫我查",
         "搜索",
         "搜尋",
-        "查詢",
-        "我想知道",
-        "想了解",
         "研究一下",
         "調查一下",
         "關鍵字擴充",
         "知識檢索",
         "research fanout",
         "多 agent 搜尋",
-        "最佳實踐"
+        "最佳實踐",
+        "幫我研究",
+        "查資料"
       ],
       "scope": "global"
     },
@@ -4074,6 +4075,1052 @@
         "trigger 逗號",
         "cronctl",
         "批次匯入 atom"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "子專案cwd歸核心根層-project-tree雙向宣告-無宣告零行為變化-hook只讀不寫",
+      "path": "_AIDocs/_atoms/MemDev/子專案cwd歸核心根層-project-tree雙向宣告-無宣告零行為變化-hook只讀不寫.md",
+      "triggers": [
+        "專案根",
+        "子專案",
+        "project-tree",
+        "project_root",
+        "find_project_root",
+        "尋根",
+        "subs",
+        "root_abs",
+        "standalone",
+        "ProjectRoot",
+        "宣告檔",
+        "claim",
+        "pick",
+        "認領",
+        "根層記憶",
+        "分叉"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "atom-write-dry-run仍在專案樹留空範疇資料夾-落點helper沿路mkdir-p-預覽不等於零副作用",
+      "path": "_AIDocs/_atoms/MemDev/atom-write-dry-run仍在專案樹留空範疇資料夾-落點helper沿路mkdir-p-預覽不等於零副作用.md",
+      "triggers": [
+        "dry_run",
+        "dry-run",
+        "空目錄",
+        "空資料夾",
+        "mkdir",
+        "_resolve_target",
+        "落點預覽",
+        "副作用",
+        "svn status 多了資料夾",
+        "預覽不落檔"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "unity-editorprefs-registry值名hash是djb2xor-字串binary-utf8結尾0-editor關著可直接寫",
+      "path": "memory/OS-Windows/unity-editorprefs-registry值名hash是djb2xor-字串binary-utf8結尾0-editor關著可直接寫.md",
+      "triggers": [
+        "EditorPrefs",
+        "Unity Editor 5.x",
+        "registry",
+        "_h",
+        "hash 尾碼",
+        "djb2",
+        "mcp-for-unity",
+        "UnityMCP port",
+        "MCPForUnity.HttpUrl",
+        "AutoStartOnLoad",
+        "8080 衝突",
+        "Editor 沒開改設定"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "dotnet-pack-在-generatepackageonbuild-專案不重建-nuspec-新版號包舊-dll",
+      "path": "memory/dotnet/dotnet-pack-在-generatepackageonbuild-專案不重建-nuspec-新版號包舊-dll.md",
+      "triggers": [
+        "dotnet pack",
+        "nupkg",
+        "GeneratePackageOnBuild",
+        "NU5026",
+        "版號",
+        "AssemblyVersion",
+        "pack 舊 dll",
+        "nuspec"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "codex裁判停用個別mcp用-c-mcp-servers名enabledfalse-mcp-servers空表是合併不是清空",
+      "path": "_AIDocs/_atoms/Tools/codex裁判停用個別mcp用-c-mcp-servers名enabledfalse-mcp-servers空表是合併不是清空.md",
+      "triggers": [
+        "codex exec",
+        "codex companion",
+        "rmcp",
+        "8090",
+        "unityMCP",
+        "MCP 連線失敗",
+        "mcp_servers",
+        "--ignore-user-config",
+        "codex_extra_args",
+        "plan_review 逾時",
+        "assessment_timeout"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "hud心跳被chromium隱藏頁節流成每分鐘一次-心跳改跑web-worker-編serverjs前先顧relinquish的mtime契約",
+      "path": "_AIDocs/_atoms/MemDev/hud心跳被chromium隱藏頁節流成每分鐘一次-心跳改跑web-worker-編serverjs前先顧relinquish的mtime契約.md",
+      "triggers": [
+        "HUD 未開",
+        "HUD 心跳",
+        "beat-status",
+        "hud_stale_s",
+        "aec_hud_fallback",
+        "setInterval 節流",
+        "intensive throttling",
+        "Web Worker",
+        "relinquish",
+        "SELF_MTIME_AT_BOOT",
+        "server.js mtime",
+        "港口持有者",
+        "連鎖退位"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "svn反向合併整檔衝突多半是後續修訂換了行尾-以現行檔為底手動拿hunk再位元組比對",
+      "path": "memory/版控/SVN/svn反向合併整檔衝突多半是後續修訂換了行尾-以現行檔為底手動拿hunk再位元組比對.md",
+      "triggers": [
+        "svn merge -c",
+        "反向合併",
+        "reverse merge",
+        "整檔衝突",
+        "行尾",
+        "CRLF",
+        "LF",
+        "退版",
+        "svn revert 修訂",
+        "tree conflict",
+        "退回舊版"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "commitorder閘只認最新一則使用者原話-中間夾系統通知或背景事件就要請使用者重下口令",
+      "path": "memory/CC與原子記憶契約/commitorder閘只認最新一則使用者原話-中間夾系統通知或背景事件就要請使用者重下口令.md",
+      "triggers": [
+        "CommitOrder",
+        "本回合使用者原話沒有版控口令",
+        "上GIT 被擋",
+        "git commit 被 hook 擋",
+        "重下口令",
+        "背景事件後 commit"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "winforms工具無人值守實測迴路-appactivate加printwindow截圖-mcpcontrol以截圖座標點按-中文type走ime不進textbox改ascii",
+      "path": "memory/驗證與實證/winforms工具無人值守實測迴路-appactivate加printwindow截圖-mcpcontrol以截圖座標點按-中文type走ime不進textbox改ascii.md",
+      "triggers": [
+        "WinForms 實測",
+        "GUI 自動化",
+        "MCPControl",
+        "PrintWindow",
+        "AppActivate",
+        "SetForegroundWindow 失效",
+        "截圖座標",
+        "注音 IME",
+        "type 中文",
+        "無人值守驗證",
+        "驗 GUI",
+        "選圖驗版面"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "插入到方法結尾的edit要驗錨點所在方法-build綠燈不代表插對地方",
+      "path": "memory/驗證與實證/插入到方法結尾的edit要驗錨點所在方法-build綠燈不代表插對地方.md",
+      "triggers": [
+        "Edit 錯位",
+        "插入點",
+        "方法結尾",
+        "錫點",
+        "old_string",
+        "插錯方法",
+        "看不出效果",
+        "build 綠燈但沒效果",
+        "插入後驗證",
+        "尾端呼叫"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "feedback-外形相似的機制不等於同一議題-不得順手把甲的原則推廣到乙",
+      "path": "memory/Failures/思考與決策/feedback-外形相似的機制不等於同一議題-不得順手把甲的原則推廣到乙.md",
+      "triggers": [
+        "順手推廣",
+        "同一類問題",
+        "同一型態",
+        "外形相似",
+        "連帶改",
+        "順便改",
+        "判斷力有問題",
+        "不要亂動",
+        "多維考量",
+        "類比推論",
+        "這也一樣"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "常駐每幀回呼vs按需短命協程-判準與mec實證",
+      "path": "memory/設計通則/常駐每幀回呼vs按需短命協程-判準與mec實證.md",
+      "triggers": [
+        "常駐 Update",
+        "每幀回呼",
+        "每幀輪詢",
+        "Tick 浪費",
+        "按需協程",
+        "短命協程",
+        "協程自滅",
+        "Timing.RunCoroutine",
+        "MEC",
+        "WaitForSeconds 成本",
+        "RealtimeUpdate",
+        "CoroutineHandle",
+        "過渡",
+        "淡入淡出",
+        "等播完",
+        "Unity 無播完事件"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "class-finalizer-讓實例多活一輪gc-純計數或清欄位的解構子一律不寫",
+      "path": "memory/dotnet/class-finalizer-讓實例多活一輪gc-純計數或清欄位的解構子一律不寫.md",
+      "triggers": [
+        "finalizer",
+        "解構子",
+        "~ClassName",
+        "終結器",
+        "GC 多一輪",
+        "FInstCount",
+        "實例計數",
+        "finalization queue",
+        "f-reachable",
+        "IL2CPP GC",
+        "Boehm"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "pwsh-傳中文路徑給svn-exe會亂碼且big5的一字含位元組觸發peg解析-改用python-subprocess",
+      "path": "memory/版控/SVN/pwsh-傳中文路徑給svn-exe會亂碼且big5的一字含位元組觸發peg解析-改用python-subprocess.md",
+      "triggers": [
+        "svn 中文路徑",
+        "svn add 亂碼",
+        "peg revision is not allowed",
+        "E200009",
+        "E020024",
+        "Error resolving case",
+        "pwsh svn",
+        "PowerShell svn 亂碼",
+        "svn add --parents 建錯目錄",
+        "cp950 路徑",
+        "一 a440",
+        "svn 路徑含 @",
+        "subprocess svn"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "codegraph與agent-retro評估結論-codegraph只當專案local-mcp不進記憶-agent-retro只拆量測",
+      "path": "_AIDocs/_atoms/Tools/codegraph與agent-retro評估結論-codegraph只當專案local-mcp不進記憶-agent-retro只拆量測.md",
+      "triggers": [
+        "codegraph",
+        "agent-retro",
+        "code graph",
+        "session retro",
+        "retrospective",
+        "外部工具評估",
+        "拆入記憶系統",
+        "tool_result_sizes",
+        "friction",
+        "MCP 外掛",
+        "prompt hook 疊加"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "posttooluse的tool-response不等於模型看到的結果-edit帶整份originalfile-量context浪費要按工具取可見欄位",
+      "path": "_AIDocs/_atoms/MemDev/posttooluse的tool-response不等於模型看到的結果-edit帶整份originalfile-量context浪費要按工具取可見欄位.md",
+      "triggers": [
+        "tool_response",
+        "PostToolUse",
+        "tool result size",
+        "工具結果體積",
+        "context 浪費",
+        "originalFile",
+        "ToolResultSize",
+        "wg_friction",
+        "token 浪費量測",
+        "誤報"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "feedback-動手前預告含查讀回合-第一次工具呼叫前就報-單獨一則再呼叫工具",
+      "path": "memory/Failures/行為契約/feedback-動手前預告含查讀回合-第一次工具呼叫前就報-單獨一則再呼叫工具.md",
+      "triggers": [
+        "動手前預告",
+        "執行目標",
+        "預估",
+        "PreActionNotice",
+        "pre-action-notice",
+        "PAN",
+        "查讀不用報",
+        "落盤時差",
+        "text_blocks"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "在使用者活躍桌面彈視窗做gui實驗會被順手關掉污染數據-改headless-edge加cdp或先查前景視窗",
+      "path": "memory/驗證與實證/在使用者活躍桌面彈視窗做gui實驗會被順手關掉污染數據-改headless-edge加cdp或先查前景視窗.md",
+      "triggers": [
+        "GUI 實驗",
+        "彈窗",
+        "Edge --app",
+        "msedge",
+        "實驗污染",
+        "headless",
+        "CDP",
+        "Page.setWebLifecycleState",
+        "playwright-core",
+        "EnumWindows",
+        "前景視窗",
+        "使用者在線"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "hud窗活性改看sse連線數不看心跳-心跳只證明正在渲染-判死原因落guard-aec-hud-stop再查一次",
+      "path": "_AIDocs/_atoms/MemDev/hud窗活性改看sse連線數不看心跳-心跳只證明正在渲染-判死原因落guard-aec-hud-stop再查一次.md",
+      "triggers": [
+        "HUD 不可達",
+        "HUD 心跳逾時",
+        "beat-status",
+        "clients",
+        "/api/aec/stream",
+        "EventSource",
+        "SSE",
+        "_hud_alive",
+        "aec_hud_fallback",
+        "guard-aec_hud",
+        "hud_stale_s",
+        "窗活性"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "糾正與失敗偵測把sub-agent完成通知當使用者輸入-task-notification整則進ups-引用的糾正詞誤觸deeppostmortem",
+      "path": "_AIDocs/_atoms/MemDev/糾正與失敗偵測把sub-agent完成通知當使用者輸入-task-notification整則進ups-引用的糾正詞誤觸deeppostmortem.md",
+      "triggers": [
+        "task-notification",
+        "DeepPostMortem 誤觸",
+        "糾正訊號誤報",
+        "wg_friction",
+        "user_correction_count",
+        "FailureDetect 誤觸",
+        "sub-agent 回報",
+        "harness 生成 prompt",
+        "is_harness_generated_prompt",
+        "sanitize_harness_noise",
+        "假糾正"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "自動化開claude-ai用量頁-headless-edge撞cloudflare人類驗證-日常chrome-profile被鎖不可借用-改專屬chrome-profile一次登入",
+      "path": "memory/驗證與實證/自動化開claude-ai用量頁-headless-edge撞cloudflare人類驗證-日常chrome-profile被鎖不可借用-改專屬chrome-profile一次登入.md",
+      "triggers": [
+        "claude.ai",
+        "用量截圖",
+        "usage snapshot",
+        "Cloudflare",
+        "headless",
+        "launch_persistent_context",
+        "channel chrome",
+        "Chrome profile",
+        "Cookies WinError 32",
+        "Register-ScheduledTask",
+        "WakeToRun",
+        "SC_MONITORPOWER",
+        "LockWorkStation",
+        "SeShutdownPrivilege",
+        "SetSuspendState",
+        "powercfg /requests"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "所有決策和報告必須提供清晰的問題-數據佐證-並以易懂的白話形式-指出錯誤-優化點",
+      "path": "memory/行為契約/所有決策和報告必須提供清晰的問題-數據佐證-並以易懂的白話形式-指出錯誤-優化點.md",
+      "triggers": [
+        "拍板項目",
+        "問題與數據的佐證",
+        "白話重點說明",
+        "CC原子記憶"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "feedback-建檔或改名後回報一律給絕對路徑-相對連結與中途改名讓使用者找不到報告",
+      "path": "memory/Failures/行為契約/feedback-建檔或改名後回報一律給絕對路徑-相對連結與中途改名讓使用者找不到報告.md",
+      "triggers": [
+        "絕對路徑",
+        "報告檔案",
+        "找不到檔案",
+        "完整路徑",
+        "改名",
+        "next-phase",
+        "_staging",
+        "外擴報備",
+        "相對連結",
+        "markdown link",
+        "親和",
+        "報備路徑"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "時間預算類測試量測時同回合不得並行其他重負載工具呼叫-否則數字被自己污染",
+      "path": "memory/驗證與實證/時間預算類測試量測時同回合不得並行其他重負載工具呼叫-否則數字被自己污染.md",
+      "triggers": [
+        "時間預算",
+        "hook 預算",
+        "timing test",
+        "量測污染",
+        "並行工具呼叫",
+        "spawn 成本",
+        "subprocess 耗時"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "feedback-暫時偵錯碼插進被外部程序持續執行的-live-檔案前後必-py-compile-一次語法錯誤讓使用者-statusline-整個失效",
+      "path": "memory/Failures/工作流/feedback-暫時偵錯碼插進被外部程序持續執行的-live-檔案前後必-py-compile-一次語法錯誤讓使用者-statusline-整個失效.md",
+      "triggers": [
+        "暫時偵錯碼",
+        "TEMP dump",
+        "statusline",
+        "live 檔案",
+        "py_compile",
+        "插碼",
+        "stdin dump",
+        "臨時 instrumentation"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "活躍session的state被fallback覆蓋-讀失敗不等於遺失且working-ttl-30分太短-多sub-agent共用session-id時必撞",
+      "path": "_AIDocs/_atoms/MemDev/活躍session的state被fallback覆蓋-讀失敗不等於遺失且working-ttl-30分太短-多sub-agent共用session-id時必撞.md",
+      "triggers": [
+        "state 已重建",
+        "fallback state",
+        "state 遺失",
+        "turn_seq 歸零",
+        "read_state",
+        "_ensure_state",
+        "_cleanup_old_states",
+        "state TTL",
+        "歷史歸零",
+        "sub-agent 共用 session_id",
+        "PermissionError state",
+        "read_state_status"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "act-r-activation-增益乘進-rrf-會壓過相關性-gain-0250-讓-r1-4581-排序權重一律先過對齊評估器",
+      "path": "_AIDocs/_atoms/MemDev/act-r-activation-增益乘進-rrf-會壓過相關性-gain-0250-讓-r1-4581-排序權重一律先過對齊評估器.md",
+      "triggers": [
+        "rrf_activation_gain",
+        "activation 增益",
+        "ACT-R 重排",
+        "排序調參",
+        "R@1",
+        "MRR",
+        "memory-eval --online",
+        "對齊評估器",
+        "檢索排序",
+        "誤注入率",
+        "bm25 停用詞",
+        "related query gate"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "多模型交叉審查工作法-共讀一份簡報獨立審-block-必親自重現才接受-codex-強在反例探針-claude-強在整合落地",
+      "path": "_AIDocs/_atoms/工作流/協作與並行/多模型交叉審查工作法-共讀一份簡報獨立審-block-必親自重現才接受-codex-強在反例探針-claude-強在整合落地.md",
+      "triggers": [
+        "多開 agent",
+        "Codex 審查",
+        "交叉審查",
+        "多模型",
+        "不被帶偏",
+        "BLOCK/WARN",
+        "審查簡報",
+        "fan-out 審查",
+        "gpt-6-astra",
+        "全面檢視",
+        "reply_review",
+        "裁決紀錄"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "裁判-precision-高不等於有眼力-先看真陽性的類型分布-被簡單案例撐起的分數不能當轉正依據",
+      "path": "memory/驗證與實證/裁判-precision-高不等於有眼力-先看真陽性的類型分布-被簡單案例撐起的分數不能當轉正依據.md",
+      "triggers": [
+        "precision",
+        "轉正條件",
+        "裁判評估",
+        "假陽性分布",
+        "標註集",
+        "promotion_ready",
+        "acceptance 裁判",
+        "分類器評估",
+        "指標被撐起",
+        "等待回合",
+        "awaiting"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "判有沒有採用不能只靠詞彙重疊-否定與轉述會把拒絕全判成採用-行動證據優先且先建標註集再改判準",
+      "path": "memory/驗證與實證/判有沒有採用不能只靠詞彙重疊-否定與轉述會把拒絕全判成採用-行動證據優先且先建標註集再改判準.md",
+      "triggers": [
+        "detect_atom_use",
+        "判用",
+        "採用偵測",
+        "詞彙重疊",
+        "usefulness attribution",
+        "否定線索",
+        "轉述句",
+        "行動證據",
+        "標註集校準",
+        "usage_labels",
+        "P/R",
+        "啟發式校準"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "feedback-問題清單每條附為什麼會寫成這樣-給人看的報告寬深要適人腦且目的明說-收尾講使用感受上調了什麼",
+      "path": "memory/Failures/行為契約/feedback-問題清單每條附為什麼會寫成這樣-給人看的報告寬深要適人腦且目的明說-收尾講使用感受上調了什麼.md",
+      "triggers": [
+        "為什麼會寫成這樣",
+        "根因猜測",
+        "報告太技術",
+        "人腦難吸收",
+        "使用感受",
+        "調了什麼",
+        "審查報告",
+        "問題清單",
+        "白話重點",
+        "拍板文件",
+        "報告目的",
+        "LLM 寫錯"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "壓縮後根層-claudemd-由磁碟重讀不需自製-constraint-pinning-真正會丟的是對話中的計畫脈絡-用-staging-計畫檔加-sessionstart-resume-指標接續",
+      "path": "memory/CC與原子記憶契約/壓縮後根層-claudemd-由磁碟重讀不需自製-constraint-pinning-真正會丟的是對話中的計畫脈絡-用-staging-計畫檔加-sessionstart-resume-指標接續.md",
+      "triggers": [
+        "compact",
+        "壓縮失真",
+        "constraint pinning",
+        "PreCompact",
+        "/continue",
+        "接續",
+        "next-phase",
+        "Guardian:Resume",
+        "context 耗盡",
+        "壓縮後接續",
+        "CLAUDE.md 重讀",
+        "計畫脈絡遺失"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "windows-每支-hook-子程序啟動約-150ms-同事件多支-standalone-hook-先量再併-過-100ms-且等價回放全過才合",
+      "path": "_AIDocs/_atoms/MemDev/windows-每支-hook-子程序啟動約-150ms-同事件多支-standalone-hook-先量再併-過-100ms-且等價回放全過才合.md",
+      "triggers": [
+        "standalone hook",
+        "hook 合併",
+        "PostToolUse 延遲",
+        "python 啟動成本",
+        "settings.json hooks",
+        "hook 數量",
+        "version_guard",
+        "acceptance_spec",
+        "事件等價回放",
+        "hook 效能"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "注入記帳以送達為準-裁切後才算-injected-宣稱送出但被總額砍掉的-atom-不得計曝光與效用",
+      "path": "_AIDocs/_atoms/MemDev/注入記帳以送達為準-裁切後才算-injected-宣稱送出但被總額砍掉的-atom-不得計曝光與效用.md",
+      "triggers": [
+        "injected_atoms",
+        "dropped_trim",
+        "pointer_trim",
+        "reconcile_injection",
+        "總額裁切",
+        "曝光記帳",
+        "usefulness 分母",
+        "1200 tok 硬頂",
+        "送達 vs 送出",
+        "injection-turns.jsonl",
+        "rescue watch"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "vscode-c-devkit對unity-assets內csproj做design-time-build-產obj被unity編進去cs0579-用directorybuildprops改obj",
+      "path": "memory/dotnet/vscode-c-devkit對unity-assets內csproj做design-time-build-產obj被unity編進去cs0579-用directorybuildprops改obj.md",
+      "triggers": [
+        "CS0579",
+        "Duplicate Attribute",
+        "AssemblyInfo.cs",
+        "obj/Debug",
+        "C# Dev Kit",
+        "csdevkit",
+        "design-time build",
+        "projectsystem-buildhost",
+        "Directory.Build.props",
+        "BaseIntermediateOutputPath",
+        "obj~",
+        "Unity 編譯失敗",
+        "Assets 內 csproj",
+        "Unity 忽略資料夾",
+        "~ 結尾"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "plan-mode-彈窗變多-bypass新版提示改用bash查讀-msys路徑被判工作目錄外-allow家族規則修法",
+      "path": "memory/CC與原子記憶契約/plan-mode-彈窗變多-bypass新版提示改用bash查讀-msys路徑被判工作目錄外-allow家族規則修法.md",
+      "triggers": [
+        "plan mode",
+        "權限詢問",
+        "permission prompt",
+        "bypass",
+        "bypassPermissions",
+        "cd /c/",
+        "Read(//c/",
+        "settings.json allow",
+        "useAutoModeDuringPlan",
+        "彈窗變多"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "knowledge-harvest-階段收割與vcs-sync機制指標與踩坑",
+      "path": "_AIDocs/_atoms/MemDev/knowledge-harvest-階段收割與vcs-sync機制指標與踩坑.md",
+      "triggers": [
+        "knowledge_harvest_report",
+        "KnowledgeHarvest",
+        "收割",
+        "Harvest-Pending",
+        "atom_retire",
+        "supersedes",
+        "receipt",
+        "vcs-sync",
+        "vcs_sync",
+        "wg_harvest",
+        "wg_vcs_sync",
+        "push 守門",
+        "記憶自動 commit",
+        "退役 atom"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "派sub-agent時寫第一則必須是預告會讓它送完就停-要寫立刻續跑-已停用sendmessage喚醒",
+      "path": "memory/工作流/協作與並行/派sub-agent時寫第一則必須是預告會讓它送完就停-要寫立刻續跑-已停用sendmessage喚醒.md",
+      "triggers": [
+        "sub-agent",
+        "並行 agent",
+        "預告",
+        "agent 停了",
+        "0 tool uses",
+        "SendMessage",
+        "喚醒 agent",
+        "介面契約",
+        "共用檔唯一寫者"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "hook-systemmessage-只給使用者看-模型讀不到-要回饋模型用additionalcontext或deny-reason",
+      "path": "memory/CC與原子記憶契約/hook-systemmessage-只給使用者看-模型讀不到-要回饋模型用additionalcontext或deny-reason.md",
+      "triggers": [
+        "systemMessage",
+        "additionalContext",
+        "hook 輸出",
+        "Stop hook 回饋模型",
+        "hook 提醒無效",
+        "Stop says"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "vcs-sync拉取側機制指標與踩坑-隔離worktree-recover持久化-新編輯保護-冷卻",
+      "path": "_AIDocs/_atoms/MemDev/vcs-sync拉取側機制指標與踩坑-隔離worktree-recover持久化-新編輯保護-冷卻.md",
+      "triggers": [
+        "vcs-sync 拉取",
+        "_git_pull",
+        "隔離 worktree",
+        "recover.json",
+        ".behind",
+        "pull_error",
+        "_git_new_edits",
+        "pull 冷卻",
+        "記憶層落後",
+        "自動拉取",
+        "update-ref CAS",
+        "restore --source"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "全量驗證與agent測試並行跑會互相干擾出假失敗-作準的全量要單獨跑",
+      "path": "memory/驗證與實證/全量驗證與agent測試並行跑會互相干擾出假失敗-作準的全量要單獨跑.md",
+      "triggers": [
+        "run_verify",
+        "全量驗證",
+        "flake",
+        "假失敗",
+        "並行 pytest",
+        "agent 跑測試",
+        "跑序相依",
+        "單跑會過",
+        "共用 tmp"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "cc-windows-hook與statusline經git-bash執行-dollar變數與波浪號展開-百分號不展開-settings可寫localappdata與home去機器路徑",
+      "path": "memory/CC與原子記憶契約/cc-windows-hook與statusline經git-bash執行-dollar變數與波浪號展開-百分號不展開-settings可寫localappdata與home去機器路徑.md",
+      "triggers": [
+        "hook 指令",
+        "settings.json 路徑",
+        "機器專屬路徑",
+        "LOCALAPPDATA",
+        "$HOME",
+        "pythonw 路徑",
+        "statusLine",
+        "hook shell",
+        "Git Bash",
+        "可攜路徑",
+        "fix-hook-python"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "whoami-輸出走-oem-碼頁-cp950-非-utf-8-中文群組名用-utf-8-解碼會靜默變亂碼",
+      "path": "memory/OS-Windows/whoami-輸出走-oem-碼頁-cp950-非-utf-8-中文群組名用-utf-8-解碼會靜默變亂碼.md",
+      "triggers": [
+        "whoami",
+        "OEM 碼頁",
+        "cp950",
+        "GetOEMCP",
+        "subprocess 中文亂碼",
+        "AD 群組",
+        "console 編碼",
+        "mbcs"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "org-memory-init-必種一顆工具卡-sync-memory-index對空索引exit1",
+      "path": "_AIDocs/_atoms/MemDev/org-memory-init-必種一顆工具卡-sync-memory-index對空索引exit1.md",
+      "triggers": [
+        "org-memory",
+        "公司層記憶",
+        "org_memory",
+        "scope=org",
+        "空索引 exit 1",
+        "sync-memory-index --check"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "vcs-sync的git-add兩個真實環境失敗-已追蹤但被gitignore蓋到的檔刪除要加-f-前一輪已stage的刪除不得再add",
+      "path": "_AIDocs/_atoms/MemDev/vcs-sync的git-add兩個真實環境失敗-已追蹤但被gitignore蓋到的檔刪除要加-f-前一輪已stage的刪除不得再add.md",
+      "triggers": [
+        "vcs-sync",
+        "git add 失敗",
+        "did not match any files",
+        "paths are ignored",
+        "memory/personal",
+        "role.md",
+        "wg_vcs_sync",
+        "已 staged",
+        "unpushed 標記",
+        "背景 commit 卡住"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "svn中文路徑實證-cp950內中文走worker安全-cp950外字元best-fit成亂碼讓add-parents建亂碼目錄-targets檔無效",
+      "path": "memory/版控/SVN/svn中文路徑實證-cp950內中文走worker安全-cp950外字元best-fit成亂碼讓add-parents建亂碼目錄-targets檔無效.md",
+      "triggers": [
+        "svn 亂碼",
+        "svn add 中文",
+        "UIºt¥X",
+        "亂碼資料夾",
+        "cp950",
+        "best-fit",
+        "--targets",
+        "svn argv 編碼",
+        "GetACP",
+        "中文路徑 svn",
+        "SvnEncoding"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "身份與職能自動來自ad-帳號即get-current-user-職能由whoami群組對映-查不到就空不預設programmer-裁決名單review-deciders",
+      "path": "memory/CC與原子記憶契約/身份與職能自動來自ad-帳號即get-current-user-職能由whoami群組對映-查不到就空不預設programmer-裁決名單review-deciders.md",
+      "triggers": [
+        "身份",
+        "AD 帳號",
+        "職能",
+        "roles",
+        "role.md",
+        "wg_roles",
+        "init-roles",
+        "管理職",
+        "is_management",
+        "review.deciders",
+        "ad_group_map",
+        "whoami /groups",
+        "待審裁決",
+        "pending review",
+        "看不到 role atom"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "程式批量產生的atom觸發詞不得含日常字與種類單字-一句話就把整批拉進注入吃光預算-只放專名與名稱加種類片語",
+      "path": "_AIDocs/_atoms/MemDev/程式批量產生的atom觸發詞不得含日常字與種類單字-一句話就把整批拉進注入吃光預算-只放專名與名稱加種類片語.md",
+      "triggers": [
+        "工具卡觸發詞",
+        "批量產生 atom",
+        "觸發詞擾民",
+        "注入預算被吃光",
+        "scan-tools",
+        "_card_triggers",
+        "泛詞 trigger",
+        "trigger 設計",
+        "refresh_legacy_triggers"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "砍雞肋時留最小接縫-沒有消費者的功能不蓋但要留三十分鐘內能接上的口-過度貼合當前環境要另派辯方檢查",
+      "path": "memory/設計通則/砍雞肋時留最小接縫-沒有消費者的功能不蓋但要留三十分鐘內能接上的口-過度貼合當前環境要另派辯方檢查.md",
+      "triggers": [
+        "雞肋",
+        "最小接縫",
+        "留接縫",
+        "過度貼合當前環境",
+        "地基辩方",
+        "沒有消費者",
+        "計畫審查",
+        "砍功能",
+        "反駁回合",
+        "seam"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "feedback-交付新功能要給用講的入口-別丟指令清單給使用者-沒人該為了用功能去開終端機",
+      "path": "memory/Failures/行為契約/feedback-交付新功能要給用講的入口-別丟指令清單給使用者-沒人該為了用功能去開終端機.md",
+      "triggers": [
+        "你現在怎麼用",
+        "指令清單",
+        "用講的",
+        "自然語言入口",
+        "使用說明",
+        "要去 cmd 下指令",
+        "收尾報告的用法",
+        "新功能交付",
+        "skill 入口",
+        "化繁為簡"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "markdown文件裡角括號佔位符要包反引號-裸寫u會被當成底線標籤把後半份文件全畫線",
+      "path": "memory/文字與格式/markdown文件裡角括號佔位符要包反引號-裸寫u會被當成底線標籤把後半份文件全畫線.md",
+      "triggers": [
+        "底線",
+        "文件被畫底線",
+        "角括號佔位符",
+        "markdown 渲染",
+        "計畫檔格式",
+        "未關閉標籤",
+        "反引號",
+        "佔位符 personal:<u>"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "feedback-列給使用者的待辦要先對環境事實核對-已經發生的事不得再列成待辦",
+      "path": "memory/Failures/驗證與實證/feedback-列給使用者的待辦要先對環境事實核對-已經發生的事不得再列成待辦.md",
+      "triggers": [
+        "待辦清單",
+        "需你動手",
+        "你這邊要做",
+        "重啟 Claude Code",
+        "已經重啟",
+        "交接檔待辦",
+        "部署現況",
+        "單人部署",
+        "斷言現況"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "新repo第一次提交前先放gitignore並看副檔名分布-系統自有repo整包加也會把各機遙測檔掃進版控",
+      "path": "memory/版控/Git/新repo第一次提交前先放gitignore並看副檔名分布-系統自有repo整包加也會把各機遙測檔掃進版控.md",
+      "triggers": [
+        "新 repo",
+        "第一次提交",
+        "gitignore",
+        "access.json",
+        "git rm --cached",
+        "整包加入",
+        "公司記憶 repo",
+        "repo 永遠髒",
+        "誤提交"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "並行實作線不要各自跑全量驗證-簡報只給目標verify清單-全量由主持人整合後單獨跑一次",
+      "path": "memory/工作流/協作與並行/並行實作線不要各自跑全量驗證-簡報只給目標verify清單-全量由主持人整合後單獨跑一次.md",
+      "triggers": [
+        "並行實作",
+        "派工簡報",
+        "全量驗證",
+        "run_verify 並行",
+        "多線同改一檔",
+        "主持人整合",
+        "sub-agent 卡在等驗證",
+        "叫停 agent"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "feedback-說不是我的改動時要指認是哪個session-給標題與編號說可能是它的-查不到才說查不到",
+      "path": "memory/Failures/行為契約/feedback-說不是我的改動時要指認是哪個session-給標題與編號說可能是它的-查不到才說查不到.md",
+      "triggers": [
+        "不是我的",
+        "那不是我的",
+        "其他 session",
+        "未提交的檔",
+        "歸屬",
+        "誰改的",
+        "aiTitle",
+        "session 標題",
+        "併發 session",
+        "非我造成",
+        "指認 session"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "既有非git目錄原地接上版控-reset-mixed加逐路徑備份-勿只信diff-filter-m-本機覆蓋檔用skip-worktree",
+      "path": "memory/版控/Git/既有非git目錄原地接上版控-reset-mixed加逐路徑備份-勿只信diff-filter-m-本機覆蓋檔用skip-worktree.md",
+      "triggers": [
+        "原地接版控",
+        "git init 既有目錄",
+        "reset --mixed",
+        "skip-worktree",
+        "diff-filter",
+        "安裝器",
+        "install.py",
+        "接管既有目錄",
+        "untracked would be overwritten"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "假家目錄測試要同時設home與userprofile-windows的pathhome看userprofile而bash看home",
+      "path": "memory/驗證與實證/假家目錄測試要同時設home與userprofile-windows的pathhome看userprofile而bash看home.md",
+      "triggers": [
+        "假家目錄",
+        "fake home",
+        "USERPROFILE",
+        "Path.home",
+        "隔離測試",
+        "HOME 環境變數",
+        "測試打到真家",
+        "tmp home"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "sessionstart的提示只有模型看得到-要使用者做決定就寫成叫模型用askuserquestion問的指示-問到有答案為止不要只提示一次",
+      "path": "memory/CC與原子記憶契約/sessionstart的提示只有模型看得到-要使用者做決定就寫成叫模型用askuserquestion問的指示-問到有答案為止不要只提示一次.md",
+      "triggers": [
+        "SessionStart 提示",
+        "只提示一次",
+        "只邀請一次",
+        "AskUserQuestion",
+        "advisory",
+        "使用者沒被問到",
+        "首次設定",
+        "尚未接上",
+        "需要使用者決定",
+        "onboarding 提示",
+        "declined"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "gitignore未釘根層的規則在不分大小寫檔案系統會吃掉同名開頭的檔-identity-星號md誤傷identity開頭的atom",
+      "path": "memory/版控/Git/gitignore未釘根層的規則在不分大小寫檔案系統會吃掉同名開頭的檔-identity-星號md誤傷identity開頭的atom.md",
+      "triggers": [
+        "gitignore",
+        "core.ignorecase",
+        "被忽略的 atom",
+        "索引有檔案沒有",
+        "broken_refs",
+        "_INDEX.md drift",
+        "乾淨 clone 索引不一致",
+        "check-ignore"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "identity-變動需同步更新-identity-template-且所有文件",
+      "path": "memory/文字與格式/identity-變動需同步更新-identity-template-且所有文件.md",
+      "triggers": [
+        "identity",
+        "identity.template",
+        "LF格式",
+        "統一LF"
       ],
       "scope": "global"
     }

@@ -343,21 +343,29 @@ def build_atom_content(
     created_at: Optional[str] = None,
     today: Optional[str] = None,
     status: Optional[str] = None,
+    supersedes: Optional[Iterable[str]] = None,
+    provenance: Optional[str] = None,
+    depends: Optional[Iterable[str]] = None,
 ) -> str:
     """從結構化參數構造 atom 檔內容。
 
-    對拍 server.js:669-721 buildAtomContent —— byte-identical 等價契約。
-    SPEC §4 metadata 順序：Scope → Audience → Author → Confidence → Trigger →
+    對拍 tools/workflow-guardian-mcp/lib/atom-render.js buildAtomContent —— byte-identical 等價契約。
+    SPEC §4 metadata 順序：Scope → Audience → Author → Source → Confidence → Trigger →
     Status → Last-used → Confirmations → ReadHits → Pending-review-by →
-    Merge-strategy → Created-at → Related。空值欄位省略（status 未給時輸出
-    與既有 parity fixture byte-identical）。
+    Merge-strategy → Created-at → Depends → Related → Supersedes。空值欄位省略（status /
+    supersedes / provenance / depends 未給時輸出與既有 parity fixture byte-identical）。
+    supersedes：本顆取代的舊 atom（被取代者不再注入、檔案保留）；None 或空 → 不輸出。
+    provenance：來源（路徑／URL／commit），渲染為 `- Source:`（write_atom 的 source 是稽核白名單，故另名）。
+    depends：壞滅緣條目（`path:<路徑>` 或自由文字），渲染為逗號清單 `- Depends:`。
     """
     today = today or date.today().isoformat()
     triggers_list = list(triggers)
     knowledge_list = list(knowledge)
     actions_list = list(actions) if actions else []
     related_list = list(related) if related else []
+    supersedes_list = list(supersedes) if supersedes else []
     audience_list = list(audience) if audience else []
+    depends_list = list(depends) if depends else []
 
     lines: List[str] = [f"# {title}", ""]
     lines.append(f"- Scope: {scope}")
@@ -365,6 +373,8 @@ def build_atom_content(
         lines.append(f"- Audience: {', '.join(audience_list)}")
     if author:
         lines.append(f"- Author: {author}")
+    if provenance:
+        lines.append(f"- Source: {provenance}")
     lines.append(f"- Confidence: {confidence}")
     lines.append(f"- Trigger: {', '.join(triggers_list)}")
     if status:
@@ -375,8 +385,12 @@ def build_atom_content(
     if merge_strategy and merge_strategy != "ai-assist":
         lines.append(f"- Merge-strategy: {merge_strategy}")
     lines.append(f"- Created-at: {created_at or today}")
+    if depends_list:
+        lines.append(f"- Depends: {', '.join(depends_list)}")
     if related_list:
         lines.append(f"- Related: {', '.join(related_list)}")
+    if supersedes_list:
+        lines.append(f"- Supersedes: {', '.join(supersedes_list)}")
     lines.extend(["", "## 知識", ""])
     lines.extend(render_knowledge_lines(knowledge_list))
     lines.extend(["", "## 行動", ""])

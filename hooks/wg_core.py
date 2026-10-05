@@ -50,6 +50,15 @@ except ImportError:
     is_cross_project_local = None
     iter_realm_category_dirs = None
     FAILURES_DIR = CLAUDE_DIR / "memory" / "Failures"
+# 專案根判定單一來源（宣告認領 + 舊四標記 fallback）；import 失敗 → 下方 find_project_root 走內建舊規則
+try:
+    from project_root import (
+        resolve_project_root, has_project_marker, DECLARED_KINDS as _ROOT_DECLARED_KINDS,
+    )
+except ImportError:
+    resolve_project_root = None
+    has_project_marker = None
+    _ROOT_DECLARED_KINDS = ()
 
 # ─── Token budget 單一來源─────────────────────────
 # 三個 budget 概念各司其職，數值不互相推導：
@@ -169,6 +178,69 @@ def load_config() -> Dict[str, Any]:
     return config
 
 
+ORG_LOCAL_NAME = "org-memory.local.json"
+
+
+def org_local_path() -> Path:
+    return WORKFLOW_DIR / ORG_LOCAL_NAME
+
+
+def load_org_local() -> Dict[str, Any]:
+    """這台機器專屬的公司層狀態（workflow/org-memory.local.json，不進版控）。
+
+    鍵：enabled／roots（這台接上沒、根在哪，形狀同 config `org_memory`）、declined（使用者答過「先不接」，
+    SessionStart 不再問）。舊鍵 advised 已不讀（曾表示「提示出過一次」，留著無害）。
+    沒檔 → {}（未接上，正常狀態）；壞檔 → {} 且 stderr 一行。
+    """
+    path = org_local_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"[org_memory] {path} 讀取失敗，視為未接上：{e}", file=sys.stderr)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_org_local(**changes: Any) -> None:
+    """把 changes 併進本機公司層狀態檔（其他鍵保留）。"""
+    data = {**load_org_local(), **changes}
+    path = org_local_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as _f:
+        _f.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+
+
+def org_memory_root() -> Optional[Path]:
+    """公司層記憶 repo 根的單一來源：共用 workflow/config.json `org_memory` 被本機狀態檔同名鍵蓋過。
+
+    共用 config 只帶 repo_url／default_root（全公司相同）；「這台接上沒、根在哪」在本機檔（load_org_local）。
+    enabled 且 roots 恰 1 個 → Path(roots[0].root)；關閉 → None（正常狀態，不出聲）。
+    缺鍵／config 壞／roots 空或 >1 → None 且 stderr 一行（fail-open 必浮訊號）。
+    """
+    config = load_config()
+    if config.get("_config_parse_failed"):
+        print("[org_memory] workflow/config.json 解析失敗，已停用 org", file=sys.stderr)
+        return None
+    org = config.get("org_memory")
+    if not isinstance(org, dict):
+        print("[org_memory] workflow/config.json 缺 org_memory 鍵，已停用 org", file=sys.stderr)
+        return None
+    org = {**org, **load_org_local()}
+    if not org.get("enabled"):
+        return None
+    roots = org.get("roots") or []
+    if len(roots) > 1:
+        print("[org_memory] org_memory.roots 只支援 1 個，已停用 org", file=sys.stderr)
+        return None
+    root = (roots[0] or {}).get("root") if roots else ""
+    if not root:
+        print("[org_memory] org_memory.enabled=true 但 roots 為空，已停用 org", file=sys.stderr)
+        return None
+    return Path(root)
+
+
 # ─── Utility ─────────────────────────────────────────────────────────────────
 
 
@@ -205,11 +277,24 @@ def truncate_to_tokens(text: str, max_tokens: int) -> str:
 # harness 注入標籤（IDE 開檔/選取、system-reminder、skill 展開）——成對或未閉合
 # （截斷）皆吃到閉合標或字串尾。用於把「使用者訊息」清成「使用者實際打的字」。
 _HARNESS_TAG_RE = re.compile(
-    r"<(system-reminder|ide_opened_file|ide_selection|ide_diagnostics|"
+    r"<(system-reminder|task-notification|ide_opened_file|ide_selection|ide_diagnostics|"
     r"command-name|command-message|command-args|local-command-stdout)\b[^>]*>"
     r".*?(?:</\1>|\Z)",
     re.DOTALL | re.IGNORECASE,
 )
+# harness 代替使用者送進 UserPromptSubmit 的整則訊息（背景 agent/task 完成通知）。
+# 內容是 sub-agent 的回報原文，不是使用者打的字——糾正偵測、失敗萃取都不該吃它。
+_HARNESS_PROMPT_PREFIXES = ("<task-notification", "[SYSTEM NOTIFICATION")
+
+
+def is_harness_generated_prompt(text: str) -> bool:
+    """整則 prompt 是否由 harness 生成（task-notification / 系統通知），而非使用者輸入。"""
+    if not text:
+        return False
+    head = text.lstrip()[:40]
+    if head.startswith(_HARNESS_PROMPT_PREFIXES):
+        return True
+    return not sanitize_harness_noise(text)
 # hook 注入殘渣行（[Guardian:*] / [Atom:*] / [Session:Context] / [JIT:*] 等
 # additionalContext 前綴）——整行剔除。
 _HOOK_RESIDUE_LINE_RE = re.compile(
@@ -282,23 +367,38 @@ def cwd_to_project_slug(cwd: str) -> str:
     return slug.lower()
 
 
+def _has_project_marker(root: Path) -> bool:
+    if has_project_marker is not None:
+        return has_project_marker(root)
+    return (
+        (root / ".claude" / "memory" / MEMORY_INDEX).exists()
+        or (root / "_AIDocs").is_dir()
+        or (root / ".git").exists() or (root / ".svn").exists()
+    )
+
+
 def find_project_root(cwd: str) -> Optional[Path]:
-    """Walk up from CWD to find project root via .claude/memory/MEMORY.md / _AIDocs / .git / .svn."""
+    """cwd 所屬的專案根（lib/project_root：宣告認領優先，否則最近標記）。找不到回 Path(cwd)。"""
     if not cwd:
         return None
+    if resolve_project_root is not None:
+        return resolve_project_root(cwd).path or Path(cwd)
     p = Path(cwd)
     for _ in range(4):
-        if (p / ".claude" / "memory" / MEMORY_INDEX).exists():
-            return p
-        if (p / "_AIDocs").is_dir():
-            return p
-        if (p / ".git").exists() or (p / ".svn").exists():
+        if _has_project_marker(p):
             return p
         parent = p.parent
         if parent == p:
             break
         p = parent
     return Path(cwd)
+
+
+def _root_is_declared(cwd: str) -> bool:
+    """cwd 的專案根是否來自宣告認領（此時記憶目錄可以尚未存在）。"""
+    if resolve_project_root is None:
+        return False
+    return resolve_project_root(cwd).claimed_by in _ROOT_DECLARED_KINDS
 
 
 def _is_under_claude_dir(cwd: str) -> bool:
@@ -331,6 +431,9 @@ def get_project_memory_dir(cwd: str) -> Optional[Path]:
         except OSError:
             pass
         new_mem = root / ".claude" / "memory"
+        if _root_is_declared(cwd):
+            # 宣告認領的根：記憶目錄可能還沒建（只 pull 到宣告檔）；讀者對空目錄回空、寫者寫入時才 mkdir
+            return new_mem
         if new_mem.is_dir():
             if (new_mem / MEMORY_INDEX).exists():
                 return new_mem
@@ -340,61 +443,6 @@ def get_project_memory_dir(cwd: str) -> Optional[Path]:
     old_mem = CLAUDE_DIR / "projects" / slug / "memory"
     if old_mem.exists():
         return old_mem
-    return None
-
-
-def get_scope_dir(
-    scope: str,
-    cwd: str,
-    user: Optional[str] = None,
-    role: Optional[str] = None,
-) -> Optional[Path]:
-    """V4: 回傳指定 scope 的目錄，必要時自動建立。"""
-    if scope == "global":
-        MEMORY_DIR.mkdir(parents=True, exist_ok=True)
-        return MEMORY_DIR
-
-    if scope == "role" and not role:
-        return None
-    if scope == "personal" and not user:
-        return None
-    if scope not in ("shared", "role", "personal"):
-        return None
-
-    root = find_project_root(cwd)
-    if not root:
-        return None
-    try:
-        if root.resolve() == CLAUDE_DIR.resolve():
-            return None
-    except OSError:
-        pass
-    has_marker = (
-        (root / ".claude" / "memory" / MEMORY_INDEX).exists()
-        or (root / "_AIDocs").is_dir()
-        or (root / ".git").exists()
-        or (root / ".svn").exists()
-    )
-    if not has_marker:
-        return None
-
-    base = root / ".claude" / "memory"
-    if scope == "shared":
-        target = base / "shared"
-    elif scope == "role":
-        target = base / "roles" / role
-    else:
-        target = base / "personal" / user
-    target.mkdir(parents=True, exist_ok=True)
-    return target
-
-
-def get_project_claude_dir(cwd: str) -> Optional[Path]:
-    root = find_project_root(cwd)
-    if root:
-        d = root / ".claude"
-        if d.is_dir() and (d / "memory" / MEMORY_INDEX).exists():
-            return d
     return None
 
 
@@ -423,7 +471,7 @@ def resolve_failures_dir(cwd: str) -> Path:
             is_root_layer = mem == MEMORY_DIR
         if not is_root_layer:
             d = mem / "failures"
-            d.mkdir(exist_ok=True)
+            d.mkdir(parents=True, exist_ok=True)   # 宣告認領的根層 memory 可能還沒建
             return d
         # cwd 在 ~/.claude 本身：get_project_memory_dir 回 MEMORY_DIR，但根層失敗家族不走
         # 專案佈局（memory/failures/ 小寫舊址），要落全域家族目錄。
@@ -523,13 +571,7 @@ def register_project(cwd: str) -> None:
             return
     except OSError:
         pass
-    has_marker = (
-        (root / ".claude" / "memory" / MEMORY_INDEX).exists()
-        or (root / "_AIDocs").is_dir()
-        or (root / ".git").exists()
-        or (root / ".svn").exists()
-    )
-    if not has_marker:
+    if not _has_project_marker(root):
         return
     slug = cwd_to_project_slug(str(root))
     reg = _load_registry()
@@ -817,14 +859,25 @@ def state_path(session_id: str) -> Path:
 
 
 def read_state(session_id: str) -> Optional[Dict[str, Any]]:
+    """讀 state；檔不存在或讀壞都回 None（呼叫端要分辨請用 read_state_status）。"""
+    return read_state_status(session_id)[0]
+
+
+def read_state_status(session_id: str) -> Tuple[Optional[Dict[str, Any]], str]:
+    """回 (state, status)：status ∈ {"ok", "missing", "error"}。
+
+    Windows 上 tmp+replace 的瞬間、或另一支 hook 正持有檔案時，read 會拋 PermissionError／
+    sharing violation——那是「暫時讀不到」不是「檔不見了」。以前一律回 None，_ensure_state 就
+    把它當遺失、建 fallback state 覆蓋掉真的 state（本 session 實證：turn 15 的歷史整個歸零）。
+    """
     path = state_path(session_id)
     if not path.exists():
-        return None
+        return None, "missing"
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            return json.load(f), "ok"
     except (json.JSONDecodeError, OSError):
-        return None
+        return None, "error"
 
 
 def write_state(session_id: str, state: Dict[str, Any]) -> None:
@@ -985,8 +1038,26 @@ def _rebuild_min_atom_index(cwd: str) -> Dict[str, Any]:
 def _ensure_state(
     session_id: str, input_data: Dict[str, Any], config: Dict[str, Any]
 ) -> Optional[Dict[str, Any]]:
-    """Read state; if missing (SessionStart was skipped), auto-create one."""
-    state = read_state(session_id)
+    """Read state; if missing (SessionStart was skipped), auto-create one.
+
+    讀取失敗（檔在、但 JSON 壞或被另一支 hook 短暫鎖住）≠ 遺失：重試三次，仍失敗就**這一次
+    hook 呼叫放棄**（回 None，呼叫端 output_nothing），絕不建 fallback 覆蓋既有 state。
+    多支 sub-agent 與主 session 共用同一 session_id、同時跑 PostToolUse 時最容易撞到。"""
+    state, status = read_state_status(session_id)
+    if status == "error":
+        for _ in range(3):
+            time.sleep(0.03)
+            state, status = read_state_status(session_id)
+            if status != "error":
+                break
+        if status == "error":
+            _atom_debug_log(
+                "ERROR",
+                f"[state:unreadable] {session_id[:12]}… state 檔存在但讀不到（鎖住或 JSON 壞），"
+                "本次 hook 跳過、不建 fallback 覆蓋",
+                config,
+            )
+            return None
     if state:
         merged_into = state.get("merged_into")
         if merged_into:
@@ -1096,7 +1167,23 @@ def log_promotion_heartbeat(scanned: int, min_gap_hours: float = 20.0) -> None:
 
 # ─── Guard Trigger Log（可觀測性：各護欄觸發計數 JSONL）─────────────────────
 
-GUARD_LOG_DIR = Path.home() / ".claude" / "Logs"
+_DEFAULT_LOGS_DIR = Path.home() / ".claude" / "Logs"
+GUARD_LOG_DIR = _DEFAULT_LOGS_DIR
+
+
+def logs_dir() -> Path:
+    """正式 Logs/ 目錄；pytest 內（PYTEST_CURRENT_TEST）或 WG_TEST_LOGS_DIR 指定時改寫到
+    暫存目錄——測試 fixture 曾把 session_id="sid" 的假資料寫進正式 guard log，污染遙測統計。
+    測試以 monkeypatch 改 GUARD_LOG_DIR 時（≠ 預設）尊重該值。"""
+    if GUARD_LOG_DIR != _DEFAULT_LOGS_DIR:
+        return GUARD_LOG_DIR
+    override = os.environ.get("WG_TEST_LOGS_DIR")
+    if override:
+        return Path(override)
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        import tempfile
+        return Path(tempfile.gettempdir()) / "wg-test-logs"
+    return GUARD_LOG_DIR
 
 
 def append_guard_log(guard: str, payload: Dict[str, Any]) -> None:
@@ -1106,8 +1193,9 @@ def append_guard_log(guard: str, payload: Dict[str, Any]) -> None:
     stderr（不可稽核），本 log 供事後統計觸發頻率與內容分布。
     每護欄獨立檔＝多 Stop hook 並行時無同檔競寫。fail-open。"""
     try:
-        GUARD_LOG_DIR.mkdir(parents=True, exist_ok=True)
-        log_path = GUARD_LOG_DIR / f"guard-{guard}.jsonl"
+        log_dir = logs_dir()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / f"guard-{guard}.jsonl"
         rotate_log_if_oversized(log_path, max_mb=5, keep=2)
         entry = {"at": _now_iso()}
         entry.update(payload)
@@ -1127,7 +1215,7 @@ def _atom_debug_log(tag: str, content: str, config: Dict[str, Any] = None) -> No
     if not content or not content.strip():
         return
     try:
-        log_dir = Path.home() / ".claude" / "Logs"
+        log_dir = logs_dir()
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / f"atom-debug-{datetime.now().strftime('%Y-%m-%d_%H')}.log"
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

@@ -7,7 +7,7 @@ atom-heal.py 修不好（驗證不過 / needs_human）時會在 memory/_heal_rev
   show  <atom>        看單張卡完整內容
   resolve <atom>      標記已修好 → 清卡（會先重掃確認真的健康，未健康需 --force）
   dismiss <atom>      決定不修 → 清卡（won't-fix）
-resolve/dismiss 需 management 角色（裁決權，沿用 conflict-review 認證）。
+resolve/dismiss 的裁決資格看 workflow/config.json review.deciders（空＝人人可裁決；與 conflict-review 同源）。
 JSON over stdout；非零 exit code 代表操作失敗。
 """
 import sys, io, json, argparse, subprocess
@@ -56,7 +56,8 @@ def list_cards():
 def rescan(atom):
     try:
         r = subprocess.run([sys.executable, str(TOOLS / "atom-health-check.py"), "--atom", atom, "--json"],
-                           capture_output=True, text=True, encoding="utf-8", timeout=60)
+                           capture_output=True, text=True, encoding="utf-8", timeout=60,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         h = json.loads(r.stdout)
         n = len(h.get("broken_refs") or []) + len(h.get("missing_reverse_refs") or [])
         return n, h

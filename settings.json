@@ -15,6 +15,7 @@
       "mcp__workflow-guardian__atom_write",
       "mcp__workflow-guardian__atom_move",
       "mcp__workflow-guardian__atom_promote",
+      "mcp__workflow-guardian__memory_search",
       "mcp__MCPControl__computer",
       "mcp__MCPControl__get_screen_size",
       "mcp__playwright__browser_navigate",
@@ -105,11 +106,21 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/plan_bash_guard.py'),run_name='__main__')\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|Read|NotebookEdit|Bash|Agent|Task|mcp__workflow-guardian__anti_evasion_report",
+        "matcher": "Edit|Write|Read|MultiEdit|NotebookEdit|ExitPlanMode|Bash|Agent|Task|mcp__workflow-guardian__anti_evasion_report|mcp__workflow-guardian__atom_write|mcp__workflow-guardian__atom_retire|mcp__workflow-guardian__knowledge_harvest_report",
         "hooks": [
           {
             "type": "command",
@@ -129,31 +140,11 @@
         ]
       },
       {
-        "matcher": "Write|Edit|MultiEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/version_guard.py'),run_name='__main__')\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
         "matcher": "Write|Edit",
         "hooks": [
           {
             "type": "command",
             "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/obsidian-sync.py'),run_name='__main__')\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Write|Edit|NotebookEdit|ExitPlanMode",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/acceptance_spec.py'),run_name='__main__')\"",
             "timeout": 5
           }
         ]
@@ -199,12 +190,6 @@
             "type": "command",
             "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
             "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/quick-extract.py'),run_name='__main__')\"",
-            "timeout": 30,
-            "async": true
           },
           {
             "type": "command",

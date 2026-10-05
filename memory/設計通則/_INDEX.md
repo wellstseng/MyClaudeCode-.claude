@@ -10,4 +10,6 @@
 | wells-design-principles-明碼優先-職責分離-防呆擋非法 | wells-design-principles-明碼優先-職責分離-防呆擋非法 |
 | wells-design-測試專用成員走internal繞道-runtime-api-乾淨 | wells-design-測試專用成員走internal繞道-runtime-api-乾淨 |
 | wells-review-report-format-分類條列-簡扼說明改動 | wells-review-report-format-分類條列-簡扼說明改動 |
+| 常駐每幀回呼vs按需短命協程-判準與mec實證 | 常駐每幀回呼vs按需短命協程-判準與mec實證 |
 | 弱訊號自動推導的狀態寫入必須只補不降級-不得覆蓋強訊號既有值 | 弱訊號自動推導的狀態寫入必須只補不降級-不得覆蓋強訊號既有值 |
+| 砍雞肋時留最小接縫-沒有消費者的功能不蓋但要留三十分鐘內能接上的口-過度貼合當前環境要另派辯方檢查 | 砍雞肋時留最小接縫-沒有消費者的功能不蓋但要留三十分鐘內能接上的口-過度貼合當前環境要另派辯方檢查 |

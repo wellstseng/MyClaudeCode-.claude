@@ -1,11 +1,12 @@
 """
 handlers/stop.py — Stop hook handler
 
-四個 gate：
+閘序：
 1. Test-Fail Gate（測試未綠 + 宣告完成 → 硬阻）
-2. Evasion 偵測（軟糾正）
-3. Scan-Report Gate（宣告完成但缺掃描報告 → 硬阻）
-4. Sync Reminder Gate（modified_files>0 仍未 commit → 軟阻）
+2. Evasion 偵測（軟糾正）／Deferral Gate（退縮歸屬）
+3. KnowledgeHarvest Gate（宣告完成 → 要求 knowledge_harvest_report；Harvest-Pending 擋核不過的 item）
+4. Scan-Report Gate（宣告完成但缺 anti_evasion_report emit → 硬阻）
+5. Sync Reminder Gate（modified_files>0 仍未 commit/push → 軟阻；vcs-sync worker 活鎖中的 root 跳過）
 + 一般 sync block 邏輯
 """
 
@@ -28,7 +29,9 @@ from wg_evasion import (
 )
 from wg_episodic import _find_session_transcript
 from wg_handoff import token_warn_payload, estimate_context_usage
+from wg_harvest import harvest_gate_reason, pending_gate_reason, vcs_sync_lock_active
 from handlers._shared import (
+    _hud_alive,
     _maybe_spawn_user_extract_worker,
     DOCDRIFT_AVAILABLE,
 )
@@ -159,6 +162,9 @@ def _git_unpushed_roots(modified_files: List[Dict[str, Any]]) -> List[str]:
         roots.append(found[1])
     unpushed: List[str] = []
     for root in roots:
+        # vcs-sync worker 正持鎖對該 root commit/push 中：領先數此刻是中間狀態，不拿來提醒
+        if vcs_sync_lock_active(root):
+            continue
         try:
             r = subprocess.run(
                 ["git", "-C", str(root), "rev-list", "--count", "@{u}..HEAD"],
@@ -362,7 +368,12 @@ def _detect_turn_outcome(state: Dict[str, Any], last_text: str) -> Optional[bool
         if int((f or {}).get("turn_seq", turn_seq)) == turn_seq
     ]
     evasion = bool(state.get("evasion_flag"))
-    retry = int(state.get("wisdom_retry_count", 0) or 0)
+    # wisdom_retry_count 是 session 累計（FixEscalation 等消費者要它累計）；
+    # outcome 只看本 turn 的增量——UPS 在 turn 起點快照 base。沒有 base（升級前
+    # in-flight session）→ 沿用累計值，不漏 fail 訊號。
+    retry_total = int(state.get("wisdom_retry_count", 0) or 0)
+    base = state.get("wisdom_retry_turn_base")
+    retry = retry_total - int(base) if base is not None else retry_total
     if failing or evasion or retry >= 2:
         return False
     if last_text and claims_completion(last_text):
@@ -402,11 +413,18 @@ def _attribute_usefulness(
             return  # 本 turn 已歸因
 
         from lib.atom_access import record_usefulness
-        from wg_atoms import detect_atom_use, resolve_atom_path, make_embed_tiebreak_fn
+        from wg_atoms import (
+            detect_atom_use, detect_atom_use_v2, resolve_atom_path, make_embed_tiebreak_fn,
+        )
 
         rare_min = int(uconf.get("rare_token_min", 2))
         overlap_min = float(uconf.get("lexical_overlap_min", 0.18))
         embed_fn = _budgeted_embed_fn(make_embed_tiebreak_fn(config), uconf)
+        # 判用政策：v2＝行動證據（rescue 命中）優先、否定線索、路標未讀不算、去路徑噪音後
+        # 共享 ≥6 才算（標註集 57 筆：precision 0.35→0.57、recall 0.84）；v1＝舊詞彙重疊（回滾用）。
+        policy = str(uconf.get("attribution_policy", "v2"))
+        v2_shared_min = int(uconf.get("v2_shared_min", 6))
+        v2_containment_min = float(uconf.get("v2_containment_min", 0.0))
 
         turn_text = (
             get_current_turn_text(transcript, text=transcript_text)
@@ -415,25 +433,53 @@ def _attribute_usefulness(
         outcome = _detect_turn_outcome(state, last_text)
         _bump_outcome_stats(state, outcome)
 
+        turn_seq_now = int(state.get("turn_seq", 0))
+        rescue_map: Dict[str, List[str]] = {}
+        form_map: Dict[str, str] = {}
+        if policy == "v2":
+            try:
+                from wg_rescue import rescue_hits_for_turn, rescue_hits_for_turn_from_state
+                rescue_map = rescue_hits_for_turn_from_state(state, turn_seq_now)
+                if not rescue_map and "rescue_hits_by_turn" not in state:
+                    rescue_map = rescue_hits_for_turn(session_id, turn_seq_now)  # 升級前 in-flight：退回讀 log
+            except Exception as e:
+                _atom_debug_error("usefulness:rescue_map", e)
+            for rec in (state.get("injection_log") or []):
+                if int(rec.get("turn_seq", -1) or -1) == turn_seq_now:
+                    form_map[rec.get("name", "")] = rec.get("form_final") or rec.get("form", "ok")
+
         def _read(path_str: str) -> str:
             try:
                 return Path(path_str).read_text(encoding="utf-8-sig")
             except (OSError, UnicodeDecodeError, ValueError):
                 return ""
 
-        def _record(path_str: str, content: str, match_text: str, decided: Optional[bool]) -> Optional[bool]:
-            if decided is None or not content or not match_text:
-                return None
-            det = detect_atom_use(
-                content, match_text,
-                rare_token_min=rare_min, overlap_min=overlap_min, embed_fn=embed_fn,
-            )
-            if not det.get("used"):
-                return None
-            record_usefulness(Path(path_str), used=True, success=decided, source="hook:usefulness")
-            return decided
+        # 同一顆 atom 同一 turn 只寫一筆：先收齊各來源（主回合 / 子代理）的判定，
+        # 結果一致才寫；父成功子失敗這種衝突 → unknown、不動 α/β、只留紀錄。
+        pending: Dict[str, Dict[str, Any]] = {}
 
-        attributed = []  # (atom, success) for telemetry
+        def _consider(name: str, path_str: str, content: str, match_text: str,
+                      decided: Optional[bool], *, origin: str = "parent") -> None:
+            if decided is None or not content or not match_text:
+                return
+            if policy == "v2":
+                # 子代理只用自己的產出判用：不借父回合文字、不借父回合 rescue（那是父的工具）；
+                # 子代理拿到的是緊湊全文 blob，form 視為 ok。
+                det = detect_atom_use_v2(
+                    content, match_text, atom_name=name,
+                    form=(form_map.get(name, "ok") if origin == "parent" else "ok"),
+                    rescue_tokens=(rescue_map.get(name) if origin == "parent" else None),
+                    shared_min=v2_shared_min, containment_min=v2_containment_min,
+                )
+            else:
+                det = detect_atom_use(
+                    content, match_text,
+                    rare_token_min=rare_min, overlap_min=overlap_min, embed_fn=embed_fn,
+                )
+            if not det.get("used"):
+                return
+            slot = pending.setdefault(name, {"path": path_str, "outcomes": set()})
+            slot["outcomes"].add(bool(decided))
 
         # 1) UPS per-turn 注入（turn_injected）— 比對本 turn assistant 活動文字
         for entry in (state.get("turn_injected") or []):
@@ -441,38 +487,61 @@ def _attribute_usefulness(
             path_str = entry.get("path", "")
             if not name or not path_str:
                 continue
-            res = _record(path_str, _read(path_str), turn_text, outcome)
-            if res is not None:
-                attributed.append((name, res))
+            _consider(name, path_str, _read(path_str), turn_text, outcome)
 
         # 2) 本 turn sub-agent 注入（state["subagent_injections"]）
+        #    只結算本 turn 的紀錄（turn_seq 相符）；更早 turn 殘留的紀錄標過期不套當輪 outcome。
         #    use 偵測比對該 agent 的 output_summary（其實際產物）；outcome 疊 agent 狀態。
         for rec in (state.get("subagent_injections") or []):
             if rec.get("attributed"):
+                continue
+            rec_turn = rec.get("turn_seq")
+            if rec_turn is not None and turn_seq and int(rec_turn) != turn_seq:
+                if int(rec_turn) < turn_seq:
+                    rec["attributed"] = True
+                    rec["skipped"] = "stale_turn"
                 continue
             status = str(rec.get("status", "") or "").lower()
             sub_outcome = outcome
             if any(k in status for k in ("error", "fail", "abort", "cancel")):
                 sub_outcome = False  # agent 出錯 → fail（覆寫 turn outcome）
-            match_text = (rec.get("output_summary", "") or "") + "\n" + turn_text
+            # 只看子代理自己的產出；接上父回合全文會讓「父採用、子沒採用」變成假的結果衝突（Codex #8 反例）。
+            # v1 政策維持舊行為（父文字併入）供回滾。
+            sub_text = rec.get("output_summary", "") or ""
+            match_text = sub_text if policy == "v2" else (sub_text + "\n" + turn_text)
+            if not match_text.strip():
+                rec["attributed"] = True
+                rec["skipped"] = "no_output"
+                continue
             for aname in (rec.get("atoms") or []):
                 p = resolve_atom_path(aname)
                 if p is None:
                     continue
-                res = _record(str(p), _read(str(p)), match_text, sub_outcome)
-                if res is not None:
-                    attributed.append((aname, res))
+                _consider(aname, str(p), _read(str(p)), match_text, sub_outcome, origin="subagent")
             rec["attributed"] = True  # 本 turn 已處理（含 no-op，避免下 turn 重算）
+
+        attributed = []  # (atom, success) for telemetry
+        conflicted: List[str] = []
+        for name, slot in pending.items():
+            if len(slot["outcomes"]) != 1:
+                conflicted.append(name)
+                continue
+            decided = next(iter(slot["outcomes"]))
+            record_usefulness(Path(slot["path"]), used=True, success=decided, source="hook:usefulness")
+            attributed.append((name, decided))
 
         if turn_seq:
             state["usefulness_attributed_seq"] = turn_seq
-        if attributed:
-            state.setdefault("usefulness_log", []).append({
+        if attributed or conflicted:
+            entry = {
                 "turn_seq": turn_seq,
                 "outcome": ("+1" if outcome is True else "0" if outcome is False else "unknown"),
                 "atoms": [{"atom": a, "success": s} for a, s in attributed],
                 "at": _now_iso(),
-            })
+            }
+            if conflicted:
+                entry["conflicted"] = conflicted
+            state.setdefault("usefulness_log", []).append(entry)
             state["usefulness_log"] = state["usefulness_log"][-50:]
     except Exception as e:
         print(f"usefulness attribution error: {e}", file=sys.stderr)
@@ -487,8 +556,11 @@ def _should_deep_postmortem(
     """是否要在本 Stop 注入「深寫 post-mortem」指令。
 
     觸發＝(effort 訊號任一) AND (真失敗訊號任一)：
-      effort：wisdom_retry_count>=2 ∨ fix_escalation_triggered
-      real_failure：failing_tests 非空 ∨ evasion_flag ∨ 未宣告完成（not claims_done）
+      effort：wisdom_retry_count>=2 ∨ fix_escalation_triggered ∨ friction
+      real_failure：failing_tests 非空 ∨ evasion_flag ∨ 未宣告完成（not claims_done）∨ friction
+      friction：使用者糾正次數 ≥ config.friction.min_hits（wg_friction）——測試全綠、
+      工作也宣告完成，但人一路在糾正方向，這是原本三個訊號都抓不到的失敗型態，
+      故同時算 effort 與真失敗。
     為何 AND：疊一個真失敗訊號，才把「高 effort 成功」與「反覆修不好」區分開。
     effort 只採 retry / fix_escalation——兩者都已在 track_retry 層以 failing_tests
     error-gate，是誠實的「失敗中反覆」訊號。不採同檔 edit 次數：它未 failure-gate、
@@ -509,14 +581,18 @@ def _should_deep_postmortem(
         return False
     if state.get("deep_postmortem_done"):  # 一次性即獨立預算＝1，anti-loop 由此保證
         return False
+    from wg_friction import friction_triggered
+    friction = friction_triggered(state, config)
     effort = (
         int(state.get("wisdom_retry_count", 0) or 0) >= 2
         or bool(state.get("fix_escalation_triggered"))
+        or friction
     )
     real_failure = (
         bool(state.get("failing_tests"))
         or bool(state.get("evasion_flag"))
         or not claims_done
+        or friction
     )
     return effort and real_failure
 
@@ -531,9 +607,25 @@ def _dpm_marker(session_id: str) -> Path:
     return WORKFLOW_DIR / "dpm-done" / f"{session_id}.flag"
 
 
+def _dpm_trigger_text(state: Dict[str, Any], config: Dict[str, Any]) -> str:
+    """DPM 指令開頭那句「為什麼觸發」：retry/fix-escalation 走原句；只靠使用者糾正
+    觸發時改說糾正幾次、命中哪些詞，讓 Claude 知道要寫的是「方向被糾正」不是「測試修不好」。"""
+    from wg_friction import friction_summary, friction_triggered
+    parts: List[str] = []
+    if int(state.get("wisdom_retry_count", 0) or 0) >= 2 or state.get("fix_escalation_triggered"):
+        parts.append("失敗中反覆重試 / fix-escalation")
+    if friction_triggered(state, config):
+        parts.append(friction_summary(state))
+    return "、".join(parts) or "高 effort 失敗"
+
+
+def _dpm_instruction(state: Dict[str, Any], config: Dict[str, Any]) -> str:
+    return _DEEP_POSTMORTEM_INSTRUCTION.replace("{trigger}", _dpm_trigger_text(state, config))
+
+
 _DEEP_POSTMORTEM_INSTRUCTION = (
-    "[Guardian:DeepPostMortem] 偵測到高 effort 失敗訊號（失敗中反覆重試 /"
-    " fix-escalation）。失敗骨架已由 hook 自動落地，但根因與設計脈絡只有你知道。\n"
+    "[Guardian:DeepPostMortem] 偵測到高 effort 失敗訊號（{trigger}）。"
+    "失敗骨架已由 hook 自動落地，但根因與設計脈絡只有你知道。\n"
     "結束前請用 atom_write 補一條完整 post-mortem（寫入既有 failure atom，或"
     " realm=local、domain 視主題新建），涵蓋：\n"
     "  - 始末：觸發場景 → 錯誤行為 → 最終正確做法\n"
@@ -622,7 +714,10 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
     last_text = get_last_assistant_text(transcript, text=transcript_text)
     # accessed_files 回收（取代 per-Read PostToolUse hook）——先寫進 state，
     # 後續任何 gate 的 write_state 也會一併固化；此處立即寫防走到不寫 state 的路徑。
-    if _harvest_accessed_files(state, transcript_text):
+    # 關回合：下一則 UserPromptSubmit 才是新回合的第一句（turn_prompts 重開，見 ups_gates.track_turn_prompts）。
+    turn_was_open = bool(state.get("turn_open"))
+    state["turn_open"] = False
+    if _harvest_accessed_files(state, transcript_text) or turn_was_open:
         write_state(session_id, state)
     # 殘檔帳本：每次 Stop 掃一次 session scratchpad 進帳（模型沒 emit 報告也不漏）。fail-open。
     try:
@@ -649,6 +744,32 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
             state["acceptance_hint_emitted"] = True
             reason = reason + _accept_hint
         return reason
+
+    # ── 各閘共用前置變數 ─────────────────────────────────────────
+    mod_files_all = state.get("modified_files", []) or []
+    # 只認「本 session 自己 Edit/Write 的檔」——共用工作樹/merged state 下，他 session
+    # 改的 core 檔（session_id 不符）不得誤觸發本 session 的收尾檢核。未標記 session_id
+    # 的 legacy entry 保守視為本 session（fail-open，不漏防退避）。
+    own_mod_files = [
+        m for m in mod_files_all
+        if (m or {}).get("session_id", session_id) == session_id
+    ]
+    # 純 VCS commit turn 豁免收尾檢核：本 turn 已把工作寫進 VCS 歷史（可稽核＝與「藏」相反），
+    # anti-evasion 目的在 commit 那刻消解。不開後門——豁免綁「本 turn 真的 commit 了」
+    # （post_tool_use 記的 last_commit_turn_seq），而非「本 turn 沒 Edit」；光宣告完成不 commit
+    # 仍被擋。未 commit 就 commit 的檔仍由 SyncReminder / 一般 block 兜底。
+    turn_seq = int(state.get("turn_seq", 0))
+    committed_this_turn = bool(turn_seq) and state.get("last_commit_turn_seq") == turn_seq
+    # emit 滿足＝本回合有呼叫 anti_evasion_report。★雙鍵（turn_seq **且** session_id）為硬性：
+    # merged/sibling session 共用同一實體 state 檔且共用同一 turn_seq 計數器，唯 session_id 能
+    # 區辨——否則隔壁 session 的 emit 會誤放行本 session（重演 own_mod_files 要防的洩漏）。
+    # bool(turn_seq) 護欄：防 turn_seq==0 的 fallback state 以 0==0 假滿足。
+    aec = state.get("anti_evasion_report") or {}
+    emitted_this_turn = (
+        bool(turn_seq)
+        and aec.get("turn_seq") == turn_seq
+        and aec.get("session_id") == session_id
+    )
 
     if failing and claims_completion(last_text):
         state["stop_blocked_count"] = stop_count + 1
@@ -734,33 +855,40 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
             output_block(_piggyback(dg))
             return
 
+    # ── KnowledgeHarvest Gate（階段完工知識收割）────────────────
+    # 宣告完成＝階段完工 → 要求呼叫 knowledge_harvest_report（items=[] 也要）。判定在
+    # wg_harvest.harvest_gate_reason（活動門檻、冷卻只認 validated、dismiss 詞表重用 wg_evasion）。
+    # 不吃 stop_gate_max_blocks 共用預算、每 turn 最多擋一次（harvest_gate_turn[sid]）；
+    # state 全按 session_id 分區——隔壁 session 的收割不放行本 session。
+    hv_reason = harvest_gate_reason(state, session_id, last_text, config, own_mod_files, turn_seq)
+    if hv_reason:
+        state.setdefault("harvest_gate_turn", {})[session_id] = turn_seq
+        append_guard_log("knowledge_harvest", {
+            "session_id": session_id, "turn_seq": turn_seq,
+            "own_mod_files": len(own_mod_files),
+            "accessed": len(state.get("accessed_files") or []),
+        })
+        write_state(session_id, state)
+        output_block(_piggyback(hv_reason))
+        return
+
+    # ── Harvest-Pending Gate：收割回報有 item 對不上 receipt ──────
+    # post_tool_use 核對落 knowledge_harvest[sid].pending；此處每 turn 擋一次要求真做完再重報。
+    # 本則是中途狀態句（仍在等 agent 回報…）→ 不擋，等真收尾再擋（wg_harvest.in_progress_text）。
+    hp_reason = pending_gate_reason(state, session_id, turn_seq, last_text)
+    if hp_reason:
+        state.setdefault("harvest_pending_gate_turn", {})[session_id] = turn_seq
+        append_guard_log("harvest_pending", {
+            "session_id": session_id, "turn_seq": turn_seq,
+            "items": (state.get("knowledge_harvest", {}).get(session_id) or {}).get("pending", [])[:5],
+        })
+        write_state(session_id, state)
+        output_block(_piggyback(hp_reason))
+        return
+
     # ── Scan-Report Gate ────────────────────────────────────────
     # 降條件觸發 — 只在動 core 檔或多檔（≥min_files_to_block）且宣告完成時要求收尾檢核；
     # 純單檔/文件小改不觸發（避免過度觸發成儀式性負擔，非防退避）。
-    mod_files_all = state.get("modified_files", []) or []
-    # 只認「本 session 自己 Edit/Write 的檔」——共用工作樹/merged state 下，他 session
-    # 改的 core 檔（session_id 不符）不得誤觸發本 session 的收尾檢核。未標記 session_id
-    # 的 legacy entry 保守視為本 session（fail-open，不漏防退避）。
-    own_mod_files = [
-        m for m in mod_files_all
-        if (m or {}).get("session_id", session_id) == session_id
-    ]
-    # 純 VCS commit turn 豁免收尾檢核：本 turn 已把工作寫進 VCS 歷史（可稽核＝與「藏」相反），
-    # anti-evasion 目的在 commit 那刻消解。不開後門——豁免綁「本 turn 真的 commit 了」
-    # （post_tool_use 記的 last_commit_turn_seq），而非「本 turn 沒 Edit」；光宣告完成不 commit
-    # 仍被擋。未 commit 就 commit 的檔仍由 SyncReminder / 一般 block 兜底。
-    turn_seq = int(state.get("turn_seq", 0))
-    committed_this_turn = bool(turn_seq) and state.get("last_commit_turn_seq") == turn_seq
-    # emit 滿足＝本回合有呼叫 anti_evasion_report。★雙鍵（turn_seq **且** session_id）為硬性：
-    # merged/sibling session 共用同一實體 state 檔且共用同一 turn_seq 計數器，唯 session_id 能
-    # 區辨——否則隔壁 session 的 emit 會誤放行本 session（重演 own_mod_files 要防的洩漏）。
-    # bool(turn_seq) 護欄：防 turn_seq==0 的 fallback state 以 0==0 假滿足。
-    aec = state.get("anti_evasion_report") or {}
-    emitted_this_turn = (
-        bool(turn_seq)
-        and aec.get("turn_seq") == turn_seq
-        and aec.get("session_id") == session_id
-    )
     if own_mod_files and not state.get("scan_report_warned") and not committed_this_turn:
         recent_prompts = state.get("recent_user_prompts", []) or []
         sr_min_files = int(config.get("min_files_to_block", 2))
@@ -819,29 +947,42 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
 
     # HUD 不可達且本回合 emit 為 notable/real-evasion → 大聲 fallback 回 chat（可觀測性鐵律：
     # push 不到窗不得 fail-silent）。post_tool_use 標旗，此處消費一次（新 emit 再標則再補，
-    # 不永久靜音 real-evasion）。Node tool chip 是 emit 當下的主要 UX 面；本 fallback 是
-    # Python 端獨立的觀測保證，不倚賴窗是否渲染。emit 閘本身已放行（見上），此處不再擋 emit。
+    # 不永久靜音 real-evasion）。消費前**再查一次**：emit 當下不可達可能是暫時的（Node 剛換手、
+    # HUD 頁重連中），現在窗活著就不吵 chat；兩次判定都落 guard-aec_hud.jsonl 可稽核。
+    # Node tool chip 是 emit 當下的主要 UX 面；本 fallback 是 Python 端獨立的觀測保證，
+    # 不倚賴窗是否渲染。emit 閘本身已放行（見上），此處不再擋 emit。
     if state.get("aec_hud_fallback"):
         state["aec_hud_fallback"] = False  # 消費，避免重播
-        state["stop_blocked_count"] = stop_count + 1
         sev = aec.get("severity", "notable")
-        fb = [
-            f"[Guardian:AEC] HUD 視窗未開啟，{sev} 收尾檢核改回 chat 呈現（不 fail-silent）："
-        ]
-        for _k, _label in (("a", "(a) 缺失修補"), ("b", "(b) 逃避通報")):
-            _v = (aec.get(_k) or "").strip()
-            if _v and _v != "無":
-                fb.append(f"  {_label}：{_v}")
-        # cross-check 升級：模型自評 (b)=無但 hook 實測退避 → 附 hook 證據（不信自評）
-        if aec.get("severity_upgraded_by"):
-            fb.append("  ⚠ severity 由 hook cross-check 升級——(b) 自評「無」與 hook 實測不符：")
-            for _e in (aec.get("hook_evidence") or [])[:3]:
-                fb.append(
-                    f"    - turn {_e.get('turn_seq', '?')}: 退避語『{_e.get('phrase', '')}』"
-                )
-        write_state(session_id, state)
-        output_block(_piggyback("\n".join(fb)))
-        return
+        _aec_cfg = config.get("aec", {}) or {}
+        alive, info = _hud_alive(
+            int(config.get("dashboard_port", 3848)), int(_aec_cfg.get("hud_stale_s", 30))
+        )
+        append_guard_log("aec_hud", {
+            "where": "stop", "session_id": session_id, "severity": sev, "alive": alive, **info,
+        })
+        if alive:
+            write_state(session_id, state)
+        else:
+            state["stop_blocked_count"] = stop_count + 1
+            _why = info.get("reason") or f"age_s={info.get('age_s')} clients={info.get('clients')}"
+            fb = [
+                f"[Guardian:AEC] HUD 不可達（{_why}），{sev} 收尾檢核改回 chat 呈現（不 fail-silent）："
+            ]
+            for _k, _label in (("a", "(a) 缺失修補"), ("b", "(b) 逃避通報")):
+                _v = (aec.get(_k) or "").strip()
+                if _v and _v != "無":
+                    fb.append(f"  {_label}：{_v}")
+            # cross-check 升級：模型自評 (b)=無但 hook 實測退避 → 附 hook 證據（不信自評）
+            if aec.get("severity_upgraded_by"):
+                fb.append("  ⚠ severity 由 hook cross-check 升級——(b) 自評「無」與 hook 實測不符：")
+                for _e in (aec.get("hook_evidence") or [])[:3]:
+                    fb.append(
+                        f"    - turn {_e.get('turn_seq', '?')}: 退避語『{_e.get('phrase', '')}』"
+                    )
+            write_state(session_id, state)
+            output_block(_piggyback("\n".join(fb)))
+            return
 
     # ── Sync Reminder Gate ──────────────────────────────────────
     sr_config = config.get("sync_reminder", {}) or {}
@@ -935,7 +1076,7 @@ def handle_stop(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
         except OSError:
             pass
         state["stop_blocked_count"] = stop_count + 1
-        reason = _piggyback(_DEEP_POSTMORTEM_INSTRUCTION)
+        reason = _piggyback(_dpm_instruction(state, config))
         write_state(session_id, state)
         output_block(reason)
         return

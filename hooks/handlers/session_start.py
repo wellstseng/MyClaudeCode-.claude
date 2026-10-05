@@ -23,18 +23,19 @@ from wg_core import (
     CLAUDE_DIR, WORKFLOW_DIR, MEMORY_DIR, EPISODIC_DIR,
     MEMORY_INDEX,
     _now_iso, _atom_debug_error,
-    cwd_to_project_slug, get_project_memory_dir, find_project_root,
+    get_project_memory_dir, find_project_root,
     register_project,
     read_state, write_state, new_state, _find_active_sibling_state,
     _check_mcp_servers,
-    _is_under_claude_dir, is_local_realm_path, is_cross_project_local,
+    _is_under_claude_dir,
     iter_realm_category_dirs,
     REALM_AUTOMOVE_MARKER,
     find_vcs_root, memory_dir_candidates,
+    resolve_project_root, org_memory_root, load_config, load_org_local,
 )
 from wg_atoms import (
     parse_memory_index, parse_aidocs_index, extract_aidocs_keywords,
-    filter_visible, scope_from_rel_path,
+    build_candidate_pool,
 )
 from wg_evasion import (
     _load_oscillation_warnings, _detect_rut_patterns, _check_periodic_review_due,
@@ -43,7 +44,7 @@ from wg_roles import (
     get_current_user, load_user_role, is_management, bootstrap_personal_dir,
 )
 from handlers._shared import (
-    _MEMORY_MD_AUTO_HEADER, _V4_TRIGGER_LINE_RE,
+    _MEMORY_MD_AUTO_HEADER,
     _call_project_hook, _cleanup_old_states,
     WISDOM_AVAILABLE, get_reflection_summary,
 )
@@ -118,52 +119,6 @@ def wg_core_workflow_dir() -> Path:
     """取 wg_core.WORKFLOW_DIR 的即時值（測試 monkeypatch wg_core 後仍生效）。"""
     import wg_core
     return wg_core.WORKFLOW_DIR
-
-
-def _collect_v4_role_atoms(
-    project_mem_dir: Optional[Path], user: str, roles: List[str],
-) -> List[Tuple[str, str, List[str]]]:
-    """列出使用者可見的 V4 sub-layer atoms（SPEC §8.1）。"""
-    if not project_mem_dir or not project_mem_dir.is_dir():
-        return []
-
-    out: List[Tuple[str, str, List[str]]] = []
-    mem_dir_name = project_mem_dir.name
-
-    scan_targets: List[Path] = []
-    shared = project_mem_dir / "shared"
-    if shared.is_dir():
-        scan_targets.append(shared)
-    roles_root = project_mem_dir / "roles"
-    for r in roles:
-        rd = roles_root / r
-        if rd.is_dir():
-            scan_targets.append(rd)
-    personal_dir = project_mem_dir / "personal" / user
-    if personal_dir.is_dir():
-        scan_targets.append(personal_dir)
-
-    for base in scan_targets:
-        for md in sorted(base.glob("**/*.md")):
-            rel_parts = md.relative_to(base).parts
-            if any(p.startswith("_") for p in rel_parts[:-1]):
-                continue
-            if md.name in (MEMORY_INDEX, "_ATOM_INDEX.md"):
-                continue
-            if md.name.startswith("_") or md.name.startswith("SPEC_"):
-                continue
-            try:
-                text = md.read_text(encoding="utf-8-sig")
-            except (OSError, UnicodeDecodeError):
-                continue
-            tm = _V4_TRIGGER_LINE_RE.search(text)
-            triggers: List[str] = []
-            if tm:
-                triggers = [t.strip().lower() for t in tm.group(1).split(",") if t.strip()]
-            layer_rel = md.relative_to(project_mem_dir)
-            rel_path = f"{mem_dir_name}/{layer_rel.as_posix()}"
-            out.append((md.stem, rel_path, triggers))
-    return out
 
 
 def _regenerate_role_filtered_memory_index(
@@ -300,8 +255,7 @@ def _refresh_vector_flag(
 def _prune_aec_files(max_age_days: int = 7) -> int:
     """清 workflow/ 下 per-turn 執行期狀態檔的 TTL GC（mtime 超過 max_age_days）。
 
-    對象：aec-report/ 與 aec-decision/（*.json，Python 寫報告 / Node 寫決策）、
-    pan-pass/ 與 pan-deny/（*.flag / *.json，PAN 預告閘門 armed marker 與 deny 計數）。
+    對象：aec-report/ 與 aec-decision/（*.json，Python 寫報告 / Node 寫決策）。
     寫了不清會無限累積。在 SessionStart 順手掃一次（比照上方 log rotation 的開機
     打掃時機）。glob 副檔名白名單自然略過 atomic write 的 .tmp 過渡檔。
     fail-open：目錄不存在 / 單檔被別進程刪或鎖 → 略過不炸。回傳刪除檔數（供測試 / 觀測）。"""
@@ -310,8 +264,6 @@ def _prune_aec_files(max_age_days: int = 7) -> int:
     for sub, patterns in (
         ("aec-report", ("*.json",)),
         ("aec-decision", ("*.json",)),
-        ("pan-pass", ("*.flag",)),
-        ("pan-deny", ("*.json",)),
     ):
         for pattern in patterns:
             try:
@@ -442,35 +394,139 @@ def _followup_advisory() -> list:
         return ["[Guardian:Followup] ⚠ 回訪檢查器執行失敗（見 atom-debug log）——手動跑 python tools/followup-check.py --run"]
 
 
-def _unpushed_advisory() -> list:
-    """本地有已 commit 未 push 的東西 → advisory 行（無則回 []，不佔 context）。
+def _spawn_pull_sync(session_id: str, cwd: str, config: Dict[str, Any]) -> int:
+    """SessionStart 的拉取觸發：`vcs_sync.enabled` 且 `vcs_sync.pull.enabled` 才 spawn（reason="pull"）。
+    fail-open：任何失敗只進 atom-debug log（spawn 自己會留 `.unpushed`／last_error 給 advisory）。回 pid（0＝未起）。"""
+    try:
+        import wg_vcs_sync as _vs
+        vs = _vs.vcs_sync_config(config or {})
+        if not vs.get("enabled", True) or not (vs.get("pull") or {}).get("enabled", True):
+            return 0
+        return _vs.spawn_vcs_sync(session_id, cwd, reason="pull", config=config)
+    except Exception as e:
+        _atom_debug_error("session_start:spawn_pull_sync", e)
+        return 0
 
-    存在理由：SessionEnd 的晉升自動提交把 push 丟到背景（30s 預算內不等網路），
-    push 掛掉時 commit 只留在本地、當下沒人看得到。這裡在下個 session 開頭補上
+
+def _unpushed_advisory() -> list:
+    """本地有已 commit 未 push／worker 留下 `.unpushed` 標記的 root → advisory 行（無則回 []）。
+    拉側（roots.json 的 last_pull／pulled_commits／pull_error 與 `.behind` 標記）也在這裡報：拉入 N 筆 → 一行提醒
+    候選池以本次載入快照為準；`.behind` → 一行理由。pull 欄位與 push 的 last_error 分欄，解除 `.unpushed` 的邏輯不碰它們。
+
+    存在理由：vcs-sync worker 在背景 commit+push 記憶庫，push 守門擋下（本地有未發布程式碼
+    commit）或 push／svn commit 失敗時只留標記與 log、當下沒人看得到。這裡在下個 session 開頭補上
     可見性，讓「背景 fail-open」不變成「永遠沒人發現」（可觀測性鐵律）。
 
-    只讀 git 不寫，任何失敗回 []——沒有 upstream / 不是 repo / git 不在都算正常。
+    範圍：workflow/vcs-sync/roots.json 列出的每個 root（根層 + 專案）；roots.json 尚無根層時退回
+    只查 ~/.claude。每 root 依序看：git `rev-list --count @{u}..HEAD`、`.unpushed` 標記（查詢成功且
+    ahead=0 → 已沒有東西待推，不論使用者是補推原 HEAD 還是另開 commit，都算已解決：刪標記並清 roots.json
+    的 last_error；查詢失敗 rc≠0 不得當 ahead=0——那是「不知道」，標記照報、不刪）、roots.json 的
+    last_error（skip／索引失敗／spawn 失敗）、`.req/` 內無人消費的請求（含 inflight 殘留：worker 沒起或中途死）。
+    除了清已解決的標記／last_error 外只讀不寫；單一 root 失敗不影響其他 root——沒有 upstream / 不是 repo /
+    git 不在都算正常（查不到 ahead 就不報 ahead）。
     """
     try:
         import subprocess
-        if not (CLAUDE_DIR / ".git").exists():
-            return []
-        r = subprocess.run(
-            ["git", "-C", str(CLAUDE_DIR), "rev-list", "--count", "@{u}..HEAD"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        if r.returncode != 0:  # 無 upstream / detached HEAD → 不是異常，不吵
-            return []
-        ahead = int((r.stdout or "0").strip() or 0)
-        if ahead <= 0:
-            return []
-        return [
-            f"[Guardian:Sync] ⚠ ~/.claude 本地有 {ahead} 筆 commit 未 push"
-            f"（背景 push 可能失敗，見 Logs/auto-commit.log）→ 跑 git push 補推。"
-        ]
+        from pathlib import Path as _P
+        try:
+            import wg_vcs_sync as _vs
+            roots = _vs.load_roots()
+        except Exception as e:
+            _atom_debug_error("session_start:unpushed_advisory:roots", e)
+            _vs, roots = None, {}
+        entries = [(_P(k), v or {}) for k, v in roots.items()]
+        if not any(r.resolve() == CLAUDE_DIR.resolve() for r, _ in entries) and (CLAUDE_DIR / ".git").exists():
+            entries.insert(0, (CLAUDE_DIR, {}))
+
+        def _git(root: _P, *args: str):
+            """回 (成功?, stdout)。失敗（無 upstream／不是 repo／git 不在）與「0」必須分得開。"""
+            r = subprocess.run(
+                ["git", "-C", str(root), *args],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            return r.returncode == 0, (r.stdout or "").strip()
+
+        lines = []
+        for root, info in entries:
+            vcs = info.get("vcs", "git")
+            last_error = info.get("last_error")
+            label = "~/.claude" if root.resolve() == CLAUDE_DIR.resolve() else root.as_posix()
+            try:
+                rec = _vs.read_unpushed_record(root) if _vs else None
+                is_git = vcs == "git" and (root / ".git").exists()
+                ahead, ahead_known = 0, False
+                if is_git:
+                    ok, out = _git(root, "rev-list", "--count", "@{u}..HEAD")
+                    if ok and out.isdigit():
+                        ahead, ahead_known = int(out), True
+                if rec and ahead_known and ahead == 0:
+                    # 查詢成功且沒有東西待推 → 已解決（使用者補推原 HEAD 也算）。先清 roots.json 的
+                    # last_error（可能因 roots.lock 逾時失敗），成功才刪標記；失敗就留著下次再清，
+                    # 否則標記沒了、last_error 卻永遠清不掉。
+                    cleared = True
+                    if last_error:
+                        cleared = bool(_vs.update_root_record(
+                            _vs.SyncTarget(vcs, root, list(info.get("pathspecs") or [])), last_error=None))
+                        if cleared:
+                            last_error = None
+                    if cleared:
+                        _vs.clear_unpushed(root)
+                        rec = None
+                pending = _vs.pending_requests(root, include_inflight=True) if _vs else 0
+                orphan = pending > 0 and _vs is not None and not _vs.lock_is_live(root)
+            except Exception as e:
+                _atom_debug_error("session_start:unpushed_advisory:root", e)
+                lines.append(f"[Guardian:Sync] ⚠ {label} 未 push 檢查失敗（{type(e).__name__}）——見 atom-debug log。")
+                continue
+            reason = (rec or {}).get("reason")
+            if ahead > 0:
+                lines.append(
+                    f"[Guardian:Sync] ⚠ {label} 本地有 {ahead} 筆 commit 未 push"
+                    f"（背景 vcs-sync 守門或 push 失敗，見 Logs/vcs-sync.log）→ 確認後 git push 補推。")
+            elif reason:
+                lines.append(
+                    f"[Guardian:Sync] ⚠ {label} 記憶庫未上版控：{reason[:80]}（見 Logs/vcs-sync.log）")
+            elif last_error:
+                lines.append(
+                    f"[Guardian:Sync] ⚠ {label} 上次背景同步未完成：{str(last_error)[:80]}（見 Logs/vcs-sync.log）")
+            if orphan:
+                lines.append(
+                    f"[Guardian:Sync] ⚠ {label} 有 {pending} 筆同步請求無人處理（worker 未起或中斷）"
+                    "→ 下次收割／SessionEnd 會自動補跑；急的話手動 python hooks/vcs-sync-worker.py。")
+            lines.extend(_pull_advisory_lines(_vs, root, label, info))
+        return lines
     except Exception as e:
         _atom_debug_error("session_start:unpushed_advisory", e)
-        return []
+        # fail-open 但要告知：這個檢查曾靜默 crash 三週沒人知道
+        return [f"[Guardian:Sync] ⚠ 未 push 檢查失敗（{type(e).__name__}）——見 atom-debug log；手動 git status 確認。"]
+
+
+def _pull_advisory_lines(_vs, root, label: str, info: Dict[str, Any]) -> list:
+    """拉側兩行（各自可缺）：上次拉入 N>0 筆 → 提醒候選池是本次載入快照；`.behind` 標記（或只剩 pull_error）→ 理由。
+    「拉入 N 筆」一次性：報過就把 last_pull 記進 roots.json pull_reported_at，同一次 last_pull 不再報（cooldown 內
+    的 reason=pull 請求不會覆寫 last_pull，沒有這個欄位會每個 session 重複報）。"""
+    try:
+        lines = []
+        pulled = info.get("pulled_commits") or 0
+        last_pull = info.get("last_pull")
+        if last_pull and pulled > 0 and info.get("pull_reported_at") != last_pull:
+            lines.append(
+                f"[Guardian:Sync] {label} 記憶層上次同步拉入 {pulled} 筆 commit（{str(last_pull)[:19]}）；"
+                "候選池以本次載入快照為準。")
+            # 「只報一次」盡力而為：寫 pull_reported_at 失敗（roots.lock 逾時，回 False、已進 atom-debug log）就不算
+            # 已報，下個 session 會再報同一次拉入；兩個 session 同時讀到同一份快照也會各報一次。重報一行提醒無害，
+            # 不為此在讀→判→寫之間加鎖。
+            if _vs:
+                _vs.update_root_record(_vs.SyncTarget(info.get("vcs", "git"), root, list(info.get("pathspecs") or [])),
+                                       pull_reported_at=last_pull)
+        rec = _vs.read_behind_record(root) if _vs else None
+        reason = (rec or {}).get("reason") or info.get("pull_error")
+        if reason:
+            lines.append(f"[Guardian:Sync] ⚠ {label} 記憶層落後未併入：{str(reason)[:100]}（見 Logs/vcs-sync.log）")
+        return lines
+    except Exception as e:
+        _atom_debug_error("session_start:pull_advisory", e)
+        return [f"[Guardian:Sync] ⚠ {label} 拉取狀態檢查失敗（{type(e).__name__}）——見 atom-debug log。"]
 
 
 def _index_conflict_advisory(cwd: str) -> list:
@@ -535,6 +591,38 @@ def _svn_index_conflict_advisory(cwd: str, root: Path) -> list:
         f"[Guardian:IndexConflict] ⚠ SVN 索引三檔尚未解（{', '.join(names)}）"
         "→ 在 CC 下 svn commit 前 hook 會自動解，或手動 python ~/.claude/tools/merge-atom-index.py --resolve"
     ]
+
+
+def _org_advisory(org_root, pool: Dict[str, Any]) -> List[str]:
+    """公司層一行：`[Org] 公司層 N 顆（<root>）`。
+    這台沒接上、使用者也還沒回答過（本機狀態檔沒有 enabled／declined）且共用 config 有 repo_url →
+    要 AI 用 AskUserQuestion 問使用者放哪裡；**每個 session 都出，直到有答案**（接上或 --decline）。
+    這幾行是給模型看的指示，不是給人看的通知：SessionStart 的輸出使用者看不到，只寫「對我說…」等於沒人會做。
+    沒 repo_url 零 context。根未 checkout／索引缺 → 警告一行（fail-open 必浮訊號）。cwd 就是 org 根時池不另列 org 組，不報。"""
+    if org_root is None:
+        shared = load_config().get("org_memory")
+        local = load_org_local()
+        if not isinstance(shared, dict) or not shared.get("repo_url") or local.get("enabled") or local.get("declined"):
+            return []
+        cmd = "python ~/.claude/tools/org-memory.py"
+        default_root = str(shared.get("default_root") or "")
+        opt_default = (f"(1) 接上，放在預設路徑 {default_root}（推薦）→ 執行 `{cmd} --join`；" if default_root else "")
+        return [
+            f"❓ [Org] 公司有一層所有專案共用的記憶（{shared.get('repo_url')}），這台機器還沒接上，使用者也還沒被問過。"
+            f"第一則回覆前先用 AskUserQuestion 問使用者：{opt_default}"
+            f"(2) 接上，放在使用者指定的資料夾（請他給完整路徑）→ `{cmd} --join \"<路徑>\"`；"
+            f"(3) 先不接 → `{cmd} --decline`（之後不再問；想接時說「接上公司記憶」）。"
+            f"選定後由你執行指令：資料夾不存在會自動從公司 repo 下載建立，路徑只記在這台機器的 "
+            f"workflow/org-memory.local.json（不進版控）；接上後告知「重開 session 生效」。"
+        ]
+    root = Path(org_root)
+    if not (root / ".claude" / "memory").is_dir():
+        return [f"[Org] 公司層記憶尚未接上（{root} 下無 .claude/memory）→ 對我說「接上公司記憶」或 /org join"]
+    if not pool.get("org_base"):
+        return []
+    if not (Path(pool["org_base"]) / "memory" / "_atom_index.json").is_file():
+        return [f"[Org] 公司層索引缺檔：{root}/.claude/memory/_atom_index.json（請在該 repo 跑 sync-atom-index）"]
+    return [f"[Org] 公司層 {len(pool.get('org') or [])} 顆（{root}）"]
 
 
 def _personal_sync_advisory(project_mem_dir, user: str) -> list:
@@ -640,6 +728,83 @@ def _personal_sync_advisory(project_mem_dir, user: str) -> list:
         return out
     except Exception as e:  # noqa: BLE001
         _atom_debug_error("session_start:personal_sync_advisory", e)
+        return [f"[Guardian:PersonalSync] ⚠ personal 同步檢查失敗（{type(e).__name__}）——見 atom-debug log。"]
+
+
+_ROOT_ASK_CMD = "python ~/.claude/tools/project-tree.py"
+
+
+def _project_root_notice(res, cwd: str) -> List[str]:
+    """專案根宣告行（📍 認領／info、⚠️ 警告、❓ 引導）。沒宣告也沒候選 → 空清單，外部專案零 token。"""
+    if res is None:
+        return []
+    lines: List[str] = []
+    if res.declared and res.path is not None:
+        from project_root import CLAIM_LABEL
+        label = CLAIM_LABEL.get(res.claimed_by, res.claimed_by)
+        if res.claimed_by != "self":
+            lines.append(
+                f"📍 [Guardian:ProjectRoot] {cwd} 屬 {res.path} 的子專案（宣告：{label} @ {res.via}）"
+                f"→ 記憶歸 {res.path / '.claude' / 'memory'}")
+    for info in res.infos:
+        lines.append(f"📍 [Guardian:ProjectRoot] {info}")
+    for warn in res.warnings:
+        lines.append(f"⚠️ [Guardian:ProjectRoot] {warn}")
+    if res.claimed_by in ("nearest", "none") and res.candidates and not res.standalone:
+        cands = "、".join(str(c) for c in res.candidates)
+        best = res.candidates[0]
+        lines.append(
+            f"❓ [Guardian:ProjectRoot] 上層 {cands} 有記憶層但未宣告與本層（{cwd}）的關係。"
+            f"第一則回覆前先用 AskUserQuestion 問使用者，四選一："
+            f"(1) 認領 {best}（推薦）→ 執行 `{_ROOT_ASK_CMD} claim --root \"{best}\" --cwd \"{cwd}\"`；"
+            f"(2) 本層獨立 → `{_ROOT_ASK_CMD} standalone on --cwd \"{cwd}\"`；"
+            f"(3) 瀏覽選別的資料夾 → `{_ROOT_ASK_CMD} pick --cwd \"{cwd}\"`；"
+            f"(4) 這次先不決定（不寫檔，下次再問）。選定後由你執行指令，並告知「重開 session 生效」。")
+    return lines
+
+
+def _root_fingerprint_matches(existing: Dict[str, Any], res) -> bool:
+    """resume/compact 能沿用舊 state 的前提：專案根指紋沒變（舊 state 沒指紋＝不符 → 重建）。"""
+    if res is None:
+        return True
+    return (existing.get("atom_index") or {}).get("project_root_fingerprint") == res.fingerprint
+
+
+_CARRY_ON_REBUILD = (
+    "modified_files", "accessed_files", "vcs_queries", "knowledge_queue", "sync_pending",
+    "stop_blocked_count", "topic_tracker", "session_context_injected",
+)
+
+
+def _next_phase_pointer(cwd: str, source: str) -> list:
+    """壓縮／恢復後的接續指標：找最新的 `_staging/next-phase-*.md`（專案層優先，其次根層），
+    一行叫模型先 Read 它並覆述現狀＋下一步。壓縮會丟掉對話裡的計畫脈絡；這個檔是單一權威狀態，
+    不靠模型記得「該去讀」。找不到就不吵。fail-open。"""
+    try:
+        from wg_core import resolve_staging_dir
+        cands = []
+        dirs = []
+        try:
+            dirs.append(resolve_staging_dir(cwd))
+        except Exception:
+            pass
+        dirs.append(MEMORY_DIR / "_staging")
+        seen = set()
+        for d in dirs:
+            if not d or str(d) in seen or not Path(d).is_dir():
+                continue
+            seen.add(str(d))
+            cands += [p for p in Path(d).glob("next-phase-*.md") if p.is_file()]
+        if not cands:
+            return []
+        newest = max(cands, key=lambda p: p.stat().st_mtime)
+        why = "context 剛壓縮" if source == "compact" else "session 恢復"
+        return [
+            f"[Guardian:Resume] {why}：對話裡的計畫脈絡可能已失真 → 先 `Read {newest.as_posix()}`"
+            "（最新交接檔），用一句話覆述現狀＋下一步再動工。"
+        ]
+    except Exception as e:  # noqa: BLE001
+        _atom_debug_error("session_start:next_phase_pointer", e)
         return []
 
 
@@ -647,6 +812,13 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
     session_id = input_data.get("session_id", "unknown")
     cwd = input_data.get("cwd", "")
     source = input_data.get("source", "startup")
+    root_res = None
+    root_lines: List[str] = []
+    try:
+        root_res = resolve_project_root(cwd) if (resolve_project_root and cwd) else None
+        root_lines = _project_root_notice(root_res, cwd)
+    except Exception as e:
+        _atom_debug_error("session_start:project_root", e)
 
     # log rotation — prevent runaway log bloat
     try:
@@ -666,8 +838,13 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             redirect_state = new_state(session_id, cwd, source)
             redirect_state["merged_into"] = sibling["session"]["id"]
             redirect_state["phase"] = "merged"
+            if root_res is not None:
+                redirect_state["atom_index"] = {
+                    "project_root": str(root_res.path) if root_res.path else "",
+                    "project_root_fingerprint": root_res.fingerprint,
+                }
             write_state(session_id, redirect_state)
-            lines = [f"[Workflow Guardian] Session merged ({source})."]
+            lines = [f"[Workflow Guardian] Session merged ({source}).", *root_lines]
             print(json.dumps({
                 "hookSpecificOutput": {
                     "hookEventName": "SessionStart",
@@ -677,11 +854,13 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             sys.exit(0)
 
     existing = read_state(session_id)
-    if existing and source in ("compact", "resume"):
-        # V5+ realm 閘門已知限制：compact/resume 複用舊 state 的 atom_index 快取，
-        # 不重建候選。故若 session 於 ~/.claude 啟動（local 在快取）後跨環境 resume
-        # 到外部專案 cwd，殘留的 local 候選不會被重濾（極低頻：同一 session id 跨
-        # 機器/跨根 resume）。重啟（source=startup/新 session）即走上方重建分支正確過濾。
+    root_rebuilt = False
+    if existing and source in ("compact", "resume") and not _root_fingerprint_matches(existing, root_res):
+        # 專案根指紋變了（cwd 換了、宣告檔改了、或舊 state 還沒有指紋）→ 走下方重建分支重算
+        # atom_index / aidocs，session 脈絡（修改檔、知識佇列…）照搬
+        root_rebuilt = True
+    if existing and source in ("compact", "resume") and not root_rebuilt:
+        # compact/resume 複用舊 state 的 atom_index 快取（指紋相同才走到這裡）
         state = existing
         prev_atoms = state.get("injected_atoms", [])
         state["injected_atoms"] = []
@@ -691,6 +870,8 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         lines = [
             f"[Workflow Guardian] Session resumed ({source}). Phase: {phase}.",
             f"Modified files: {mod_count}. Knowledge queue: {kq_count}.",
+            *root_lines,
+            *_next_phase_pointer(cwd, source),
         ]
         if mod_count > 0:
             files = [m["path"].rsplit("/", 1)[-1] for m in state["modified_files"][-5:]]
@@ -709,26 +890,20 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             lines.append(f"[Atom Recovery] 壓縮前已載入: {atom_names}")
     else:
         state = new_state(session_id, cwd, source)
+        if root_rebuilt and existing:
+            for key in _CARRY_ON_REBUILD:
+                if key in existing:
+                    state[key] = existing[key]
+            state["phase"] = existing.get("phase", "working")
         if sibling and source == "startup":
             state["_skip_vector_init"] = True
 
+        # ── 記憶層背景「拉」：在首次讀索引之前 detached 起 vcs-sync worker（秒回、不等）。
+        # 趕不趕得上本次候選池隨緣——拉入的 atom 下一個 session 才一定進候選池，advisory 只報同步事實。
+        _spawn_pull_sync(session_id, cwd, config)
+
         global_atoms = parse_memory_index(MEMORY_DIR)
-        # ── V5+ realm 注入閘門（範疇限定）──────────────────────────────────────
-        # 此處為「新 session 候選快取建立處」——user_prompt_submit 只讀此快取做
-        # trigger 比對注入，故閘門落點在此、非注入迴圈。外部專案（cwd∉~/.claude）
-        # 濾掉 local-realm atom（index path 前綴 _AIDocs/_atoms/）；core（含 feedback-*
-        # 所在的 _AIDocs/Failures/）不受影響。**例外**：is_cross_project_local 為真者
-        # （storage 在 _atoms 但屬 CROSS_PROJECT_LOCAL_DOMAINS；清單目前為空、機制保留）保留——
-        # 解開「儲存位置綁死注入範圍」，對偶 feedback-*。直接用既有 3-tuple 的 path 過濾，
-        # 不查 realm map、不改 tuple 形狀。is_local_realm_path 為 None（lib import 失敗）→
-        # 不過濾（fail-open 回退至 pre-S2 全注入，安全）。
-        if is_local_realm_path is not None and not _is_under_claude_dir(cwd):
-            global_atoms = [
-                (n, p, t) for (n, p, t) in global_atoms
-                if not is_local_realm_path(p) or is_cross_project_local(p)
-            ]
         project_mem_dir = get_project_memory_dir(cwd)
-        project_atoms = parse_memory_index(project_mem_dir) if project_mem_dir else []
         project_root = find_project_root(cwd)
 
         register_project(cwd)
@@ -736,15 +911,12 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         v4_user = ""
         v4_roles: List[str] = []
         v4_mgmt = False
-        v4_entries: List[Tuple[str, str, List[str]]] = []
         try:
             v4_user = get_current_user()
             bootstrap_personal_dir(cwd, v4_user)
             role_info = load_user_role(cwd, v4_user)
-            v4_roles = role_info.get("roles") or ["programmer"]
+            v4_roles = list(role_info.get("roles") or [])  # 查不到職能＝[]，不預設 programmer
             v4_mgmt = is_management(cwd, v4_user)
-            if project_mem_dir:
-                v4_entries = _collect_v4_role_atoms(project_mem_dir, v4_user, v4_roles)
         except Exception as e:
             _atom_debug_error("role_bootstrap", e)
 
@@ -754,48 +926,40 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             "management": v4_mgmt,
         }
 
+        # 候選池單源（wg_atoms.build_candidate_pool，memory_search 同用）：local-realm 閘門、
+        # scope 可見性（SPEC §8.1：personal 只給本人、role 只給持有者）、Supersedes 名單都在裡面收窄一次；
+        # UPS 六條檢索路全從此池取，不再各自過濾。副作用（註冊、bootstrap、MEMORY.md 重生）留在本檔。
+        org_root = org_memory_root()
+        pool = build_candidate_pool(
+            cwd, v4_user, v4_roles,
+            org_root=str(org_root) if org_root else None, global_atoms=global_atoms,
+        )
+        global_atoms = pool["global"]
+        project_atoms_merged = pool["project"]
+
         v4_layout_active = bool(project_mem_dir) and any(
             (project_mem_dir / d).is_dir() for d in ("shared", "roles", "personal")
         )
 
-        if v4_layout_active:
-            project_atoms_merged = list(v4_entries)
-        else:
-            project_atoms_merged = list(project_atoms)
-            existing_names = {n for n, _p, _t in project_atoms_merged}
-            for name, rel_path, triggers in v4_entries:
-                if name in existing_names:
-                    continue
-                project_atoms_merged.append((name, rel_path, triggers))
-                existing_names.add(name)
-
-        # scope 可見性（SPEC §8.1）：候選池只留本人看得到的——personal 只給本人、
-        # role 只給持有者；V3 / V4 佈局一視同仁。UPS 六條檢索路全從此池取，不再各自過濾。
-        global_atoms = filter_visible(global_atoms, v4_user, v4_roles)
-        project_atoms_merged = filter_visible(project_atoms_merged, v4_user, v4_roles)
-        atom_scopes = {n: scope_from_rel_path(p, "global") for n, p, _t in global_atoms}
-        atom_scopes.update({n: scope_from_rel_path(p, "shared") for n, p, _t in project_atoms_merged})
-        project_slug = ""
-        if project_root:
-            try:
-                project_slug = cwd_to_project_slug(str(project_root.resolve()))
-            except OSError:
-                project_slug = cwd_to_project_slug(str(project_root))
-
         state["atom_index"] = {
-            "global": [(n, p, t) for n, p, t in global_atoms],
-            "project": [(n, p, t) for n, p, t in project_atoms_merged],
-            "project_memory_dir": str(project_mem_dir) if project_mem_dir else "",
-            "project_root": str(project_root) if project_root else "",
-            "project_slug": project_slug,
-            "scopes": atom_scopes,
+            "global": pool["global"],
+            "project": pool["project"],
+            "org": pool["org"],
+            "org_base": pool["org_base"],
+            "project_memory_dir": pool["project_memory_dir"],
+            "project_root": pool["project_root"],
+            "project_root_fingerprint": root_res.fingerprint if root_res else "",
+            "project_slug": pool["project_slug"],
+            "scopes": pool["scopes"],
+            "superseded": pool["superseded"],
         }
         state["injected_atoms"] = []
-        state["phase"] = "working"
+        if not root_rebuilt:
+            state["phase"] = "working"
 
         if v4_layout_active and v4_user:
             _regenerate_role_filtered_memory_index(
-                project_mem_dir, v4_user, v4_roles, v4_mgmt, v4_entries,
+                project_mem_dir, v4_user, v4_roles, v4_mgmt, project_atoms_merged,
             )
 
         aidocs_entries = parse_aidocs_index(project_root) if project_root else []
@@ -809,8 +973,10 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         g_names = [n for n, _, _ in global_atoms]
         p_names = [n for n, _, _ in project_atoms_merged]
         lines = [
-            "[Workflow Guardian] Active.",
+            "[Workflow Guardian] Active." if not root_rebuilt
+            else f"[Workflow Guardian] Session resumed ({source}); 專案根變更，atom index 已重建.",
             f"Global: {len(g_names)} atoms. Project: {len(p_names)}.",
+            *root_lines,
         ]
 
         # ── 全域 index 解析 fail-loud ──
@@ -918,15 +1084,16 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         lines.extend(_followup_advisory())
         lines.extend(_scope_layout_advisory(project_mem_dir))
         lines.extend(_personal_sync_advisory(project_mem_dir, v4_user))
+        lines.extend(_org_advisory(org_root, pool))
 
         if v4_user:
             lines.append(
-                f"[Role] user={v4_user} roles={','.join(v4_roles) or 'programmer'} mgmt={v4_mgmt}"
+                f"[Role] user={v4_user} roles={','.join(v4_roles) or '-'} mgmt={v4_mgmt}"
             )
-            if v4_mgmt:
-                pending = _count_pending_review(project_mem_dir)
-                if pending > 0:
-                    lines.append(f"[Pending Review] {pending} 件待裁決（shared/_pending_review/）")
+            # 待審草稿對所有人顯示（裁決資格另由 config review.deciders 決定）
+            pending = _count_pending_review(project_mem_dir)
+            if pending > 0:
+                lines.append(f"[Pending Review] {pending} 件待裁決（shared/_pending_review/）")
 
         if v4_user and config.get("userExtraction", {}).get("enabled", False):
             try:

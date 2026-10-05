@@ -6,6 +6,7 @@
 
 | Atom | 說明 |
 |------|------|
+| act-r-activation-增益乘進-rrf-會壓過相關性-gain-0250-讓-r1-4581-排序權重一律先過對齊評估器 | ACT-R activation 增益乘進 RRF 會壓過相關性-gain 0.25→0 讓 R@1 45%→81%-排序權重一律先過對齊評估器 |
 | activation負值不是負相關-act-r對數尺度天然跨零-注入噪音修門檻與顯示勿過濾分數 | activation負值不是負相關-ACT-R對數尺度天然跨零-注入噪音修門檻與顯示勿過濾分數 |
 | always-load-規則檔修剪判準-事前規則留一句-事後且已有程式硬控制才刪-啟發式提示不算硬控制 | always-load 規則檔修剪判準-事前規則留一句-事後且已有程式硬控制才刪-啟發式提示不算硬控制 |
 | anti-evasion-hud-設計脊柱與強化前必讀 | anti-evasion-hud-設計脊柱與強化前必讀 |
@@ -13,6 +14,7 @@
 | atom-move-v5-sot-correct-化與半遷移工具辨識 | atom-move V5 SoT-correct 化與半遷移工具辨識 |
 | atom-table-support | atom_write 知識區表格/程式碼 fence block 渲染用法（dogfood） |
 | atom-usefulness-loop | 注入→使用→結果 閉環效用 (α,β)：use 偵測 + Wilson 晉升 + 慢衰減（Phase 2，#2） |
+| atom-write-dry-run仍在專案樹留空範疇資料夾-落點helper沿路mkdir-p-預覽不等於零副作用 | atom-write-dry-run仍在專案樹留空範疇資料夾-落點helper沿路mkdir-p-預覽不等於零副作用 |
 | atom-元資料編輯與晉升閘真相 | atom 元資料編輯與晉升閘真相 |
 | auto-capture碎片sweep污染詞庫-defer根治 | auto-capture碎片sweep污染詞庫-defer根治 |
 | catclaw-遷移到-claude-code-的落點與踩坑 | CatClaw 遷移到 Claude Code 的落點與踩坑 |
@@ -27,18 +29,26 @@
 | harness原生memory與atom索引marker撞名辨識 | harness原生memory與atom索引marker撞名辨識 |
 | hook-py改動立即生效-每次呼叫起新進程-只有mcp-node進程需重啟 | hook-py改動立即生效-每次呼叫起新進程-只有MCP-node進程需重啟 |
 | hook-內呼叫外部工具的四個坑-home覆寫下claude-dir指錯-pythonw無stdio-5秒預算-探針要隔離global設定 | hook 內呼叫外部工具的四個坑-HOME覆寫下CLAUDE_DIR指錯-pythonw無stdio-5秒預算-探針要隔離global設定 |
+| hud心跳被chromium隱藏頁節流成每分鐘一次-心跳改跑web-worker-編serverjs前先顧relinquish的mtime契約 | hud心跳被chromium隱藏頁節流成每分鐘一次-心跳改跑web-worker-編server.js前先顧relinquish的mtime契約 |
 | hud暫存清單靠prose猜路徑的失敗-改殘檔帳本以檔案系統為權威 | HUD暫存清單靠prose猜路徑的失敗-改殘檔帳本以檔案系統為權威 |
+| hud窗活性改看sse連線數不看心跳-心跳只證明正在渲染-判死原因落guard-aec-hud-stop再查一次 | hud窗活性改看sse連線數不看心跳-心跳只證明正在渲染-判死原因落guard-aec_hud-stop再查一次 |
+| knowledge-harvest-階段收割與vcs-sync機制指標與踩坑 | knowledge-harvest-階段收割與vcs-sync機制指標與踩坑 |
 | mcp-js-改動後未重啟-lazy-require-新舊模組混載-tool-回-undefined-類錯誤不是-bug-reload-window-即復原 | MCP js 改動後未重啟-lazy-require 新舊模組混載-tool 回 undefined 類錯誤不是 bug-Reload Window 即復原 |
 | memory-pipeline-silent-failure-2026-05 | 記憶機制靜默失效（confirmations 零增 + episodic 停擺） |
+| org-memory-init-必種一顆工具卡-sync-memory-index對空索引exit1 | org-memory-init-必種一顆工具卡-sync-memory-index對空索引exit1 |
 | otel-遙測評估結論-不實作-兩目標指標皆測不到 | OTEL 遙測評估結論-不實作-兩目標指標皆測不到 |
 | pan-hermes不移植部件與vscode-text-block不落盤實測 | pan-hermes不移植部件與vscode-text-block不落盤實測 |
 | post-mortem-write-raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用 | post-mortem-write_raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用 |
+| posttooluse的tool-response不等於模型看到的結果-edit帶整份originalfile-量context浪費要按工具取可見欄位 | PostToolUse的tool_response不等於模型看到的結果-Edit帶整份originalFile-量context浪費要按工具取可見欄位 |
 | repo-全面-lf-決策與守衛鏈 | repo-全面-LF-決策與守衛鏈 |
 | scope-shared-無主題子夾路由-專案靠-project-hooks-sweep-分層 | scope-shared-無主題子夾路由-專案靠-project_hooks-sweep-分層 |
 | svn測試與hook的三個實測事實-diff3相鄰改動自合-整wc-status爆預算-只信xml輸出 | svn測試與hook的三個實測事實-diff3相鄰改動自合-整WC status爆預算-只信xml輸出 |
 | testfailgate-非-pytest-失敗紀錄只靠同前綴-40-字的成功指令清除-重跑勿加-cd-前綴 | TestFailGate 非 pytest 失敗紀錄只靠同前綴 40 字的成功指令清除-重跑勿加 cd 前綴 |
 | toolchain-ollama | Ollama Dual-Backend 實戰記憶 |
 | usefulness晉升軌兩級同門檻-同日連跳觀到固的假晉升 | usefulness晉升軌兩級同門檻-同日連跳觀到固的假晉升 |
+| vcs-sync拉取側機制指標與踩坑-隔離worktree-recover持久化-新編輯保護-冷卻 | vcs-sync拉取側機制指標與踩坑-隔離worktree-recover持久化-新編輯保護-冷卻 |
+| vcs-sync的git-add兩個真實環境失敗-已追蹤但被gitignore蓋到的檔刪除要加-f-前一輪已stage的刪除不得再add | vcs-sync的git-add兩個真實環境失敗-已追蹤但被gitignore蓋到的檔刪除要加-f-前一輪已stage的刪除不得再add |
+| windows-每支-hook-子程序啟動約-150ms-同事件多支-standalone-hook-先量再併-過-100ms-且等價回放全過才合 | Windows 每支 hook 子程序啟動約 150ms-同事件多支 standalone hook 先量再併-過 100ms 且等價回放全過才合 |
 | write-raw-對未列舉-source-靜默回-okfalse-不-raise呼叫端必檢查回傳值 | write_raw 對未列舉 source 靜默回 ok=False 不 raise（呼叫端必檢查回傳值） |
 | 佛法三缺口工程化-失念壞滅緣了義 | 佛法三缺口工程化-失念壞滅緣了義 |
 | 健檢error與索引矛盾即解析器誤報-audit跨層全掃自08-31起-週報global-only看不到專案層 | 健檢error與索引矛盾即解析器誤報-audit跨層全掃自08-31起-週報global-only看不到專案層 |
@@ -48,14 +58,19 @@
 | 向量庫stale清理失效根因-layer標籤含冒號拆鍵錯位-刪0列仍回報成功 | 向量庫stale清理失效根因-layer標籤含冒號拆鍵錯位-刪0列仍回報成功 |
 | 啟動鏈自動覆寫陷阱-user-init每session拷貝來源檔必先驗證管線仍成立 | 啟動鏈自動覆寫陷阱-user-init每session拷貝來源檔必先驗證管線仍成立 |
 | 回訪機制-改完一週後看數據交給到期自動跑-交接以接手者零記憶為前提 | 回訪機制-改完一週後看數據交給到期自動跑-交接以接手者零記憶為前提 |
+| 子專案cwd歸核心根層-project-tree雙向宣告-無宣告零行為變化-hook只讀不寫 | 子專案cwd歸核心根層-project-tree雙向宣告-無宣告零行為變化-hook只讀不寫 |
 | 專案工作驗收裁判的分級啟動與殺閘設計 | 專案工作驗收裁判的分級啟動與殺閘設計 |
 | 專案等級-mcpskillhookslog-不放全域根層 | 專案等級 mcp/skill/hooks/log 不放全域根層 |
 | 巨檔純機械拆分-carve腳本與驗證盲點 | 巨檔純機械拆分-carve腳本與驗證盲點 |
 | 本repo公開有同事使用者-外部pr審查與docindex衝突解法 | 本repo公開有同事使用者-外部PR審查與DocIndex衝突解法 |
 | 模型行為移植-fable行為契約必載檔 | 模型行為移植-Fable行為契約必載檔 |
 | 檢索融合與回歸集調參-rrf-min-score-定案 | 檢索融合與回歸集調參-rrf-min-score-定案 |
+| 注入記帳以送達為準-裁切後才算-injected-宣稱送出但被總額砍掉的-atom-不得計曝光與效用 | 注入記帳以送達為準-裁切後才算 injected-宣稱送出但被總額砍掉的 atom 不得計曝光與效用 |
 | 注入預算三教訓-裁切要回填-分級看token不看字元-橋接檔須隨索引重產 | 注入預算三教訓-裁切要回填-分級看token不看字元-橋接檔須隨索引重產 |
+| 活躍session的state被fallback覆蓋-讀失敗不等於遺失且working-ttl-30分太短-多sub-agent共用session-id時必撞 | 活躍session的state被fallback覆蓋-讀失敗不等於遺失且working-ttl-30分太短-多sub-agent共用session-id時必撞 |
 | 禁語-hook-不開引用豁免誤報噪音-vs-契約破洞不對稱 | 禁語 hook 不開引用豁免（誤報噪音 vs 契約破洞不對稱） |
+| 程式批量產生的atom觸發詞不得含日常字與種類單字-一句話就把整批拉進注入吃光預算-只放專名與名稱加種類片語 | 程式批量產生的atom觸發詞不得含日常字與種類單字-一句話就把整批拉進注入吃光預算-只放專名與名稱加種類片語 |
+| 糾正與失敗偵測把sub-agent完成通知當使用者輸入-task-notification整則進ups-引用的糾正詞誤觸deeppostmortem | 糾正與失敗偵測把sub-agent完成通知當使用者輸入-task-notification整則進UPS-引用的糾正詞誤觸DeepPostMortem |
 | 衝突偵測-block-資格閘-複驗一致-分區感知-待審出路 | 衝突偵測-block-資格閘-複驗一致-分區感知-待審出路 |
 | 規則縫隙偏移-兩條各自合理的規則疊出第三種行為-syncreminder被local-commit靜音 | 規則縫隙偏移-兩條各自合理的規則疊出第三種行為-SyncReminder被local-commit靜音 |
 | 記憶索引分類讀寫鏈總審計結論-驗無誤清單與一條龍中斷點 | 記憶索引分類讀寫鏈總審計結論-驗無誤清單與一條龍中斷點 |

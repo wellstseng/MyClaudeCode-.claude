@@ -28,8 +28,8 @@ from pathlib import Path
 
 CLAUDE = Path(__file__).resolve().parents[2]
 SCAN_DIRS = [CLAUDE / "hooks", CLAUDE / "lib", CLAUDE / "tools", CLAUDE / "skills"]
-# synced＝桌面版 App 同步進來的第三方技能（skills/synced/，不進版控、不歸本 repo 維護）
-EXCLUDE_PARTS = {"verify", "__pycache__", "node_modules", "_archived", "_archive", "v4-archive", "synced"}
+EXCLUDE_PARTS = {"verify", "__pycache__", "node_modules", "_archived", "_archive", "v4-archive",
+                 "synced"}  # skills/synced/ 是 Claude Code 同步下來的外部 skill，不是本 repo 程式碼
 TEMPFILE_FUNCS = {"NamedTemporaryFile", "TemporaryFile", "SpooledTemporaryFile"}
 OPEN_TEXT_WRITE_CHARS = set("wax+")
 TEMPFILE_TEXT_CHARS = set("wa+")

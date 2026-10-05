@@ -15,7 +15,7 @@ from typing import Any, Dict, List
 
 from wg_core import (
     _ensure_state, _now_iso, write_state, output_json, output_nothing,
-    _atom_debug_error, WORKFLOW_DIR,
+    _atom_debug_error, append_guard_log, WORKFLOW_DIR,
 )
 from wg_episodic import _check_output_quality
 from wg_extraction import _is_lease_valid  # noqa: F401
@@ -25,8 +25,17 @@ from wg_evasion import (
 )
 from wg_atoms import _trigger_incremental_index
 from wg_extraction import is_plan_filename
+from wg_harvest import (
+    parse_receipt, record_atom_op, apply_report, append_ledger, validated_this_turn,
+    is_error_response,
+)
+try:
+    from wg_vcs_sync import spawn_vcs_sync  # 收割 validated 後背景 commit/push 記憶目錄
+except ImportError:
+    spawn_vcs_sync = None
 from handlers import aec_ledger
 from handlers._shared import (
+    _hud_alive,
     _is_ephemeral_path,
     WISDOM_AVAILABLE, wisdom_track_retry,
     DOCDRIFT_AVAILABLE, check_source_drift, resolve_doc_update, prune_committed_entries,
@@ -92,6 +101,7 @@ def _record_subagent_injection(state: Dict[str, Any], input_data: Dict[str, Any]
         "status": tr.get("status", "") or "",
         "output_summary": _extract_agent_output_summary(tr),
         "tool_use_id": input_data.get("tool_use_id", "") or "",
+        "turn_seq": int(state.get("turn_seq", 0) or 0),  # 來源回合：Stop 只結算本輪的紀錄
         "at": _now_iso(),
     }
     injections = state.setdefault("subagent_injections", [])
@@ -225,19 +235,6 @@ def _collect_aec_evidence(
     return evidence
 
 
-def _hud_beat_fresh(port: int, threshold_s: int) -> bool:
-    """GET /api/aec/beat-status → age_s < threshold？不可達 / 舊碼(404) / 逾時 → False（窗死）。"""
-    try:
-        import urllib.request
-        with urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/api/aec/beat-status", timeout=0.6
-        ) as r:
-            data = json.loads(r.read().decode("utf-8"))
-        return int(data.get("age_s", 10 ** 9)) < threshold_s
-    except Exception:
-        return False
-
-
 def _find_edge() -> str:
     """定位 msedge 執行檔（僅 Windows 主環境；找不到回 ""）。"""
     if sys.platform == "win32":
@@ -272,17 +269,22 @@ def _spawn_hud_edge(port: int) -> None:
         _atom_debug_error("post_tool_use:aec_spawn_edge", e)
 
 
-def _maybe_spawn_hud(sev: str, state: Dict[str, Any], config: Dict[str, Any]) -> None:
-    """窗活著（心跳新）→ 會輪詢渲染、無需 fallback。窗死：config.aec.hud_autospawn 才嘗試
-    spawn Edge（預設關）；且 sev∈{notable,real-evasion} → 標 aec_hud_fallback 供 Stop 大聲
-    補 chat（可觀測性鐵律：push 不到窗不得 fail-silent）。routine 窗死只落 disk（無退避訊號、
-    可事後由歷史格瀏覽，非違反可觀測性）。Fail-open。"""
+def _maybe_spawn_hud(sev: str, state: Dict[str, Any], config: Dict[str, Any],
+                     session_id: str = "") -> None:
+    """窗活著（HUD 頁連線在，或心跳新）→ 會輪詢渲染、無需 fallback。窗死：config.aec.hud_autospawn
+    才嘗試 spawn Edge（預設關）；且 sev∈{notable,real-evasion} → 標 aec_hud_fallback 供 Stop
+    再查一次後大聲補 chat（可觀測性鐵律：push 不到窗不得 fail-silent）。routine 窗死只落 disk
+    （無退避訊號、可事後由歷史格瀏覽，非違反可觀測性）。判死原因一律落 guard-aec_hud.jsonl。Fail-open。"""
     try:
         aec_cfg = (config or {}).get("aec", {}) or {}
         port = int((config or {}).get("dashboard_port", 3848))
         threshold = int(aec_cfg.get("hud_stale_s", 30))
-        if _hud_beat_fresh(port, threshold):
+        alive, info = _hud_alive(port, threshold)
+        if alive:
             return
+        append_guard_log("aec_hud", {
+            "where": "post_tool_use", "session_id": session_id, "severity": sev, **info,
+        })
         # B：只有 notable/real-evasion 才彈窗（routine 靜默入 disk、不打擾）。
         if aec_cfg.get("hud_autospawn", False) and sev in ("notable", "real-evasion"):
             _spawn_hud_edge(port)
@@ -292,11 +294,98 @@ def _maybe_spawn_hud(sev: str, state: Dict[str, Any], config: Dict[str, Any]) ->
         _atom_debug_error("post_tool_use:aec_maybe_spawn_hud", e)
 
 
+def _run_companion_hooks(input_data: Dict[str, Any], config: Dict[str, Any]):
+    """原 standalone PostToolUse hook（version_guard / acceptance_spec）併入本程序，省每次
+    Edit/Write 多起兩支 Python。各自 try/except 隔離，錯誤只進 debug log、不影響 guardian 主流程。
+    回 (systemMessage 訊息, additionalContext 訊息)；兩檔仍保留 __main__ 可獨跑——
+    回滾＝settings.json 的 PostToolUse 加回那兩行。"""
+    sys_msgs: List[str] = []
+    ctx_msgs: List[str] = []
+    try:
+        import version_guard
+        sys_msgs = list(version_guard.run(input_data, config.get("version_guard", {})))
+    except Exception as e:
+        _atom_debug_error("post_tool_use:version_guard", e)
+    try:
+        import acceptance_spec
+        ctx_msgs = list(acceptance_spec.run(input_data, config.get("acceptance_spec", {})))
+    except Exception as e:
+        _atom_debug_error("post_tool_use:acceptance_spec", e)
+    return sys_msgs, ctx_msgs
+
+
+def _emit_post_tool_output(advisories: List[str], sys_msgs: List[str]) -> None:
+    """單一出口：additionalContext（給模型）＋ systemMessage／stderr（給使用者，version_guard 原格式）。"""
+    for m in sys_msgs:
+        print(m, file=sys.stderr)
+    out: Dict[str, Any] = {}
+    if sys_msgs:
+        out["systemMessage"] = "\n".join(sys_msgs)
+    if advisories:
+        out["hookSpecificOutput"] = {
+            "hookEventName": "PostToolUse",
+            "additionalContext": "\n".join(advisories),
+        }
+    if out:
+        output_json(out)
+    else:
+        output_nothing()
+
+
+def _track_test_result(state: Dict[str, Any], input_data: Dict[str, Any], command: str) -> bool:
+    """Bash 測試指令 → 記／清 state.failing_tests；回傳是否動到 state。
+    子代理（hook 輸入帶 agent_id）自己迭代中的紅測不記進主 session，也不替主 session 清帳；
+    否則子代理跑到一半的紅測會讓主 session 的 Stop 被 TestFailGate 擋。"""
+    if not is_test_command(command) or input_data.get("agent_id"):
+        return False
+    tr = input_data.get("tool_response", {}) or {}
+    if isinstance(tr, dict):
+        stdout = tr.get("stdout", "") or ""
+        stderr = tr.get("stderr", "") or ""
+        interrupted = bool(tr.get("interrupted", False))
+    else:
+        stdout, stderr, interrupted = str(tr), "", False
+    failure = detect_test_failure(stdout, stderr, interrupted)
+    if failure:
+        state.setdefault("failing_tests", []).append({
+            "tool": "Bash",
+            "cmd": command[:200],
+            # cmd 截 200 字會把串在後段的 pytest 截掉 → 綠的 pytest 對不上、永遠清不掉；
+            # 記錄時就用全文判定一次
+            "pytest": "pytest" in command.lower(),
+            "summary": failure,
+            "at": _now_iso(),
+            # 供 Stop 端 outcome 歸因「只認本 turn 失敗」（sync/test-fail
+            # gate 等其他消費者仍看全量清單，語意不變）
+            "turn_seq": int(state.get("turn_seq", 0)),
+        })
+        return True
+    if not state.get("failing_tests"):
+        return False
+    cmd_prefix = command[:80].strip()
+    is_pytest_success = "pytest" in command.lower()
+    before = state["failing_tests"]
+    after = [
+        f for f in before
+        if not f.get("cmd", "").startswith(cmd_prefix[:40])
+        and not (is_pytest_success and (
+            f.get("pytest")
+            or "pytest" in f.get("cmd", "").lower()
+            or "short test summary" in f.get("summary", "")   # legacy 無 flag 者看 pytest 輸出特徵
+        ))
+    ]
+    if len(after) == len(before):
+        return False
+    state["failing_tests"] = after
+    return True
+
+
 def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
     session_id = input_data.get("session_id", "")
     state = _ensure_state(session_id, input_data, config)
     if not state:
-        output_nothing()
+        sys_msgs, ctx_msgs = _run_companion_hooks(input_data, config)
+        _emit_post_tool_output(ctx_msgs, sys_msgs)
         return
 
     tool_name = input_data.get("tool_name", "")
@@ -319,6 +408,19 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             dirty = True
     except Exception as e:
         print(f"rescue check error: {e}", file=sys.stderr)
+
+    # ─── 工具結果體積：每筆量長度落 per-session 檔（不進 state）；單筆超門檻 → advisory ───
+    try:
+        from wg_friction import record_tool_result
+        _trs_adv = record_tool_result(
+            state, session_id, tool_name, tool_input, input_data.get("tool_response"), config,
+            base_dir=WORKFLOW_DIR,
+        )
+        if _trs_adv:
+            state["_tool_result_advisory"] = _trs_adv
+            dirty = True
+    except Exception as e:
+        print(f"tool result size error: {e}", file=sys.stderr)
 
     # ─── sub-agent 注入歸因記錄 ───────────────────────────────
     # PostToolUse 對 Agent/Task 自足：tool_response 含 agentId / content / prompt
@@ -475,47 +577,8 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             state["last_commit_turn_seq"] = int(state.get("turn_seq", 0))
             dirty = True
 
-        if is_test_command(command):
-            tr = input_data.get("tool_response", {}) or {}
-            if isinstance(tr, dict):
-                stdout = tr.get("stdout", "") or ""
-                stderr = tr.get("stderr", "") or ""
-                interrupted = bool(tr.get("interrupted", False))
-            else:
-                stdout, stderr, interrupted = str(tr), "", False
-            failure = detect_test_failure(stdout, stderr, interrupted)
-            if failure:
-                ft = state.setdefault("failing_tests", [])
-                ft.append({
-                    "tool": "Bash",
-                    "cmd": command[:200],
-                    # cmd 截 200 字會把串在後段的 pytest 截掉 → 綠的 pytest 對不上、永遠清不掉；
-                    # 記錄時就用全文判定一次
-                    "pytest": "pytest" in command.lower(),
-                    "summary": failure,
-                    "at": _now_iso(),
-                    # 供 Stop 端 outcome 歸因「只認本 turn 失敗」（sync/test-fail
-                    # gate 等其他消費者仍看全量清單，語意不變）
-                    "turn_seq": int(state.get("turn_seq", 0)),
-                })
-                dirty = True
-            elif state.get("failing_tests"):
-                cmd_prefix = command[:80].strip()
-                cmd_lower = command.lower()
-                is_pytest_success = "pytest" in cmd_lower
-                before = state["failing_tests"]
-                after = [
-                    f for f in before
-                    if not f.get("cmd", "").startswith(cmd_prefix[:40])
-                    and not (is_pytest_success and (
-                        f.get("pytest")
-                        or "pytest" in f.get("cmd", "").lower()
-                        or "short test summary" in f.get("summary", "")   # legacy 無 flag 者看 pytest 輸出特徵
-                    ))
-                ]
-                if len(after) != len(before):
-                    state["failing_tests"] = after
-                    dirty = True
+        if _track_test_result(state, input_data, command):
+            dirty = True
 
     elif tool_name.endswith("anti_evasion_report"):
         # MCP 結構化收尾 emit（one-writer spine）：MCP tool 只回 chip、不碰 state；
@@ -562,7 +625,9 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         # (d)/(h) pending：把「記憶寫入」推到之後（尚未寫／見下一動／下一動＝寫 atom）。
         # 報告是收尾檢核，不是待辦清單——落 d_pending 供 HUD 標紅，並回告模型當回合補寫；
         # Stop 端讀 d_pending 擋一次（AEC-Pending Gate），逼 atom_write 後重新 emit。
-        pending = aec_pending_items(vals["d"], vals["h"])
+        # 本 turn 已有 validated 收割 → (d) 的記憶收錄帳已由收割核對過，不再判 d_pending；(h) 照舊。
+        hv_done = validated_this_turn(state, session_id, turn_seq)
+        pending = aec_pending_items("" if hv_done else vals["d"], vals["h"])
         if pending:
             report["d_pending"] = pending
             aec_reject_msgs.append(
@@ -589,8 +654,61 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                 )
         except Exception as e:
             _atom_debug_error("post_tool_use:aec_ledger_collect", e)
-        _maybe_spawn_hud(sev, state, config)
+        _maybe_spawn_hud(sev, state, config, session_id)
         dirty = True
+
+    elif tool_name.endswith("atom_write") or tool_name.endswith("atom_retire"):
+        # atom 工具成功時結果最後一行 `receipt: {json}`（失敗呼叫沒有 receipt → 不記）。
+        # 入帳 state["atom_ops"][sid]，收割回報用它逐項核對（exists()/全域 resolver 驗不出
+        # 專案層 atom、append 是否真發生、索引是否成功；receipt 可以）。
+        receipt = parse_receipt(input_data.get("tool_response"))
+        if receipt:
+            record_atom_op(state, session_id, int(state.get("turn_seq", 0)), receipt)
+            dirty = True
+
+    elif tool_name.endswith("knowledge_harvest_report"):
+        # 收割回報（one-writer）：items ↔ 本 session 自上次 validated 收割以來的 receipts 逐項核對，
+        # 落本 session 分區 + ledger；核不過 → pending（Stop 的 Harvest-Pending 閘擋一次要求補）。
+        # MCP 端已拒收（isError）的呼叫不是回報：不核對、不落分區、不 spawn，否則拒收的 items
+        # 會被當成 validated 放行。
+        if is_error_response(input_data.get("tool_response")):
+            print("[Guardian:Harvest] knowledge_harvest_report 被 MCP 拒收，本次不核對", file=sys.stderr)
+        else:
+            turn_seq = int(state.get("turn_seq", 0))
+            sec = apply_report(state, session_id, turn_seq, tool_input.get("items"), tool_input.get("note", ""))
+            append_ledger(session_id, {
+                "at": sec["at"], "session_id": session_id, "turn_seq": turn_seq,
+                "validated": sec["validated"], "items": sec["items"], "pending": sec["pending"],
+                "retired_paths": sec["retired_paths"], "note": sec["note"],
+            }, base_dir=WORKFLOW_DIR)
+            if sec["validated"]:
+                # 同 turn 先 emit 的 AEC 報告：(d) 的記憶收錄帳已由收割核對過 → 用 (h) 重算 d_pending。
+                # (d)/(h) 共用 d_pending，整個 pop 會把 (h)「下一動＝寫 atom」一起放掉。
+                aec = state.get("anti_evasion_report") or {}
+                if aec.get("session_id") == session_id and aec.get("turn_seq") == turn_seq and aec.get("d_pending"):
+                    still = aec_pending_items("", aec.get("h", ""))
+                    if still:
+                        aec["d_pending"] = still
+                    else:
+                        aec.pop("d_pending", None)
+                    _write_aec_report_file(session_id, turn_seq, aec)
+                _cwd = state.get("session", {}).get("cwd", "") or input_data.get("cwd", "")
+                if spawn_vcs_sync is None:
+                    print("[Guardian:Harvest] wg_vcs_sync 不可用，記憶目錄未背景上版控（fail-open）", file=sys.stderr)
+                else:
+                    # retired_paths 只帶本次 validated 且有 ok:true retire receipt 的退役檔（apply_report 算好）。
+                    try:
+                        spawn_vcs_sync(session_id, _cwd, reason="harvest", retired_paths=sec["retired_paths"])
+                    except Exception as e:
+                        print(f"[Guardian:Harvest] spawn_vcs_sync failed (fail-open): {e}", file=sys.stderr)
+            else:
+                aec_reject_msgs.append(
+                    f"[Guardian:Harvest-Pending] 收割回報有 {len(sec['pending'])} 項核不過："
+                    + "".join("\n  ✗ " + x for x in sec["pending"][:6])
+                    + "\n先用 atom_write／atom_retire 真的做完（或改 action=skip 附 reason），"
+                    "再重新呼叫 knowledge_harvest_report；否則 Stop 會擋。"
+                )
+            dirty = True
 
     if DOCDRIFT_AVAILABLE and config.get("docdrift", {}).get("enabled", True):
         try:
@@ -607,6 +725,7 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             ("_aidocs_advisory", "[Guardian:AIDocs]"),
             ("_staging_advisory", "[Guardian:StagingName]"),
             ("_docdrift_advisory", "[Guardian:DocDrift]"),
+            ("_tool_result_advisory", "[Guardian:ToolResultSize]"),
         ]:
             val = state.get(key)
             if val:
@@ -645,12 +764,8 @@ def handle_post_tool_use(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         except Exception as e:
             _atom_debug_error("post_tool_use:late_collision", e)
 
-    if advisories:
-        output_json({
-            "hookSpecificOutput": {
-                "hookEventName": "PostToolUse",
-                "additionalContext": "\n".join(advisories),
-            }
-        })
-    else:
-        output_nothing()
+    # 併入的兩支輕檢查放在 write_state 之後：acceptance_spec 從磁碟讀 state 數修改檔，
+    # 讓本次事件的檔已入帳（原本兩程序並行時先後不定）
+    sys_msgs, ctx_msgs = _run_companion_hooks(input_data, config)
+    advisories.extend(ctx_msgs)
+    _emit_post_tool_output(advisories, sys_msgs)

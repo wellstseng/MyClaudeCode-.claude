@@ -965,3 +965,186 @@ def test_27_create_atom_merged_byte_parity(isolated_claude, tmp_path):
     acc = _json.loads(fpA.with_suffix(".access.json").read_text(encoding="utf-8"))
     assert acc["first_seen"] == FIXED_TODAY and acc["last_used"] == FIXED_TODAY
     assert acc["read_hits"] == 0 and acc["confirmations"] == 0
+
+
+# ─── 28. Supersedes parity（py↔js buildAtomContent：缺省／[]／多目標） ────────
+
+
+def _js_build(tmp_path, kwargs_js: str, tag: str) -> str:
+    """以 lib/atom-render.js buildAtomContent 產出；回字串。"""
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not available")
+    render_js = LIB_PARENT / "tools" / "workflow-guardian-mcp" / "lib" / "atom-render.js"
+    if not render_js.exists():
+        pytest.skip("atom-render.js not found")
+    out_file = tmp_path / f"js_{tag}.txt"
+    js_script = (
+        "const fs=require('fs');"
+        "const {buildAtomContent}=require(process.argv[1]);"
+        "fs.writeFileSync(process.argv[2], buildAtomContent({" + kwargs_js + "}));process.exit(0);"
+    )
+    proc = subprocess.run(
+        [node, "-e", js_script, str(render_js), str(out_file)],
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    assert proc.returncode == 0, f"node failed: {proc.stderr}"
+    return out_file.read_text(encoding="utf-8")
+
+
+_SUP_BASE_JS = ("title:'Sup',scope:'global',confidence:'[臨]',triggers:['a','b','c'],"
+                "knowledge:['k1'],actions:['act1'],related:['r1'],today:'" + FIXED_TODAY + "'")
+_SUP_BASE_PY = dict(title="Sup", scope="global", confidence="[臨]", triggers=["a", "b", "c"],
+                    knowledge=["k1"], actions=["act1"], related=["r1"], today=FIXED_TODAY)
+
+
+@pytest.mark.parametrize("tag,py_sup,js_sup", [
+    ("absent", None, ""),
+    ("empty", [], ",supersedes:[]"),
+    ("multi", ["old-a", "old-b"], ",supersedes:['old-a','old-b']"),
+])
+def test_28_supersedes_py_js_byte_parity(tmp_path, tag, py_sup, js_sup):
+    """Supersedes 三態 py↔js byte-identical；缺省／[] 不輸出任何行（既有 fixture byte 不變）。"""
+    py_out = build_atom_content(**_SUP_BASE_PY, supersedes=py_sup)
+    js_out = _js_build(tmp_path, _SUP_BASE_JS + js_sup, tag)
+    assert js_out == py_out, f"DRIFT[{tag}]\nPY:\n{py_out!r}\nJS:\n{js_out!r}"
+    if py_sup:
+        assert "- Related: r1\n- Supersedes: old-a, old-b\n" in py_out  # Related 之後
+    else:
+        assert "Supersedes" not in py_out
+        assert py_out == build_atom_content(**_SUP_BASE_PY)  # 缺省與既有輸出 byte 相同
+
+
+def test_29_replace_supersedes_three_state(isolated_claude):
+    """replace：未給 supersedes → 保留原行；[] → 清除；非空 → 替換（目標須存在）。
+    receipt extra 含 op/atom/path/index_ok/supersedes。"""
+    from lib.atom_io import read_supersedes
+    common = dict(scope="global", confidence="[臨]", triggers=["a", "b", "c"],
+                  knowledge=["k"], source="test", skip_gate=True, today=FIXED_TODAY)
+    for t in ("Old One", "Old Two", "New One"):
+        r = write_atom(title=t, domain="設計通則", mode="create", **common)
+        assert r.ok, r.error
+        assert r.extra["op"] == "create" and r.extra["index_ok"] is True
+        assert r.extra["supersedes"] == [] and r.extra["atom"] == t.lower().replace(" ", "-")
+    # 非空 → 替換（寫入）
+    r = write_atom(title="New One", mode="replace", supersedes=["old-one"], **common)
+    assert r.ok, r.error
+    assert r.extra["supersedes"] == ["old-one"] and r.extra["op"] == "replace"
+    assert r.extra["path"] == str(r.path)
+    assert read_supersedes(r.path.read_text(encoding="utf-8")) == ["old-one"]
+    # 未給 → 保留
+    r = write_atom(title="New One", mode="replace", **common)
+    assert r.ok, r.error
+    assert read_supersedes(r.path.read_text(encoding="utf-8")) == ["old-one"]
+    assert r.extra["supersedes"] == ["old-one"]
+    # append 不動 Supersedes，receipt 照回現值
+    r = write_atom(title="New One", mode="append", **common)
+    assert r.ok, r.error
+    assert r.extra["supersedes"] == ["old-one"] and r.extra["index_ok"] is None
+    # 多目標替換
+    r = write_atom(title="New One", mode="replace", supersedes=["old-one", "old-two"], **common)
+    assert r.ok, r.error
+    assert read_supersedes(r.path.read_text(encoding="utf-8")) == ["old-one", "old-two"]
+    # [] → 清除
+    r = write_atom(title="New One", mode="replace", supersedes=[], **common)
+    assert r.ok, r.error
+    assert "Supersedes" not in r.path.read_text(encoding="utf-8")
+    assert r.extra["supersedes"] == []
+    # 目標不存在 → 拒寫（檔不變）
+    before = r.path.read_bytes()
+    r2 = write_atom(title="New One", mode="replace", supersedes=["ghost-atom"], **common)
+    assert not r2.ok and "not found" in r2.error
+    assert r.path.read_bytes() == before
+
+
+# ─── 30. Supersedes 名稱正規化：寫入與 receipt 一律 canonical slug ─────────────
+
+
+def test_30_supersedes_written_as_canonical_slug(isolated_claude):
+    """create/replace 傳 "Old Atom" → 檔內 `- Supersedes: old-atom`、receipt 同；
+    原字串寫入會讓檔內名與索引名對不上（收割核對／退役引用掃描都比不到）。"""
+    from lib.atom_io import read_supersedes
+    common = dict(scope="global", confidence="[臨]", triggers=["a", "b", "c"],
+                  knowledge=["k"], source="test", skip_gate=True, today=FIXED_TODAY)
+    assert write_atom(title="Old Atom", domain="設計通則", mode="create", **common).ok
+    r = write_atom(title="Newer Atom", domain="設計通則", mode="create",
+                   supersedes=["Old Atom"], **common)
+    assert r.ok, r.error
+    assert r.extra["supersedes"] == ["old-atom"]
+    assert "- Supersedes: old-atom\n" in r.path.read_text(encoding="utf-8")
+    assert read_supersedes(r.path.read_text(encoding="utf-8")) == ["old-atom"]
+    r = write_atom(title="Newer Atom", mode="replace", supersedes=[" Old  Atom "], **common)
+    assert r.ok, r.error
+    assert r.extra["supersedes"] == ["old-atom"]
+    assert read_supersedes(r.path.read_text(encoding="utf-8")) == ["old-atom"]
+    r = write_atom(title="Newer Atom", mode="replace", supersedes=[""], **common)
+    assert not r.ok and "empty target" in r.error
+
+
+# ─── 31. Source／Depends parity（py↔js buildAtomContent：provenance／depends） ───
+
+
+def test_31_provenance_py_js_byte_parity(tmp_path):
+    """provenance → `- Source:` 緊接 Author 之後、Confidence 之前；py↔js byte-identical。"""
+    py_out = build_atom_content(**_SUP_BASE_PY, author="alice", provenance="tools/x.py")
+    js_out = _js_build(tmp_path, _SUP_BASE_JS + ",author:'alice',provenance:'tools/x.py'", "prov")
+    assert js_out == py_out, f"DRIFT[prov]\nPY:\n{py_out!r}\nJS:\n{js_out!r}"
+    assert "- Author: alice\n- Source: tools/x.py\n- Confidence: [臨]\n" in py_out
+    # 未給／空字串 → 不輸出，與既有輸出 byte 相同
+    assert build_atom_content(**_SUP_BASE_PY, provenance="") == build_atom_content(**_SUP_BASE_PY)
+    assert "Source" not in build_atom_content(**_SUP_BASE_PY)
+
+
+def test_32_depends_py_js_byte_parity(tmp_path):
+    """depends → `- Depends:` 逗號清單，位於 Created-at 之後、Related 之前；py↔js byte-identical。"""
+    deps = ["path:tools/x.py", "decision:abc"]
+    py_out = build_atom_content(**_SUP_BASE_PY, depends=deps)
+    js_out = _js_build(tmp_path, _SUP_BASE_JS + ",depends:['path:tools/x.py','decision:abc']", "deps")
+    assert js_out == py_out, f"DRIFT[deps]\nPY:\n{py_out!r}\nJS:\n{js_out!r}"
+    assert f"- Created-at: {FIXED_TODAY}\n- Depends: path:tools/x.py, decision:abc\n- Related: r1\n" in py_out
+    # 未給／[] → 不輸出；js [] 同
+    assert build_atom_content(**_SUP_BASE_PY, depends=[]) == build_atom_content(**_SUP_BASE_PY)
+    assert _js_build(tmp_path, _SUP_BASE_JS + ",depends:[]", "deps_empty") == build_atom_content(**_SUP_BASE_PY)
+    assert "Depends" not in build_atom_content(**_SUP_BASE_PY)
+
+
+def test_33_replace_preserves_source_and_depends(isolated_claude):
+    """replace 未給 provenance／depends → 保留既有檔頭 Source／Depends 行（同 Author 規則）；
+    給了 → 替換；給空 → 清除；append 不動檔頭。"""
+    common = dict(scope="global", confidence="[臨]", triggers=["a", "b", "c"],
+                  knowledge=["k"], source="test", skip_gate=True, today=FIXED_TODAY)
+    r = write_atom(title="Prov Atom", domain="設計通則", mode="create", author="alice",
+                   provenance="tools/x.py", depends=["path:tools/x.py"], **common)
+    assert r.ok, r.error
+    text = r.path.read_text(encoding="utf-8")
+    assert "- Author: alice\n- Source: tools/x.py\n" in text
+    assert "- Depends: path:tools/x.py\n" in text
+    # 未給 → 保留
+    r = write_atom(title="Prov Atom", mode="replace", knowledge=["k2"],
+                   **{k: v for k, v in common.items() if k != "knowledge"})
+    assert r.ok, r.error
+    text = r.path.read_text(encoding="utf-8")
+    assert "- Source: tools/x.py\n" in text and "- Depends: path:tools/x.py\n" in text
+    assert "- k2" in text and "- k\n" not in text
+    # append 不動檔頭
+    r = write_atom(title="Prov Atom", mode="append", **common)
+    assert r.ok, r.error
+    text = r.path.read_text(encoding="utf-8")
+    assert "- Source: tools/x.py\n" in text and "- Depends: path:tools/x.py\n" in text
+    # 給了 → 替換
+    r = write_atom(title="Prov Atom", mode="replace", provenance="https://example/commit/1",
+                   depends=["path:tools/y.py", "decision:z"], **common)
+    assert r.ok, r.error
+    text = r.path.read_text(encoding="utf-8")
+    assert "- Source: https://example/commit/1\n" in text
+    assert "- Depends: path:tools/y.py, decision:z\n" in text
+    assert "tools/x.py" not in text
+    # 給空 → 清除
+    r = write_atom(title="Prov Atom", mode="replace", provenance="", depends=[], **common)
+    assert r.ok, r.error
+    text = r.path.read_text(encoding="utf-8")
+    assert "Source" not in text and "Depends" not in text

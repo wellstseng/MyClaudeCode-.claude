@@ -19,7 +19,7 @@ import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from wg_core import (
     CLAUDE_DIR, WORKFLOW_DIR,
@@ -75,6 +75,38 @@ except ImportError:
     prune_committed_entries = None
 
 
+# ─── AEC HUD 活性判定（post_tool_use 標旗 / stop 再查一次，兩端共用）─────────────
+
+
+def _hud_alive(port: int, threshold_s: int) -> Tuple[bool, Dict[str, Any]]:
+    """GET /api/aec/beat-status → HUD 窗活著？回 (alive, info)。
+
+    活著 = clients ≥ 1（HUD 頁的 SSE 常駐連線在：視窗開著，即使頁面被瀏覽器凍結/節流）
+        或 age_s < threshold（心跳新；舊版 Node 無 clients 欄時的退路）。
+    心跳是「頁面正在渲染」的證據，Edge --app 視窗被遮住久了會停（瀏覽器休眠/凍結隱藏頁；現場實證窗開著 age 仍上百秒），
+    單靠它會把開著的窗判死；連線才是「窗開著」的直接證據。
+    info 一律帶實際用的 port/threshold/耗時、查到的 age_s/clients、失敗原因——呼叫端落 guard log
+    （可觀測性鐵律：不可達的原因不得吞掉）。不可達 / 舊碼 404 / 逾時 → (False, info)。"""
+    import urllib.request
+    info: Dict[str, Any] = {"port": port, "threshold_s": threshold_s}
+    t0 = time.perf_counter()
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/aec/beat-status", timeout=0.6
+        ) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        age = int(data.get("age_s", 10 ** 9))
+        clients = int(data.get("clients", 0))
+        info.update(age_s=age, clients=clients)
+        alive = clients >= 1 or age < threshold_s
+        info["reason"] = "" if alive else "no_hud_client_and_beat_stale"
+    except Exception as e:  # 逾時 / 連線拒絕 / 404 / 非 JSON：全記原因，不分類吞掉
+        alive = False
+        info["reason"] = f"{type(e).__name__}: {e}"[:200]
+    info["elapsed_ms"] = round((time.perf_counter() - t0) * 1000)
+    return alive, info
+
+
 # ─── Path helpers ────────────────────────────────────────────────────────────
 
 
@@ -124,9 +156,12 @@ def _call_project_hook(project_root: Path, action: str, context: Dict[str, Any])
 # ─── State file TTL cleanup (was _cleanup_old_states in workflow-guardian) ───
 
 
+_ACTIVE_WORKING_TTL_S = 6 * 3600  # 有 prompt 的 working state 的孤兒兜底 TTL
+
+
 def _cleanup_old_states() -> None:
     """V3/2.2A: Tiered TTL cleanup for state files.
-    age < 600s keep; merged_into → 10min; empty working → 1h; working >30min;
+    age < 600s keep; merged_into → 10min; empty working → 1h; working（有 prompt）> 6h；
     done synced > 1h; done pending > 4h; anything > 7d.
 
     empty working 取 1h：idle session（開著沒下 prompt）state 被清後，
@@ -156,7 +191,11 @@ def _cleanup_old_states() -> None:
                 f.unlink(missing_ok=True)
             elif prompt_count == 0 and phase == "working" and age > 3600:
                 f.unlink(missing_ok=True)
-            elif prompt_count > 0 and phase == "working" and age > 1800:
+            elif prompt_count > 0 and phase == "working" and age > _ACTIVE_WORKING_TTL_S:
+                # 有 prompt 的活躍 session：以前 30 分鐘沒寫 state 就刪——使用者在想、或在等
+                # 長時間背景任務時就會中招，下一個 hook 只能建 fallback、整場歷史歸零
+                #（2026-09-21 本 session turn 15 實證）。CC 真正結束會走 SessionEnd 標 done，
+                # 這條只是兜底孤兒，放寬到 6 小時。
                 f.unlink(missing_ok=True)
             elif phase == "done" and not sync_pending and age > 3600:
                 f.unlink(missing_ok=True)
@@ -225,7 +264,7 @@ def _maybe_spawn_user_extract_worker(
 
     cwd = state.get("session", {}).get("cwd", "")
     user_id = state.get("user_identity", {})
-    user = user_id.get("user", "wellstseng")
+    user = user_id.get("user", "unknown")
 
     worker_ctx = {
         "session_id": session_id,
