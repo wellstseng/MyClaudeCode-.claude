@@ -221,6 +221,12 @@
       }
     ]
   },
+  "statusLine": {
+    "type": "command",
+    "command": "python \"$HOME/.claude/tools/statusline.py\"",
+    "padding": 0,
+    "refreshInterval": 10
+  },
   "enabledPlugins": {
     "discord@claude-plugins-official": true,
     "unity@claude-plugins-official": true
