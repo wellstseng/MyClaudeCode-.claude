@@ -702,7 +702,8 @@ def cleanup_stale_chunks(
         include_distant=config.get("index_distant", False),
         additional_dirs=additional_dirs,
     )
-    current_keys = {f"{ln}:{fp.stem}" for ln, fp, _rp in current}
+    # layer 本身含 ":"（shared:slug），用 tuple 當 key，不可串成字串再切
+    current_keys = {(ln, fp.stem) for ln, fp, _rp in current}
 
     try:
         db = _get_db()
@@ -712,15 +713,15 @@ def cleanup_stale_chunks(
     except Exception as e:
         return {"error": str(e), "deleted_atoms": 0, "deleted_chunks": 0}
 
-    db_keys: Dict[str, int] = {}
+    db_keys: Dict[Tuple[str, str], int] = {}
     for r in rows:
-        k = f"{r.get('layer', '')}:{r.get('atom_name', '')}"
+        k = (r.get("layer", ""), r.get("atom_name", ""))
         db_keys[k] = db_keys.get(k, 0) + 1
 
     stale = [k for k in db_keys if k not in current_keys]
     deleted_chunks = 0
     for k in stale:
-        layer_val, atom_val = k.split(":", 1)
+        layer_val, atom_val = k
         layer_val = layer_val.replace("'", "''")
         atom_val = atom_val.replace("'", "''")
         try:
