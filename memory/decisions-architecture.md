@@ -2,7 +2,7 @@
 
 - Scope: global
 - Confidence: [固]
-- Trigger: 架構細節, vector service, ollama backend, extraction, ACT-R, episodic tracking, context budget
+- Trigger: 架構, hooks, pipeline, guardian, SessionStart, hot cache, extract-worker, vector service
 - Last-used: 2026-04-11
 - Confirmations: 132
 - Type: decision

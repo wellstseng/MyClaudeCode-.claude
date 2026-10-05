@@ -2,7 +2,7 @@
 
 - Scope: global
 - Confidence: [固]
-- Trigger: 工具鏈, 環境設定, bash指令, command, bash, git, python, npm
+- Trigger: 工具鏈, 環境設定, MCPControl, MCP新增, npm全域, 螢幕截圖, Excel MCP, LanceDB, MSYS2, cp950, PowerShell截圖, 向量服務
 - Last-used: 2026-05-28
 - Confirmations: 319
 - Type: procedural

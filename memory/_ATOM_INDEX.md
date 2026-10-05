@@ -84,3 +84,16 @@
 | 自己flag的維護動作直接做完不要反問 | memory/自己flag的維護動作直接做完不要反問.md | 更新atom, 維護, 同步, 反問, 要不要我, 該做就做, 推進, 收尾, follow-through | global |
 | 記憶汙染與上下文腐化-注入萃取自檢 | memory/記憶汙染與上下文腐化-注入萃取自檢.md | 上下文腐化, context rot, 記憶汙染, 知識汙染, 累積知識, 焦點模糊, 回應偏門, 越做越小, 多session, 接續, 大型專案, 注入, 萃取, context engineering, memory governance, selective forgetting, 上下文工程, 偏離目標 | global |
 | 跨session資訊失真機制與對策 | _AIDocs/_atoms/Continuity/跨session資訊失真機制與對策.md | 失真, 失憶, context 壓縮, 長對話, 多 session, lost in the middle, context rot, goal drift, 摘要有損, 為什麼會偏掉, anchoring, context poisoning, 錯誤發展, 錯誤認知 | global |
+| collab-anchor | memory/collab-anchor.md | CatClaw, 個人專案, 跑偏, 過度擴張, 焦慮, 收斂, 方向校正, 提醒, 副駕, 協作規則, 邊界, 失焦, 方向, 副駕規則 | global |
+| collab-experiment | memory/collab-experiment.md | AI自主開發, AI自主, Sprint自主, 協作實驗, harness agent, subagent協作, PM角色, AI當開發, 啟動協作實驗, 協作模式 | global |
+| experience-vmlx-gemma4-abliterated | memory/experience-vmlx-gemma4-abliterated.md | vmlx, gemma4, gemma 4, abliterated, dealignai, 破解版模型, 去審查模型, JANG, 本地 LLM, mac 跑大模型, ollama, gguf, windows, rdchat, RTX 3090, douyamv, 31B JANG | global |
+| feedback-knowledge-doc-iteration | memory/feedback-knowledge-doc-iteration.md | same_file_3x, retry_escalation, knowledge_doc, 規劃文件, 補章節, WellsDB, 知識庫 | global |
+| nodejs-ecosystem | memory/nodejs-ecosystem.md | Node.js, NodeJS, npm, npx, package.json, node_modules, TypeScript, tsc, pm2, ecosystem.config, JavaScript, JS, TS, ESM, CommonJS, CJS | global |
+| reference-claudecode | memory/reference-claudecode.md | Claude Code, claudecode, claude code 架構, context 管理, token 控制, session 處理, 安全邊界 | global |
+| reference-obsidian-vault | memory/reference-obsidian-vault.md | obsidian, vault, WellsDB, 筆記庫, 寫到obsidian, 放到obsidian, 輸出obsidian | global |
+| wells-workflow-infra-before-app | memory/wells-workflow-infra-before-app.md | 新專案啟動, AI 工作流規劃, 大任務開工, 基礎建設, 記憶系統, infrastructure | global |
+| wells-workflow-mechanism-over-discipline | memory/wells-workflow-mechanism-over-discipline.md | 紀律, 決心, 機制, 自動偵測, guardian, hook, 自動化, 靠記得 | global |
+| wells-workflow-multi-llm-ledger | memory/wells-workflow-multi-llm-ledger.md | 多 agent, 多 LLM, 平行協作, 任務分派, subagent, claim, 範圍認領, Doomsday Phase2 | global |
+| wells-workflow-small-automation-payoff | memory/wells-workflow-small-automation-payoff.md | 自動化, hook, stream idle, watchdog, 卡死, 沉默失敗, silent failure, LLM 不回覆 | global |
+| wells-workflow-tell-ai-what-you-hate | memory/wells-workflow-tell-ai-what-you-hate.md | AI 行為糾正, feedback atom, 偏好設定, 行為校正, 不喜歡, 別這樣做 | global |
+| catclaw-遷移到-claude-code-的落點與踩坑 | _AIDocs/_atoms/MemDev/catclaw-遷移到-claude-code-的落點與踩坑.md | CatClaw 遷移, wendy 專案, ext 碎片, 專案記憶匯入, tool:migrate, MEMORY.md 發現, trigger 逗號, cronctl, 批次匯入 atom | global |

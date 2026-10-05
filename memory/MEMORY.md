@@ -23,6 +23,18 @@
 | 品質完整性判定須讀完整內容-勿從截斷採樣斷言 | 品質完整性判定須讀完整內容-勿從截斷採樣斷言 |
 | 自己flag的維護動作直接做完不要反問 | 自己flag的維護動作直接做完不要反問 |
 | 記憶汙染與上下文腐化-注入萃取自檢 | 記憶汙染與上下文腐化-注入萃取自檢 |
+| collab-anchor | 協作錨點——個人專案方向守則 |
+| collab-experiment | AI 自主開發實驗協作模式 |
+| experience-vmlx-gemma4-abliterated | vMLX × Gemma 4 31B Abliterated 本地化嘗試（暫停） |
+| feedback-knowledge-doc-iteration | feedback-knowledge-doc-iteration |
+| nodejs-ecosystem | Node.js / TypeScript 生態系知識庫 |
+| reference-claudecode | Claude Code Source 參照 |
+| reference-obsidian-vault | Obsidian Vault 位置 |
+| wells-workflow-infra-before-app | wells-workflow-infra-before-app |
+| wells-workflow-mechanism-over-discipline | wells-workflow-mechanism-over-discipline — 不靠決心靠機制 |
+| wells-workflow-multi-llm-ledger | wells-workflow-multi-llm-ledger |
+| wells-workflow-small-automation-payoff | wells-workflow-small-automation-payoff |
+| wells-workflow-tell-ai-what-you-hate | wells-workflow-tell-ai-what-you-hate |
 | feedback-* | 行為校正（10 atoms） → [`_AIDocs/Failures/`](../_AIDocs/Failures/) |
 | cognitive-patterns | 認知模式偏差（Cognitive Patterns） → [`_AIDocs/Failures/cognitive-patterns.md`](../_AIDocs/Failures/cognitive-patterns.md) |
 | memory-pipeline-silent-failure-2026-05 | 記憶機制靜默失效（confirmations 零增 + episodic 停擺） → [`_AIDocs/Failures/memory-pipeline-silent-failure-2026-05.md`](../_AIDocs/Failures/memory-pipeline-silent-failure-2026-05.md) |

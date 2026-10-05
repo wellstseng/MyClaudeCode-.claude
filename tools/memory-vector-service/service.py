@@ -63,6 +63,44 @@ def _init_service():
         _embedder = None
 
 
+# ─── Embedder Self-heal ──────────────────────────────────────────────────────
+
+_RECOVER_PROBE_INTERVAL = 60.0
+
+
+def _embedder_degraded() -> bool:
+    """設定要 ollama，實際卻不是 OllamaEmbedder（啟動時 Ollama 未就緒而落到 fallback，或無 embedder）。
+
+    fallback 模型的向量維度與索引表不同時，所有查詢會回空，必須切回。
+    """
+    if _config.get("embedding_backend", "ollama") != "ollama":
+        return False
+    return _embedder is None or _embedder.__class__.__name__ != "OllamaEmbedder"
+
+
+def _recover_embedder_loop():
+    """降級期間定期重探 Ollama，可用即切回。背景執行，不佔用請求路徑。"""
+    global _embedder
+    from indexer import OllamaEmbedder
+    while True:
+        time.sleep(_RECOVER_PROBE_INTERVAL)
+        if not _embedder_degraded():
+            continue
+        try:
+            emb = OllamaEmbedder()
+            if emb.is_available():
+                _embedder = emb
+                print(
+                    f"{time.strftime('%Y-%m-%d %H:%M:%S')} [service] Embedder recovered: OllamaEmbedder",
+                    file=sys.stderr, flush=True,
+                )
+        except Exception as e:
+            print(
+                f"{time.strftime('%Y-%m-%d %H:%M:%S')} [service] WARNING: embedder recovery probe failed: {e}",
+                file=sys.stderr, flush=True,
+            )
+
+
 # ─── Request Handler ─────────────────────────────────────────────────────────
 
 
@@ -339,6 +377,7 @@ class VectorServiceHandler(BaseHTTPRequestHandler):
         self._send_json({
             "status": "ok",
             "embedder": _embedder.__class__.__name__ if _embedder else "none",
+            "degraded": _embedder_degraded(),
             "uptime_seconds": round(time.time() - _start_time, 1),
         })
 
@@ -464,6 +503,7 @@ class VectorServiceHandler(BaseHTTPRequestHandler):
 def run_server(port: int = 3849):
     """Start the HTTP daemon."""
     _init_service()
+    threading.Thread(target=_recover_embedder_loop, daemon=True).start()
 
     server = HTTPServer(("127.0.0.1", port), VectorServiceHandler)
     print(f"[service] Memory Vector Service listening on http://127.0.0.1:{port}", file=sys.stderr)

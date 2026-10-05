@@ -24,6 +24,7 @@
 | 17 | v4-archive/ | Wave 4 hooks/_v4_archive 19 檔對照證物（V4 hook 模組退役前最後一版） | v4-archive, hooks, 證物, V4 退役 |
 | 18 | v5-overhaul-2026-05/ | V5 升版完整紀錄（起因 + 4-Wave + Wave 5 全面汰舊 + GA Checklist 驗收 + Session α/β feedback-aidocs 遷移）— 取代原 audit atom | V5, GA, 升版, overhaul, Wave, 全面汰舊, BM25, JSON SoT, Codex subprocess, 114GB, feedback-aidocs, atom_locations |
 | 19 | auto-memory-writeback.md | 對談結束自動記憶 writeback 三 stage 開發脈絡（session_end flush 落點路由 + 失敗五區塊骨架 + Deep Post-Mortem Gate；含 edit-count proxy 拔除、獨立預算演化） | session_end flush, 失敗骨架, deep post-mortem, writeback, 落點路由, extract-worker, stop gate, edit-count proxy |
+| 20 | catclaw-migration-2026-10.md | CatClaw → Claude Code 記憶與技能遷移（落點決策、格式轉換規則、碎片篩併流程、遷移中修掉的缺陷、踩坑） | CatClaw, 遷移, migration, ext 碎片, 向量服務自癒, session_end_flush, 專案記憶 |
 
 > 2026-05-27 Wave 5 Session 2 已歸檔（移至 `memory/_distant/2026_05_v5_overhaul/`，git 不再追蹤）：`session-logs/` / `memory-cleanup-2026-04/` / `atomic-memory-evolution/` / `ab-test-gemma4/` / `atom-v4/` / `atom-v4-phases/` / `changelog-roll/` / `v41-handoffs/` / `v41-p4-simulation/` / `wg-docdrift/`
 

@@ -135,7 +135,7 @@ async function appendToIndex(memDir, atomName, relPath, triggers) {
 /** Trigger vector service re-index (fire and forget) */
 function triggerVectorReindex() {
   try {
-    const url = "http://127.0.0.1:3849/reindex";
+    const url = "http://127.0.0.1:3849/index/incremental";
     const req = http.request(url, { method: "POST", timeout: 3000 }, () => {});
     req.on("error", () => {}); // ignore
     req.end();

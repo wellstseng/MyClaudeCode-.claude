@@ -1,5 +1,7 @@
 {
-  "env": {},
+  "env": {
+    "CLAUDE_USER": "wellstseng"
+  },
   "permissions": {
     "allow": [
       "Bash(*)",

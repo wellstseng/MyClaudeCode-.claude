@@ -3,7 +3,7 @@
 - Scope: global
 - Author: holylight
 - Confidence: [觀]
-- Trigger: 失真, 失憶, context 壓縮, 長對話, 多 session, lost in the middle, context rot, goal drift, 摘要有損, 為什麼會偏掉, anchoring, context poisoning, 錯誤發展, 錯誤認知, 記憶汙染, 知識汙染, 上下文腐化, selective forgetting
+- Trigger: 失真, 失憶, context 壓縮, 長對話, 多 session, lost in the middle, context rot, goal drift, 摘要有損, 為什麼會偏掉, anchoring, context poisoning, 錯誤發展, 錯誤認知
 - Created-at: 2026-06-18
 - Related: handoff-綜觀品質與抗失真寫法, feedback-workflow-discipline, decisions-architecture, cognitive-patterns, decisions, realm-範疇分區機制-v5
 

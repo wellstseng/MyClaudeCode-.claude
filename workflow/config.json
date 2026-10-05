@@ -151,8 +151,8 @@
       "weak_min_match": 3
     },
     "session_end_flush": {
-      "_disabled_2026_07_01": "調整式拔除：見 per_turn._disabled_2026_07_01。停 session_end 草稿 flush。回滾：改回 true。",
-      "enabled": false,
+      "_note": "SessionEnd 以本機 Ollama 萃取知識，草稿落 _drafts/auto-capture/（不入索引、不注入）；下游＝~/project/wendy/cron 的 memory-drafts-consolidate 定期整併成 atom。沒有下游消費時應關閉。",
+      "enabled": true,
       "max_atoms": 8
     }
   },

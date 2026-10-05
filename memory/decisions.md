@@ -2,7 +2,7 @@
 
 - Scope: global
 - Confidence: [固]
-- Trigger: 決策, 記憶系統, 原子記憶, guardian, hooks, MCP, 架構細節, context budget
+- Trigger: 決策, 記憶系統, 原子記憶, 架構細節, context budget
 - Last-used: 2026-05-28
 - Confirmations: 237
 - Related: decisions-architecture, toolchain, toolchain-ollama

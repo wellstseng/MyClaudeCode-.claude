@@ -642,17 +642,21 @@ def build_index(
             # Delete changed atoms first, then add new
             try:
                 table = db.open_table(TABLE_NAME)
-                changed_atoms = {f"{r['layer']}:{r['atom_name']}" for r in records}
-                for ak in changed_atoms:
-                    layer_val, atom_val = ak.split(":", 1)
+            except Exception:
+                table = None
+            if table is None:
+                # Table doesn't exist → full write
+                db.create_table(TABLE_NAME, records, mode="overwrite")
+            else:
+                # 既有表只做 delete+add；失敗（如 embedder 維度與表不符）往上拋，
+                # 不可用這批變更覆寫整張表。layer 本身含 ":"（shared:slug），用 tuple 當 key。
+                changed_atoms = {(r["layer"], r["atom_name"]) for r in records}
+                for layer_val, atom_val in changed_atoms:
                     # Escape single quotes to prevent query breakage
                     layer_val = layer_val.replace("'", "''")
                     atom_val = atom_val.replace("'", "''")
                     table.delete(f"layer = '{layer_val}' AND atom_name = '{atom_val}'")
                 table.add(records)
-            except Exception:
-                # Table doesn't exist or other error → full write
-                db.create_table(TABLE_NAME, records, mode="overwrite")
         else:
             db.create_table(TABLE_NAME, records, mode="overwrite")
 
@@ -799,8 +803,26 @@ def search_vectors(
                 q = q.where(f"layer = '{safe_filter}'")
         results = q.to_list()
         return results
-    except Exception:
+    except Exception as e:
+        _warn_search_failure(e)
         return []
+
+
+_last_search_warn = 0.0
+
+
+def _warn_search_failure(exc: Exception) -> None:
+    """查詢失敗仍回空（不阻斷），但要留下訊號；同類錯誤 5 分鐘最多印一次。"""
+    global _last_search_warn
+    now = time.time()
+    if now - _last_search_warn < 300:
+        return
+    _last_search_warn = now
+    print(
+        f"{time.strftime('%Y-%m-%d %H:%M:%S')} [indexer] WARNING: vector search failed, "
+        f"returning empty: {type(exc).__name__}: {str(exc)[:300]}",
+        file=sys.stderr, flush=True,
+    )
 
 
 if __name__ == "__main__":

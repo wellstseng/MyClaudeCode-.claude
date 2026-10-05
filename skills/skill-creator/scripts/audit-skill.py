@@ -8,6 +8,8 @@
 
 輸出 JSON 到 stdout (UTF-8)，exit 0 = 通過，1 = fail。
 """
+from __future__ import annotations
+
 import argparse
 import json
 import re

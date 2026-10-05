@@ -1422,6 +1422,220 @@
         "錯誤認知"
       ],
       "scope": "global"
+    },
+    {
+      "name": "collab-anchor",
+      "path": "memory/collab-anchor.md",
+      "triggers": [
+        "CatClaw",
+        "個人專案",
+        "跑偏",
+        "過度擴張",
+        "焦慮",
+        "收斂",
+        "方向校正",
+        "提醒",
+        "副駕",
+        "協作規則",
+        "邊界",
+        "失焦",
+        "方向",
+        "副駕規則"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "collab-experiment",
+      "path": "memory/collab-experiment.md",
+      "triggers": [
+        "AI自主開發",
+        "AI自主",
+        "Sprint自主",
+        "協作實驗",
+        "harness agent",
+        "subagent協作",
+        "PM角色",
+        "AI當開發",
+        "啟動協作實驗",
+        "協作模式"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "experience-vmlx-gemma4-abliterated",
+      "path": "memory/experience-vmlx-gemma4-abliterated.md",
+      "triggers": [
+        "vmlx",
+        "gemma4",
+        "gemma 4",
+        "abliterated",
+        "dealignai",
+        "破解版模型",
+        "去審查模型",
+        "JANG",
+        "本地 LLM",
+        "mac 跑大模型",
+        "ollama",
+        "gguf",
+        "windows",
+        "rdchat",
+        "RTX 3090",
+        "douyamv",
+        "31B JANG"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "feedback-knowledge-doc-iteration",
+      "path": "memory/feedback-knowledge-doc-iteration.md",
+      "triggers": [
+        "same_file_3x",
+        "retry_escalation",
+        "knowledge_doc",
+        "規劃文件",
+        "補章節",
+        "WellsDB",
+        "知識庫"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "nodejs-ecosystem",
+      "path": "memory/nodejs-ecosystem.md",
+      "triggers": [
+        "Node.js",
+        "NodeJS",
+        "npm",
+        "npx",
+        "package.json",
+        "node_modules",
+        "TypeScript",
+        "tsc",
+        "pm2",
+        "ecosystem.config",
+        "JavaScript",
+        "JS",
+        "TS",
+        "ESM",
+        "CommonJS",
+        "CJS"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "reference-claudecode",
+      "path": "memory/reference-claudecode.md",
+      "triggers": [
+        "Claude Code",
+        "claudecode",
+        "claude code 架構",
+        "context 管理",
+        "token 控制",
+        "session 處理",
+        "安全邊界"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "reference-obsidian-vault",
+      "path": "memory/reference-obsidian-vault.md",
+      "triggers": [
+        "obsidian",
+        "vault",
+        "WellsDB",
+        "筆記庫",
+        "寫到obsidian",
+        "放到obsidian",
+        "輸出obsidian"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "wells-workflow-infra-before-app",
+      "path": "memory/wells-workflow-infra-before-app.md",
+      "triggers": [
+        "新專案啟動",
+        "AI 工作流規劃",
+        "大任務開工",
+        "基礎建設",
+        "記憶系統",
+        "infrastructure"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "wells-workflow-mechanism-over-discipline",
+      "path": "memory/wells-workflow-mechanism-over-discipline.md",
+      "triggers": [
+        "紀律",
+        "決心",
+        "機制",
+        "自動偵測",
+        "guardian",
+        "hook",
+        "自動化",
+        "靠記得"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "wells-workflow-multi-llm-ledger",
+      "path": "memory/wells-workflow-multi-llm-ledger.md",
+      "triggers": [
+        "多 agent",
+        "多 LLM",
+        "平行協作",
+        "任務分派",
+        "subagent",
+        "claim",
+        "範圍認領",
+        "Doomsday Phase2"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "wells-workflow-small-automation-payoff",
+      "path": "memory/wells-workflow-small-automation-payoff.md",
+      "triggers": [
+        "自動化",
+        "hook",
+        "stream idle",
+        "watchdog",
+        "卡死",
+        "沉默失敗",
+        "silent failure",
+        "LLM 不回覆"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "wells-workflow-tell-ai-what-you-hate",
+      "path": "memory/wells-workflow-tell-ai-what-you-hate.md",
+      "triggers": [
+        "AI 行為糾正",
+        "feedback atom",
+        "偏好設定",
+        "行為校正",
+        "不喜歡",
+        "別這樣做"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "catclaw-遷移到-claude-code-的落點與踩坑",
+      "path": "_AIDocs/_atoms/MemDev/catclaw-遷移到-claude-code-的落點與踩坑.md",
+      "triggers": [
+        "CatClaw 遷移",
+        "wendy 專案",
+        "ext 碎片",
+        "專案記憶匯入",
+        "tool:migrate",
+        "MEMORY.md 發現",
+        "trigger 逗號",
+        "cronctl",
+        "批次匯入 atom"
+      ],
+      "scope": "global"
     }
   ]
 }
