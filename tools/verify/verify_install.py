@@ -503,6 +503,9 @@ def test_check_exit_code(base, upstream):
 
 # ─── 升級 ───────────────────────────────────────────────────────────────────
 
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="測資以 Windows 的 pythonw.exe 為新 hook 直譯器；非 Windows 上該路徑不存在，"
+                           "升級尾段的直譯器校正會改寫指令，連使用者自訂 hook 也一併改寫，斷言必失敗")
 def test_upgrade_remerges_overlays_then_restores_on_failed_pull(base, upstream, adopted):
     mine = fork(base, adopted, upstream, "u1")
     home, claude, upstream = mine["home"], mine["claude"], mine
