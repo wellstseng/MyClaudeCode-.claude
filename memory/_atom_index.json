@@ -5139,6 +5139,22 @@
         "輸出資料夾"
       ],
       "scope": "global"
+    },
+    {
+      "name": "claude-cli-多人共用一台機器的隔離手段-setting-sources加deny規則-claude-config-dir會掉登入",
+      "path": "memory/CC與原子記憶契約/ClaudeCLI/claude-cli-多人共用一台機器的隔離手段-setting-sources加deny規則-claude-config-dir會掉登入.md",
+      "triggers": [
+        "CLAUDE_CONFIG_DIR",
+        "setting-sources",
+        "permissions.deny",
+        "隔離",
+        "多使用者",
+        "claude -p 隔離",
+        "不載 CLAUDE.md",
+        "deny 規則",
+        "Not logged in"
+      ],
+      "scope": "global"
     }
   ]
 }

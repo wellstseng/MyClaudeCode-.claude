@@ -13,7 +13,7 @@
 | 文字與格式 | 11 | `memory/文字與格式/_INDEX.md` |
 | 設計通則 | 7 | `memory/設計通則/_INDEX.md` |
 | 行為契約 | 5 | `memory/行為契約/_INDEX.md` |
-| CC與原子記憶契約 | 15 | `memory/CC與原子記憶契約/_INDEX.md` |
+| CC與原子記憶契約 | 16 | `memory/CC與原子記憶契約/_INDEX.md` |
 | Failures | 34 | `memory/Failures/_INDEX.md` |
 | OS-macOS | 2 | `memory/OS-macOS/_INDEX.md` |
 | lua | 3 | `memory/lua/_INDEX.md` |

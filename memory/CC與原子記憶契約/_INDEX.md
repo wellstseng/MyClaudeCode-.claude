@@ -21,3 +21,9 @@
 | 壓縮後根層-claudemd-由磁碟重讀不需自製-constraint-pinning-真正會丟的是對話中的計畫脈絡-用-staging-計畫檔加-sessionstart-resume-指標接續 | 壓縮後根層 CLAUDE.md 由磁碟重讀不需自製 constraint pinning-真正會丟的是對話中的計畫脈絡-用 _staging 計畫檔加 SessionStart resume 指標接續 |
 | 記憶汙染與上下文腐化-注入萃取自檢 | 記憶汙染與上下文腐化-注入萃取自檢 |
 | 身份與職能自動來自ad-帳號即get-current-user-職能由whoami群組對映-查不到就空不預設programmer-裁決名單review-deciders | 身份與職能自動來自AD-帳號即get-current-user-職能由whoami群組對映-查不到就空不預設programmer-裁決名單review-deciders |
+
+## 子層
+
+| 子層 | atom 數 | 深入 |
+|------|---------|------|
+| ClaudeCLI | 1 | `memory/CC與原子記憶契約/ClaudeCLI/claude-cli-多人共用一台機器的隔離手段-setting-sources加deny規則-claude-config-dir會掉登入.md` |

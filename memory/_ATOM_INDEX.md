@@ -300,3 +300,4 @@
 | gitignore未釘根層的規則在不分大小寫檔案系統會吃掉同名開頭的檔-identity-星號md誤傷identity開頭的atom | memory/版控/Git/gitignore未釘根層的規則在不分大小寫檔案系統會吃掉同名開頭的檔-identity-星號md誤傷identity開頭的atom.md | gitignore, core.ignorecase, 被忽略的 atom, 索引有檔案沒有, broken_refs, _INDEX.md drift, 乾淨 clone 索引不一致, check-ignore | global |
 | identity-變動需同步更新-identity-template-且所有文件 | memory/文字與格式/identity-變動需同步更新-identity-template-且所有文件.md | identity, identity.template, LF格式, 統一LF | global |
 | 雲端同步資料夾內不放sqlite-googledb是drive鏡像會間歇disk-io-error | memory/OS-macOS/雲端同步資料夾內不放sqlite-googledb是drive鏡像會間歇disk-io-error.md | GoogleDB, Google Drive, 雲端同步, sqlite, disk I/O error, OperationalError, download-archive, gallery-dl, 輸出資料夾 | global |
+| claude-cli-多人共用一台機器的隔離手段-setting-sources加deny規則-claude-config-dir會掉登入 | memory/CC與原子記憶契約/ClaudeCLI/claude-cli-多人共用一台機器的隔離手段-setting-sources加deny規則-claude-config-dir會掉登入.md | CLAUDE_CONFIG_DIR, setting-sources, permissions.deny, 隔離, 多使用者, claude -p 隔離, 不載 CLAUDE.md, deny 規則, Not logged in | global |
