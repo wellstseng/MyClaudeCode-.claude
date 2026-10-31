@@ -232,9 +232,10 @@
     "unity@claude-plugins-official": true
   },
   "effortLevel": "high",
-  "tui": "fullscreen",
   "autoUpdatesChannel": "latest",
+  "tui": "fullscreen",
   "skipDangerousModePermissionPrompt": true,
   "skipWorkflowUsageWarning": true,
-  "switchModelsOnFlag": true
+  "switchModelsOnFlag": true,
+  "agentPushNotifEnabled": true
 }
