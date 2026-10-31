@@ -5,8 +5,8 @@ const path = require("path");
 const http = require("http");
 const https = require("https");
 const { exec } = require("child_process");
-const { CLAUDE_DIR, WORKFLOW_DIR, MEMORY_DIR, TOOLS_DIR, loadConfig, loadRegistry, getRegistryMemDirs, PYTHON_EXE } = require("./paths");
-const { listAllSessions, readState, writeState } = require("./state");
+const { CLAUDE_DIR, CODE_DIR, WORKFLOW_DIR, MEMORY_DIR, TOOLS_DIR, loadConfig, loadRegistry, getRegistryMemDirs, PYTHON_EXE } = require("./paths");
+const { listAllSessions, readState } = require("./state");
 const { enrichAtomWithAccess } = require("./atom-access");
 
 // ─── v2.1 API Handlers ──────────────────────────────────────────────────────
@@ -33,7 +33,7 @@ function parseEpisodicAtom(filePath) {
   };
   const titleMatch = content.match(/^#\s+(.+)$/m);
   if (titleMatch) atom.title = titleMatch[1];
-  const metaRe = /^-\s+([\w-]+):\s*(.+)$/gm;
+  const metaRe = /^-[ \t]+([\w-]+):[ \t]*(.+)$/gm;   // [ \t] 不跨行：空欄位不把下一行讀成值
   let m;
   while ((m = metaRe.exec(content)) !== null) {
     const key = m[1].toLowerCase(), val = m[2].trim();
@@ -198,7 +198,7 @@ const testRunner = makeJobRunner({ maxConcurrent: 1, ttlMs: 300000 });
 function apiTestRunStart(req, res) {
   // V5 統一 verify 入口（hooks/tools/lib/skills 各層 verify/）；舊 tools/test-memory-v21.py
   // 已於 V5 Wave 5 汰除，此處為當時漏改的呼叫點。1400 餘案 JSON 約 300 KB → 放大 maxBuffer。
-  const scriptPath = path.join(CLAUDE_DIR, "run_verify.py");
+  const scriptPath = path.join(CODE_DIR, "run_verify.py");   // 程式碼：本樹的 run_verify
   const r = testRunner.start(() =>
     execJson(pyCmd(scriptPath, "--json"), { timeout: 180000, maxBuffer: 32 * 1024 * 1024 })
       .then(mapVerifyToDashboard)
@@ -260,7 +260,7 @@ function readWorldDev() {
 }
 let worldDev = readWorldDev();
 let worldDevTimer = null;
-function flushWorldDev() {                                   // 原子寫，仿 writeState（.tmp→rename）
+function flushWorldDev() {                                   // 原子寫（.tmp→rename）
   worldDevTimer = null;
   worldDev.updated_at = Date.now();
   const tmp = WORLD_DEV_PATH + ".tmp";
@@ -602,7 +602,7 @@ function parseAtomFile(filePath, fileName, layerLabel, defaultScope) {
       scope: defaultScope,
       file: fileName,
     };
-    const metaRe = /^-\s+([\w-]+):\s*(.+)$/gm;
+    const metaRe = /^-[ \t]+([\w-]+):[ \t]*(.+)$/gm;   // [ \t] 不跨行：空欄位不把下一行讀成值
     let m;
     while ((m = metaRe.exec(content)) !== null) {
       const key = m[1].toLowerCase(), val = m[2].trim();
@@ -713,7 +713,7 @@ function apiAtoms(req, res) {
     // 路徑即權威：專案 memory 目錄下的 atom 一律歸該 slug。
     // pushAtomFromFile 解析 frontmatter 時會用 bare `Scope:`（project/shared/personal/role:x）
     // 覆寫掉 path-derived 的 composite scope，導致 shared/ 子層 atom 被誤歸 "core" 房
-    // （c--projects 全在 shared/ → 整個房間消失）。兩段掃描後統一補正回 project:<slug>[:subscope]。
+    // （某專案的 atom 全在 shared/ → 整個房間消失）。兩段掃描後統一補正回 project:<slug>[:subscope]。
     for (let i = before; i < atoms.length; i++) {
       const sc = atoms[i].scope || "";
       if (sc === "project:" + slug || sc.startsWith("project:" + slug + ":")) continue;

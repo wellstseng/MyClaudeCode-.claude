@@ -15,15 +15,13 @@ from pathlib import Path
 
 import pytest  # noqa: F401  (pytest 收集需要)
 
-CLAUDE = Path.home() / ".claude"
-# 外部專案測資 platform-aware：r"C:\..." 在 POSIX 是相對路徑，resolve 後落回 rootdir 之下被誤判為內部
-EXTERNAL_PROJECT = r"C:\Projects\SomeApp" if sys.platform == "win32" else "/opt/Projects/SomeApp"
-EXTERNAL_X = r"C:\Projects\X" if sys.platform == "win32" else "/opt/Projects/X"
-for _p in (CLAUDE / "hooks", CLAUDE / "lib", CLAUDE):
+CODE = Path(__file__).resolve().parents[2]   # 本測試所在的樹根：程式碼從這裡載
+for _p in (CODE / "hooks", CODE / "lib", CODE):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
 import atom_locations  # noqa: E402  (monkeypatch CROSS_PROJECT_LOCAL_DOMAINS 的宿主)
+from wg_core import CLAUDE_DIR as CLAUDE  # noqa: E402  資料根（WG_CLAUDE_DIR 或 ~/.claude）：「在根層之內」的判準
 from wg_core import (  # noqa: E402
     _is_under_claude_dir, is_local_realm_path, is_cross_project_local,
 )
@@ -50,7 +48,7 @@ ATOMS = [
 
 def test_gate_external_project_filters_local(monkeypatch):
     monkeypatch.setattr(atom_locations, "CROSS_PROJECT_LOCAL_DOMAINS", CROSS)
-    out = _apply_gate(ATOMS, EXTERNAL_PROJECT)
+    out = _apply_gate(ATOMS, r"C:\Work\SomeApp")
     names = {n for n, _, _ in out}
     assert "decisions" in names           # core 保留
     assert "feedback-x" in names          # _AIDocs/Failures/ core 保留（不誤殺）
@@ -62,7 +60,7 @@ def test_gate_external_project_filters_local(monkeypatch):
 def test_gate_external_project_live_list_empty_filters_all_local():
     # live 清單為空（跨專案知識一律住 core）→ 外部專案 local 全濾，含 Continuity 路徑
     assert atom_locations.CROSS_PROJECT_LOCAL_DOMAINS == frozenset()
-    out = _apply_gate(ATOMS, EXTERNAL_PROJECT)
+    out = _apply_gate(ATOMS, r"C:\Work\SomeApp")
     assert {n for n, _, _ in out} == {"decisions", "feedback-x"}
 
 
@@ -100,7 +98,7 @@ def test_gate_external_project_cwd_keeps_category_core(tmp_path):
 def test_is_under_claude_dir_predicate():
     assert _is_under_claude_dir(str(CLAUDE)) is True
     assert _is_under_claude_dir(str(CLAUDE / "tools")) is True
-    assert _is_under_claude_dir(EXTERNAL_X) is False
+    assert _is_under_claude_dir(r"C:\Work\X") is False
     assert _is_under_claude_dir("") is False
     # 旁系路徑 ~/.claude-foo 必不算內部（parents 比對，非 startswith）
     assert _is_under_claude_dir(str(CLAUDE.parent / (CLAUDE.name + "-foo"))) is False

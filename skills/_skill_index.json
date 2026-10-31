@@ -1,12 +1,22 @@
 {
   "_doc": "skills/ 計數 SoT 機器鏡像。由 tools/skill-index.py 生成，勿手改。SoT=skills/*/SKILL.md。改 skill 後 PostToolUse hook 自動 --write。",
   "generated_from": "skills/*/SKILL.md",
-  "count": 24,
+  "count": 31,
   "skills": [
     {
       "name": "atom-debug",
       "dir": "atom-debug",
       "description": "切換原子記憶系統的注入/萃取 debug log（寫入 ~/.claude/Logs/atom-debug-*.log）"
+    },
+    {
+      "name": "atom-source",
+      "dir": "atom-source",
+      "description": "卡片來源回看：讀 atom 的 Source／Quote，原對話還在就撈出原句與前後文，不在就只報落檔時留的原句或「已逾保留期」。使用者說「這張卡片哪來的」「誰說的」「你哪裡看到的」「這條記憶的來源」時用。"
+    },
+    {
+      "name": "behavior-preservation",
+      "dir": "behavior-preservation",
+      "description": "行為保持重構的等值證法：預期值來自舊源碼或舊產物、實際值來自新產物，兩邊來源必不同；order／side_effect／boundary 三類變異各要證。被要求「改寫法但結果完全相同」「重構後行為不變」「等值證明」時觸發。"
     },
     {
       "name": "browse-sprites",
@@ -37,6 +47,11 @@
       "name": "consciousness-stream",
       "dir": "consciousness-stream",
       "description": "識流處理（Consciousness Stream Pipeline）— 連續對話流的記憶寫入"
+    },
+    {
+      "name": "console",
+      "dir": "console",
+      "description": "多 session 協作總控台：一個入口四種用法——「/console 對人」開對人總控台、「/console 調度」開調度總控台、「/console 開工 <軌名> <派工單路徑>」總控台自己開工作 session 送開工句、「/console 開工句 <軌名>」只產生第一句給人貼。只能手動打 /console 叫起（模型不會自己載入）。"
     },
     {
       "name": "continue",
@@ -84,6 +99,16 @@
       "description": "Behavioral guidelines to reduce common LLM coding mistakes. Use when writing, reviewing, or refactoring code to avoid overcomplication, make surgical changes, surface assumptions, and define verifiable success criteria."
     },
     {
+      "name": "mailbox",
+      "dir": "mailbox",
+      "description": "共用信箱（網路共用資料夾）：收信、寄信、回信、解鎖已讀、刪信、信件總覽、收件人名單（簡稱對帳號）；跨專案／跨人員（程式、企劃）用寫信溝通，企劃找程式協助寄需求單。「收信／有沒有信／看信／寄信／寫信給 xxx／寄給專案／收專案的信／回信／解鎖信件／刪信／信件總覽／寄需求單給程式」時觸發。"
+    },
+    {
+      "name": "meeting",
+      "dir": "meeting",
+      "description": "會議錄音整理：音檔 → 逐字稿 → 決議／待辦／未決三段摘要 → 決議寫進專案記憶（shared）。使用者說「整理這場會議」「會議錄音」「轉錄」「做會議摘要」時用。"
+    },
+    {
       "name": "memory",
       "dir": "memory",
       "description": "原子記憶系統綜合工具 — health/review/score 三主力 + classify（專案記憶 scope 分層整理，SessionStart 出 [Guardian:ScopeLayout] 或使用者說「整理記憶分類」時用）+ peek/undo（僅查自動萃取歷史殘留）。用於檢查記憶健康、自我迭代、Session 評分。"
@@ -107,6 +132,16 @@
       "name": "skill-creator",
       "dir": "skill-creator",
       "description": "建立、改造、稽核 Claude Code skill 的標準作業。確保每個 skill 遵循 Anthropic Progressive Disclosure 三層架構與 5 大設計模式，避免 agent 腦補亂寫。**任何要寫新 skill、改既有 skill、或評估 skill 品質的場合都該觸發。**"
+    },
+    {
+      "name": "text-score",
+      "dir": "text-score",
+      "description": "文字評分（G15）手動叫：照文字規格逐條問免費小模型裁判，對使用者這次要的需求評一則回覆或一份文件好不好讀。使用者說「評一下這則」「幫我評分」「這段好不好讀」「評分上一則回覆」「text-score」時用。"
+    },
+    {
+      "name": "token",
+      "dir": "token",
+      "description": "量一場或多場 Claude Code session 實際處理了多少 token（輸入分未快取、讀快取、建快取，加輸出與合計，含子代理），不換算美金。使用者說「/token」「這場用了多少 token」「消耗多少 token」「token 用量」「比較兩場 token」時用；預設量目前 session，也可給 session id 前綴或 transcript 路徑一起列表比較。"
     },
     {
       "name": "unity-mcp-orchestrator",

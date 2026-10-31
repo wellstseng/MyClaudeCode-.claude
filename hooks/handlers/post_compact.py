@@ -50,6 +50,37 @@ def _resolve_injected_entries(
     return gm, pm, unresolved
 
 
+def _atom_blob(state: Dict[str, Any], config: Dict[str, Any], trigger: str) -> Tuple[str, List[str], List[str]]:
+    """壓縮前已注入 atom 的緊湊內文 blob。回 (blob, injected, unresolved)；名單空或載不到 → ("", [], [])。"""
+    raw = state.get("pre_compact_injected_atoms") or state.get("injected_atoms") or []
+    names = list(dict.fromkeys(raw))  # 去重保序
+    if not names:
+        return "", [], []
+    budget = int(config.get("atoms", {}).get("post_compact_budget", _DEFAULT_BUDGET))
+    gm, pm, unresolved = _resolve_injected_entries(state, names)
+    lines: List[str] = []
+    injected: List[str] = []
+    if gm:
+        gl, gi, used = load_atoms_within_budget(gm, MEMORY_DIR.parent, budget, [])
+        lines += gl
+        injected += gi
+        budget -= used
+    if pm and budget > 0:
+        proj_mem = state.get("atom_index", {}).get("project_memory_dir", "")
+        if proj_mem:
+            base_proj = Path(proj_mem).parent
+            pl, pi, _u = load_atoms_within_budget(pm, base_proj, budget, [])
+            lines += pl
+            injected += pi
+    if not injected:
+        return "", [], unresolved
+    header = (
+        f"[Atom Recovery] 壓縮（{trigger or '?'}）後復原 {len(injected)} 條長期記憶緊湊內文"
+        f"（壓縮前已載入；atom 索引仍常駐系統提示，故僅補內文）："
+    )
+    return header + "\n\n" + "\n\n".join(lines), injected, unresolved
+
+
 def handle_post_compact(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
     session_id = input_data.get("session_id", "")
     state = _ensure_state(session_id, input_data, config)
@@ -58,42 +89,14 @@ def handle_post_compact(input_data: Dict[str, Any], config: Dict[str, Any]) -> N
         return
 
     try:
-        # 名單：PreCompact 快照優先（免受 SessionStart(compact) 清空順序影響），fallback 現存
-        raw = state.get("pre_compact_injected_atoms") or state.get("injected_atoms") or []
-        names = list(dict.fromkeys(raw))  # 去重保序
-        if not names:
-            output_nothing()
-            return
-
-        budget = int(config.get("atoms", {}).get("post_compact_budget", _DEFAULT_BUDGET))
-        gm, pm, unresolved = _resolve_injected_entries(state, names)
-
-        lines: List[str] = []
-        injected: List[str] = []
-        if gm:
-            gl, gi, used = load_atoms_within_budget(gm, MEMORY_DIR.parent, budget, [])
-            lines += gl
-            injected += gi
-            budget -= used
-        if pm and budget > 0:
-            proj_mem = state.get("atom_index", {}).get("project_memory_dir", "")
-            if proj_mem:
-                base_proj = Path(proj_mem).parent
-                pl, pi, _u = load_atoms_within_budget(pm, base_proj, budget, [])
-                lines += pl
-                injected += pi
-
-        if not injected:
-            output_nothing()
-            return
-
         trigger = input_data.get("trigger", "")
-        header = (
-            f"[Atom Recovery] 壓縮（{trigger or '?'}）後復原 {len(injected)} 條長期記憶緊湊內文"
-            f"（壓縮前已載入；atom 索引仍常駐系統提示，故僅補內文）："
-        )
+        atom_blob, injected, unresolved = _atom_blob(state, config, trigger)
+        if not atom_blob:
+            output_nothing()
+            return
+
         state["pending_reinjection"] = True
-        state["pending_reinjection_blob"] = header + "\n\n" + "\n\n".join(lines)
+        state["pending_reinjection_blob"] = atom_blob
         state["pending_reinjection_atoms"] = injected
         state["post_compact_at"] = _now_iso()
         if unresolved:   # no-silent-cap：未解析名單留痕

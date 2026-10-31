@@ -17,10 +17,15 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from wg_core import (
-    CLAUDE_DIR, WORKFLOW_DIR,
+    CLAUDE_DIR, CODE_DIR, WORKFLOW_DIR,
     _now_iso, _atom_debug_log, _atom_debug_error,
 )
-from wg_atoms import _kw_match
+
+
+def _kw_match(*a: Any, **k: Any) -> Any:
+    """wg_atoms._kw_match 的惰性入口（HOOK_IMPORT_ON_USE）：只有萃取觸發判斷用到，import 本模組的 hook 不先載 wg_atoms。"""
+    from wg_atoms import _kw_match as _f
+    return _f(*a, **k)
 
 
 # ─── Process Utilities ───────────────────────────────────────────────────────
@@ -92,7 +97,7 @@ def _gui_python() -> str:
 def _spawn_extract_worker(ctx_dict: dict) -> int:
     """Spawn extract-worker.py as detached subprocess. Returns PID or 0."""
     import subprocess as _sp
-    worker_path = CLAUDE_DIR / "hooks" / "extract-worker.py"
+    worker_path = CODE_DIR / "hooks" / "extract-worker.py"
     if not worker_path.exists():
         return 0
     try:
@@ -164,11 +169,10 @@ def _maybe_spawn_failure_extraction(
     clean_prompt: str, lines: list,
 ) -> None:
     """偵測失敗關鍵字 → spawn extract-worker failure mode。"""
-    from wg_core import is_harness_generated_prompt
-    # sub-agent 完成通知不是使用者回報失敗；其內文的失敗詞不觸發萃取
-    if is_harness_generated_prompt(clean_prompt):
-        return
-    if not _detect_failure_keywords(clean_prompt, config):
+    from wg_core import user_typed_text
+    # 只看使用者打的字：sub-agent 完成通知、其他 session 的訊息內文的失敗詞不觸發萃取
+    typed = user_typed_text(clean_prompt)
+    if not typed or not _detect_failure_keywords(typed, config):
         return
 
     fc = config.get("response_capture", {}).get("failure_extraction", {})
@@ -197,7 +201,7 @@ def _maybe_spawn_failure_extraction(
         "session_intent": "debug",
         "mode": "failure",
         "byte_offset": prev_offset,
-        "failure_prompt": clean_prompt[:500],
+        "failure_prompt": typed[:500],
     }
     pid = _spawn_extract_worker(worker_ctx)
     if pid:
@@ -317,6 +321,59 @@ def detect_signal(prompt: str) -> Dict:
 
     signal = score >= _SIGNAL_THRESHOLD
     return {"signal": signal, "score": round(score, 2), "matched": matched}
+
+
+# ─── 否決剛記的決策：字樣只是提示（規則 EXTRACT_VETO_NEEDS_JUDGMENT）───────────
+# 決策萃取（user-extract-worker）信心夠高就直接寫成卡，下一則 UPS 通知。使用者那則含「否」之類的字不再整批丟掉通知
+# （「是否」「否則」都會中，而且舊做法沒撤卡、只是不說）：通知照送，另問 AI 是不是在否決；AI 判是就 atom_retire 撤卡。
+
+EXTRACT_VETO_LABEL = "否決記憶"
+EXTRACT_VETO_MARKER = "[Guardian:ExtractVeto]"
+EXTRACT_VETO_HINTS = ("否", "不要記", "別記", "取消記憶")
+
+
+def extract_veto_hints(typed: str) -> List[str]:
+    """使用者本人打的字裡出現的否決提示字樣（子字串，只是提示）。"""
+    low = (typed or "").lower()
+    return [w for w in EXTRACT_VETO_HINTS if w in low]
+
+
+def extract_veto_question(hints: List[str], confirmed: List[Dict[str, Any]]) -> str:
+    """UPS 問 AI 的那一句（切入點登錄表靠 EXTRACT_VETO_MARKER 認）；列剛記的卡（有路徑才列路徑）。"""
+    items = "；".join(
+        f"「{str(e.get('statement', ''))[:60]}」" + (f"（{e['atom_path']}）" if e.get("atom_path") else "")
+        for e in confirmed[:3]) + (f"；另 {len(confirmed) - 3} 條見上面的通知" if len(confirmed) > 3 else "")
+    return (f"{EXTRACT_VETO_MARKER} 使用者這句有「{'、'.join(hints)}」（字樣只是提示，規則 EXTRACT_VETO_NEEDS_JUDGMENT）："
+            f"他是在否決剛記下的決策 {items} 嗎？是 → 用 atom_retire 撤掉那張卡，並寫一行「{EXTRACT_VETO_LABEL}｜是：<理由>」；"
+            f"只是句子裡剛好有這個字（是否、否則…）→ 寫「{EXTRACT_VETO_LABEL}｜不是：<理由>」。兩種都會留帳。")
+
+
+def settle_pending_veto(state: Dict[str, Any], session_id: str) -> None:
+    """上次問了、到下一則使用者訊息 AI 都沒回 → 留帳 undeclared（不自動撤卡：沒人判過不動已寫的卡）。"""
+    pending = state.pop("extract_veto_pending", None)
+    if isinstance(pending, dict):
+        from wg_core import append_guard_log
+        append_guard_log("extract_veto", {"session_id": session_id, "turn_seq": pending.get("turn"), "event": "undeclared",
+                                          "hints": pending.get("hints", []), "statements": pending.get("statements", []),
+                                          "atoms": pending.get("atoms", [])})
+
+
+def resolve_extract_veto(state: Dict[str, Any], session_id: str, text: str) -> Optional[bool]:
+    """Stop：有待判、本回合文字有理由有填的「否決記憶｜是／不是：<理由>」→ 留帳 judged、清待判。
+    回 True／False＝AI 判是／不是；None＝沒有待判或還沒回。撤卡是 AI 自己呼叫 atom_retire，這裡只記判斷。"""
+    pending = state.get("extract_veto_pending")
+    if not isinstance(pending, dict):
+        return None
+    import wg_release_rules as rr
+    decl = rr.yes_no_declaration(text, EXTRACT_VETO_LABEL)
+    if decl is None:
+        return None
+    state.pop("extract_veto_pending", None)
+    from wg_core import append_guard_log
+    append_guard_log("extract_veto", {"session_id": session_id, "turn_seq": pending.get("turn"), "event": "judged",
+                                      "veto": decl["yes"], "reason": decl["reason"], "hints": pending.get("hints", []),
+                                      "statements": pending.get("statements", []), "atoms": pending.get("atoms", [])})
+    return decl["yes"]
 
 
 # ─── Content Classify: plan vs knowledge (was wg_content_classify) ──────────

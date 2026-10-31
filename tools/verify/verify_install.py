@@ -17,11 +17,13 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
-UNDER_TEST = ("tools/install.py", "hooks/user-init.sh")
+UNDER_TEST = ("tools/install.py", "hooks/user-init.sh", "tools/fix-hook-python.py", "lib/project_root.py",
+              "lib/config_local.py")
 NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 GIT = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "core.longpaths=true"]
 
@@ -51,7 +53,10 @@ USER_CONFIG = {
 # ─── 小工具 ─────────────────────────────────────────────────────────────────
 
 def fake_env(home: Path) -> dict:
-    return {**os.environ, "HOME": str(home), "USERPROFILE": str(home), "PYTHONIOENCODING": "utf-8"}
+    # LOCALAPPDATA 也指進假家：fix-hook-python 看 settings 裡 $LOCALAPPDATA/Python/bin 的直譯器在不在，
+    # 用真機的值時，Python 裝在別處的機器會把所有 hook（含使用者自訂）改寫掉，測試結果隨機器而變
+    return {**os.environ, "HOME": str(home), "USERPROFILE": str(home),
+            "LOCALAPPDATA": str(home / "AppData" / "Local"), "PYTHONIOENCODING": "utf-8"}
 
 
 def git(*args: str, cwd: Path, home: Path, check: bool = True) -> subprocess.CompletedProcess:
@@ -59,11 +64,11 @@ def git(*args: str, cwd: Path, home: Path, check: bool = True) -> subprocess.Com
                           encoding="utf-8", errors="replace", check=check, creationflags=NO_WINDOW)
 
 
-def run_install(home: Path, script: Path, *args: str) -> subprocess.CompletedProcess:
-    """在假家環境跑 install.py；先確認它認定的目標真的在假家裡。"""
+def run_install(home: Path, script: Path, *args: str, extra_env: Optional[dict] = None) -> subprocess.CompletedProcess:
+    """在假家環境跑 install.py；先確認它認定的目標真的在假家裡。extra_env 疊在假家環境上。"""
     assert REPO.resolve() not in (home / ".claude").resolve().parents and (home / ".claude").resolve() != REPO.resolve()
-    r = subprocess.run([sys.executable, str(script), *args], env=fake_env(home), capture_output=True, text=True,
-                       encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
+    r = subprocess.run([sys.executable, str(script), *args], env={**fake_env(home), **(extra_env or {})},
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
     assert f"目標目錄：{home / '.claude'}" in r.stdout, r.stdout + r.stderr
     return r
 
@@ -72,6 +77,10 @@ def make_home(base: Path, name: str, files: dict) -> Path:
     """建假家；files＝{相對 ~/.claude 的路徑: 文字或 dict（寫成 JSON）}。"""
     home = base / name
     (home / ".claude").mkdir(parents=True)
+    pybin = home / "AppData" / "Local" / "Python" / "bin"   # 版控 settings 指名的直譯器位置放樁檔，讓它在假家裡「存在」
+    pybin.mkdir(parents=True)
+    for exe in ("python.exe", "pythonw.exe"):
+        (pybin / exe).write_bytes(b"")
     for rel, content in files.items():
         path = home / ".claude" / rel
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -478,6 +487,26 @@ def test_missing_target_is_created_and_adopted(base, upstream):
     assert not (claude / "backups").exists()
 
 
+def test_data_root_elsewhere_installs_and_checks_target(base, upstream):
+    """環境把資料根（WG_CLAUDE_DIR）與 Claude Code 設定目錄（CLAUDE_CONFIG_DIR）各指到別處時，安裝照常完成，
+    hook 直譯器檢查看的是安裝目標的 settings.json：兩處各放一份直譯器不存在的誘餌 settings.json，
+    安裝完都一個位元沒動、旁邊也沒多出備份檔。兩個變數由本案自己指定，不靠 conftest 的隔離值。"""
+    home = make_home(base, "h9", {"settings.json": USER_SETTINGS})
+    decoy = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "\"C:/no/such/python.exe\" x.py"}]}]}}
+    elsewhere = {"WG_CLAUDE_DIR": base / "h9-data", "CLAUDE_CONFIG_DIR": base / "h9-cc-config"}
+    before = {}
+    for var, d in elsewhere.items():
+        d.mkdir()
+        (d / "settings.json").write_text(json.dumps(decoy), encoding="utf-8", newline="\n")
+        before[var] = (d / "settings.json").read_bytes()
+    result = run_install(home, upstream["script"], "--apply", extra_env={k: str(d) for k, d in elsewhere.items()})
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "hook 直譯器：" in result.stdout and "安裝完成" in result.stdout
+    for var, d in elsewhere.items():
+        assert sorted(p.name for p in d.iterdir()) == ["settings.json"], var
+        assert (d / "settings.json").read_bytes() == before[var], var
+
+
 def test_broken_user_settings_aborts_before_any_change(base, upstream):
     broken = '{\n  // my comment\n  "model": "mine",\n}\n'
     home = make_home(base, "h8", {"settings.json": broken, "CLAUDE.md": "x\n"})
@@ -657,6 +686,7 @@ def test_verify_exit_code_on_installed_home(adopted):
         assert "PASS     hook 啟動紀錄" in result.stdout and "有 1 個 session" in result.stdout
         assert "記憶三層現況" in result.stdout and "公司層" in result.stdout
         assert "DEGRADED MCP 註冊" in result.stdout  # 假家沒有 ~/.claude.json
+        assert "PASS     根層部位表" in result.stdout  # 假家是本 repo 的 clone，.claude/overview-map.md 跟著來
         (claude / "USER.md").unlink()
         broken = run_install(home, script, "--verify")
         assert broken.returncode == 1 and "FAIL     個人啟動檔" in broken.stdout
@@ -664,3 +694,39 @@ def test_verify_exit_code_on_installed_home(adopted):
         (claude / "USER.md").write_bytes(user_md)
         stale.unlink(missing_ok=True)
         opened.unlink(missing_ok=True)
+
+
+def test_verify_overview_map_three_states(tmp_path, monkeypatch):
+    """根層部位表三態：表不在 DEGRADED（附 scaffold 指令）；表在且 parse_map 讀得出列 PASS；表在但讀不出列 FAIL。"""
+    target = tmp_path / "home" / ".claude"
+    (target / ".claude").mkdir(parents=True)
+    monkeypatch.setattr(install, "TARGET", target)
+    level, detail = install.verify_overview_map()
+    assert level == "DEGRADED" and "overview-map-scaffold.py" in detail and str(target) in detail
+    table = target / ".claude" / "overview-map.md"
+    table.write_text((REPO / ".claude" / "overview-map.md").read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
+    level, detail = install.verify_overview_map()
+    assert level == "PASS" and "個部位" in detail, detail
+    table.write_text("# 只有標題，沒有表\n\n隨便寫的字\n", encoding="utf-8", newline="\n")
+    level, detail = install.verify_overview_map()
+    assert level == "FAIL" and "沒有任何可解析的列" in detail
+    table.write_text("| 路徑前綴 | 部位 | 導讀卡 | 狀態 |\n|---|---|---|---|\n| 沒有反引號路徑 | x | y | 有 |\n",
+                     encoding="utf-8", newline="\n")
+    assert install.verify_overview_map()[0] == "FAIL"
+    assert any(name == "根層部位表" and fn is install.verify_overview_map for name, fn in install.VERIFY_ITEMS)
+
+
+def test_upgrade_hints_v6_off_unless_local_enables(fake_target, monkeypatch, capsys):
+    """升級結尾：上游 v6.enabled=false 且本機 config.local.json 沒開 → 印一行怎麼開；本機開了 → 不印。"""
+    monkeypatch.delenv("WG_V6", raising=False)
+    (fake_target / "lib").mkdir()
+    shutil.copyfile(REPO / "lib" / "config_local.py", fake_target / "lib" / "config_local.py")
+    workflow = fake_target / "workflow"
+    workflow.mkdir()
+    install.write_json(workflow / "config.json", {"v6": {"enabled": False}})
+    install.v6_hint()
+    assert capsys.readouterr().out.strip() == install.V6_HINT
+    install.write_json(workflow / "config.local.json", {"v6": {"enabled": True}})
+    install.v6_hint()
+    assert capsys.readouterr().out == ""
+    assert "v6_hint" in install.cmd_upgrade.__code__.co_names     # 升級結尾真的有叫

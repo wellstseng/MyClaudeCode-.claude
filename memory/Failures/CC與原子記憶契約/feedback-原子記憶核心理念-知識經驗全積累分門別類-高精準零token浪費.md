@@ -6,6 +6,7 @@
 - Trigger: 記憶系統, 原子記憶, 注入, 萃取, token 稅, token 浪費, 精準, 高效, 記憶取捨, budget, TURN_BUDGET_LIMIT, 記憶變弱, 注入變弱, 分門別類, 積累
 - Created-at: 2026-08-28
 - Related: 取用端稽核與瘦身規範-atomaudit與3kb預算, decisions, 注入預算三教訓-裁切要回填-分級看token不看字元-橋接檔須隨索引重產, codegraph與agent-retro評估結論-codegraph只當專案local-mcp不進記憶-agent-retro只拆量測
+- Source: commit:3a4809c 2026-08-28（原對話已逾保留期）
 
 ## 知識
 
@@ -13,6 +14,7 @@
 - [臨] 判準：任何記憶系統取捨（預算上限、剪法、分類閘、trigger 設計）先問兩題——「該想起的有沒有完整送到我眼前？」「送進來的有沒有一行是白佔 token 的？」兩題都要過；只過一題＝不合格。
 - [臨] 實例：per-turn 硬頂 500 tok 時 trigger 命中的熱 atom 只有 22% 全文送達（其餘降級成標題或一行路標）——省了 token 卻讓「積累」失去意義；改 1200（≈3 顆中位數全文）並讓降級版保留知識節錄，才同時滿足兩題。
 - [臨] 效果量測必須是腳本自動統計（Logs/injection-turns.jsonl → memory-effect-report 週趨勢「全文/回合」「熱 atom 全文率」），不得靠 LLM 主觀判斷。
+- [臨] 使用者裁定 atom 的內容尺度：要收的是**知識與經驗**，不是「只是闡述某一個當下」的流水帳；只有在經驗無法用通則說清、非得用發生實例來解說時才寫實例，而且實例也不帶時間戳——「使用者指正（日期）」「實踩（日期）」這種寫法每次注入都在浪費 token，也讓 atom 讀起來像日誌。日期只留在 metadata（Created-at、Source），或者日期本身就是知識（外查事實的 EOL、發布日）。
 
 ## 行動
 

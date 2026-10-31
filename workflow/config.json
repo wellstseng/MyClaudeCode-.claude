@@ -1,6 +1,10 @@
 {
   "atom_debug": false,
   "enabled": true,
+  "coding_guard": {
+    "_doc": "寫碼守門總開關（開發期代號 v6），預設關：關時只跑寫碼守門以外的處理（記憶注入、收割、vcs-sync、語言守門等）。本機要開設環境變數 WG_CODING_GUARD=1，或在 workflow/config.local.json（不進版控）寫 {\"coding_guard\": {\"enabled\": true}}；WG_CODING_GUARD=0 強制關。相容：舊鍵 v6（{\"v6\": {\"enabled\": true}}）與舊環境變數 WG_V6 仍認——coding_guard／WG_CODING_GUARD 優先、沒寫（enabled 不是 true）才看舊的（hooks/wg_core.v6_enabled、coding_guard_opt）。coding_turn_only（沒寫＝true）：寫碼守門的每回合守門（退避偵測、退縮閘、收尾檢核、閱讀路徑、hook 計時帳）只在寫碼回合啟動（這個使用者回合已經用工具改過程式檔或有判不出目標的寫入；或前幾回合改過程式、收尾宣告完成；prompt 關鍵字意圖不算，只改文件、純問答不算），寫 false 退回每回合都啟動（hooks/wg_core.coding_turn）。",
+    "enabled": false
+  },
   "stop_gate_max_blocks": 2,
   "min_files_to_block": 2,
   "dashboard_port": 3848,
@@ -22,8 +26,8 @@
   },
   "org_memory": {
     "repo_url": "https://gitlab.uj.com.tw/open-data-prog/companyatomsmem.git",
-    "default_root": "C:\\CompanyAtomsMem",
-    "_doc": "公司層記憶 repo（所有專案看得到、能寫）。本檔只放全公司相同的值：repo_url、default_root（--join 沒給路徑時 clone 到哪）。「這台機器接上沒、根在哪」寫在 workflow/org-memory.local.json（不進版控，tools/org-memory.py --join／--init 會填；同名鍵蓋過本區段）；enabled／roots 在此保持 false／[]。程式只讀 roots[0]，>1 個拒絕並停用 org。寫公司知識：atom_write scope=org。",
+    "default_root": "~/CompanyAtomsMem",
+    "_doc": "公司層記憶 repo（所有專案看得到、能寫）。本檔只放全公司相同的值：repo_url、default_root（--join 沒給路徑時 clone 到哪；寫 ~/ 開頭的家目錄相對路徑，不寫磁碟代號，多機多 OS 才通用）。「這台機器接上沒、根在哪」寫在 workflow/org-memory.local.json（不進版控，tools/org-memory.py --join／--init 會填；同名鍵蓋過本區段）；enabled／roots 在此保持 false／[]。程式只讀 roots[0]，>1 個拒絕並停用 org。寫公司知識：atom_write scope=org。",
     "enabled": false,
     "roots": []
   },
@@ -86,10 +90,11 @@
   },
   "write_gate": {
     "enabled": true,
-    "auto_threshold": 0.5,
-    "ask_threshold": 0.3,
+    "quality_floor": 0.3,
     "dedup_score": 0.8,
-    "skip_on_explicit_user": true
+    "dedupe_declaration": true,
+    "_doc_dedupe": "去重交 AI 判：相似度達 dedup_score 不再直接拒寫，回候選卡要 AI 帶 dedupe={verdict: same|supersedes|different, of, why} 重送；same 走 append、supersedes 併進 Supersedes、different 照常，留帳 dedupe_declared。品質分數只分寫／不寫（quality_floor，舊 ask 級已拿掉）。dedupe_declaration=false 回舊行為（tools/memory-write-gate.py）。",
+    "_doc_hub_card_budget": "導讀卡（kind_hint=hub、標題含「導讀」或五段齊）knowledge 區預算固定 4096 bytes，值住 lib/hub_card.py HUB_CARD_BUDGET、不開放設定；一般卡用 knowledge_budget_bytes（預設 3072）。"
   },
   "episodic": {
     "auto_generate": true,
@@ -100,14 +105,10 @@
   "cross_session": {
     "enabled": true,
     "min_score": 0.75,
-    "promote_threshold": 2,
-    "suggest_threshold": 4,
     "timeout_seconds": 5
   },
   "self_iteration": {
     "decay_half_life_days": 30,
-    "promote_confirmations_threshold": 4,
-    "promote_min_confirmations": 20,
     "archive_score_threshold": 0.3,
     "_doc_auto_commit": "舊鍵 auto_commit_promotions / auto_push_promotions 已由 vcs_sync.enabled / vcs_sync.push 接管（晉升 sweep 後改 spawn vcs-sync worker）；鍵保留供相容讀取，實際開關以 vcs_sync 為準。",
     "auto_commit_promotions": true,
@@ -115,12 +116,6 @@
     "oscillation_window": 3,
     "oscillation_threshold": 2,
     "review_interval": 6,
-    "forget": {
-      "_doc": "Task 2 Phase D selective forgetting：stale+低用+非核心保護的封存候選隔離到 memory/_distant/（被 sync-atom-index 排除→不注入、可逆）。預設 dry-run（enabled=false ∨ dry_run=true）只寫 _staging/forget-candidates.md 不搬。真隔離需 enabled=true ∧ dry_run=false。憲法 Forgetting 對策。",
-      "enabled": false,
-      "dry_run": true,
-      "isolate_threshold": 0.3
-    },
     "_doc_rut_file_whitelist": "same_file_3x 覆轍信號檔名白名單（fnmatch、不分大小寫）：索引/編年/驗收工件每 session 高頻反覆更新屬常態，不構成表面修復證據。生成端(wg_episodic)、掃描端(wg_evasion)、recall-miss 共用；被略過者落 atom-debug log。",
     "rut_file_whitelist": [
       "readme*",
@@ -130,13 +125,19 @@
       "memory.md",
       "_atom_index*",
       "acceptance-*"
-    ]
+    ],
+    "forget": {
+      "_doc": "選擇性遺忘：stale+低用+非核心保護的封存候選隔離到 memory/_distant/（被 sync-atom-index 排除→不注入、可逆）。預設 dry-run（enabled=false ∨ dry_run=true）只寫 _staging/forget-candidates.md 不搬。真隔離需 enabled=true ∧ dry_run=false。",
+      "enabled": false,
+      "dry_run": true,
+      "isolate_threshold": 0.3
+    }
   },
   "usefulness": {
     "attribution_policy": "v2",
     "v2_shared_min": 6,
     "v2_containment_min": 0.0,
-    "_doc": "Phase 2 (#2) 注入→使用→結果 閉環效用：Beta-Bernoulli (α,β) + Wilson 下界 + 慢衰減。py↔js 鏡像門檻 (promote_lb/min_n/wilson_z) 與 lib/atom_access.py、server.js SYNC。",
+    "_doc": "注入→使用→結果 閉環效用：Beta-Bernoulli (α,β) + Wilson 下界 + 慢衰減。py↔js 鏡像門檻 (promote_lb/min_n/wilson_z) 與 lib/atom_access.py、server.js SYNC。",
     "enabled": true,
     "lexical_overlap_min": 0.18,
     "rare_token_min": 2,
@@ -145,6 +146,7 @@
     "demote_lb": 0.35,
     "demote_min_n": 5,
     "min_n": 3,
+    "fix_min_n": 10,
     "decay_lambda": 0.97,
     "distraction_enabled": true,
     "distraction_weight": 0.5,
@@ -161,7 +163,7 @@
     }
   },
   "injection": {
-    "_doc": "Task 2 Phase C 注入端 relevance gate（context governance 落地）。related_gate 只裁切 related-edge spreading（非 prompt 命中、純連結擴散＝最易成 distractor），主迴圈 trigger/bm25/vector 命中者完全不碰，故不誤殺 prompt 相關或新 atom。憲法 Context Confusion 對策。",
+    "_doc": "注入端 relevance gate。related_gate 只裁切 related-edge spreading（非 prompt 命中、純連結擴散＝最易成 distractor），主迴圈 trigger/bm25/vector 命中者完全不碰，故不誤殺 prompt 相關或新 atom。",
     "related_gate": {
       "query_gate": "bm25",
       "query_gate_min": 5,
@@ -181,10 +183,8 @@
     "enabled": true,
     "session_end_max_chars": 20000,
     "session_end_max_items": 5,
-    "session_end_timeout_seconds": 10,
-    "classification_default": "[臨]",
     "per_turn": {
-      "_disabled_2026_07_01": "調整式拔除：auto-capture 草稿為 write-only 死路（0 下游消費；DedupStage 實跑 0/16）。停產。失敗萃取(failure_extraction)與 episodic 生成保留。回滾：改回 true。",
+      "_doc_enabled": "false：不產 auto-capture 草稿（草稿沒有下游消費）；失敗萃取（failure_extraction）與 episodic 生成不受影響。要開改 true。",
       "enabled": false,
       "min_new_chars": 500,
       "max_items": 3,
@@ -236,14 +236,28 @@
   },
   "userExtraction": {
     "enabled": true,
-    "mode": "production",
     "tokenBudget": 240
   },
   "parallel_agents": {
+    "_doc": "並行建議 [Parallel:Suggest] 只在強訊號出：score 滿分 7（連接詞×2＋批量 2＋跨目標 1＋複數 1＋多檔 1），一般請求落 2～5，min_score 6 以上才不會每則都出；max_per_session 同類建議一 session 最多幾次。判斷（score_prompt）照舊，門檻只管印不印。",
     "enabled": true,
-    "min_score": 2,
+    "min_score": 6,
+    "max_per_session": 2,
     "cooldown_turns": 3,
     "min_prompt_chars": 15
+  },
+  "research_fanout": {
+    "_doc": "知識檢索型 prompt（幫我查/搜索/我想知道）偵測 → 注入兩階段 fan-out SOP。命中時抑制 parallel_agents 提示避免重複。一鍵關 = enabled:false。 只在強訊號出：min_signal_hits＝檢索動詞＋知識域／本地定位／明示檔命中總數門檻（「幫我查一下 X 的用法」=2 不出，「幫我查、研究一下 A 跟 B 的差別與選型比較」那級才出）；max_per_session 一 session 最多幾次。判斷（classify）照舊。",
+    "enabled": true,
+    "min_signal_hits": 4,
+    "max_per_session": 2,
+    "cooldown_turns": 2,
+    "min_prompt_chars": 5
+  },
+  "aidocs": {
+    "_doc": "每則 [Guardian:AIDocs]：關鍵字命中數 ≥ min_prompt_hits 才指、最多 max_prompt_matches 條、同一份一 session 只指一次（v6_once）；開場只給一行 Read _AIDocs/_INDEX.md。",
+    "min_prompt_hits": 2,
+    "max_prompt_matches": 1
   },
   "changelog_auto_roll": {
     "enabled": true,
@@ -255,14 +269,12 @@
   },
   "codex_companion": {
     "enabled": true,
-    "codex_binary": "C:/Users/wellstseng/AppData/Roaming/npm/codex.cmd",
-    "model": "gpt-5.6-sol",
+    "_doc_codex_binary": "codex_binary 不設＝從 PATH 找 codex；要指定執行檔路徑寫 workflow/config.local.json 的 codex_companion 段（tools/codex-companion/judge_backend.resolve_codex_bin：設定值找不到檔也退 PATH）。",
+    "model": "gpt-6-astra",
     "assessment_timeout": 120,
-    "codex_extra_args": [
-      "-c",
-      "mcp_servers.unityMCP.enabled=false"
-    ],
-    "_doc_codex_extra_args": "原樣附加到 codex exec 的旗標（機器層）。本機 ~/.codex/config.toml 註冊的 unityMCP(127.0.0.1:8090) 只在 Unity Editor 開著時存在，裁判用不到卻每次啟動連線重試 3 次，故只對裁判停用；Codex 桌面版仍可用。",
+    "_doc_assessment_timeout": "背景審查子程序（audit.py）單次 codex 呼叫的秒數上限；Stop hook 不等它，與收尾耗時無關。",
+    "codex_extra_args": [],
+    "_doc_codex_extra_args": "原樣附加到 codex exec 的旗標（tools/codex-call.py 帶上；驗收裁判也走它）。只有某台機器需要的旗標（例：停用那台 ~/.codex/config.toml 註冊、裁判用不到的 MCP 伺服器）寫在 workflow/config.local.json 的 codex_companion 段。",
     "score_threshold": 7,
     "max_audits_per_session": 30,
     "silent_advisory": true,
@@ -271,38 +283,45 @@
       "completion_evidence": true,
       "architecture_review": false,
       "handoff_review": true,
-      "block_severity_threshold": "high"
+      "block_severity_threshold": "high",
+      "_doc": "completion_evidence=收尾自檢（heuristics）：silent_advisory=false 且 severity≥block_severity_threshold 時只落 completion_evidence assessment 檔、下一則附說明，不 block 收尾。"
     },
-    "block_template": "Codex Companion 軟閘：偵測到高風險缺漏。\n{detail}\n請補充驗證或修正後再收尾。",
     "fallback": {
-      "_doc": "備援裁判（tools/codex-companion/judge_backend.py）：codex 不在（codex_binary 路徑與 PATH 都找不到）或授權未開通（未登入/401/429/額度）→ 改用 headless `claude -p --model <model>` 當裁判。獨立性降級（同廠同家族、盲點相關）故 allow_block 預設 false＝只發 advisory 不擋收尾；要當硬閘自行改 true。授權類失敗會落 workflow/companion-backend.json 抑制標記，reprobe_hours 內不重試 codex，codex 一旦成功即清除。claude_binary 留空＝自動找（PATH → VSCode 擴充 → ~/.local/share/claude/versions）。兩者皆不可用 → 退 heuristics-only 並於 SessionStart 揭露一次。全關＝enabled:false。",
+      "_doc": "備援裁判（tools/codex-companion/judge_backend.py）：codex 不在（codex_binary 路徑與 PATH 都找不到）或授權未開通（未登入/401/429/額度）→ 改用 headless `claude -p --model <model>` 當裁判。獨立性降級（同廠同家族、盲點相關）故只發 advisory、不擋收尾（驗收裁判不論哪個後端都只記錄）。授權類失敗會落 workflow/companion-backend.json 抑制標記，reprobe_hours 內不重試 codex，codex 一旦成功即清除。claude_binary 留空＝自動找（PATH → VSCode 擴充 → ~/.local/share/claude/versions）。兩者皆不可用 → 退 heuristics-only 並於 SessionStart 揭露一次。全關＝enabled:false。",
       "enabled": true,
       "model": "sonnet",
       "claude_binary": "",
       "timeout": 90,
-      "allow_block": false,
       "reprobe_hours": 24
     },
     "audit_quota": {
-      "_doc": "Q8 配額分桶（INV-BUDGET-ISOLATION）：共用 max_audits_per_session 總量之上，acceptance_review 自用上限 max、保底名額 min（其他審查最多用 total-min），兩類互不餓死。",
+      "_doc": "配額分桶（INV-BUDGET-ISOLATION）：共用 max_audits_per_session 總量之上，acceptance_review 自用上限 max、保底名額 min（其他審查最多用 total-min），兩類互不餓死。",
       "acceptance_review_min": 6,
       "acceptance_review_max": 8
     },
     "acceptance_review": {
-      "_doc": "驗收裁判（Phase 3 已轉正）：宣稱完成且綁到本 session 唯一 open 規格 → 組案卷（需求原話+驗收清單+diff 採樣+測試輸出）發 codex 回 verdict。enforce=true 時於 Stop 同步審：fail 且 severity≥enforce_severity_threshold → block 收尾（沿用 top-level stop_gate_max_blocks=2，第 3 次強制放行+揭露）；pass/uncertain/低嚴重度→放行，advisory 照注。裁判逾時→uncertain 放行不卡收尾。規格檔標 done 觸發的審計維持 async 影子。全部判定寫 acceptance-audit.jsonl。綁定契約：唯一 open 規格才審，否則 uncertain 永不 block（INV-CASE-BINDING-OR-UNCERTAIN）。max_per_spec=同規格每 session 審計上限；enforce_timeout=同步審單次 codex 秒數上限。一鍵退影子=enforce:false；全關=enabled:false。",
+      "_doc": "驗收裁判（hooks/codex_companion.py）：歸 寫碼守門總開關管，關時兩個觸發處（收尾宣稱完成、規格檔標 done）都不跑。宣稱完成且綁到本 session 唯一 open 規格 → 組案卷（需求原話+驗收清單+diff 採樣+測試輸出）在背景子程序（audit.py）發 codex 回 verdict；Stop 不等、永不 block。結果落 companion-assessment 檔，下一則 UserPromptSubmit 一律附一行（verdict／severity／摘要）；fail 且 severity≥max_inject_severity 才附完整說明（摘要＋事證＋建議）。全部判定寫 acceptance-audit.jsonl。綁定契約：唯一 open 規格才審，否則 uncertain（INV-CASE-BINDING-OR-UNCERTAIN）。max_per_spec=同規格每 session 審計上限。全關=enabled:false。",
       "enabled": true,
       "max_per_spec": 2,
-      "max_prompt_chars": 22000,
-      "enforce": true,
-      "enforce_severity_threshold": "high",
-      "enforce_timeout": 60
+      "max_prompt_chars": 22000
     }
   },
   "lang_guard": {
-    "_doc": "P8b 英文回應漂移攔截（hooks/lang_guard.py，standalone Stop hook）。量測 assistant 終版訊息英文語言字元佔比（先剝 code fence/inline/URL/link 目標，政策B只管 user-facing 對話輸出），超門檻→hookSpecificOutput.additionalContext 回饋模型（Stop 事件支援：回合結尾注入、對話續跑一回合用繁中重答；stop_hook_active 回合不再觸發防迴圈）。不用 systemMessage：那只顯示給使用者、模型讀不到。stateless、無 flag。一鍵關=enabled:false；english_ratio_threshold=英文佔比門檻(0~1，英文字母/(英文字母+CJK))；min_lang_chars=低於此語言字元數不判(濾短訊如 Done.)。",
+    "_doc": "英文回應漂移攔截（hooks/lang_guard.py，standalone Stop hook）。量測 assistant 終版訊息英文語言字元佔比（先剝 code fence/inline/URL/link 目標，只管 user-facing 對話輸出），超門檻→hookSpecificOutput.additionalContext 回饋模型（Stop 事件支援：回合結尾注入、對話續跑一回合用繁中重答；stop_hook_active 回合不再觸發防迴圈）。不用 systemMessage：那只顯示給使用者、模型讀不到。stateless、無 flag。一鍵關=enabled:false；english_ratio_threshold=英文佔比門檻(0~1，英文字母/(英文字母+CJK))；min_lang_chars=低於此語言字元數不判(濾短訊如 Done.)。",
     "enabled": true,
     "english_ratio_threshold": 0.5,
     "min_lang_chars": 40
+  },
+  "text_score": {
+    "_doc": "文字規格評分（tools/text-score.py，使用者叫 skill text-score 才跑；規格在程式碼樹 text-specs/<代號>.md，寫法見 text-specs/README.md）：逐條問開源免費的小模型裁判（vector_search.ollama_backends 的優先序；都不在就記未評、不擋、不改用付費模型），分數由程式算，留帳 Logs/guard-text_score.jsonl，週彙總 tools/text-score-weekly.py。規格的 {{goal}} 由 --goal 填（skill 給使用者這次要的那一句；沒給就不評）。default_spec=沒給 --spec 時用的規格；timeout_sec=每次問裁判的逾時；num_ctx=每次明帶的 context 長度（Ollama 預設 4096 會靜默截斷）。judge_model_by_backend＝{backend 名: 裁判模型}，每台用自己的（正確性為主：內網 e4b 判得較準、本機跑不動 e4b 用 instruct-2507），沒列到的 backend 用 judge_model；--model 給了全部用它；那台沒裝就算不在、不換成它原本的 llm_model；跨機同標籤要比 digest。",
+    "default_spec": "reader-designer",
+    "judge_model": "gemma4:e4b",
+    "judge_model_by_backend": {
+      "rdchat-direct": "gemma4:e4b",
+      "local": "qwen3:4b-instruct-2507-q4_K_M"
+    },
+    "timeout_sec": 120,
+    "num_ctx": 8192
   },
   "version_guard": {
     "_doc": "版本操作脈絡殘留 warn hook（hooks/version_guard.py，由 guardian PostToolUse 同程序呼叫 run()）。Write/Edit 後掃剛寫入的 ~/.claude 內檔，命中高精度版本 pattern（V5 Pxx/Sprint/Wave/方案代號/[vN]·[phaseN] 前綴/[Fxx] 錨）→ warn-only(systemMessage+stderr)，不阻斷。寧漏報不誤報：模糊 pattern（裸 Phase N/日期/v2.x/變更敘事）刻意不收。正位檔(DevHistory/_CHANGELOG/TECH/Architecture/SPEC/plans/verify/_staging)+功能 token(_migrate_v/SCHEMA_VERSION/protocolVersion)豁免。規則 rules/core.md「版本與文件治理」；pattern single source＝atom feedback-live-…。一鍵關=enabled:false 或 mode:off；min_matches=命中幾項才提醒。",
@@ -311,8 +330,10 @@
     "min_matches": 1
   },
   "docdrift": {
+    "_doc": "文件漂移（hooks/wg_docdrift.py）：改了程式檔沒同步改對應的 _AIDocs 文件就記一筆待補。path_mappings＝{路徑樣式(fnmatch，相對專案根): [文件]}，出廠空，要用的專案自己填；self_path_mappings＝記憶系統自己這個 repo 的對應，只在改的檔落在 ~/.claude 之下才套。都沒對上時退回 _AIDocs 索引關鍵字比對（keyword_match_threshold）。一鍵關＝enabled:false。",
     "enabled": true,
-    "path_mappings": {
+    "path_mappings": {},
+    "self_path_mappings": {
       "hooks/wg_*.py": [
         "Architecture.md"
       ],
@@ -361,20 +382,19 @@
     "backend": "ollama",
     "max_concurrent": 1,
     "agent_timeout_ms": 180000,
-    "_comment": "記憶自癒(腦內世界 P3)：backend=ollama 本地免費序列；改 cloud + max_concurrent>1 可雲端並行(需接 adapter)"
+    "_comment": "記憶自癒：backend=ollama 本地免費序列；改 cloud + max_concurrent>1 可雲端並行(需接 adapter)"
   },
   "realm": {
     "auto_migrate": true,
     "llm_fallback": {
       "enabled": false,
-      "backend": "ollama",
       "max_per_session": 5,
       "min_confidence": 0.7,
       "_comment": "SessionEnd sweep 對詞庫 miss 的 unknown-core atom 喚本地 LLM 判 realm+階層 domain。基礎設施失敗→defer 留原地(不誤降級)；unsure/低信心→Else；local≥min_confidence→搬+學詞。protected 永不喚 LLM。enabled=false 則只跑 deterministic 詞庫(含 learned)。"
     }
   },
   "auto_handoff": {
-    "_doc": "Auto-Handoff 自動無損交接（plans/wise-wobbling-gem.md）。PreCompact 壓縮前自動備六區塊 stub 到 _staging（核心保底，不依賴 token 量測）；PostToolBatch 壓縮後注入提示叫模型補全主觀區塊。token_warn 系列為 Phase 2 Stop 預警旗標。enabled=false 一鍵全關回現狀。token 量測主路徑讀 transcript message.usage 真實 token；context_window_tokens 為分母『預設/下限』（1M，貼合常跑 1M Opus），實際視窗自我校準：usage 曾破 200k → 數學上必為 1M 自動升頂（200k 視窗逼近前 harness 已先壓縮、摸不到 200k）。context_base_overhead_tokens 僅 fallback char-proxy（無 usage 時）用。",
+    "_doc": "Auto-Handoff 自動無損交接。PreCompact 壓縮前自動備六區塊 stub 到 _staging（核心保底，不依賴 token 量測）；PostToolBatch 壓縮後注入提示叫模型補全主觀區塊。token_warn 系列是 Stop 的 context 用量預警旗標。enabled=false 一鍵全關回現狀。token 量測主路徑讀 transcript message.usage 真實 token；context_window_tokens 為分母『預設/下限』（1M，貼合常跑 1M Opus），實際視窗自我校準：usage 曾破 200k → 數學上必為 1M 自動升頂（200k 視窗逼近前 harness 已先壓縮、摸不到 200k）。context_base_overhead_tokens 僅 fallback char-proxy（無 usage 時）用。",
     "enabled": true,
     "precompact_stub": true,
     "postbatch_emit": true,
@@ -386,7 +406,7 @@
     "stub_filename": "next-phase-auto.md"
   },
   "deep_postmortem": {
-    "_doc": "Stage 3：高 effort 失敗（wisdom_retry_count>=2 / fix_escalation_triggered，AND 真失敗訊號 failing_tests/evasion/未宣告完成）時，Stop gate 注入指令要 Claude 用 atom_write 補完整 post-mortem（始末/根因/設計原理/運作邏輯/防再犯）。effort 只採 retry/fix_esc（均於 track_retry 層 error-gate，僅測試/lint 失敗未解時才計），不採同檔 edit 次數。deep_postmortem_done 一次性即獨立預算＝1，不共用 stop_gate_max_blocks（曾共用會被 Sync+TestFail 吃光預算而餓死）。enabled=false 一鍵關。",
+    "_doc": "深度事後檢討：高 effort 失敗（wisdom_retry_count>=2 / fix_escalation_triggered，AND 真失敗訊號 failing_tests/evasion/未宣告完成）時，Stop gate 注入指令要 Claude 用 atom_write 補完整 post-mortem（始末/根因/設計原理/運作邏輯/防再犯）。effort 只採 retry/fix_esc（均於 track_retry 層 error-gate，僅測試/lint 失敗未解時才計），不採同檔 edit 次數。deep_postmortem_done 一次性即獨立預算＝1，不共用 stop_gate_max_blocks（共用會被其他收尾閘吃光預算）。enabled=false 一鍵關。",
     "enabled": true
   },
   "friction": {
@@ -403,17 +423,23 @@
   "aec": {
     "_doc": "Anti-Evasion HUD：hud_autospawn=true → notable/real-evasion 報告且窗死時自動 spawn Edge --app HUD 窗（否則 fallback 回 chat）。窗活著＝HUD 頁對 Node 的 SSE 常駐連線在（beat-status.clients ≥ 1；頁被瀏覽器凍結時連線仍在、視窗關了才斷），或心跳 age_s < hud_stale_s（退路：舊版 Node 無 clients 欄）。判死原因落 Logs/guard-aec_hud.jsonl；Stop 消費旗標前再查一次。",
     "hud_stale_s": 75,
-    "hud_autospawn": true
+    "hud_autospawn": true,
+    "_doc_scan_report_gate": "false＝沒交收尾檢核（anti_evasion_report）不擋收尾；報告照收、HUD 照開（規則 CLOSING_RITUAL_SWITCHES）。",
+    "scan_report_gate": false
+  },
+  "atom_audit": {
+    "_doc": "卡片表態閘（stop.py AtomAudit：只以一行路標注入、全程沒讀的卡要求表態）。false＝不擋收尾（規則 CLOSING_RITUAL_SWITCHES）。",
+    "enabled": false
   },
   "coordination": {
-    "_doc": "跨 session 協調衝突預警（hooks/wg_coordination.py）。PreToolUse 掃其他活 session state 的 modified_files：Write/Edit/NotebookEdit 同檔 → warn-only（additionalContext 隨工具結果下一輪可見 + systemMessage）；Bash git add -A/reset --hard 且同 cwd 有他人未收改動 → 同型警告；PostToolUse 補 60s late-collision。全程 fail-open，log 落 Logs/session-coordination/<sid>.jsonl。enabled 一鍵關；warn_suppress_min=同檔重警抑制分鐘；scan_mtime_window_s=peer state 活躍窗；max_scan_files=單次 parse 上限。日落：log 連續 4 週 conflict_warn 零命中 → 提降級評估。",
+    "_doc": "跨 session 協調衝突預警（hooks/wg_coordination.py）。PreToolUse 掃其他活 session state 的 modified_files：Write/Edit/NotebookEdit 同檔 → warn-only（additionalContext 隨工具結果下一輪可見 + systemMessage）；Bash git add -A/reset --hard 且同 cwd 有他人未收改動 → 同型警告；PostToolUse 補 60s late-collision。全程 fail-open，log 落 Logs/session-coordination/<sid>.jsonl。enabled 一鍵關；warn_suppress_min=同檔重警抑制分鐘；scan_mtime_window_s=peer state 活躍窗；max_scan_files=單次 parse 上限。",
     "enabled": true,
     "warn_suppress_min": 10,
     "scan_mtime_window_s": 1800,
     "max_scan_files": 20
   },
   "acceptance_spec": {
-    "_doc": "驗收規格工件 hook（hooks/acceptance_spec.py，由 guardian PostToolUse 同程序呼叫 run()）。分級啟動：ExitPlanMode（plan 獲同意）→ 注入指示落 <專案根>/.claude/verify/acceptance-<slug>.md（frontmatter 綁定 + 必須發生/禁止發生/驗證指令三段）；無 plan 但同 session 修改 ≥min_files_trigger 檔 → 一次性建議。小任務零打擾。advisory-only 不阻斷；sidecar workflow/acceptance-spec/<sid>.json 保證每 session 每型至多提醒一次。count_exclude_substrings=計檔數時排除的路徑片段（記憶/暫存寫入不算任務檔）。一鍵關=enabled:false。",
+    "_doc": "驗收規格工件 hook（hooks/acceptance_spec.py，由 guardian PostToolUse 同程序呼叫 run()）。分級啟動：ExitPlanMode（plan 獲同意）→ 注入指示落 <專案根>/.claude/verify/acceptance-<slug>.md（frontmatter 綁定 + 必須發生/禁止發生/驗證指令三段）；無 plan 但同 session 修改 ≥min_files_trigger 檔 → 一次性建議。小任務零打擾。advisory-only 不阻斷；sidecar workflow/acceptance-spec/<sid>.json 保證每 session 每型至多提醒一次。count_exclude_substrings=計檔數時排除的路徑片段（記憶/暫存寫入不算任務檔）。兩種提示歸 寫碼守門總開關管（規格只給驗收裁判用，裁判也歸同一個開關），關時不提示、規格檔落盤照記。一鍵關=enabled:false。",
     "enabled": true,
     "min_files_trigger": 3,
     "count_exclude_substrings": [
@@ -429,15 +455,48 @@
     "_doc": "迴歸累積提示（handlers/stop.py::_acceptance_regression_hint）：本 session 驗收裁判有 fail/high（enforce 級）判定 → 收尾 block 訊息搭車建議 (a) 補測試案例 (b) 模式類落 atom。純 piggyback 不獨立打斷、每 session 一次、不建佇列。一鍵關=enabled:false。",
     "enabled": true
   },
+  "reading_path": {
+    "_doc": "閱讀路徑與拐彎判斷（hooks/wg_reading_path.py）。remind_only_over_threshold（缺＝true）：背景量完收結果時沒有任何一條到門檻要問（含只剩「量不出來」「還沒 git add」這種一句原因）→ 整段不送模型、PostToolBatch 不附提醒行，只記 Logs/guard-reading_path.jsonl event=under_threshold 與 stderr；至少一條要問才送條目＋那一題。false 照舊：結果文字非空就送。",
+    "remind_only_over_threshold": true,
+    "turn_judgment": {
+      "_doc": "拐彎判斷：收尾背景算函式級側面數據（拐彎數、巢狀、條件塊、轉手鏈、繼承深度與每層加了什麼），達門檻的逐條問 AI「這一層存在的理由、有沒有真正作用、會不會讓人拐超過三個彎」，收尾要有「拐彎判斷｜…」五欄行（規則 TURN_JUDGMENT_REQUIRED）。門檻是「從第幾個彎起要人看」的事實門檻，不是判臭；max_items＝一次最多問幾條（hooks/wg_reading_path.py TURN_JUDGMENT_DEFAULTS）。",
+      "turns": 2,
+      "nesting": 3,
+      "bumpy": 2,
+      "handoff_chain": 2,
+      "inherit_depth": 3,
+      "max_items": 8
+    }
+  },
   "guard": {
+    "data_file_ask": {
+      "_doc": "AI 改使用者既有的資料檔／設定檔（非程式、非本 session 建、原話沒點名）要先宣告「動資料檔｜路徑：為什麼」或先問；Edit／Write／NotebookEdit 與 Bash／PowerShell 寫入目標都管（hooks/wg_data_file.py；規則 USER_DATA_FILE_NEEDS_DECLARATION）。只在這個 session 改過程式檔（state modified_files 有程式檔）或這次指令同時寫程式檔時才問，純文件／設定的回合放行、留帳 skipped_non_coding。extensions 給了就整份取代預設 .json .jsonc .yaml .yml .toml .ini .cfg .conf .env .csv .tsv .xml .properties .plist。enabled=false 整條不擋。",
+      "enabled": true
+    },
+    "old_test_declare": {
+      "_doc": "改舊測試要先宣告「改舊測試｜哪支：理由」（hooks/wg_oldtest.py；規則 OLD_TEST_CHANGE_NEEDS_DECLARATION）：刪、改名、改斷言、加 skip、改說明五種動作；Edit／Write 當場擋，Bash／PowerShell／NotebookEdit 事後比對、擋下一個工具呼叫。false＝整條不擋。",
+      "enabled": true
+    },
+    "gate_bypass": {
+      "_doc": "繞閘嫌疑：病形閘擋過之後，把被點名的檔移出暫存、改提交範圍、--no-verify 而病還在 → 要「不是繞閘｜理由」否則擋（hooks/wg_gate_bypass.py；規則 GATE_BYPASS_NEEDS_DECLARATION）；atom 內容同時提到 Guardian 閘與改暫存區做法 → 拒寫，知識段第一行寫「不是教繞閘｜理由」才寫入（ATOM_BYPASS_HOWTO_REFUSED）。staging_words 不設＝程式預設。false＝整條不擋。",
+      "enabled": true
+    },
+    "smell_gate": {
+      "_doc": "git／svn commit 前病形閘（tools/project-smells.py「commit 前病形檢查」段）：這次要提交的程式新寫進病形就擋。門檻依據：匿名函式本體 >20 行擋、≥10 行只提醒（Sonar S1188 匿名類別 20 行、S5612／Checkstyle LambdaBodyLength 10 行）；Python 函式控制結構巢狀 ≥4 層擋（寫碼規矩「巢狀 ≥4 一律重構」、Sonar S134 Python 4），舊函式沒變深不擋。enabled=false 停用。",
+      "enabled": true,
+      "anon_body_block_lines": 20,
+      "anon_body_list_lines": 10,
+      "nesting_block_depth": 4
+    },
     "cross_realm_write": {
       "_doc": "外部專案 session（cwd∉~/.claude）寫入核心層 ~/.claude/{skills,tools,hooks,lib,rules}/ → PreToolUse deny。核心開發 session 不受影響。allowlist 為路徑子字串白名單。",
       "enabled": true,
       "allowlist": []
     },
     "commit_order": {
-      "_doc": "PreToolUse git commit 口令閘：本回合使用者原話無任何 keywords → deny。USER.md 縮寫指令契約的程式化版本。",
+      "_doc": "PreToolUse git commit 口令閘：本回合使用者原話無任何 keywords → deny。USER.md 縮寫指令契約的程式化版本。exempt_cwd_under_claude_dir＝commit 實際落在原子記憶系統自己的 repo（~/.claude 本身或它的 git worktree）時放行——系統自己的程式與文件驗證過就由 AI 直接上版控，不等口令（USER.md 例外條；記憶內容三層本來就由 vcs-sync 自動，與本閘無關）。只認看得出落點的句型：整條命令只由 && 串起，第一段可為 cd <絕對路徑>，其餘每段都是 git [-C <字面路徑>] <add|commit|push|status|diff|log|show|rm|mv|restore> …；其他寫法（未知命令段、; | 換行、單引號外的 $( ) 或反引號、未加引號的 heredoc、repo 覆寫參數或 GIT_DIR 等環境變數、路徑含變數）不豁免、照常要口令。",
       "enabled": true,
+      "exempt_cwd_under_claude_dir": true,
       "keywords": [
         "上GIT",
         "上 GIT",
@@ -447,21 +506,24 @@
         "上版",
         "上SVN",
         "執P",
-        "執驗上P",
-        "commit",
-        "提交",
-        "push"
+        "執驗上P"
       ]
+    },
+    "verify_batch": {
+      "_doc": "PreToolUse 驗證批次閘（hooks/wg_verify_batch.py；不歸 寫碼守門開關管）：Bash／PowerShell 跑 pytest（含 python -m pytest）、run_verify.py、verify_*.py／test_*.py 時判兩件事。① 會拖時間的整組驗證（run_verify.py 不帶參數、pytest 沒點名檔或只給目錄、沒縮範圍選項；且 同一組指令最近一筆收據耗時 ≥ slow_run_s 秒〔只有自寫收據記了 started_at 能算，算不出當不知道〕或 指令跑的樹底下符合 reconcile_gate.verify_case_globs 的測試檔 ≥ large_suite_files 支〔數到門檻就停，state.verify_batch_suite_files 每根快取一筆〕）要本回合使用者原話含 full_run_keywords 任一字（取法同 commit_order：turn_prompts，背景通知與子代理回報不算）→ 沒有就擋；不拖時間（含不知道）的整組沒口令也放行、留帳 reason=small（006 實測小專案 pytest 幾秒就完被攔＝誤傷）。② 同一組指令上次收據綠、之後本 session 沒改檔 → 擋「這批改動已驛證過」（收據：state verify_receipts 與 workflow/verify-ledger/_runs/ 自寫收據；指紋：收據 seq 對 modified_files.last_seq）；上次紅或之後有改檔放行。每回合每條規則最多擋 1 次、第 2 次放行留帳；擋下與放行都記 Logs/guard-verify_batch.jsonl。解析不了的指令（heredoc、eval、bash -c）不管。一鍵關＝enabled:false。",
+      "enabled": true,
+      "full_run_keywords": [
+        "整組",
+        "全量",
+        "全部測試",
+        "run_verify"
+      ],
+      "slow_run_s": 120,
+      "large_suite_files": 50
     }
   },
-  "research_fanout": {
-    "_doc": "知識檢索型 prompt（幫我查/搜索/我想知道）偵測 → 注入兩階段 fan-out SOP。命中時抑制 parallel_agents 提示避免重複。一鍵關 = enabled:false。",
-    "enabled": true,
-    "cooldown_turns": 2,
-    "min_prompt_chars": 5
-  },
   "deferral_gate": {
-    "_doc": "Stop DeferralGate（退縮歸屬）：主任務已完工（完成宣告 ∨ 本 turn 已 commit）且 context 用量 ≤ max_context_ratio（讀 transcript 真實 usage，同 auto_handoff 量測）時，收尾訊息把帶受詞的可做之事推給下個 session／獨立議題／非我造成 → 擋回三選一。min_object_chars＝命中句去掉退縮語後至少幾字才算有受詞。詞表在 memory/_meta/forbidden-phrases.json categories[deferral-attribution] + deferral_user_ok。",
+    "_doc": "Stop DeferralGate（退縮歸屬）：主任務已完工（完成宣告 ∨ 本 turn 已 commit）且 context 用量 ≤ max_context_ratio（讀 transcript 真實 usage，同 auto_handoff 量測）時，收尾訊息把帶受詞的可做之事推給下個 session／獨立議題／非我造成 → 擋回三選一。min_object_chars＝命中句去掉退縮語後至少幾字才算有受詞。詞表在 memory/_meta/forbidden-phrases.json categories[deferral-attribution]；退縮句對到有理由的「不做｜…」行就不擋、留帳（規則 NOT_DOING_DECLARED，hooks/wg_release_rules.py）。",
     "enabled": true,
     "max_context_ratio": 0.75,
     "min_object_chars": 6
@@ -486,10 +548,28 @@
     "enabled": true,
     "min_turns": 3,
     "min_accessed": 5,
-    "min_turns_between": 3
+    "min_turns_between": 3,
+    "_doc_background": "background＝true（預設）：觸發條件同上時不擋寫碼 AI，改起背景行程（hooks/wg_bg_harvest.py）問 vector_search.ollama_backends 的開源免費模型 background_model，從 transcript 尾段產最多 background_max_cards 張待審候選卡（專案 shared/_pending_review/，沒專案層落 memory/_staging/harvest-candidates/）；留帳 Logs/guard-harvest_bg.jsonl。模型不在只記 failed、不改用付費模型。false＝照舊擋下要 AI 呼叫 knowledge_harvest_report。",
+    "background": true,
+    "background_model": "gemma4:e4b",
+    "background_max_cards": 3,
+    "background_timeout_sec": 180
+  },
+  "pick_one": {
+    "_doc": "寫碼交付時順手點出最該修的一件：本 session 改了程式、到交付邊界（改過程式之後測試跑綠的那批、交收尾檢核那批，附在那批工具結果後面；沒走到就 Stop 判：宣告完成、本回合交了收尾檢核或 commit）→ 送一次「這次看到的鄰近問題裡哪一件最該修、為什麼、為什麼不是數字最高的那個」（只提醒、不擋；同一批改動只問一次），材料依部位分組、數字標參考。AI 回覆裡的「順手看到最該修」段記成追蹤項（另存建議怎麼解、該誰解），下個 session 開場先列。缺本區段或 enabled 不是 true＝整個關。",
+    "enabled": true
+  },
+  "provenance": {
+    "_doc": "atom 來源回看：PostToolUse 對剛寫入的 atom 自動補 `- Source:`（session 指標）與 `- Quote:`（使用者原話 ≤quote_max_chars 字）；backfill＝SessionStart 見到新 transcript 就 detached 跑 tools/atom-provenance-backfill.py --apply 補舊 atom（A 級補原句、B 級補出處）；anti_rot_days＝週健檢對 session 來源距今超過此天數仍無 Quote 的 atom 搶在 transcript 被清前補原句。缺本區段＝全開。",
+    "enabled": true,
+    "quote_max_chars": 200,
+    "anti_rot_days": 25,
+    "backfill": {
+      "enabled": true
+    }
   },
   "vcs_sync": {
-    "_doc": "記憶目錄背景靜默上版控（hooks/vcs-sync-worker.py）。觸發：收割 validated、SessionEnd。root_pathspecs 相對 ~/.claude、project_pathspecs 相對專案根；org_extra_pathspecs 相對公司層 repo 根（非記憶但一起自動推拉的路徑，如週用量截圖）；git 只 add/commit 這些 pathspec，待推歷史含非記憶 commit 則不 push 留標記；svn 逐檔 add 套 exclude 後 commit。；exclude 含 memory/_meta/**：taxonomy／forbidden-phrases 等設定檔不走記憶自動提交，隨程式碼上GIT",
+    "_doc": "記憶目錄背景靜默上版控（hooks/vcs-sync-worker.py）。觸發：收割 validated、SessionEnd。root_pathspecs 相對 ~/.claude、project_pathspecs 相對專案根；root_extra_pathspecs（TECH.md 等 atom 寫入連動的計數標記檔）／org_extra_pathspecs（公司層 repo 根，如週用量截圖）為非記憶但一起自動推拉的路徑；git 只 add/commit 這些 pathspec，待推歷史含非記憶 commit 則不 push 留標記；svn 逐檔 add 套 exclude 後 commit。；exclude 含 memory/_meta/**：taxonomy／forbidden-phrases 等設定檔不走記憶自動提交，隨程式碼上GIT",
     "enabled": true,
     "push": false,
     "root_pathspecs": [
@@ -498,6 +578,11 @@
     ],
     "project_pathspecs": [
       ".claude/memory"
+    ],
+    "root_extra_pathspecs": [
+      "TECH.md",
+      "_AIDocs/_INDEX.md",
+      "_AIDocs/DocIndex-System.md"
     ],
     "org_extra_pathspecs": [
       "usage-snapshots"
@@ -512,5 +597,204 @@
       "fetch_timeout_s": 20,
       "_doc": "記憶層自動拉取（worker 內 commit 之後、push 之前）：fetch → 純記憶 incoming 走 ref+pathspec 同步；含程式碼只在整樹乾淨時 ff-only；分叉在隔離 worktree rebase（索引三檔由 merge driver 自動解）。不受 push 開關影響。"
     }
-  }
+  },
+  "overview_hub": {
+    "equivalence": {
+      "_doc": "等值與熱路徑收尾閘（handlers/stop.py Equivalence Gate；規則 REFACTOR_NEEDS_EQUIVALENCE／PERF_HOT_PATH_NEEDS_MEASURE 在 wg_release_rules）：使用者原話意圖是 refactor／perf 且本回合改過程式檔時，宣告完成要有三類等值證法收據（PRESERVE_CHECK PASS，--mutation order／side_effect／boundary）或一行「等值證法｜不適用｜<理由>」，並答「熱路徑｜是／否｜…」；答是要量測收據或「量測｜不做｜<理由>」。留帳 Logs/guard-equivalence.jsonl。enabled=false 整道閘關。",
+      "enabled": true
+    },
+    "_doc": "OverviewHub 變量。合併順序 根層預設 < 本段 < <公司根>/.claude/overview-hub.json < <專案根>/.claude/overview-hub.json，巢狀物件深合併、陣列整取。未知鍵報錯（Edit 一律擋；OverviewHub 自己的設定檔與部位表除外，放行附警告）；退役鍵（hub_config.RETIRED_KEYS）出現只警告一次、不報錯，dry_run／deny_parts 明寫也不放行。整段只在寫碼守門開時生效。readonly_paths（相對該層根的 glob，**/ 也配零層）命中一律擋（OVERVIEW_READONLY_PATHS）；讀檔帳記各部位讀過的檔（part_files_read，提問閘 ASK_OVERVIEW_BEFORE_DECISION 用）。smells_report（相對專案根或絕對；json／jsonl／md 表）：病形閘把報告列的檔整檔算舊病、交付時「順手看到最該修」取部位前 2 名。max_card_chars：Depends 召回地圖的字數上限。authority_map：{檔名樣式(fnmatch): 地圖路徑}，讀到文件檔命中且非空 → 一 session 注入一次。Depends 召回：讀到的檔若是某卡索引 depends 的 path: 目標（或其目錄之下）→ 一行一卡指標，同卡一 session 一次。verify_chains：{部位: {runtime_gate, pre, run, collect, cleanup}} 只驗形狀，目前沒有程式讀；path_bases 每項要是存在目錄且彼此不包含；eol_policy ∈ lf／crlf／per-file-head；編碼鍵要過 codecs.lookup。加新鍵要同時加進 lib/hub_config.py 的 HUB_DEFAULTS。",
+    "enabled": true,
+    "max_card_chars": 6000,
+    "path_bases": [],
+    "vcs_roots": [],
+    "commit_encoding": "utf-8",
+    "source_encodings": [
+      "utf-8"
+    ],
+    "eol_policy": "per-file-head",
+    "PYTHONIOENCODING": "utf-8",
+    "readonly_paths": [],
+    "smells_report": "",
+    "authority_map": {},
+    "verify_chains": {}
+  },
+  "overview_scaffold": {
+    "_doc": "從零掃表（tools/overview-map-scaffold.py）。scaffold_ignore：頂層目錄不成列的名單；layers：{層名: [目錄名或 glob]}，空＝全部「單層」；scaffold_default_lv1：骨架卡的 Lv1，必須是核心或專案既有 Lv1，工具絕不開新。預設 dry-run，--write 落檔；卡先寫、表最後寫；失敗不撤回、重跑接續補完。",
+    "scaffold_ignore": [
+      ".git",
+      ".svn",
+      "node_modules",
+      "obj",
+      "bin",
+      "Library",
+      "Temp",
+      "__pycache__",
+      ".claude",
+      "_AIDocs"
+    ],
+    "layers": {},
+    "scaffold_default_lv1": "設計通則"
+  },
+  "refix_churn": {
+    "_doc": "同檔反覆 fix 量尺（lib/refix_churn.py；tools/refix-churn.py 與掃表熱點共用）。fix_patterns：訊息任一行命中即算 fix（regex，不分大小寫；中文詞級、問句不算）；refix_window_days：配對天數窗；refix_since_days：回看天數；refix_min_fixes：至少幾筆才列；refix_exclude：路徑 regex（記憶、索引、表）；refix_exclude_msg：訊息 regex（收割與記憶提交）；refix_same_commit_pairs：同一 commit 同檔列兩次算不算兩次。",
+    "fix_patterns": [
+      "\\bfix(?:e[sd]|ing)?\\b",
+      "\\bbugfix\\b",
+      "\\bhotfix\\b",
+      "\\bbug\\b",
+      "修正(?![^。；;！!\n]*[嗎？?])",
+      "修復(?![^。；;！!\n]*[嗎？?])",
+      "修好(?![^。；;！!\n]*[嗎？?])",
+      "修補(?![^。；;！!\n]*[嗎？?])",
+      "壞了(?![^。；;！!\n]*[嗎？?])",
+      "壞掉(?![^。；;！!\n]*[嗎？?])",
+      "錯誤(?![^。；;！!\n]*[嗎？?])"
+    ],
+    "refix_window_days": 14,
+    "refix_since_days": 60,
+    "refix_min_fixes": 2,
+    "refix_exclude": [
+      "(^|/)\\.claude/memory/",
+      "^memory/",
+      "(^|/)_AIDocs/_atoms/",
+      "_ATOM_INDEX\\.md$",
+      "_atom_index\\.json$",
+      "(^|/)MEMORY\\.md$",
+      "(^|/)_INDEX\\.md$",
+      "(^|/)_local_catalog\\.md$",
+      "overview-map\\.md$",
+      "overview-hub\\.json$"
+    ],
+    "refix_exclude_msg": [
+      "knowledge harvest",
+      "\\[memory\\]",
+      "\\batom\\b"
+    ],
+    "refix_same_commit_pairs": false
+  },
+  "verify_ledger": {
+    "_doc": "驗證帳本（hooks/wg_verify_ledger.py）：PostToolUse 收 Bash／PowerShell 輸出的哨兵（<NAME>_CHECK PASS|FAIL|DONE、量測類 <NAME> DONE k=v）與 exit code，落 workflow/verify-ledger/<sid>.jsonl（gitignore）並進 state verify_receipts[sid]（cap 50）；只在有哨兵或是測試指令時落帳；子代理（agent_id）另落 <sid>.agents.jsonl 不入主帳。每筆收據記 env＝啟動當下繼承的縮限變數（PYTEST_ADDOPTS、PYTHONOPTIMIZE），Stop 採認時與指令內的環境指定合併算有效值，沒 env 欄的舊收據不算證據。sentinel_regex 讓既有工具不改輸出就能映射：每項 {regex（MULTILINE；可帶 (?P<verdict>) 具名群組）, name, verdict_map{子字串: PASS|FAIL|DONE}, pytest_summary（選填）}；命中的那段整段看，多個鍵命中時 FAIL 優先；一般規則照子字串比（自訂哨兵 `CUSTOM_FAIL 1 item` 照 fail 判）；標了 pytest_summary:true 的規則（只有內建兩條 PYTEST）按「數字 狀態詞」組逐組比完整狀態詞（xfailed／xpassed 不是 failed／passed；error 對 errors），計數非零才算命中，所以 pytest 摘要 `1 passed, 1 error in 0.1s`、`1 error in 0.1s` 是 FAIL、`5 passed, 2 skipped, 1 xfailed in 3.2s` 是 PASS／DONE（兩條 PYTEST 規則同 regex 同結果）；regex 要抓到整段統計到 ` in `，只抓開頭 `N passed` 會漏掉後面的 error。vcs_budget_s 是 vcs_snapshot 整體 deadline（每個子行程 ≤1 s、rev 每 root 60 s 快取、未提交雜湊只用 os.stat、每 10 檔查一次、上限 200 檔）。ledger_sources 程式不讀。一鍵關＝enabled:false。",
+    "enabled": true,
+    "sentinel_regex": [
+      {
+        "regex": "^(?:=+ )?(?P<verdict>\\d+ (?:passed|failed|errors?|skipped|xfailed|xpassed|warnings?|deselected|rerun)(?:, \\d+ [a-z]+)*) in \\d",
+        "name": "PYTEST",
+        "verdict_map": {
+          "failed": "FAIL",
+          "error": "FAIL",
+          "passed": "PASS",
+          "xpassed": "PASS"
+        },
+        "pytest_summary": true
+      },
+      {
+        "regex": "^(?:=+ )?(?P<verdict>\\d+ (?:passed|failed|errors?|skipped|xfailed|xpassed|warnings?|deselected|rerun)(?:, \\d+ [a-z]+)*) in \\d",
+        "name": "PYTEST_MEASURE",
+        "verdict_map": {
+          "failed": "FAIL",
+          "error": "FAIL",
+          "passed": "DONE",
+          "xpassed": "DONE"
+        },
+        "pytest_summary": true
+      }
+    ],
+    "vcs_budget_s": 1.5
+  },
+  "reconcile_gate": {
+    "_doc": "Stop 寫碼查核的對帳閘（緊接 TestFailGate；主 session、SubagentStop、裁判 Stop 共用 _verify_gates）：拿收尾宣稱對驗證收據（hooks/wg_verify_ledger.py 採認、lib/self_receipt.py 解析指令）。宣稱看最後一句（優先 hook 輸入的 last_assistant_message）、以子句判（轉折詞另起子句、否定／疑問排除、第三方轉述不算）。(a) 說修好要有晚於每個對上的改檔、同一棵樹的 PASS，不限本回合（舊回合的只要之後本 session 沒再改任何程式檔就算，子代理改的與判不出目標的寫入都算改；改過就要新的 PASS，擋訊息點名改了哪個檔；對上＝指令含改檔檔名、對應的 test_／verify_ 檔、整體驗證或部位量尺，或該部位合格的自寫收據）；(b) 說量了要有能當證據的 DONE 或合格自寫收據；(c) 說試過要本回合有 exec_tools 呼叫；(d) 改了 code_exts 檔要有本 session 改過、仍存在、同根的案例覆蓋它（檔名照它取、內容提到它，或「case_for｜<程式檔>：<案例…>」宣告行列了它；不比先後；判法以 hooks/wg_verify_ledger.py 為準）；(e) AEC 已 emit：(j) 空／路徑不存在→擋，(k) 空字串→擋（「無」放行）。案例檔＝符合 verify_case_globs 的程式檔（相對專案根比）；改過又原樣還原的檔不算改碼；部位表類別 knowledge 的部位下的檔兩邊都不算。max_blocks_per_turn＝(a)～(d)＋量尺閘共用的每回合預算（不吃 stop_gate_max_blocks）；擋滿之後怎麼放行、子代理與 headless 怎麼收尾，以 hooks/handlers/stop.py、hooks/wg_release.py 為準。宣稱詞表在 forbidden-phrases.json 的 fixed_claim／measured_claim／tried_claim。一鍵關＝enabled:false。",
+    "enabled": true,
+    "_doc_block_letters": "寫碼守門關時寫碼查核擋哪些條目字母（規則 RECONCILE_BLOCK_LETTERS；沒列的照判、只印 stderr）。寫碼守門開時送法只看 hooks/wg_release_rules.py 的 RULE_MODE（(a) 照擋、(d) 提醒），本欄不再決定；兩處不要各寫一套。",
+    "block_letters": [
+      "a",
+      "d"
+    ],
+    "max_blocks_per_turn": 2,
+    "exec_tools": [
+      "Bash",
+      "PowerShell"
+    ],
+    "code_exts": [
+      ".py",
+      ".pyw",
+      ".js",
+      ".mjs",
+      ".cjs",
+      ".ts",
+      ".tsx",
+      ".jsx",
+      ".cs",
+      ".lua",
+      ".c",
+      ".h",
+      ".cc",
+      ".cpp",
+      ".cxx",
+      ".hpp",
+      ".hh",
+      ".java",
+      ".kt",
+      ".kts",
+      ".go",
+      ".rs",
+      ".rb",
+      ".php",
+      ".swift",
+      ".m",
+      ".mm",
+      ".scala",
+      ".dart",
+      ".vue",
+      ".svelte",
+      ".ps1",
+      ".psm1",
+      ".bat",
+      ".cmd",
+      ".sh",
+      ".bash",
+      ".sql",
+      ".gd",
+      ".shader",
+      ".hlsl",
+      ".glsl"
+    ],
+    "verify_case_globs": [
+      "**/verify/**",
+      "**/tests/**",
+      "**/test/**",
+      "**/__tests__/**",
+      "**/*.tests/**",
+      "**/test_*",
+      "**/*_test.*",
+      "**/*_tests.*",
+      "**/*.test.*",
+      "**/*.spec.*",
+      "**/test.*",
+      "**/tests.*",
+      "**/conftest.py"
+    ]
+  },
+  "chain_breaker": {
+    "_doc": "連鎖斷路器（寫碼守門總開關開著才跑，關時以總開關為準；判定 hooks/wg_chain.py，帳與快照還原 lib/chain_store.py）：同一個使用者回合裡閘擋下或記欠 → AI 動手 → 又讓閘擋下或記欠，記成連鎖；同一道閘第 max_same_gate 次觸發（只數兩次之間 AI 看過擋訊息後有動手的；同一則回覆裡平行送出的呼叫算同一步；原樣重試交回那道閘自己的擋次上限）就中止；深度（閘→修→閘→修→第三次閘）照算、照列進經過表，depth_alarm 開了才在深度到 max_depth 時也中止（預設關：三道各管各的閘各擋一次不是連鎖）。中止後這一回合其餘閘只記錄不擋；能互動的 session 讀與問以外的工具先停手，收尾送連鎖過程表、請 AI 用 AskUserQuestion 問使用者三選一（還原連鎖改動／信任後續 AI 審查繼續／放行這一回合）；沒人能答（headless、子代理）不停手、照常做完、收尾報告附表。帳在 Logs/chain-<session>.jsonl；連鎖段每個要改的檔改之前存快照到 workflow/chain-snap/<session>/（超過 snapshot_max_bytes、這一段已存 snapshot_max_files 個就不存、記原因），選還原就逐檔寫回、每檔最多試 restore_retries 次；SessionEnd 刪這個 session 的快照與 7 天沒動的別 session 快照與帳。設定沒寫 enabled＝不開；一鍵關＝enabled:false。",
+    "enabled": true,
+    "depth_alarm": false,
+    "max_depth": 2,
+    "max_same_gate": 2,
+    "snapshot_max_bytes": 5000000,
+    "snapshot_max_files": 200,
+    "restore_retries": 3
+  },
+  "tool_selftests": [
+    {
+      "name": "config-consistency",
+      "cmd": "python -X utf8 tools/config-consistency.py --notes workflow/config-consistency-notes.json --out memory/_staging/config-consistency-report.md",
+      "expected": "DONE",
+      "sentinel": "CONFIG_CONSISTENCY",
+      "timeout_s": 120
+    }
+  ],
+  "_doc_tool_selftests": "週健檢（tools/health-weekly.py）逐筆跑的工具自測：每項 {name, cmd, expected: PASS|FAIL|DONE, sentinel?: 哨兵名, runtime_gate?: 指令, timeout_s?}。只認輸出的最後非空行哨兵；exit 非零時 expected PASS／DONE 一律紅、expected=FAIL 才綠；runtime_gate 非 0 → 跳過不紅。cmd 用 shlex 切、反斜線先換正斜線。例：{\"name\": \"my-tool\", \"cmd\": \"python -X utf8 tools/my-tool.py --selftest\", \"expected\": \"PASS\", \"timeout_s\": 30}",
+  "depends_coverage_min": 0,
+  "_doc_depends_coverage_min": "週健檢 Depends 覆蓋率門檻（有 path 型 Depends 的 atom 數／總數）；低於門檻黃燈。0＝只進報表不判。"
 }

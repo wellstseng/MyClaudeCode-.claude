@@ -14,17 +14,25 @@
 - **Native-first**：原生機制（CLAUDE.md / skills / memory / resume）優先；自製只做原生做不到的「結構化 · 可稽核 · 跨-session 高價值」。過度工程的正解是誠實化＋修剪，非推倒重來。
 - **根層只在根層改**：`~/.claude` 核心（hooks/lib/tools/skills/rules、根層設定與文件、根層 repo 版控）只在 `~/.claude` session 改；專案 session 遇到 → 不動手，把需求寫成可貼上的 prompt 交給使用者（閘門會擋，擋下訊息附替代做法）。跑根層工具不算改：`python ~/.claude/tools/<tool>.py …`，不 `cd` 進去。
 - **可觀測性鐵律**：所有 fail-open「不阻斷但要告知」——降級／靜默失敗必浮出訊號（告警 / stderr / 收尾報告），不得無聲吞掉。
+- **判斷交 LLM、流程交程式**：固定規則是判斷完之後的產物；還需要判斷的事（該測哪些、影響到誰、是不是誤判）不寫死，留 LLM 宣告判斷、附理由、事後被對帳的入口。
 
 ## 知識庫
 - 禁憑記憶改碼；斷言嚴重度/blocker/「必爆」前先實證（跑/查/追根源）。細節 [[feedback-未實證先別斷言-從根源驗證-先證再修-反退避反冗長]]
 - 修改核心結構/新認知/踩坑 → 更新 _AIDocs + _CHANGELOG.md（新增時同步 _INDEX.md）；_AIDocs 只放長期參考，規劃/TODO/進行中 → memory/_staging/。
 - live 檔（code/config/test）與 atom 只寫現況，不埋版本脈絡（版本/階段標記、日期戳、變更敘事）；編年歸 `_AIDocs/DevHistory/` 與 `_CHANGELOG.md`。
+- 寫規則檔、決策卡：現在的做法寫「目前用 X」，不寫「一律」；退版、否決要寫是方向錯，還是時機或資源不夠——只寫結論，下一個 AI 會讀成禁令。
 
 ## 記憶
 - 寫入一律走 atom_write MCP（自動驗證去重索引），禁直接 Edit atom .md；已記錄事實直接引用；不寫臨時嘗試/未確認猜測。**新 atom 一律 [臨] 起跳**（系統拒收新建 [固]/[觀]），晉升靠使用或 append。
 - **Realm**：跨專案通用 → `memory/<範疇>/`（失敗家族 `memory/Failures/<主題>/`）；只在 ~/.claude 內有用 → `realm=local`（`_AIDocs/_atoms/`）。判定三問見 [[realm-範疇分區機制-v5]]。
 - **Scope**（問「遷就專案還是遷就人？」）：專案的規則／決策 → `shared`；只關於這個人 → `personal`；本人跨專案偏好 → `personal, cross_project=true`；全公司所有專案都該知道 → `org`。
 - create 必給 `domain`（Lv1 閉合清單 `memory/_meta/taxonomy.json`），不確定落點先 `dry_run`；分不出範疇的知識不寫。
+- **清單不進 atom**：待辦／backlog／稽核結果／對照表這類「會一直加項目」的東西，正本寫 `memory/_staging/<主題>.md`，atom 只留指標（正本在哪／怎麼改／什麼不寫這裡）。atom 隨 trigger 整顆注入、知識段上限約 200 tok，長清單會被截斷——放進去等於記了但送不到。寫入閘以待辦標記數硬拒（`- [ ]`／`- [x]` ≥3）。
+- atom 被預算擋下時先分辨**這是結論還是清單**：結論 → 壓縮（個案敘事移文件）；清單 → 換形狀。別靠刪既有內容換空間。放寬寫入預算沒用，注入端會先截斷。
+
+## 版控
+- **原子記憶系統相關的不用問、直上版控**（判準是「改的是什麼」）：記憶卡片與索引（三層）由系統背景自動上傳，AI 不碰也不問；原子記憶系統本身的程式與文件，異動範圍與確實相關的案例綠、文件同步，就直接 commit＋push（指令寫成純 `git add && git commit && git push` 串，口令閘才認得是本 repo），不等口令、不反問；不為了上版跑整組。
+- **其他專案的程式碼與文件等口令**（團隊共有物，上傳等於替別人做決定）：改完只報告改了什麼、驗了什麼，等使用者看 diff 下「上GIT」，再 commit → push 一氣做完。
 
 ## 對話
 - 「用識流…」→ /consciousness-stream；/resume → /continue。

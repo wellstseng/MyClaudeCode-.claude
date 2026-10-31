@@ -7,7 +7,6 @@
      抑制過期→重探 codex；備援關閉且無 codex→NONE
   4. 抑制標記讀寫與 TTL
   5. run_claude_judge 組裝：唯讀工具限制 + JUDGE_ENV 子 session 標記 + stdin 傳材料
-  6. _judge_may_block：備援預設無 block 權，allow_block=true 才有
 
 不實際呼叫 codex / claude；subprocess.run 以 monkeypatch 攔截。
 """
@@ -20,10 +19,10 @@ from pathlib import Path
 
 import pytest
 
-CLAUDE_DIR = Path.home() / ".claude"
-COMPANION_DIR = CLAUDE_DIR / "tools" / "codex-companion"
+TREE = Path(__file__).resolve().parents[3]   # 本樹（測的是這份碼，不是家目錄那份）
+COMPANION_DIR = TREE / "tools" / "codex-companion"
 sys.path.insert(0, str(COMPANION_DIR))
-sys.path.insert(0, str(CLAUDE_DIR / "hooks"))
+sys.path.insert(0, str(TREE / "hooks"))
 
 import judge_backend as jb  # noqa: E402
 
@@ -237,27 +236,6 @@ def test_run_judge_does_not_fallback_on_plain_timeout(monkeypatch, isolated_stat
     raw, stderr, attempts, backend = assessor._run_judge("材料", "", _cfg())
     assert backend == jb.BACKEND_CODEX and raw == ""
     assert jb.codex_suppressed(_cfg()) is None
-
-
-# ─── 6. block 權 ────────────────────────────────────────────────────────────
-
-
-def test_fallback_has_no_block_power_by_default():
-    import codex_companion as cc
-    result = {"_judge_backend": jb.BACKEND_CLAUDE}
-    assert cc._judge_may_block(result, _cfg()) is False
-
-
-def test_fallback_can_block_when_explicitly_allowed():
-    import codex_companion as cc
-    result = {"_judge_backend": jb.BACKEND_CLAUDE}
-    assert cc._judge_may_block(result, _cfg(allow_block=True)) is True
-
-
-def test_codex_always_has_block_power():
-    import codex_companion as cc
-    result = {"_judge_backend": jb.BACKEND_CODEX}
-    assert cc._judge_may_block(result, _cfg()) is True
 
 
 # ─── 7. 無後端揭露（可觀測性鐵律：不得無聲降級） ─────────────────────────────

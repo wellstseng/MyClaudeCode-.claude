@@ -26,7 +26,8 @@ _SID = "sid"
 _DONE = "全部完成了"
 _CORE = r"c:\a\.claude\hooks\x.py"
 _ATOM_PATH = r"C:\Users\u\.claude\memory\dotnet\foo-bar.md"
-_CFG = {"harvest": {"enabled": True, "min_turns": 3, "min_accessed": 5, "min_turns_between": 3}}
+_CFG = {"harvest": {"enabled": True, "min_turns": 3, "min_accessed": 5, "min_turns_between": 3,
+                    "background": False}}   # 測擋下這條路（背景送不出去或開關關掉時走它）
 _PTU_CFG = {"docdrift": {"enabled": False}, "aec": {}, **_CFG}
 
 
@@ -125,6 +126,27 @@ def test_gate_once_per_turn(driven, capsys):
     assert "KnowledgeHarvest" not in driven(capsys, state)
 
 
+@pytest.mark.parametrize("user_turn, blocked", [(5, False), (8, True)])
+def test_044_6_reported_earlier_in_user_turn_is_not_reasked(driven, capsys, user_turn, blocked):
+    """044 第 6 項（規則 TURN_SINCE_USER_PROMPT；wg_harvest.reported_this_turn）：使用者 turn 5 打字、turn 5 收割已回報並核過 →
+    三則背景通知讓 turn_seq 到 8 → 說完成：本回合已回報過，不再要求收割。舊碼要回報的 turn_seq 剛好是 8，判沒回報、冷卻 8-5 也過了，又擋。
+    配對：使用者在 turn 8 又打字（新回合）→ 照擋。"""
+    state = _state(turn_seq=8, turn_prompts_seq=user_turn, modified_files=[_mf(_CORE)],
+                   knowledge_harvest={_SID: {"turn_seq": 5, "validated": True, "last_valid_harvest_turn": 5}})
+    assert ("[Guardian:KnowledgeHarvest]" in driven(capsys, state)) is blocked
+
+
+def test_044_6_harvest_validated_after_peer_message_recomputes_aec_pending(ptu):
+    """044 第 6 項（post_tool_use 收割核過後重算 AEC d_pending）：turn 5 emit 的收尾報告 (d) 標「尚未寫」→ 同伴訊息讓 turn_seq 到 7 →
+    這時收割核過：同一個使用者回合的報告照樣重算，(h) 沒有待寫就拿掉 d_pending（HUD 不再紅、Stop 不擋 AEC-Pending）。
+    舊碼要報告的 turn_seq 剛好是 7，不重算、d_pending 留著。"""
+    aec = {"session_id": _SID, "turn_seq": 5, "d_pending": ["- foo → 尚未寫（見下一動）"], "h": "可關閉"}
+    state = _state(turn_seq=7, turn_prompts_seq=5, anti_evasion_report=aec)
+    ptu(state, "knowledge_harvest_report", {"items": []})
+    assert state["knowledge_harvest"][_SID]["validated"]
+    assert "d_pending" not in state["anti_evasion_report"]
+
+
 def test_zero_turn_no_trigger(driven, capsys):
     state = _state(turn_seq=0, modified_files=[_mf(_CORE)])
     assert "KnowledgeHarvest" not in driven(capsys, state)
@@ -142,8 +164,11 @@ def test_no_completion_claim_no_trigger(driven, capsys):
 
 
 def test_dismiss_prompt_skips(driven, capsys):
+    """近 3 則使用者原話有「先這樣」：收割整個不擋（不用再寫不做行引用）；沒有就照擋。"""
     state = _state(modified_files=[_mf(_CORE)], recent_user_prompts=["先這樣"])
     assert "KnowledgeHarvest" not in driven(capsys, state)
+    state = _state(modified_files=[_mf(_CORE)], recent_user_prompts=["繼續"])
+    assert "KnowledgeHarvest" in driven(capsys, state)
 
 
 def test_config_section_absent_is_off(driven, capsys):
@@ -156,6 +181,17 @@ def test_cooldown_only_counts_validated(driven, capsys):
                            "last_valid_harvest_turn": 4}}
     assert "KnowledgeHarvest" not in driven(capsys, _state(knowledge_harvest=validated_t4))
     assert "KnowledgeHarvest" in driven(capsys, _state(turn_seq=7, knowledge_harvest=validated_t4))
+
+
+def test_045_cooldown_counts_user_turns_not_peer_messages(driven, capsys):
+    """規則 TURN_SINCE_USER_PROMPT（收割冷卻）：同伴訊息把 turn_seq 推到 9，使用者回合只過了 1 個 → 仍在冷卻；
+    使用者回合過了 4 個 → 冷卻已過照擋。舊 state 沒有使用者回合計數 → 退回 turn_seq 差。"""
+    kh = {_SID: {"turn_seq": 4, "validated": True, "pending": [], "items": [],
+                 "last_valid_harvest_turn": 4, "last_valid_harvest_uturn": 4}}
+    assert "KnowledgeHarvest" not in driven(capsys, _state(turn_seq=9, user_turn_count=5, knowledge_harvest=kh))
+    assert "KnowledgeHarvest" in driven(capsys, _state(turn_seq=9, user_turn_count=8, knowledge_harvest=kh))
+    legacy = {_SID: {"turn_seq": 4, "validated": True, "pending": [], "items": [], "last_valid_harvest_turn": 4}}
+    assert "KnowledgeHarvest" in driven(capsys, _state(turn_seq=9, knowledge_harvest=legacy))
 
 
 def test_sibling_session_harvest_does_not_release(driven, capsys):
@@ -425,3 +461,11 @@ def test_item_missing_summary_is_bad_field():
     assert bad and "summary" in bad
     ok = wh._item_fields_bad({"source": "mechanism", "summary": "s", "action": "skip", "atom": "x", "reason": "r"})
     assert ok is None
+
+
+@pytest.fixture(autouse=True)
+def _block_mode(monkeypatch):
+    """規則 GATE_MODE_TABLE：送法只讀 wg_release_rules.RULE_MODE。這個檔的案例驗的是判定與擋訊息內容，把送法釘成 block 讓它們照驗；
+    v6 預設的提醒送法（Stop 只留帳、提醒掛改檔那則工具結果）由 verify_gate_mode_stop.py 驗。"""
+    import wg_release_rules as _rr
+    monkeypatch.setattr(_rr, "mode_of", lambda rule: _rr.BLOCK)

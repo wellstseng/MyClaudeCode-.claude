@@ -6,14 +6,19 @@ console-window-trace.ps1 — Forensic 追蹤器：抓「可見 console 視窗」
 
 執行：pwsh -NoProfile -File console-window-trace.ps1 [-DurationSec 1800] [-PollMs 250]
 停止：建立 stop flag 檔（見 $StopFlag）或等 DurationSec 到。
-日誌：~/.claude/Logs/console-window-trace.log
+日誌：<資料根>/Logs/console-window-trace.log；資料根＝WG_CLAUDE_DIR（去頭尾空白後非空），否則 ~/.claude
+（和 lib/project_root.claude_data_dir 同一規則）
 #>
 param(
   [int]$DurationSec = 1800,
   [int]$PollMs = 250,
-  [string]$LogPath = "$HOME\.claude\Logs\console-window-trace.log",
-  [string]$StopFlag = "$HOME\.claude\Logs\console-trace.stop"
+  [string]$LogPath = "",
+  [string]$StopFlag = ""
 )
+
+$DataRoot = if ($env:WG_CLAUDE_DIR -and $env:WG_CLAUDE_DIR.Trim()) { $env:WG_CLAUDE_DIR.Trim() } else { "$HOME\.claude" }
+if (-not $LogPath) { $LogPath = "$DataRoot\Logs\console-window-trace.log" }
+if (-not $StopFlag) { $StopFlag = "$DataRoot\Logs\console-trace.stop" }
 
 New-Item -ItemType Directory -Force -Path (Split-Path $LogPath) | Out-Null
 if (Test-Path $StopFlag) { Remove-Item $StopFlag -Force -ErrorAction SilentlyContinue }
@@ -61,12 +66,15 @@ function Write-Log([string]$msg){
 }
 
 Write-Log "==================== TRACE START (dur=${DurationSec}s poll=${PollMs}ms pidSelf=$PID) ===================="
-# baseline：記下起始所有 console 視窗（含隱藏），之後對照
+# baseline：記下起始所有 console 視窗（含隱藏），之後對照；擁有者一次查全部行程（每窗各查一次要 0.5 秒）
 $state = @{}
+$owners = @{}
+foreach($p in Get-CimInstance Win32_Process -ErrorAction SilentlyContinue){ $owners[[uint32]$p.ProcessId] = $p }
 foreach($w in [CWT]::Go()){
   $state[$w.hwnd] = $w.vis
   $vtag = if($w.vis){'VISIBLE'}else{'hidden '}
-  $pr = Get-CimInstance Win32_Process -Filter "ProcessId=$($w.pid)" -ErrorAction SilentlyContinue
+  $pr = $owners[[uint32]$w.pid]
+  if(-not $pr){ $pr = Get-CimInstance Win32_Process -Filter "ProcessId=$($w.pid)" -ErrorAction SilentlyContinue }   # 快照之後才開的
   Write-Log ("  baseline {0} cls={1,-20} pid={2,-6} owner={3} :: {4}" -f $vtag,$w.cls,$w.pid,$pr.Name,$w.title)
 }
 Write-Log "-------------------- watching for NEW / hidden->VISIBLE transitions --------------------"

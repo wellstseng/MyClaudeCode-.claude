@@ -48,12 +48,49 @@ def test_detect_deferral_no_hit(text):
     assert detect_deferral(text, []) is None
 
 
-def test_detect_deferral_user_explicit_defer_is_escape_hatch():
+# ─── G6 階段 4（P7）：使用者延後要 AI 引用原句對到事項；AI 自己的不做行要附理由（NOT_DOING_DECLARED／USER_WAIVER_NEEDS_CITATION）──
+
+def test_p7_user_defer_line_no_citation_check():
     text = "完工。realm atom 瘦身留到下個 session 做。"
-    assert detect_deferral(text, ["這顆 atom 下個 session 再做就好"]) is None
-    assert detect_deferral(text, ["先這樣，其他不用管"]) is None            # 一般 dismiss 也放行
-    # 使用者只是「質問」為何要新開 session → 不算放行
-    assert detect_deferral(text, ["為什麼你會判斷還需要新開 session？"]) is not None
+    assert detect_deferral(text, ["這顆 atom 下個 session 再做就好"]) is not None   # 沒寫那一行 → 照標
+    cited = text + "\n不做｜realm atom 瘦身：使用者說「下個 session 再做就好」"
+    audit = []
+    assert detect_deferral(cited, ["這顆 atom 下個 session 再做就好"], audit=audit) is None
+    assert audit and audit[0]["rule"] == "NOT_DOING_DECLARED" and "realm atom 瘦身" in audit[0]["why"]
+    # 引用的句子不再比對使用者原話（USER_WAIVER_NEEDS_CITATION 已拿掉）：寫了那一行就不標，留帳抽查
+    assert detect_deferral(cited, ["為什麼你會判斷還需要新開 session？"]) is None
+
+
+def test_p6_claim_line_is_not_a_deferral_sentence():
+    """宣稱行「宣稱｜修好：非本回合宣稱，因為…」是對閘的回答，裡面的「非本回合」不是退縮語（實跑探針：回了宣稱行反被擋）。"""
+    text = "閘修好了，完成。\n宣稱｜修好：非本回合宣稱，因為那句講的是上一回合驗過的狀態，本回合只改了文件"
+    assert detect_deferral(text, []) is None
+    from wg_evasion import detect_evasion
+    assert detect_evasion(text, []) is None
+
+
+def test_p7_descriptive_sentence_needs_disclaim_line():
+    """b 軌 10-20 實遇：「下個 session 開場列出的內容…三段都正常」在描述已驗過的事、沒推任何事，卻被「下個 session」擋。
+    詞表只是提示：AI 寫「不是退避｜<命中的詞>：因為 <理由>」→ 不擋、留帳；沒寫照擋（真退縮沒理由照擋）。"""
+    text = "完工。在假專案上真跑了一遍：交付時送出的提醒、記進帳本的那一筆、下個 session 開場列出的內容，三段都正常。"
+    assert detect_deferral(text, []) is not None, "前置：這句詞表會命中"
+    audit = []
+    assert detect_deferral(text + "\n不是退避｜下個 session：因為那句在描述新功能開場會列出什麼，是已跑過的驗證結果", [],
+                           audit=audit) is None
+    assert audit and audit[0]["rule"] == "NOT_DOING_DECLARED" and "不是退避" in audit[0]["why"]
+    assert detect_deferral(text + "\n不是退避｜下個 session：<理由>", []) is not None, "只有佔位不算"
+
+
+def test_p7_not_doing_with_reason_passes_gate_and_audits():
+    text = "完工。\n不做｜realm atom 瘦身：留到下個 session，因為要重算全庫索引（約 20 分鐘）、會飄移主任務。"
+    audit = []
+    assert deferral_gate_reason(text, [], turn_seq=5, gated_turn=None, committed_this_turn=False, context_ratio=0.3,
+                                config=_CFG, audit=audit) is None
+    assert audit and audit[0]["rule"] == "NOT_DOING_DECLARED"
+    # 理由只有佔位 → 照擋，擋訊息問收尾那一問（快又有效的做掉、其餘寫追蹤行）
+    bad = "完工。\n不做｜realm atom 瘦身：留到下個 session，<理由>"
+    reason = deferral_gate_reason(bad, [], turn_seq=5, gated_turn=None, committed_this_turn=False, context_ratio=0.3, config=_CFG)
+    assert reason and "追蹤｜" in reason and "改得快又有效" in reason
 
 
 def test_min_object_chars_respected():
@@ -88,7 +125,7 @@ def _reason(text=_DEFER_DONE, *, turn=5, gated=None, committed=False, ratio=0.3,
 def test_gate_fires_when_done_and_tokens_plentiful():
     r = _reason()
     assert r and "[Guardian:DeferralGate]" in r
-    assert "(a)" in r and "(b)" in r and "(c)" in r
+    assert "剩下沒做的，哪些改得快又有效？" in r and "追蹤｜" in r
     assert "下個 session" in r                       # 退縮語回顯
 
 
@@ -138,6 +175,8 @@ def driven(monkeypatch):
     monkeypatch.setattr(st, "_maybe_spawn_user_extract_worker", lambda *a, **k: None)
     monkeypatch.setattr(st, "estimate_context_usage", lambda *a, **k: 0.3)
 
+    monkeypatch.setattr(st, "coding_turn", lambda *a, **k: True)   # 測閘本身：當成寫碼回合（CODING_TURN_ONLY 的案在 verify_gate_trim）
+
     def drive(last_text, capsys, **extra):
         monkeypatch.setattr(st, "get_last_assistant_text", lambda *a, **k: last_text)
         state = {
@@ -153,11 +192,30 @@ def driven(monkeypatch):
     return drive
 
 
-def test_stop_blocks_on_deferral(driven, capsys):
+def test_stop_reminds_on_deferral_v6_and_blocks_v6_off(driven, capsys, monkeypatch):
+    """規則 DEFERRAL_OF_DOABLE_WORK 是提醒（GATE_MODE_TABLE）：v6 開 → Stop 不擋、只留帳 event=remind、一回合一次的記號照記、
+    不吃共用擋次；v6 關 → 照擋（9e476fd0 原樣）。"""
+    logs = []
+    monkeypatch.setattr(st, "append_guard_log", lambda g, p: logs.append((g, p)))
+    out, state = driven(_DEFER_DONE, capsys)
+    assert "[Guardian:DeferralGate]" not in out
+    assert state["deferral_gate_turn"] == 7 and state["stop_blocked_count"] == 0
+    assert any(g == "deferral" and p.get("event") == "remind" and p.get("rule") == "DEFERRAL_OF_DOABLE_WORK" for g, p in logs)
+    monkeypatch.setenv("WG_V6", "0")
     out, state = driven(_DEFER_DONE, capsys)
     assert "[Guardian:DeferralGate]" in out
-    assert state["deferral_gate_turn"] == 7
-    assert state["stop_blocked_count"] == 1
+    assert state["deferral_gate_turn"] == 7 and state["stop_blocked_count"] == 1
+
+
+def test_p7_stop_passes_with_not_doing_line_and_logs(driven, capsys, monkeypatch):
+    """整合：收尾有「不做｜…：<理由>」→ DeferralGate 不擋，guard-deferral_declared.jsonl 留一筆（規則、原行）。"""
+    logs = []
+    monkeypatch.setattr(st, "append_guard_log", lambda g, p: logs.append((g, p)))
+    text = "完工，工作樹乾淨。\n不做｜realm atom 瘦身：留到下個 session，因為要重算全庫索引、會飄移主任務。"
+    out, state = driven(text, capsys)
+    assert "[Guardian:DeferralGate]" not in out and "deferral_gate_turn" not in state
+    hit = [p for g, p in logs if g == "deferral_declared"]
+    assert hit and hit[0]["rule"] == "NOT_DOING_DECLARED" and hit[0]["line"].startswith("不做｜realm atom 瘦身")
 
 
 def test_stop_does_not_reblock_same_turn(driven, capsys):
@@ -179,3 +237,21 @@ def test_quoted_deferral_phrase_not_flagged():
     assert detect_deferral(quoted, []) is None
     plain = "完工。這個 registry 清理留給下個 session 處理比較好。"
     assert detect_deferral(plain, []) is not None
+
+
+# ─── markdown 表格列與 ``` 程式區塊不觸發（列舉詞表／貼程式碼不是退縮句）────────
+
+def test_markdown_table_row_not_flagged():
+    text = "完工。詞表如下：\n| 詞 | 說明 |\n|---|---|\n| 之後再 | 這個 realm atom 瘦身留給下個 session 處理 |\n"
+    assert detect_deferral(text, []) is None
+
+
+def test_code_fence_not_flagged():
+    text = "完工。範例：\n```python\n# realm atom 瘦身留給下個 session 處理\nx = 1\n```\n"
+    assert detect_deferral(text, []) is None
+
+
+def test_plain_sentence_after_table_still_flagged():
+    text = "| 詞 |\n|---|\n| 之後再 |\n完工。realm atom 瘦身留給下個 session 處理。"
+    det = detect_deferral(text, [])
+    assert det and "realm atom 瘦身" in det["sentence"]

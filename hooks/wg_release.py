@@ -1,0 +1,311 @@
+"""wg_release.py：Stop 閘擋滿次數後「不自行放行、改問使用者」的純函式。
+
+做什麼：
+  擋滿後送固定擋訊息，要模型用 AskUserQuestion 問使用者（題目含【收尾放行確認】、選項固定兩個）。
+  放行只認兩種，且都要在「最後一次擋」之後出現：
+    (a) transcript 裡 AskUserQuestion 的 tool_result，題目含【收尾放行確認】、答案是「放行這一回合」（同題多次以最後一次為準）；
+    (b) 使用者本人新打的訊息整則符合放行句型（is_release_prompt；state.turn_prompts，背景通知等 harness 訊息不進這個清單）。
+  (a) 只認 tool_use_id 對到 AskUserQuestion（題目含標記）的 tool_result；其他工具輸出、assistant 文字印出同樣的字都不算。
+  「最後一次擋」的位置＝擋那一刻的 transcript 位元組長度＋當時的 turn_prompts 快照（mark_block 記）。
+  擋滿記 pending_release，只在同一個使用者回合有效（pending_of 照 wg_release_rules.user_turn 認）：換了使用者回合就失效，
+  預算重給、不拿先前的宣稱重查。
+  放行記成「這一回合＋放行的那幾件」（release_items：擋訊息每條 ✗ 的規則與現象）：同一回合整個放；之後的回合那幾件原因還在
+  就不再要求放行（keep_released／drop_items），原因消失就從紀錄拿掉。
+  無法互動（non_interactive_reason：裁判子 session、子代理、headless／SDK）→ 不叫它問；擋滿照預算放行並留帳（由呼叫端記）。
+  用在寫程式碼的查核閘（ReconcileGate、TestFailGate）、等值證法。
+怎麼跑：被 handlers/stop.py 匯入；verify 在 hooks/verify/verify_stop_reconcile.py（件一段）、verify_pull_stop_gates.py。
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import unicodedata
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+from wg_release_rules import HIT_PREFIX, in_turn, user_turn
+
+RELEASE_TAG = "【收尾放行確認】"
+OPT_RELEASE = "放行這一回合"
+OPT_KEEP = "繼續擋，先修好"
+# 使用者打字放行：整則訊息（NFKC 正規化全半形、去頭尾空白）必須完全符合；否定、疑問、引用、描述句一律不算
+_PROMPT_RELEASE_RE = re.compile(r"^(好|好的|可以|行|OK|ok)?[，,、 ]*放行(這一回合|吧)?[。.!！]*$")
+
+
+def is_release_prompt(text: str) -> bool:
+    return bool(_PROMPT_RELEASE_RE.match(unicodedata.normalize("NFKC", str(text or "")).strip()))
+_ANSWER_PAIR_RE = re.compile(r'"([^"]*)"="([^"]*)"')
+
+
+def exhausted_message(gate: str, n: Optional[int], summary: str) -> str:
+    """擋滿後的固定擋訊息。summary 取原因第一行；n＝None 表示不報次數（本回合先前已擋滿、記了 pending_release）。"""
+    line = (summary or "").strip().splitlines()[0] if (summary or "").strip() else "（無原因摘要）"
+    head = f"本回合已擋 {n} 次仍未解" if n is not None else "本回合已擋滿、仍未放行也仍未解"
+    return (f"[Guardian:{gate}] {head}：{line[:200]}。不准自行放行，也不准改寫宣稱來繞過。"
+            f"用 AskUserQuestion 問使用者，題目必須含標記{RELEASE_TAG}，選項固定兩個：「{OPT_RELEASE}」「{OPT_KEEP}」；"
+            "使用者選放行才收尾。")
+
+
+_ENTRY_RE = re.compile(r'"entrypoint"\s*:\s*"([^"]*)"')
+_ENTRY_TAIL_BYTES = 65536
+
+
+def _transcript_entrypoint(transcript_path: Optional[str]) -> str:
+    """transcript 尾段最後一筆紀錄的 entrypoint 欄（CC 每筆紀錄都寫）；讀不到回空字串。"""
+    if not transcript_path:
+        return ""
+    try:
+        with open(transcript_path, "rb") as f:
+            f.seek(max(0, os.path.getsize(transcript_path) - _ENTRY_TAIL_BYTES))
+            hits = _ENTRY_RE.findall(f.read().decode("utf-8", errors="replace"))
+    except OSError:
+        return ""
+    return hits[-1] if hits else ""
+
+
+def non_interactive_reason(input_data: Dict[str, Any], transcript_path: Optional[str],
+                           env: Optional[Dict[str, str]] = None) -> Optional[str]:
+    """沒有人能回答 AskUserQuestion 的情境 → 回原因（給擋訊息）；有人在 → None。訊號依序：
+    ① 環境變數 CLAUDE_COMPANION_JUDGE（裁判子 session；dispatcher 現已整組早退，這裡是第二道）；
+    ② hook 輸入是 SubagentStop、或帶 agent_id（官方：子代理內才有）；
+    ③ entrypoint 是 sdk-*（`claude -p`／SDK 呼叫）：環境變數 CLAUDE_CODE_ENTRYPOINT 優先（CC 設給子行程，hook 繼承），
+       沒有再看 transcript 最後一筆紀錄的 entrypoint 欄。互動入口是 cli／claude-vscode 等，不算。"""
+    env = os.environ if env is None else env
+    if env.get("CLAUDE_COMPANION_JUDGE"):
+        return "裁判子 session（CLAUDE_COMPANION_JUDGE=1）"
+    if input_data.get("hook_event_name") == "SubagentStop" or input_data.get("agent_id"):
+        return "子代理 Stop"
+    ep = str(env.get("CLAUDE_CODE_ENTRYPOINT") or _transcript_entrypoint(transcript_path) or "")
+    if ep.startswith("sdk"):
+        return f"headless／SDK（entrypoint={ep}）"
+    return None
+
+
+def non_interactive_message(gate: str, n: Optional[int], summary: str, why: str) -> str:
+    """無法互動時的擋訊息：沒有人能回答放行詢問，不叫模型問使用者。n＝本回合已擋次數（給 None 就不寫次數）。
+    擋滿之後由呼叫端放行並留帳，不送這則。"""
+    line = (summary or "").strip().splitlines()[0] if (summary or "").strip() else "（無原因摘要）"
+    count = f"；本回合已擋 {n} 次" if n is not None else ""
+    return (f"[Guardian:{gate}] 收尾查核沒過：{line[:200]}（{why}，沒有人能回答放行詢問{count}）。"
+            "不准改寫宣稱來繞過：把它修好，或照實回報沒修好。")
+
+
+def _size(transcript_path: Optional[str]) -> int:
+    try:
+        return os.path.getsize(transcript_path) if transcript_path else 0
+    except OSError:
+        return 0
+
+
+def mark_block(state: Dict[str, Any], sid: str, gate: str, transcript_path: Optional[str], turn_seq: int,
+               items: Optional[Iterable[str]] = None) -> None:
+    """記這個閘（reconcile＝對帳／量尺閘；shared＝吃 stop_gate_max_blocks 的閘）最後一次擋的位置：
+    transcript 長度＋turn_prompts 快照＋回合＋這次擋訊息列給使用者看的那幾件（release_items；使用者放行只放這幾件）。"""
+    prompts = state.get("turn_prompts") if isinstance(state.get("turn_prompts"), list) else []
+    state.setdefault("last_block", {}).setdefault(sid, {})[gate] = {
+        "offset": _size(transcript_path), "prompts": list(prompts), "turn": int(turn_seq),
+        **({"items": list(items)} if items is not None else {}),
+    }
+
+
+def shown_items(state: Dict[str, Any], sid: str, gate: str) -> Optional[List[str]]:
+    """這個閘最後一次擋時列給使用者看的那幾件；沒記（沒擋過、或擋的位置是沒記項目的寫法）→ None。"""
+    rec = ((state.get("last_block") or {}).get(sid) or {}).get(gate)
+    items = rec.get("items") if isinstance(rec, dict) else None
+    return [str(i) for i in items] if isinstance(items, list) else None
+
+
+def _blocks(o: Dict[str, Any]) -> List[Dict[str, Any]]:
+    msg = o.get("message") if isinstance(o.get("message"), dict) else {}
+    content = msg.get("content")
+    return [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+
+
+def _answers_after(transcript_path: Optional[str], offset: int) -> List[Tuple[str, str]]:
+    """offset 之後真的來自 AskUserQuestion 的 (題目, 答案)，依出現順序。
+    先從 assistant 的 tool_use 區塊建「tool_use_id → AskUserQuestion 題目」表（只收 input 題目含【收尾放行確認】的那次呼叫），
+    再只採用 tool_use_id 對得上的 tool_result：優先讀同一筆紀錄的 toolUseResult.answers，沒有才解析 tool_result 文字。
+    Bash／PowerShell／其他工具的輸出、assistant 文字一律不算（印出同樣的字也不算）。"""
+    if not transcript_path:
+        return []
+    try:
+        with open(transcript_path, "rb") as f:
+            f.seek(max(0, int(offset)))
+            raw = f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return []
+    asked: Dict[str, List[str]] = {}
+    out: List[Tuple[str, str]] = []
+    for line in raw.splitlines():
+        try:
+            o = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(o, dict):
+            continue
+        for b in _blocks(o):
+            if b.get("type") == "tool_use" and b.get("name") == "AskUserQuestion":
+                qs = [str((q or {}).get("question", "")) for q in ((b.get("input") or {}).get("questions") or [])
+                      if isinstance(q, dict)]
+                if any(RELEASE_TAG in q for q in qs):
+                    asked[str(b.get("id", ""))] = qs
+        results = [b for b in _blocks(o) if b.get("type") == "tool_result" and str(b.get("tool_use_id", "")) in asked]
+        if not results:
+            continue
+        qs = asked[str(results[0].get("tool_use_id"))]
+        tur = o.get("toolUseResult")
+        if isinstance(tur, dict) and isinstance(tur.get("answers"), dict):
+            out.extend((str(q), str(a)) for q, a in tur["answers"].items() if str(q) in qs)
+            continue
+        for b in results:
+            text = b.get("content") if isinstance(b.get("content"), str) else ""
+            out.extend((q, a) for q, a in _ANSWER_PAIR_RE.findall(text) if q in qs)
+    return out
+
+
+def new_prompts(at_block: Iterable[str], now: Iterable[str]) -> List[str]:
+    """turn_prompts 是最多 5 則的滑動窗（新回合會重開）：取 now 裡接在 at_block 之後新進來的那幾則。"""
+    old, cur = list(at_block or []), list(now or [])
+    for k in range(min(len(old), len(cur)), 0, -1):
+        if old[len(old) - k:] == cur[:k]:
+            return cur[k:]
+    return cur
+
+
+def user_released(state: Dict[str, Any], sid: str, gate: str, transcript_path: Optional[str]) -> Optional[str]:
+    """這個閘最後一次擋之後使用者放行了嗎：回 "ask"（AskUserQuestion 選放行）／"prompt"（使用者打「放行」）／None。
+    沒有擋的紀錄（還沒擋過）→ None。"""
+    rec = ((state.get("last_block") or {}).get(sid) or {}).get(gate)
+    if not isinstance(rec, dict):
+        return None
+    tagged = [a.strip() for q, a in _answers_after(transcript_path, int(rec.get("offset", 0))) if RELEASE_TAG in q]
+    if tagged and tagged[-1] == OPT_RELEASE:
+        return "ask"
+    now = state.get("turn_prompts") if isinstance(state.get("turn_prompts"), list) else []
+    if any(is_release_prompt(p) for p in new_prompts(rec.get("prompts") or [], now)):
+        return "prompt"
+    return None
+
+
+def pending_of(state: Dict[str, Any], sid: str, gate: str) -> Optional[Dict[str, Any]]:
+    """擋滿後待使用者放行的紀錄；只認記在目前這個使用者回合的（背景通知、同伴訊息開的續跑回合不算換回合）。
+    換了使用者回合 → None：預算重給、不拿先前的宣稱重查。state 沒有 turn_seq（判不出回合）→ 照算有效。"""
+    rec = ((state.get("pending_release") or {}).get(sid) or {}).get(gate)
+    if not isinstance(rec, dict):
+        return None
+    if "turn_seq" not in state:
+        return rec
+    now = int(state.get("turn_seq", 0) or 0)
+    return rec if in_turn(rec.get("turn"), now, user_turn(state, now)) else None
+
+
+def pending_any(state: Dict[str, Any], sid: str) -> bool:
+    """這個 session 真的有一筆擋滿待放行：同一個閘的 last_block 與 pending_release 都在（光在題目加【收尾放行確認】不算）。"""
+    blocks = (state.get("last_block") or {}).get(sid) or {}
+    return any(pending_of(state, sid, g) is not None for g in blocks)
+
+
+CLAIM_CHARS = 3000
+
+
+def set_pending(state: Dict[str, Any], sid: str, gate: str, turn_seq: int, at: str, reason: str,
+                claims: Iterable[str] = ()) -> None:
+    """記擋滿待放行。claims＝pending 在這個使用者回合第一次建立時的「宣告完成」原話（每段尾 CLAIM_CHARS 字）：同一回合之後的
+    Stop 換一句話，對帳 (a)(b)(c) 仍拿原話重查；pending 還有效時 claims 一律沿用原本那份，之後的文字不附加、不取代、不擠掉。
+    沒有 claims 欄的 pending 照舊沒有：無法重查原宣稱，只能由使用者放行清掉（stop.handle_stop 據此擋；換了使用者回合就失效）。"""
+    old = pending_of(state, sid, gate)
+    rec: Dict[str, Any] = {"turn": int(turn_seq), "at": at, "reason": (reason or "")[:300]}
+    if old is None:
+        rec["claims"] = [str(c)[-CLAIM_CHARS:] for c in claims if c]
+    elif "claims" in old:
+        rec["claims"] = list(old["claims"])
+    state.setdefault("pending_release", {}).setdefault(sid, {})[gate] = rec
+
+
+def clear_pending(state: Dict[str, Any], sid: str, gate: str) -> None:
+    sec = (state.get("pending_release") or {}).get(sid)
+    if isinstance(sec, dict):
+        sec.pop(gate, None)
+
+
+def _release_rec(state: Dict[str, Any], sid: str, gate: str) -> Optional[Dict[str, Any]]:
+    """user_released[sid][gate]：{"turn": 放行的使用者回合, "items": 放行的那幾件}；只記回合整數的紀錄當沒有放行件。"""
+    rec = ((state.get("user_released") or {}).get(sid) or {}).get(gate)
+    if isinstance(rec, dict):
+        return rec
+    return {"turn": rec, "items": []} if isinstance(rec, int) and not isinstance(rec, bool) else None
+
+
+def released_this_turn(state: Dict[str, Any], sid: str, gate: str, turn_seq: int) -> bool:
+    """使用者已放行過這個閘的這一回合（放行一次＝這一回合不再擋）。"""
+    rec = _release_rec(state, sid, gate)
+    try:
+        return rec is not None and int(rec.get("turn")) == int(turn_seq)
+    except (TypeError, ValueError):
+        return False
+
+
+def record_release(state: Dict[str, Any], sid: str, gate: str, turn_seq: int, items: Iterable[str] = (),
+                   context: Optional[str] = None) -> None:
+    """記使用者放行：這一回合整個放（選項就叫「放行這一回合」）；items（release_items 的鍵，只放使用者看過的那幾件）之後的
+    回合原因還在就照放。context＝放行當下的情境指紋（例：改檔的指紋），之後不一樣就整份不算（keep_released）。"""
+    state.setdefault("user_released", {}).setdefault(sid, {})[gate] = {
+        "turn": int(turn_seq), "items": list(dict.fromkeys(str(i) for i in items if i)),
+        **({"context": context} if context is not None else {})}
+
+
+def _hit_key(line: str) -> Optional[str]:
+    s = line.strip()
+    return s.split("｜證據", 1)[0] if s.startswith(HIT_PREFIX + "(") else None
+
+
+def _sections(text: str) -> List[List[str]]:
+    """擋訊息照 `[Guardian:` 開頭的行切段（一道閘或一個判定錯誤一段）；第一個 `[Guardian:` 之前的行自成一段。"""
+    out: List[List[str]] = []
+    for ln in str(text or "").splitlines():
+        if not out or ln.lstrip().startswith("[Guardian:"):
+            out.append([])
+        out[-1].append(ln)
+    return out
+
+
+def _section_keys(sec: List[str]) -> List[str]:
+    """一段的鍵：每條 `✗ (<字母>) <規則名>：<一句現象>`（不含證據段）；這段沒有 ✗ 條目就用它的第一個非空行（整段算一件）。"""
+    hits = [k for k in map(_hit_key, sec) if k]
+    first = next((ln.strip() for ln in sec if ln.strip()), "")
+    return hits or ([first] if first else [])
+
+
+def release_items(text: str) -> List[str]:
+    """擋訊息裡「那一件」的鍵：逐段取 _section_keys（沒有 ✗ 條目的段——例如判定錯誤——自己算一件，不會被別段的放行吞掉）。"""
+    return list(dict.fromkeys(k for sec in _sections(text) for k in _section_keys(sec)))
+
+
+def keep_released(state: Dict[str, Any], sid: str, gate: str, current: Iterable[str],
+                  context: Optional[str] = None) -> List[str]:
+    """先前放行過、這次還在的那幾件（current＝這次擋訊息的 release_items）；原因消失的從放行紀錄拿掉。
+    放行時記了情境指紋、這次給的不一樣（例：放行之後又改了檔）→ 整份放行不算、清掉。回還在的那幾件。"""
+    rec = _release_rec(state, sid, gate)
+    if not rec or not rec.get("items"):
+        return []
+    stale = context is not None and rec.get("context") is not None and rec.get("context") != context
+    now = set(current)
+    keep = [] if stale else [i for i in rec["items"] if i in now]
+    if keep != rec["items"]:
+        state.setdefault("user_released", {}).setdefault(sid, {})[gate] = {**rec, "items": keep}
+    return keep
+
+
+def drop_items(text: str, items: Iterable[str]) -> Optional[str]:
+    """擋訊息拿掉已放行的那幾件：已放行的 ✗ 條目拿掉，鍵已放行的無條目段整段拿掉；拿完沒有任何一件要擋 → None。"""
+    gone = set(items)
+    if not gone:
+        return text
+    if all(k in gone for k in release_items(text)):
+        return None
+    kept: List[str] = []
+    for sec in _sections(text):
+        if not any(map(_hit_key, sec)) and all(k in gone for k in _section_keys(sec)):
+            continue
+        kept += [ln for ln in sec if _hit_key(ln) not in gone]
+    return "\n".join(kept)

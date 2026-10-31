@@ -6,7 +6,7 @@
   且 Chrome 136+ 拒絕在預設 profile 上被自動化，所以不能直接借用）
   開有頭 Chrome 視窗（headless 會被 Cloudflare 人類驗證擋下）到 https://claude.ai/settings/usage，
   等用量條渲染完 → 截圖存到公司記憶庫（workflow/config.json org_memory 那個 repo）的 usage-snapshots/usage-YYYYMMDD-<帳號>.png，
-  隨即 commit／push（走記憶庫同一套背景上版控 wg_vcs_sync）。帳號＝這台 Claude Code 登入信箱 @ 前那段（~/.claude.json），讀不到就報錯不截。
+  隨即 commit／push（走記憶庫同一套背景上版控 wg_vcs_sync）。帳號＝這台 Claude Code 登入信箱 @ 前那段（.claude.json，跟 Claude Code 設定目錄），讀不到就報錯不截。
   這台沒接上公司記憶庫（先跑 tools/org-memory.py --join）或推不上去 → 截圖留本機／留在 clone 內，結果標 repo_error。
   頁面上的 % / Resets 文字追記到本機 workflow/usage-snapshots/usage-log.jsonl，usage-last-run.json 記最近一次結果（成功／失敗原因）。
   失敗（未登入、逾時、被擋）也會在本機留一張 usage-YYYYMMDD-<帳號>-FAILED.png 供診斷，不靜默。
@@ -39,11 +39,15 @@ for _name in ("stdout", "stderr"):
 
 TOOL_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(TOOL_DIR.parents[1] / "hooks"))
-from wg_core import load_config, org_memory_root  # noqa: E402
+from wg_core import CLAUDE_DIR, load_config, org_memory_root  # noqa: E402
 from wg_vcs_sync import collect_sync_targets, sync_targets_inline  # noqa: E402
+if str(TOOL_DIR.parents[1]) not in sys.path:
+    sys.path.insert(0, str(TOOL_DIR.parents[1]))
+from lib.project_root import claude_global_config  # noqa: E402
 
-PROFILE_DIR = TOOL_DIR / "browser-data"
-OUT_DIR = Path.home() / ".claude" / "workflow" / "usage-snapshots"  # 本機：log / last-run / FAILED 圖 / 沒接公司記憶庫時的截圖退路
+# 資料都在資料根（WG_CLAUDE_DIR 或 ~/.claude）；一般安裝兩根同一路徑，登入 profile 仍在原處
+PROFILE_DIR = CLAUDE_DIR / "tools" / "usage-snapshot" / "browser-data"   # Chrome 登入 profile（使用者資料）
+OUT_DIR = CLAUDE_DIR / "workflow" / "usage-snapshots"  # 本機：log / last-run / FAILED 圖 / 沒接公司記憶庫時的截圖退路
 REPO_SUBDIR = "usage-snapshots"  # 公司記憶庫內的截圖目錄（wg_vcs_sync org_extra_pathspecs 同名）
 LAST_RUN = OUT_DIR / "usage-last-run.json"
 LOG = OUT_DIR / "usage-log.jsonl"
@@ -59,7 +63,7 @@ def log(msg: str) -> None:
 def detect_account() -> str:
     """這台 Claude Code 登入信箱 @ 前那段（進檔名）；讀不到回空字串。"""
     try:
-        data = json.loads((Path.home() / ".claude.json").read_text(encoding="utf-8"))
+        data = json.loads(claude_global_config().read_text(encoding="utf-8"))
         email = (data.get("oauthAccount") or {}).get("emailAddress") or ""
     except (OSError, json.JSONDecodeError, AttributeError):
         return ""
@@ -67,7 +71,13 @@ def detect_account() -> str:
 
 
 def launch(headed: bool):
-    from playwright.sync_api import sync_playwright
+    try:
+        from playwright.sync_api import sync_playwright
+    except ModuleNotFoundError:
+        raise SystemExit(
+            f"[usage-snapshot] 這個 Python 沒裝 playwright：{sys.executable}\n"
+            "  改用排程登記的那個 Python 跑（PowerShell：(Get-ScheduledTask Claude-Usage-WeeklySnapshot).Actions.Execute，"
+            "把 pythonw.exe 換成 python.exe），或先 pip install playwright 再 playwright install chromium")
 
     p = sync_playwright().start()
     ctx = p.chromium.launch_persistent_context(

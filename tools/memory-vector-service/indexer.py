@@ -21,11 +21,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # import wg_core for centralized path logic
-sys.path.insert(0, str(Path.home() / ".claude" / "hooks"))
-# lib.* 需 ~/.claude 在 sys.path，否則 L28 `from lib.atom_locations`
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "hooks"))
+# lib.* 需本樹根在 sys.path，否則 `from lib.atom_locations`
 # 直接 ModuleNotFoundError → service.py fire-and-forget spawn 秒崩 → 不寫 vector_ready.flag
 # → 6 個 consumer 全 no_flag short-circuit（語意召回/episodic/衝突偵測靜默死）
-sys.path.insert(0, str(Path.home() / ".claude"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from ollama_client import get_client
 from wg_core import CLAUDE_DIR, MEMORY_DIR, discover_memory_layers
 # V5+ Session β: Failures layer 注入 + stems filter（對拍 lib/atom_locations）
@@ -247,6 +247,16 @@ def file_hash(path: Path) -> str:
         return hashlib.md5(path.read_bytes()).hexdigest()
     except OSError:
         return ""
+
+
+def _norm_rel(p: Any) -> str:
+    return str(p or "").replace("\\", "/")
+
+
+def _incremental_unchanged(existing: Dict[str, Tuple[str, str]], key: str, fhash: str, rel_path: Any) -> bool:
+    """增量索引可略過這顆 atom：內容雜湊與存的路徑都沒變。
+    內容沒改、只搬了位置的 atom 也要重索引，否則向量庫的 file_path 一直指舊址。"""
+    return existing.get(key) == (fhash, _norm_rel(rel_path))
 
 
 def parse_and_chunk(
@@ -502,14 +512,15 @@ def create_embedder(config: Dict[str, Any]) -> Any:
         print("[indexer] Ollama unavailable, checking fallback...", file=sys.stderr)
 
     # Respect fallback_backend: "none" — do NOT try sentence-transformers
-    fb_backend = config.get("fallback_backend", "sentence-transformers")
+    from config import DEFAULTS   # 缺鍵時的預設只認 config.py 那一份（load_config 合併用的同一張表）
+    fb_backend = config.get("fallback_backend", DEFAULTS["fallback_backend"])
     if fb_backend in ("none", "None", "", None):
         raise RuntimeError(
             "No embedding backend available. Ollama is unreachable and "
             "fallback_backend is set to 'none'."
         )
 
-    fb_model = config.get("fallback_model", "BAAI/bge-m3")
+    fb_model = config.get("fallback_model", DEFAULTS["fallback_model"])
     if fb_model in ("none", "None", "", None):
         raise RuntimeError(
             "No embedding backend available. Ollama is unreachable and "
@@ -600,15 +611,16 @@ def build_index(
 
     db = _get_db()
 
-    # For incremental: load existing hashes
-    existing_hashes: Dict[str, str] = {}
+    # For incremental: load existing (hash, path)
+    existing: Dict[str, Tuple[str, str]] = {}
     if incremental:
         try:
             table = db.open_table(TABLE_NAME)
-            rows = table.search().select(["layer", "atom_name", "file_hash"]).limit(table.count_rows()).to_list()
+            rows = (table.search().select(["layer", "atom_name", "file_hash", "file_path"])
+                    .limit(table.count_rows()).to_list())
             for row in rows:
                 key = f"{row.get('layer', '')}:{row.get('atom_name', '')}"
-                existing_hashes[key] = row.get("file_hash", "")
+                existing[key] = (row.get("file_hash", ""), _norm_rel(row.get("file_path", "")))
         except Exception:
             pass
 
@@ -622,7 +634,7 @@ def build_index(
         fhash = file_hash(file_path)
         atom_key = f"{layer_name}:{atom_name}"
 
-        if incremental and existing_hashes.get(atom_key) == fhash:
+        if incremental and _incremental_unchanged(existing, atom_key, fhash, rel_path):
             skipped += 1
             continue
 
@@ -915,6 +927,9 @@ def _warn_search_failure(exc: Exception) -> None:
 
 
 if __name__ == "__main__":
+    for _stream in (sys.stdout, sys.stderr):   # 卡名含 cp950 外字時印不出會整支炸掉（實例：鬪）；輸出一律 utf-8、印不出的字用替代字
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8", errors="replace")
     import argparse
     from config import load_config
 

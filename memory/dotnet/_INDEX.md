@@ -20,6 +20,7 @@
 | sqlx-讀取端三個踩點字串定序tinyint-當-booldesc-的-enum | Sqlx 讀取端三個踩點：字串定序、TINYINT 當 bool、DESC 的 ENUM |
 | vscode-c-devkit對unity-assets內csproj做design-time-build-產obj被unity編進去cs0579-用directorybuildprops改obj | VSCode-C#-DevKit對Unity-Assets內csproj做design-time-build-產obj被Unity編進去CS0579-用Directory.Build.props改obj~ |
 | winforms-關閉階段-async-續體不執行-formclosing-殺process必須同步 | winforms-關閉階段-async-續體不執行-formclosing-殺process必須同步 |
+| 不裝vs也能用roslyn解析c-net-sdk自帶在sdk版本roslyn-bincore-hintpath參照就能離線編-build要關nodereuse與共用編譯 | 不裝VS也能用Roslyn解析C#-NET-SDK自帶在sdk版本Roslyn-bincore-HintPath參照就能離線編-build要關nodeReuse與共用編譯 |
 
 ## 子層
 

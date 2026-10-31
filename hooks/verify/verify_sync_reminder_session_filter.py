@@ -52,6 +52,7 @@ def driven(monkeypatch):
     monkeypatch.setattr(st, "_attribute_usefulness", lambda *a, **k: None)
     monkeypatch.setattr(st, "_should_deep_postmortem", lambda *a, **k: False)
     monkeypatch.setattr(st, "_maybe_spawn_user_extract_worker", lambda *a, **k: None)
+    monkeypatch.setattr(st, "_drop_synced", lambda mf: mf)   # 假路徑會被「已同步／檔與版控根都不在」規則剔掉；這裡只測 session 過濾
 
     def drive(modified_files, capsys, uncommitted="echo", **extra):
         if uncommitted == "echo":
@@ -129,9 +130,17 @@ def test_block_foreign_only_not_triggered(driven, capsys):
 
 
 def test_block_own_meets_threshold_triggers(driven, capsys):
-    """own ≥ min_files(2) → 觸發 [Workflow Guardian] 一般 block。"""
-    out = driven(
-        [_mf(_CORE, session_id=_SID), _mf(_CORE2, session_id=_SID)],
-        capsys, uncommitted="none",
-    )
+    """own ≥ min_files(2) 但只剩「改了 N 個檔」→ 跟同步提醒同一件事，不再擋（規則 SYNC_BLOCK_NOT_REPEATED）；
+    有待記知識才擋 [Workflow Guardian] 一般 block。"""
+    files = [_mf(_CORE, session_id=_SID), _mf(_CORE2, session_id=_SID)]
+    assert "[Workflow Guardian]" not in driven(files, capsys, uncommitted="none")
+    out = driven(files, capsys, uncommitted="none", knowledge_queue=[{"content": "坑", "classification": "[臨]"}])
     assert "[Workflow Guardian]" in out
+
+
+@pytest.fixture(autouse=True)
+def _block_mode(monkeypatch):
+    """規則 GATE_MODE_TABLE：送法只讀 wg_release_rules.RULE_MODE。這個檔的案例驗的是判定與擋訊息內容，把送法釘成 block 讓它們照驗；
+    v6 預設的提醒送法（Stop 只留帳、提醒掛改檔那則工具結果）由 verify_gate_mode_stop.py 驗。"""
+    import wg_release_rules as _rr
+    monkeypatch.setattr(_rr, "mode_of", lambda rule: _rr.BLOCK)

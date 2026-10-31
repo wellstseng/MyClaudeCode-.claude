@@ -168,15 +168,53 @@ const TOOL_DEFINITIONS = [
         },
         provenance: {
           type: "string",
-          description: "Optional source of this knowledge: file path / URL / commit / session id. Rendered as `- Source:`. replace: omit=keep, \"\"=clear, non-empty=replace.",
+          description: "Optional source of this knowledge: file path / URL / commit / session id. Rendered as `- Source:`. replace／append: omit=keep, \"\"=clear, non-empty=replace the whole Source line (append: include the old source in the value if it should stay).",
         },
         depends: {
           type: "array", items: { type: "string" },
-          description: "Optional validity dependencies, e.g. [\"path:C:/abs/entrypoint.py\"]. Rendered as `- Depends:`; path: entries are machine-checked by health-check (missing → stale). replace: omit=keep, []=clear.",
+          description: "Optional validity dependencies, e.g. [\"path:~/.claude/tools/entrypoint.py\"] (root-layer card) or [\"path:src/entrypoint.py\"] (project card, relative to project root). Cards are shared across machines: never write this machine's absolute path (C:/Users/<me>/...). Rendered as `- Depends:`; path: entries are machine-checked by health-check (missing → stale). replace: omit=keep, []=clear.",
+        },
+        entry: {
+          type: "array", items: { type: "string" },
+          description: "切入點代號標記（如 [\"E04\", \"E08\"]）。Rendered as `- Entry:`。create 帶 entry 的卡不會被自動分到 local realm（ENTRY_BOUND_STAYS_CORE），scope=global 要給 core 的 domain。replace: omit=keep, []=clear；append 忽略。",
+        },
+        quote: {
+          type: "string",
+          description: "觸發這張卡片的使用者原話，單行 ≤200 字；通常由 PostToolUse 自動填，呼叫者不必給。Rendered as `- Quote:`（Source 之後）。replace／append: omit=keep, \"\"=clear, non-empty=replace.",
         },
         status: {
           type: "string",
           description: "Optional one-line current status (e.g. '案結 2026-07-29'). Shown alongside cold/one-line injections so the pointer carries minimal state. Current-state ONLY — no version history / change narrative.",
+        },
+        kind_hint: {
+          type: "string",
+          enum: ["pointer", "complement", "ledger", "hub", "plain"],
+          description: "選填。宣告這張卡的型：pointer 指標／complement 互補／ledger 現況帳／hub 導讀卡／plain 一般。py 端仍會自判（hub＝kind_hint=hub 或標題含「導讀」或五段齊、ledger 日期數字對），hint 不能讓缺段卡過",
+        },
+        dedupe: {
+          type: "object",
+          properties: {
+            verdict: { type: "string", enum: ["same", "supersedes", "different"] },
+            of: { type: "string" },
+            why: { type: "string" },
+          },
+          description: "去重宣告（create）。寫入閘回「需要宣告」（新內容和既有卡相似，列出候選卡）時才帶著重送：你判斷新內容和其中一張候選卡的關係。same＝同一條，知識段改併入那張卡（走 append；triggers／actions 不併）；supersedes＝取代，寫新卡並以 Supersedes 標那張（舊卡留檔、不再注入）；different＝不同，照常寫新卡。of＝候選卡名原字照抄，也可以是這次去重比對的層（回覆的 searched layers）裡其他存在的卡（不同層同名寫成 <layer>:<卡名>）；why＝一句理由（空白、佔位、純標點會被退回）。沒有命中相似時照宣告走：same／supersedes 的 of 要是那幾層裡存在的卡，different 照常寫並附 note。",
+        },
+        conflict: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              of: { type: "string" },
+              verdict: { type: "string", enum: ["conflict", "not_conflict"] },
+              why: { type: "string" },
+            },
+          },
+          description: "衝突宣告（scope=shared create）。atom_write 回「衝突待宣告（這次不寫檔）」並列出要宣告的卡（這次向量前幾名）時才帶著重送：名單每張一條，多寫不在名單的會略過、不算錯。判兩張是不是同一件事、同一個範圍，而且不能同時成立；範圍不同各自成立、或一張補充另一張都不是衝突。not_conflict＝照寫；conflict＝落待審報告不寫 shared。of＝卡名原字照抄，why＝一句理由。都會留帳。",
+        },
+        scope_reason: {
+          type: "string",
+          description: "範疇理由（scope=global／org）。realm 閘只因字面「此專案／本專案」這類字樣擋下時才帶：一句說明為什麼這段是跨專案的（例：在講這個詞本身）。帶了照寫並留帳；專案專名、專案路徑命中照擋，這欄不放行。",
         },
         mode: {
           type: "string", enum: ["create", "append", "replace"],
@@ -202,8 +240,8 @@ const TOOL_DEFINITIONS = [
     name: "atom_promote",
     description:
       "Promote an atom's confidence level. " +
-      "Eligible when Confirmations (cross-session) ≥4→[觀] / ≥10→[固], OR usefulness Wilson " +
-      "lower-bound ≥ promote_lb with n ≥ min_n. ReadHits is exposure-only, not a promotion gate. " +
+      "Eligible only by usefulness: Wilson lower-bound ≥ promote_lb with n ≥ min_n for [臨]→[觀], " +
+      "n ≥ fix_min_n for [觀]→[固]. Confirmations and ReadHits are not promotion gates. " +
       "Use execute=false for dry-run. " +
       "When promoting to [固], pass merge_to_preferences=true to append knowledge " +
       "into preferences.md and archive the source atom (global scope only).",
@@ -246,12 +284,12 @@ const TOOL_DEFINITIONS = [
   {
     name: "atom_edit_meta",
     description:
-      "Surgically edit an atom's metadata (Trigger / Related / Tags) in place — " +
+      "Surgically edit an atom's metadata (Trigger / Related / Tags / Entry) in place — " +
       "no full-file rebuild. Locates <atom_name>.md via py lib/atom_io.locate_atom (single " +
       "authority: global memory/ + memory/Failures/ + _AIDocs/_atoms/; project shared → " +
       "personal(current user) → role when scope=project), then " +
       "delegates to lib/atom_io.edit_metadata through the audit funnel. " +
-      "Pass any subset of triggers/related/tags; at least one is required. " +
+      "Pass any subset of triggers/related/tags/entry; at least one is required. " +
       "Each provided field fully replaces that field's existing value.",
     inputSchema: {
       type: "object",
@@ -272,6 +310,10 @@ const TOOL_DEFINITIONS = [
           type: "array", items: { type: "string" },
           description: "Replacement Tags (optional). Replaces the whole Tags line.",
         },
+        entry: {
+          type: "array", items: { type: "string" },
+          description: "Replacement Entry（切入點代號標記，如 [\"E04\"]；optional）。Replaces the whole Entry line and the index entry field; [] clears.",
+        },
         project_cwd: { type: "string", description: "Project root (required for project scope)" },
       },
       required: ["atom_name", "scope"],
@@ -280,25 +322,30 @@ const TOOL_DEFINITIONS = [
   {
     name: "anti_evasion_report",
     description:
-      "結構化提交收尾檢核 (a)–(i)；內容走 Anti-Evasion HUD、chat 只留折疊 chip。" +
-      "動 core 檔並宣告完成時由 Stop 閘要求。九參都 required；未發生填「無」。" +
+      "結構化提交收尾檢核 (a)–(k)；內容走 Anti-Evasion HUD、chat 只留折疊 chip。" +
+      "動 core 檔並宣告完成時由 Stop 閘要求。收尾只交這一份：report 寫給讀者的白話全文（做了什麼／驗了什麼／沒做什麼／追蹤項，" +
+      "以讀者看得懂為先），給了 report 時 e／f／g 可省；收尾一次交齊：要記的知識放 harvest_items（同 knowledge_harvest_report 的 items），" +
+      "不必另呼叫那支。其餘欄必填（沒有 (c)）；未發生填「無」（(k) 不接受空字串）。" +
       "順序：先把值得留的知識 atom_write 寫完、再呼叫本 tool——報告是收尾檢核不是待辦清單，" +
       "(d)「尚未寫／見下一動」或 (h)「下一動＝寫 atom」會被 Stop 擋回、要求補寫後重新提交。" +
       "本 tool 只回 chip、不寫 state（one-writer：state/持久化由 Python PostToolUse 獨佔）。",
     inputSchema: {
       type: "object",
       properties: {
+        report: { type: "string", description: "收尾全文，寫給沒看執行過程的讀者：做了什麼、驗了什麼（附數字或收據）、沒做什麼、追蹤項；白話、不預設欄位。給了它 e／f／g 可省（寫進這份裡）" },
+        harvest_items: { type: "array", description: "知識收割清單（選填，格式同 knowledge_harvest_report 的 items；交了就不必另呼叫那支，(d) 可寫「見收割報告」）", items: { type: "object" } },
         a: { type: "string", description: "缺失發現與修補清單（`- 檔:行 — 改了什麼`）；無則「無」。必寫" },
         b: { type: "string", description: "AI 逃避通報（忽略/偷埋現象）；僅發生時填、否則「無」" },
-        c: { type: "string", description: "Token 累積警示（Auto-Handoff 預警則附接續 prompt）；僅發生時填、否則「無」" },
-        d: { type: "string", description: "記憶收錄帳：填之前先掃五個來源——①使用者指正/退回/重申的話（→ feedback）②重試≥2 次或查了才懂的機制/踩坑 ③外查來的事實（帶日期）④我做的取捨/契約/偏好 ⑤既有 atom 被證錯或要補的。逐項 `- <項目> → 已寫入 atom <名>`（atom_write 已完成）或 `- <項目> → 不寫（一句理由）`；判定不寫也要留痕。⛔ 不接受「尚未寫／待補／見下一動」——那是把記憶推給下一回合，會被拒收並擋 Stop；值得寫就在呼叫本 tool 之前寫完。無則「無」。必寫" },
+        d: { type: "string", description: "記憶收錄帳：填之前先掃五個來源——①使用者指正/退回/重申的話（→ feedback）②重試≥2 次或查了才懂的機制/踩坑 ③外查來的事實（帶日期）④我做的取捨/契約/偏好 ⑤既有 atom 被證錯或要補的。逐項 `- <項目> → 已寫入 atom <名>`（atom_write 已完成）或 `- <項目> → 不寫（一句理由）`；判定不寫也要留痕。⛔ 不接受「尚未寫／待補／見下一動」——那是把記憶推給下一回合，會被拒收並擋 Stop；值得寫就在呼叫本 tool 之前寫完。本回合已交過收割報告（knowledge_harvest_report）可只填「見收割報告」。無則「無」。必寫" },
         e: { type: "string", description: "未告知決策＋未驗證假設：擅自的取捨（默默選了方案、跳過步驟、動了請求之外的檔）與做事時依賴但未驗證的假設；使用者沒看執行過程就不會知道的事都算。無則「無」" },
         f: { type: "string", description: "靜默狀態改變：對話輸出沒交代的環境副作用——安裝套件、改 config、重啟服務、建排程/cron、仍在跑的背景程序或 agent。無則「無」" },
         g: { type: "string", description: "版控收尾：本 session 改動哪些已 commit（hash 一句）、哪些未上及理由（併發 session 進度／待拍板／隱私）。無改動則「無」" },
         h: { type: "string", description: "收尾判定：單句——「可關閉」或「下一動＝…」。下一動只列使用者要做的事（重啟驗證、拍板）；寫 atom／補測試／commit 是你自己能做的，先做完再提交。必寫" },
         i: { type: "string", description: "衍生暫存清單：一行一路徑 `<路徑> — <備註>`（絕對或相對 cwd，可 glob）。只列「你自己產生的暫存／中間產物、此刻尚存、留給使用者裁決」的（scratchpad 腳本、.bak、一次性 log、undo 檔）；已刪的不列、純說明不列（預設完工即刪）。⛔ 絕不列正式產出：改了還沒 commit 的 code／doc／atom／索引／CHANGELOG 屬 (a)(b)/(g) 未同步事項，不是暫存——這些路徑會被拒收並回警。Python 端解析進 per-session 殘檔帳本，HUD 以 exists() 列尚存者供保留/刪除。無則「無」。必寫" },
+        j_evidence_path: { type: "string", description: "證據持久路徑：本回合驗證收據的持久位置，一行一路徑（絕對路徑）。本 session 跑過哨兵驗證（Bash／PowerShell 輸出 `<NAME>_CHECK PASS|FAIL|DONE`）時填「無」或留空即可：系統自動帶入本 session 收據帳本的絕對路徑（帳本在資料根，不必自己找）；要另附驗證輸出檔／報告檔才填它們，填了就用你填的，Stop 對帳閘會查 exists()，不存在會擋。沒有收據填「無」。必寫" },
+        k_followups: { type: "string", description: "追蹤項：還沒做完、之後要追的事，一行一項 `[<部位>] <要追什麼>` 或 `<部位>｜<要追什麼>`（Python 端只寫進追蹤帳本 workflow/tracking/<slug>.jsonl，不寫病灶文件；有部位的，之後碰到那個部位時接在導讀卡末段【未結追蹤項】送出，沒部位的在開場列出）。跟帳上已記的（本 session 的 PickOne、先前的 k）是同一件 → 行尾加「｜同追蹤項：<那筆裡連續至少 8 字>」，系統換成新說法、不另記一筆；字面相同的自動不重記。沒有寫「無」；⛔ 不接受空字串（Stop 會擋）。必寫" },
       },
-      required: ["a", "b", "c", "d", "e", "f", "g", "h", "i"],
+      required: ["a", "b", "d", "h", "i", "j_evidence_path", "k_followups"],
     },
   },
   {
@@ -310,7 +357,7 @@ const TOOL_DEFINITIONS = [
       "③外查事實（帶日期）④我做的取捨/契約/偏好 ⑤既有 atom 被證錯或要補 ⑥本場證實無用且無人引用的 atom。" +
       "判準：只寫「從程式碼/文件讀不出來、之後會重查或重犯」的；一次性事實不寫（action=skip 附 reason 留痕）。" +
       "action≠skip 必填 atom 與 path，path 必須是 atom_write/atom_retire 結果最後一行 receipt 的絕對路徑（retired 填退役前路徑）；" +
-      "items=[] 表示本場無值得寫的（照樣要呼叫）。" +
+      "items=[] 表示本場無值得寫的（照樣要呼叫）。收尾要交收尾檢核時，改放進 anti_evasion_report 的 harvest_items 一次交，不必另呼叫本 tool。" +
       "本 tool 只回 chip、不寫 state（one-writer：items 與本 session receipt 的逐項核對、state/ledger 由 Python PostToolUse 獨佔；核不過會以 Harvest-Pending 擋一次要求補）。",
     inputSchema: {
       type: "object",
@@ -336,6 +383,13 @@ const TOOL_DEFINITIONS = [
               path: { type: "string", description: "receipt 回的絕對路徑（action≠skip 必填；retired 填 old_path）" },
               scope: { type: "string", enum: ["global", "shared", "personal", "role", "local", "org"], description: "落點層" },
               reason: { type: "string", description: "action=skip 必填：一句為何不寫" },
+              route: {
+                type: "string",
+                enum: ["part_doc", "global", "org", "local", "shared", "candidate_global"],
+                description: "選填。萃取路由：part_doc=有部位→該部位病灶文件＋卡一行指標（必帶 part）；global=去專案細節後跨專案；org=全公司；local=只在記憶系統；shared=專案；candidate_global=realm 拒後先落 shared 標候選全域。global／candidate_global 的 summary 不得帶專案名（先 atom_io_cli action=scrub）",
+              },
+              candidate_global: { type: "boolean", description: "選填。這條其實是跨專案通則、只因 realm 閘先落 shared" },
+              part: { type: "string", description: "選填。部位名（route=part_doc 必填）" },
             },
             required: ["source", "summary", "action"],
           },
@@ -377,7 +431,8 @@ const TOOL_DEFINITIONS = [
     description:
       "一句話查原子記憶（唯讀）。走與 hook 注入同一條檢索管線：候選池（global + 本專案 shared + 本人 role/personal，" +
       "scope 可見性已收窄）→ trigger / BM25 / vector → RRF 融合排序。回 schema_version=1 的穩定結構：" +
-      "results[{name, path, rel_path, scope, source, score, excerpt, author, audience, tags, status}] 與 warnings（同名跨層遮蔽、向量路關閉等）。" +
+      "results[{name, path, rel_path, scope, source, score, excerpt, author, audience, tags, status, provenance}] 與 warnings（同名跨層遮蔽、向量路關閉等）；" +
+      "provenance＝該 atom 的 `- Source:` 行原值（空字串表示無）。" +
       "format=table（預設，人讀）| json（給程式／其他 AI）。不寫 state、不留 receipt。",
     inputSchema: {
       type: "object",
@@ -390,15 +445,32 @@ const TOOL_DEFINITIONS = [
       required: ["query"],
     },
   },
+  {
+    name: "atom_source",
+    description:
+      "查一張 atom 的來源：Source 指標＋Quote 原句；transcript 還在則回該 uuid 前後各 1 則原文（state=live），" +
+      "否則回 Quote（quote_only），都沒有回出處與『原對話已逾保留期』（unrecoverable）。唯讀，不寫 state、不留 receipt。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        atom: { type: "string", description: "atom 名（不含 .md）或絕對路徑（必填）" },
+        cwd: { type: "string", description: "專案根，用於定位專案層 atom；預設 server 行程 cwd" },
+        format: { type: "string", enum: ["table", "json"], description: "回覆格式：table（預設）或 json（原始 JSON 字串）" },
+      },
+      required: ["atom"],
+    },
+  },
 ];
 
 // ─── Tool Handlers ──────────────────────────────────────────────────────────
 
 function handleToolCall(id, toolName, args) {
-  const { toolAtomWrite, toolAtomPromote, toolAtomMove, toolAtomEditMeta, toolAtomRetire, toolMemorySearch } = require("./atom-tools");
+  const { toolAtomWrite, toolAtomPromote, toolAtomMove, toolAtomEditMeta, toolAtomRetire, toolMemorySearch, toolAtomSource } = require("./atom-tools");
   switch (toolName) {
     case "memory_search":
       return toolMemorySearch(id, args).catch(e => sendToolResult(id, `memory_search error: ${e.message}`, true));
+    case "atom_source":
+      return toolAtomSource(id, args).catch(e => sendToolResult(id, `atom_source error: ${e.message}`, true));
     case "atom_retire":
       return toolAtomRetire(id, args).catch(e => sendToolResult(id, `atom_retire error: ${e.message}`, true));
     case "knowledge_harvest_report":

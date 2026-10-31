@@ -22,12 +22,14 @@ _SID = "11111111-2222-3333-4444-555555555555"
 @pytest.fixture
 def wdir(tmp_path, monkeypatch):
     monkeypatch.setattr(L, "WORKFLOW_DIR", tmp_path / "workflow")
+    # tmp_path 本身就在系統暫存區底下：不隔開的話案例裡的「專案」整個被當暫存區（受保護規則直接放行），測不到保護規則
+    monkeypatch.setattr(L, "_tempdir", lambda: str(tmp_path / "systemp"))
     return tmp_path
 
 
 def test_cwd_slug_matches_claude_code_convention():
     assert L._cwd_slug(r"c:\Users\x\.claude") == "c--Users-x--claude"
-    assert L._cwd_slug(r"d:\AI-PLAY\AI-gen-projs\MudClient-withAI") == "d--AI-PLAY-AI-gen-projs-MudClient-withAI"
+    assert L._cwd_slug(r"d:\WORK-AREA\demo-projs\AppB-withAI") == "d--WORK-AREA-demo-projs-AppB-withAI"
 
 
 def test_scan_scratchpad_lists_top_level_only(wdir, monkeypatch):

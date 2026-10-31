@@ -17,7 +17,7 @@ function render() {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Anti-Evasion HUD</title>
+<title>收尾檢核</title>
 <style>
   :root {
     --plane: #0d1117; --surface-1: #161b22; --surface-2: #1c222b;
@@ -40,6 +40,7 @@ function render() {
   .badge.notable { background: #fab21926; color: var(--sev-notable); border: 1px solid #fab21966; }
   .badge.real { background: #d03b3b26; color: #ff9a9a; border: 1px solid #d03b3b88; }
   .meta { font-size: .76em; color: var(--muted); font-family: ui-monospace, monospace; }
+  .who { font-size: .82em; color: var(--ink); font-weight: 600; font-family: ui-monospace, monospace; }
   .banner { display: none; background: #d03b3b1f; border: 1px solid #d03b3b88; color: #ffb4b4; padding: 8px 12px; border-radius: 8px; font-size: .82em; margin-bottom: 14px; }
   .banner.show { display: block; }
   .sec { border-top: 1px solid var(--border); padding: 9px 0; }
@@ -71,42 +72,72 @@ function render() {
   .aec-dec-btn.danger { color: #ff9a9a; border-color: #d03b3b66; }
   .aec-dec-btn.danger:hover { background: #d03b3b26; border-color: #d03b3b; }
   .dec-status { font-size: .74em; color: var(--muted); }
+  .tabs { display: flex; gap: 6px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
+  .tab { font-size: .82em; padding: 6px 14px; border: 1px solid transparent; border-bottom: none; border-radius: 8px 8px 0 0; background: none; color: var(--muted); cursor: pointer; margin-bottom: -1px; }
+  .tab.active { background: var(--surface-1); border-color: var(--border); color: var(--ink); }
+  .grp { border-top: 1px solid var(--border); padding: 9px 0; }
+  .grp:first-child { border-top: none; }
+  .lamp { font-weight: 700; font-size: .98em; }
+  .lamp.ok { color: #3fb950; } .lamp.todo { color: var(--sev-notable); } .lamp.real { color: #ff9a9a; }
+  .item { margin: 5px 0 7px; }
+  .item-h { font-size: .76em; color: var(--muted); margin-bottom: 2px; }
+  .detail { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 6px; }
+  .detail summary { font-size: .76em; color: var(--muted); cursor: pointer; }
+  .grp-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: .8em; color: var(--ink); }
+  .grp-head .k { color: var(--muted); }
+  .grp details { margin-top: 4px; }
+  .grp summary { font-size: .74em; color: var(--muted); cursor: pointer; }
+  .all-sum { font-size: .78em; color: var(--muted); display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 6px; }
 </style>
 </head>
 <body>
   <div class="top">
     <div>
-      <h1>Anti-Evasion HUD</h1>
-      <div class="sub">收尾檢核 (a)–(i) · severity-gated · 唯讀歷史</div>
+      <h1>收尾檢核</h1>
+      <div class="sub">每輪收尾的白話報告；底下格子是最近幾輪，點一下看那一輪</div>
     </div>
     <div class="poll"><span class="dot"></span><span id="poll-txt">輪詢中…</span></div>
   </div>
 
+  <div class="tabs">
+    <button class="tab active" data-tab="report">收尾檢核</button>
+    <button class="tab" data-tab="all">全機殘留</button>
+  </div>
+
+  <div id="tab-report">
   <div id="banner" class="banner"></div>
   <div id="card-slot">
-    <div class="card"><div class="empty">尚無收尾檢核報告。動 core 檔並宣告完成、呼叫 anti_evasion_report 後出現。</div></div>
+    <div class="card"><div class="empty">還沒有收尾報告。AI 改了核心檔案或多個檔、宣告完成時會交一份，交了就會出現在這裡。</div></div>
   </div>
   <div id="temp-slot"></div>
 
   <div class="grid-wrap">
     <div class="grid-h">
-      <span>近 ${64} 回合</span>
+      <span>最近 ${64} 輪</span>
       <span class="legend">
-        <span><i style="background:var(--sev-routine)"></i>routine</span>
-        <span><i style="background:var(--sev-notable)"></i>notable</span>
-        <span><i style="background:var(--sev-real)"></i>real-evasion</span>
+        <span><i style="background:var(--sev-routine)"></i>例行</span>
+        <span><i style="background:var(--sev-notable)"></i>有修補</span>
+        <span><i style="background:var(--sev-real)"></i>疑似偷懶（待核對）</span>
       </span>
     </div>
     <div id="grid" class="grid"></div>
+  </div>
+  </div>
+
+  <div id="tab-all" style="display:none">
+    <div class="card">
+      <div class="all-sum"><span id="all-sum">還沒讀取</span><button id="all-refresh" class="aec-dec-btn">重新整理</button></div>
+      <div id="all-body"></div>
+    </div>
   </div>
 
 <script>
 // 瀏覽器端（勿 hoist；字串串接、不用 template literal）。
 var POLL_MS = 1500, BEAT_MS = 10000, GRID_N = 64;
 var SEV = {
-  "routine":      { cls: "routine", label: "routine" },
-  "notable":      { cls: "notable", label: "notable" },
-  "real-evasion": { cls: "real",    label: "real-evasion" }
+  "routine":      { cls: "routine", label: "例行" },
+  "notable":      { cls: "notable", label: "有修補" },
+  "real-evasion": { cls: "real",    label: "疑似偷懶（待核對）" }
 };
 var activeKey = null;   // 使用者點選的歷史格（null=跟隨最新）
 var reports = [];       // 新→舊
@@ -119,6 +150,12 @@ function esc(s) {
 function isBlank(v) { var s = String(v == null ? "" : v).trim(); return s === "" || s === "無"; }
 function sevOf(r) { return SEV[r && r.severity] || SEV.routine; }
 function keyOf(r) { return (r.session_id || "?") + "|" + (r.turn_seq != null ? r.turn_seq : "?"); }
+// 這則是哪個 session 寫的（session 前 8 碼）
+function whoOf(r) { return "session " + String(r.session_id || "?").slice(0, 8); }
+function tipOf(r) {
+  return whoOf(r) + " · 第 " + r.turn_seq + " 輪 · " +
+    sevOf(r).label + " · " + String(r.at || "").slice(5, 16).replace("T", " ");
+}
 
 function sectionHtml(letter, name, val) {
   var blank = isBlank(val);
@@ -131,43 +168,47 @@ function sectionHtml(letter, name, val) {
 
 function escAttr(s) { return esc(s).replace(/"/g, "&quot;"); }
 
-// 殘檔面板：資料來自 /api/aec/tempfiles/<sid>（Python 帳本 + Node 當下 exists() 過濾），
-// 不從 (i) prose 猜——(i) 只是宣告來源之一，「還在不在」以檔案系統為準。每列 保留/刪除
-// 兩鈕都給（使用者決定權），刪除經 confirm() 二次確認；已決者顯示狀態但仍可改按（覆寫）。
+// 「這個 session 留下的東西」面板：資料來自 /api/aec/tempfiles/<sid>（Python 現場查還在的、附白話狀態），
+// 不從 (i) 文字猜。每列「保留／刪除」都給（使用者決定權）；刪除先 confirm()，要再確認的（沒合併的分支、
+// 有改動的工作樹、遠端分支、整個 repo）再問一次才帶 force 送出；結果當場顯示在該列。
 // 注意：本 script 整塊在外層 render() 的 template literal 內，字串/comment 中的反斜線
 // 都須 \\ 跳脫，否則會在 render 時被 outer JS 當跳脫序列吃掉（換行字元須寫 "\\n"）。
-function tempRow(sid, it) {
-  var d = it.decision;
-  var status = "";
-  if (d) {
-    status = '<span class="dec-status">' + (d.action === "delete" ? "已排定刪除 🗑" : "已排定保留 📌") +
-             (d.action === "delete" && d.injected ? "（已通知模型，仍在）" : "") + "</span>";
-  }
-  var attrs = ' data-sid="' + escAttr(String(sid)) + '" data-path="' + escAttr(String(it.path)) +
-              '" data-note="' + escAttr(String(it.note || "")) + '"';
-  var btns = status +
-    '<button class="aec-dec-btn"' + attrs + ' data-action="keep">保留</button>' +
-    '<button class="aec-dec-btn danger"' + attrs + ' data-action="delete">刪除</button>';
-  var meta = (it.source ? esc(it.source) : "") + (it.note ? " · " + esc(it.note) : "");
-  return '<div class="dec-row' + (d ? " dec-done" : "") + '">' +
-         '<span class="dec-item">' + esc(it.path) +
-           (meta ? '<span class="k"> — ' + meta + "</span>" : "") + "</span>" +
+var KIND = {
+  worktree: "🗂 工作樹", branch: "🌿 分支", remote_branch: "☁ 遠端分支",
+  repo: "📦 臨時 repo", dir: "📁 資料夾", file: "📄 檔案"
+};
+var rowMsg = {};   // key → 上次按鈕的結果（當場顯示，下次重抓清單仍保留）
+// scope："one"＝這個 session 的面板（按完重抓那個 session）；"all"＝全機殘留分頁（按完重抓全機清單）
+function tempRow(sid, it, scope) {
+  var msg = rowMsg[it.key] || (it.decision === "keep" ? "你選了保留" : (it.decision_message || ""));
+  var attrs = ' data-sid="' + escAttr(String(sid)) + '" data-key="' + escAttr(String(it.key)) +
+              '" data-title="' + escAttr(String(it.title)) + '" data-confirm="' + escAttr(String(it.confirm || "")) +
+              '" data-scope="' + (scope || "one") + '"';
+  var del = it.can_delete
+    ? '<button class="aec-dec-btn danger"' + attrs + ' data-action="delete">刪除</button>'
+    : '<button class="aec-dec-btn" disabled title="' + escAttr(String(it.label)) + '">不能刪</button>';
+  var btns = (msg ? '<span class="dec-status">' + esc(msg) + "</span>" : "") +
+    '<button class="aec-dec-btn"' + attrs + ' data-action="keep">保留</button>' + del;
+  var meta = esc(it.label) + (it.origin ? " · " + esc(it.origin) : "") + (it.note ? " · AI 說：" + esc(it.note) : "");
+  return '<div class="dec-row' + (it.decision === "keep" ? " dec-done" : "") + '">' +
+         '<span class="dec-item" title="' + escAttr(String(it.path)) + '">' + (KIND[it.kind] || esc(it.kind)) + "　" +
+           esc(it.title) + '<span class="k"> — ' + meta + "</span></span>" +
          '<span class="dec-btns">' + btns + "</span></div>";
 }
 
 function renderTemp(sid, items) {
   var slot = document.getElementById("temp-slot");
   if (!sid) { slot.innerHTML = ""; return; }
-  var head = '<div class="card"><div class="sec"><div class="sec-h">本 session 尚存殘檔 ' +
-             '<span class="k">· session ' + esc(String(sid).slice(0, 8)) + " · 帳本 ∪ scratchpad，當下 exists() 過濾 · " +
-             (items.length ? items.length + " 項" : "0 項") + "</span></div>";
-  if (!items.length) {
-    slot.innerHTML = head + '<div class="sec-body blank">無殘檔（帳上路徑皆已不在磁碟）</div></div></div>';
-    return;
+  var head = '<div class="card"><div class="sec"><div class="sec-h">這個 session 留下的東西（' + items.length + "）" +
+             '<span class="k">　滑鼠停在名稱上看完整路徑</span></div>';
+  var rows = "", alive = {};
+  for (var i = 0; i < items.length; i++) { rows += tempRow(sid, items[i], "one"); alive[items[i].key] = true; }
+  var done = "";   // 已經從清單消失的（刪掉了）：結果留一行，不讓按完就什麼都看不到
+  for (var k in rowMsg) {
+    if (!alive[k] && rowMsg[k].charAt(0) === "✔") { done += '<div class="dec-row dec-done"><span class="dec-item">' + esc(rowMsg[k]) + "</span></div>"; }
   }
-  var rows = "";
-  for (var i = 0; i < items.length; i++) { rows += tempRow(sid, items[i]); }
-  slot.innerHTML = head + '<div class="sec-body dec-list">' + rows + "</div></div></div>";
+  var body = rows || done ? rows + done : '<div class="sec-body blank">沒有留下東西</div>';
+  slot.innerHTML = head + '<div class="sec-body dec-list">' + body + "</div></div></div>";
   var btns = slot.querySelectorAll(".aec-dec-btn");
   for (var b = 0; b < btns.length; b++) { btns[b].addEventListener("click", onDecClick); }
 }
@@ -187,22 +228,75 @@ function pollTemp(sid) {
     .catch(function () {});
 }
 
+// 卡片：燈號＋一句話 → 要你處理 → 這輪做了什麼 → 記住了／之後要追；欄位字母與原始內容收進「細節」。
+function nextStep(h) {
+  var m = String(h == null ? "" : h).trim().match(/^下一動\\s*[=＝:：]\\s*([\\s\\S]*)$/);
+  return m ? m[1].trim() : "";
+}
+function todoItems(r) {
+  var out = [], ns = nextStep(r.h);
+  if (ns) { out.push(["下一步要你做", ns]); }
+  if (!isBlank(r.e) && r.e != null) { out.push(["AI 自己做的決定、沒驗證的假設（看一下對不對）", r.e]); }
+  if (r.d_pending && r.d_pending.length) { out.push(["記憶寫入被推到之後（AI 會被擋回去補寫）", r.d_pending.join("\\n")]); }
+  if (r.j_missing) { out.push(["驗證證據的路徑缺了或不存在", jOf(r) || "（空）"]); }
+  if (r.k_missing) { out.push(["追蹤項是空的", "AI 要一行一項補上，或寫「無」"]); }
+  return out;
+}
+function lampOf(r) {
+  if (sevOf(r).cls === "real") { return { cls: "real", text: "🔴 疑似偷懶（待核對）" }; }
+  if (todoItems(r).length) { return { cls: "todo", text: "🟡 有事要你決定" }; }
+  return { cls: "ok", text: "✅ 可以關了" };
+}
+function itemsHtml(items, empty) {
+  if (!items.length) { return '<div class="sec-body blank">' + empty + "</div>"; }
+  return items.map(function (x) {
+    return '<div class="item"><div class="item-h">' + esc(x[0]) + '</div><div class="sec-body">' + esc(x[1]) + "</div></div>";
+  }).join("");
+}
+function partHtml(title, items, empty) {
+  return '<div class="sec"><div class="sec-h">' + title + "</div>" + itemsHtml(items, empty) + "</div>";
+}
+function picked(pairs) {
+  return pairs.filter(function (x) { return !isBlank(x[1]) && x[1] != null; });
+}
+function cardHtml(r) {
+  var lamp = lampOf(r);
+  var cls = "card" + (lamp.cls === "todo" ? " sev-notable" : lamp.cls === "real" ? " sev-real" : "");
+  var when = String(r.at || "").slice(5, 16).replace("T", " ");
+  var html = '<div class="' + cls + '"><div class="card-head"><span class="lamp ' + lamp.cls + '">' + lamp.text + "</span>" +
+    '<span class="who">' + esc(whoOf(r)) + "</span>" +
+    '<span class="meta">' + esc(when) + " · 第 " + esc(r.turn_seq) + " 輪</span></div>";
+  if (lamp.cls === "real") {
+    html += partHtml("疑似偷懶的地方（hook 只比對字面，可能是誤判，看一下）", picked([["", r.b]]), "");
+  }
+  html += partHtml("要你處理", todoItems(r), "沒有要你處理的事") +
+    (r.report == null || isBlank(r.report) ? "" : partHtml("收尾全文", [["", r.report]], "")) +   // CLOSING_REPORT_ONE_CALL
+    partHtml("這輪做了什麼", picked([["修了什麼", r.a], ["版控", r.g], ["環境有變動", r.f]]), "這輪沒有修補，也沒有改到環境") +
+    (r.e == null ? "" : partHtml("記住了／之後要追", picked([["記住了", r.d], ["之後要追", kOf(r)]]), "沒有新記住的事，也沒有要追的"));
+  return html + '<details class="detail"><summary>細節（原始欄位，給要查的時候看）</summary>' + detailHtml(r) + "</details></div>";
+}
+// 每 1.5 秒輪詢一次：內容沒變就不重畫（重畫會讓畫面跳、把點開的「細節」收回去）；「細節」開合照使用者上次的選擇
+var cardKey = "", detailOpen = false;
 function renderCard(r) {
-  var slot = document.getElementById("card-slot");
   if (!r) { return; }
-  var s = sevOf(r);
+  var key = JSON.stringify(r);
+  if (key === cardKey) { return; }
+  cardKey = key;
+  var slot = document.getElementById("card-slot");
+  slot.innerHTML = cardHtml(r);
+  var det = slot.querySelector("details.detail");
+  if (det) {
+    det.open = detailOpen;
+    det.addEventListener("toggle", function (e) { detailOpen = e.currentTarget.open; });
+  }
+}
+function detailHtml(r) {
   var sid = String(r.session_id || "?").slice(0, 8);
-  var cls = "card" + (s.cls === "notable" ? " sev-notable" : s.cls === "real" ? " sev-real" : "");
-  var badgeCls = s.cls === "real" ? "real" : s.cls;
-  var html = '<div class="' + cls + '">' +
-    '<div class="card-head">' +
-      '<span class="badge ' + badgeCls + '">' + s.label + "</span>" +
-      '<span class="meta">session ' + esc(sid) + " · turn " + esc(r.turn_seq) +
-        " · " + esc(r.at || "") + "</span>" +
-    "</div>" +
+  var html = '<div class="sec"><div class="sec-body">session ' + esc(sid) + " · 第 " + esc(r.turn_seq) + " 輪 · " +
+    esc(r.at || "") + " · 嚴重度 " + esc(r.severity || "") + "</div></div>" +
     sectionHtml("a", "缺失發現與修補清單", r.a) +
     sectionHtml("b", "AI 逃避通報", r.b) +
-    sectionHtml("c", "Token 累積警示", r.c) +
+    (r.c == null ? "" : sectionHtml("c", "Token 累積警示（舊欄位）", r.c)) +
     // 舊報告（2026-09 前）只有 a–d 且 d=衍生暫存：無 e 欄視為舊格式，d 以舊標籤渲染。
     (r.e == null
       ? sectionHtml("d", "衍生暫存清單（舊格式；實際尚存者見下方殘檔面板）", r.d)
@@ -213,23 +307,31 @@ function renderCard(r) {
         sectionHtml("f", "靜默狀態改變", r.f) +
         sectionHtml("g", "版控收尾", r.g) +
         sectionHtml("h", "收尾判定", r.h) +
-        sectionHtml("i", "衍生暫存清單（宣告；實際尚存者見下方殘檔面板）", r.i)) +
-  "</div>";
-  slot.innerHTML = html;
+        sectionHtml("i", "衍生暫存清單（宣告；實際尚存者見下方殘檔面板）", r.i) +
+        (jOf(r) == null ? "" :
+          sectionHtml("j", "證據持久路徑" + (r.j_missing ? ' <span class="badge real">缺或不存在</span>' : ""), jOf(r)) +
+          sectionHtml("k", "追蹤項" + (r.k_missing ? ' <span class="badge real">空字串</span>' : ""), kOf(r))));
+  return html;
 }
+// 報告檔存的是 j_evidence_path／k_followups（tool 參數原名）；早期測試資料用 j／k，兩種都認
+function jOf(r) { return r.j != null ? r.j : r.j_evidence_path; }
+function kOf(r) { return r.k != null ? r.k : r.k_followups; }
 
+var gridHtml = "";
 function renderGrid() {
   var grid = document.getElementById("grid");
   var cells = reports.slice(0, GRID_N).slice().reverse();   // 舊→新，最新在右
-  if (!cells.length) { grid.innerHTML = ""; return; }
+  if (!cells.length) { grid.innerHTML = ""; gridHtml = ""; return; }
   var out = "";
   for (var i = 0; i < cells.length; i++) {
     var r = cells[i], s = sevOf(r), k = keyOf(r);
     var active = (k === activeKey) ? " active" : "";
-    var tip = "t" + r.turn_seq + " · " + s.label + " · " + (r.at || "");
+    var tip = tipOf(r);
     out += '<div class="cell ' + s.cls + active + '" title="' + esc(tip) +
            '" data-key="' + esc(k) + '">' + (s.cls === "real" ? "!" : "") + "</div>";
   }
+  if (out === gridHtml) { return; }   // 格子沒變就不重畫（滑鼠停著看提示時不會被打斷）
+  gridHtml = out;
   grid.innerHTML = out;
   var nodes = grid.querySelectorAll(".cell");
   for (var j = 0; j < nodes.length; j++) {
@@ -257,31 +359,132 @@ function findReport(sid, turn) {
 
 function onDecClick(e) {
   var el = e.currentTarget;
-  if (el.getAttribute("data-action") === "delete" &&
-      !window.confirm("確定排定刪除？\\n" + el.getAttribute("data-path"))) { return; }
-  postDecision(
-    el.getAttribute("data-sid"), el.getAttribute("data-path"),
-    el.getAttribute("data-note"), el.getAttribute("data-action")
-  );
+  var action = el.getAttribute("data-action"), extra = el.getAttribute("data-confirm"), force = false;
+  if (action === "delete") {
+    if (!window.confirm("確定刪除？\\n" + el.getAttribute("data-title"))) { return; }
+    if (extra) {
+      if (!window.confirm(extra)) { return; }
+      force = true;
+    }
+  }
+  postDecision(el.getAttribute("data-sid"), el.getAttribute("data-key"), action, force, el.getAttribute("data-scope"));
 }
 
-// POST 決策 → 落磁碟佇列（Node 寫，檔名=路徑 hash，跨回合穩定）；成功後立刻重抓面板顯示狀態。
-function postDecision(sid, p, note, action) {
+function refreshAfter(scope, sid) {
+  if (scope === "all") { loadAll(); } else { lastTempKey = ""; pollTemp(sid); }
+}
+
+// POST → Node 轉給 Python 當場執行（刪除或記下保留），回 {ok, message}；結果寫在該列，再重抓清單。
+function postDecision(sid, key, action, force, scope) {
+  rowMsg[key] = action === "delete" ? "刪除中…" : "記下中…";
+  refreshAfter(scope, sid);
   fetch("/api/aec/decision", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sid: sid, path: p, note: note, action: action })
+    body: JSON.stringify({ sid: sid, key: key, action: action, force: force })
   })
-    .then(function (res) { return res.ok ? res.json() : null; })
-    .then(function (j) { if (j && j.ok) { lastTempKey = ""; pollTemp(sid); } })
-    .catch(function () {});
+    .then(function (res) { return res.ok ? res.json() : { ok: false, message: "HUD 伺服器回應錯誤" }; })
+    .then(function (j) { rowMsg[key] = (j.ok ? "✔ " : "✖ ") + (j.message || ""); refreshAfter(scope, sid); })
+    .catch(function () { rowMsg[key] = "✖ 連不到 HUD 伺服器"; refreshAfter(scope, sid); });
 }
+
+// ── 全機殘留分頁：/api/aec/tempfiles-all（Python 掃全部帳本、依 session 分組、附 session 還開著沒有）──
+// 每組一行摘要＋「清掉不用再確認的」（Python 現場判哪些不用再確認：暫存檔、專案外檔案資料夾、乾淨工作樹、已合併分支…；
+// 要再確認的、按過保留的、來源不明的不動）；展開看每一項，逐項保留／刪除跟單一 session 面板同一套。
+var KIND_SHORT = { worktree: "工作樹", branch: "分支", remote_branch: "遠端分支", repo: "臨時 repo", dir: "資料夾", file: "檔案" };
+var allOpen = {};     // sid → 使用者展開／收起過的狀態（重繪時保留）
+var lastBulk = "";    // 上次整組清的結果（那組刪光消失了也看得到）
+function safeCount(items) {
+  var n = 0;
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i];
+    if (it.can_delete && !it.confirm && it.decision !== "keep" && it.source !== "snapshot") { n++; }
+  }
+  return n;
+}
+function kindSummary(items) {
+  var c = {}, order = ["worktree", "branch", "remote_branch", "repo", "dir", "file"], out = [];
+  for (var i = 0; i < items.length; i++) { c[items[i].kind] = (c[items[i].kind] || 0) + 1; }
+  for (var j = 0; j < order.length; j++) { if (c[order[j]]) { out.push(KIND_SHORT[order[j]] + " " + c[order[j]]); } }
+  return out.join("、");
+}
+function hasGit(items) {
+  for (var i = 0; i < items.length; i++) { if (items[i].kind !== "file" && items[i].kind !== "dir") { return true; } }
+  return false;
+}
+function loadAll() {
+  document.getElementById("all-sum").textContent = "讀取中…（要查 git，可能要幾秒）";
+  fetch("/api/aec/tempfiles-all")
+    .then(function (res) { return res.ok ? res.json() : { sessions: [], total: 0, error: "HUD 伺服器回應錯誤" }; })
+    .then(renderAll)
+    .catch(function () { renderAll({ sessions: [], total: 0, error: "連不到 HUD 伺服器" }); });
+}
+function renderAll(j) {
+  var ss = (j && j.sessions) || [];
+  var sum = j && j.error ? "✖ " + j.error
+    : (j.total ? "全機還有 " + j.total + " 樣東西，分屬 " + ss.length + " 個 session（只列還在的）" : "全機沒有留下東西");
+  document.getElementById("all-sum").textContent = sum + (lastBulk ? "　｜　" + lastBulk : "");
+  var html = "";
+  for (var i = 0; i < ss.length; i++) {
+    var s = ss[i], items = s.items || [], n = safeCount(items);
+    var open = allOpen[s.sid] != null ? allOpen[s.sid] : (hasGit(items) || items.length <= 5);
+    var rows = "";
+    for (var k = 0; k < items.length; k++) { rows += tempRow(s.sid, items[k], "all"); }
+    var bulk = n ? '<button class="aec-dec-btn danger aec-bulk" data-sid="' + escAttr(s.sid) + '" data-n="' + n +
+                   '" data-state="' + escAttr(s.state) + '">清掉不用再確認的（' + n + "）</button>" : "";
+    html += '<div class="grp"><div class="grp-head"><span>session ' + esc(String(s.sid).slice(0, 8)) +
+            ' <span class="k">· ' + esc(s.label) + " · " + esc(kindSummary(items)) + " · 最後 " +
+            esc(String(s.latest || "").slice(5, 16).replace("T", " ")) + "</span></span>" + bulk + "</div>" +
+            '<details data-sid="' + escAttr(s.sid) + '"' + (open ? " open" : "") + "><summary>列出 " + items.length + " 樣</summary>" +
+            '<div class="sec-body dec-list">' + rows + "</div></details></div>";
+  }
+  var body = document.getElementById("all-body");
+  body.innerHTML = html || '<div class="sec-body blank">沒有留下東西</div>';
+  var btns = body.querySelectorAll(".aec-dec-btn[data-action]");
+  for (var b = 0; b < btns.length; b++) { btns[b].addEventListener("click", onDecClick); }
+  var bulks = body.querySelectorAll(".aec-bulk");
+  for (var u = 0; u < bulks.length; u++) { bulks[u].addEventListener("click", onBulkClick); }
+  var dets = body.querySelectorAll("details");
+  for (var d = 0; d < dets.length; d++) {
+    dets[d].addEventListener("toggle", function (e) { allOpen[e.currentTarget.getAttribute("data-sid")] = e.currentTarget.open; });
+  }
+}
+function onBulkClick(e) {
+  var el = e.currentTarget, sid = el.getAttribute("data-sid"), n = el.getAttribute("data-n");
+  var warn = el.getAttribute("data-state") === "open" ? "\\n注意：這個 session 還開著，它可能還在用這些東西。" : "";
+  if (!window.confirm("要刪掉 session " + sid.slice(0, 8) + " 留下、不用再確認的 " + n + " 樣東西" +
+                      "（暫存檔、專案外檔案資料夾、乾淨的工作樹、已合併分支…）。要再確認的、按過保留的、來源不明的不會動。" +
+                      warn + "\\n確定嗎？")) { return; }
+  el.disabled = true; el.textContent = "刪除中…";
+  fetch("/api/aec/decision", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sid: sid, all_safe: true, action: "delete" })
+  })
+    .then(function (res) { return res.ok ? res.json() : { ok: false, message: "HUD 伺服器回應錯誤" }; })
+    .then(function (j) { lastBulk = "session " + sid.slice(0, 8) + "：" + (j.ok ? "✔ " : "✖ ") + (j.message || ""); loadAll(); })
+    .catch(function () { lastBulk = "session " + sid.slice(0, 8) + "：✖ 連不到 HUD 伺服器"; loadAll(); });
+}
+function showTab(t) {
+  document.getElementById("tab-report").style.display = t === "report" ? "" : "none";
+  document.getElementById("tab-all").style.display = t === "all" ? "" : "none";
+  var tabs = document.querySelectorAll(".tab");
+  for (var i = 0; i < tabs.length; i++) { tabs[i].className = "tab" + (tabs[i].getAttribute("data-tab") === t ? " active" : ""); }
+  if (t === "all") { loadAll(); }
+}
+(function () {
+  var tabs = document.querySelectorAll(".tab");
+  for (var i = 0; i < tabs.length; i++) {
+    tabs[i].addEventListener("click", function (e) { showTab(e.currentTarget.getAttribute("data-tab")); });
+  }
+  document.getElementById("all-refresh").addEventListener("click", loadAll);
+})();
 
 function updateBanner() {
   var banner = document.getElementById("banner");
   var latest = reports[0];
   if (latest && sevOf(latest).cls === "real") {
-    banner.textContent = "⚠ real-evasion：最新回合偵測到 (b) AI 逃避通報。請檢視卡片。";
+    banner.textContent = "🔴 最新一輪疑似偷懶（待核對）：看卡片裡抓到的說法，hook 只比對字面，可能是誤判。";
     banner.className = "banner show";
   } else {
     banner.className = "banner";
@@ -291,7 +494,7 @@ function updateBanner() {
 function applyReports(data) {
   reports = (data && data.reports) || [];
   document.getElementById("poll-txt").textContent =
-    reports.length ? (reports.length + " 筆 · 最新 t" + reports[0].turn_seq) : "尚無報告";
+    reports.length ? (reports.length + " 份報告 · 最新第 " + reports[0].turn_seq + " 輪") : "還沒有報告";
   if (activeKey === null && reports.length) { renderCard(reports[0]); }
   renderGrid();
   updateBanner();

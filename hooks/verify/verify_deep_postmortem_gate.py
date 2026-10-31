@@ -173,7 +173,8 @@ def test_dpm_not_starved_by_shared_budget(monkeypatch, capsys, tmp_path):
 
     state = {
         "phase": "working", "wisdom_retry_count": 3,
-        "failing_tests": [{"cmd": "pytest", "summary": "boom"}],
+        # failing_tests 條目自 v6 起蓋 session_id；TestFailGate 只認本 session（"sid"）的條目，沒蓋 sid 的視為他人
+        "failing_tests": [{"cmd": "pytest", "summary": "boom", "session_id": "sid"}],
         "modified_files": [{"path": "hooks/foo.py"}, {"path": "hooks/bar.py"}],
         "stop_blocked_count": 0, "recent_user_prompts": [],
     }
@@ -199,3 +200,11 @@ def test_dpm_not_starved_by_shared_budget(monkeypatch, capsys, tmp_path):
     assert state.get("stop_blocked_count", 0) >= 2   # 共用預算已被吃光
     assert "DeepPostMortem" in o3                     # 曾餓死 → 現獨立預算觸發
     assert state.get("deep_postmortem_done") is True
+
+
+@pytest.fixture(autouse=True)
+def _block_mode(monkeypatch):
+    """規則 GATE_MODE_TABLE：送法只讀 wg_release_rules.RULE_MODE。這個檔的案例驗的是判定與擋訊息內容，把送法釘成 block 讓它們照驗；
+    v6 預設的提醒送法（Stop 只留帳、提醒掛改檔那則工具結果）由 verify_gate_mode_stop.py 驗。"""
+    import wg_release_rules as _rr
+    monkeypatch.setattr(_rr, "mode_of", lambda rule: _rr.BLOCK)

@@ -34,21 +34,24 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
-CLAUDE_DIR = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(CLAUDE_DIR))
-sys.path.insert(0, str(CLAUDE_DIR / "hooks"))
+CODE_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(CODE_DIR))
+sys.path.insert(0, str(CODE_DIR / "hooks"))
 
 import wg_core  # noqa: E402
 from wg_roles import get_current_user  # noqa: E402
 from lib import atom_access  # noqa: E402
-from lib.atom_io import edit_metadata, locate_atom, write_index, write_raw  # noqa: E402
+from lib.atom_io import (  # noqa: E402
+    card_body_lines, edit_metadata, locate_atom, narrative_date_error, write_index, write_raw,
+)
 from lib.atom_spec import (  # noqa: E402
-    TRIGGER_MIN, build_atom_content, parse_depends, resolve_depends_path, slugify, validate_atom_content,
+    TRIGGER_MIN, build_atom_content, classify_depends_path, depends_base_for, parse_depends, portable_depends_path,
+    slugify, validate_atom_content,
 )
 from lib.atom_index_json import load_atom_index_json, upsert_atom  # noqa: E402
 
 CONFIG_PATH = wg_core.CONFIG_PATH
-SYNC_INDEX = CLAUDE_DIR / "tools" / "sync-memory-index.py"
+SYNC_INDEX = CODE_DIR / "tools" / "sync-memory-index.py"
 TAXONOMY = {
     "domains": {
         "工具": {
@@ -62,9 +65,9 @@ SEED_REL = f"memory/shared/工具/{SEED_NAME}.md"
 SEED_TRIGGERS = ["org-memory", "公司層記憶", "org 初始化", "scope=org"]
 
 # --scan-tools 來源（測試 monkeypatch 這三個）
-SKILL_INDEX = CLAUDE_DIR / "skills" / "_skill_index.json"
-SKILLS_DIR = CLAUDE_DIR / "skills"
-MCP_TEMPLATE = CLAUDE_DIR / "mcp-servers.template.json"
+SKILL_INDEX = CODE_DIR / "skills" / "_skill_index.json"
+SKILLS_DIR = CODE_DIR / "skills"
+MCP_TEMPLATE = CODE_DIR / "mcp-servers.template.json"
 TOOL_DOMAIN = "工具"
 # audit source：VALID_SOURCES 內最貼切者——把外部 SoT（skills 索引／MCP 樣板／tools 目錄）同步進記憶
 SCAN_SOURCE = "tool:sync-memory-index"
@@ -128,7 +131,7 @@ def init_tree(root: Path, user: str) -> List[str]:
                 "新機初始化：python ~/.claude/tools/org-memory.py --init <公司記憶 repo 的本機 checkout 路徑>",
                 "查公司知識：python ~/.claude/tools/memory-search.py \"關鍵字\"",
             ],
-            author=user, status="production", provenance=entry, depends=[f"path:{entry}"],
+            author=user, status="production", provenance=entry, depends=[f"path:{portable_depends_path(Path(entry))}"],
         )
         err = validate_atom_content(content)
         if err:
@@ -172,6 +175,7 @@ def cmd_init(root_arg: str) -> int:
     if wg_core.find_vcs_root(root) is None:
         print(f"[org-memory] 警告：{root} 不在任何 git/svn 工作區內，記憶不會被 vcs-sync 自動上版控", file=sys.stderr)
     user = get_current_user()
+    had_index = (root / ".claude" / "memory" / "_atom_index.json").is_file()   # 現成公司層（--join clone 下來）還是這台新佈的
     msgs = init_tree(root, user)
     msgs.append(register_local(root))
     msgs.append(register_in_registry(root))
@@ -179,7 +183,10 @@ def cmd_init(root_arg: str) -> int:
     for m in msgs:
         print(f"  - {m}")
     print("下一步：")
-    print(f"  1. 把 {root / '.claude'} 提交上版控，其他同事 checkout 後各自跑同一行 --init")
+    if had_index:
+        print("  1. 公司層已是現成內容，不需提交；其他同事說「接上公司記憶」即可")
+    else:
+        print(f"  1. 把 {root / '.claude'} 提交上版控，其他同事 checkout 後各自跑同一行 --init")
     print("  2. 重啟 Claude Code（MCP 重載）；SessionStart 會多一行 [Org] 公司層 N 顆")
     print("  3. 寫公司知識：atom_write scope=org domain=<Lv1>；查：python ~/.claude/tools/memory-search.py \"關鍵字\"")
     return 0
@@ -196,13 +203,14 @@ def _card_triggers(name: str, kind: str) -> List[str]:
     return [f"{kind}-{name}", f"{name} {kind}", f"工具卡 {name}"]
 
 
-def _card(name: str, kind: str, desc: str, *, entry: str, has_path: bool, run: str) -> Dict[str, object]:
-    """卡名＝kind 前綴＋名稱（kind 為「工具」的專案腳本不加前綴）。"""
+def _card(name: str, kind: str, desc: str, *, entry: str, has_path: bool, run: str, dep: str = "") -> Dict[str, object]:
+    """卡名＝kind 前綴＋名稱（kind 為「工具」的專案腳本不加前綴）。dep＝寫進 Depends 的可攜路徑（`~/.claude/<rel>`／專案相對），
+    沒給就用 entry；卡片跨機共享，作者機的絕對路徑別台機器驗不到。"""
     card_name = name if kind == TOOL_DOMAIN else f"{kind}-{name}"
     triggers = _card_triggers(name, kind)
     assert len(triggers) >= TRIGGER_MIN
     return {
-        "name": card_name, "entry": entry, "has_path": has_path, "triggers": triggers,
+        "name": card_name, "entry": entry, "dep": dep or entry, "has_path": has_path, "triggers": triggers,
         "desc": desc or "（來源未附說明）", "run": run, "kind": kind,
     }
 
@@ -227,7 +235,7 @@ def collect_skill_cards() -> List[Dict[str, object]]:
             continue
         entry = (SKILLS_DIR / (s.get("dir") or name) / "SKILL.md").resolve().as_posix()
         cards.append(_card(name, "skill", s.get("description", ""), entry=entry, has_path=True,
-                           run=f"Claude Code 內呼叫 /{name}"))
+                           run=f"Claude Code 內呼叫 /{name}", dep=portable_depends_path(Path(entry))))
     return cards
 
 
@@ -240,11 +248,12 @@ def collect_mcp_cards() -> List[Dict[str, object]]:
     for name, d in (data.get("servers") or {}).items():
         abs_entry = d.get("entry_absolute")
         if abs_entry:
-            entry = Path(abs_entry.replace("{claude_dir}", str(CLAUDE_DIR))).resolve().as_posix()
+            entry = Path(abs_entry.replace("{claude_dir}", str(CODE_DIR))).resolve().as_posix()
         else:
             entry = d.get("npm_package") or name
         cards.append(_card(name, "mcp", d.get("description", ""), entry=entry, has_path=bool(abs_entry),
-                           run=f"MCP server「{name}」由 hooks/ensure-mcp.py 依 mcp-servers.template.json 註冊，Claude Code 啟動即載入"))
+                           run=f"MCP server「{name}」由 hooks/ensure-mcp.py 依 mcp-servers.template.json 註冊，Claude Code 啟動即載入",
+                           dep=portable_depends_path(Path(entry)) if abs_entry else ""))
     return cards
 
 
@@ -264,7 +273,7 @@ def collect_project_cards(root: Path) -> List[Dict[str, object]]:
     for py in sorted((root / ".claude" / "tools").glob("*.py")):
         entry = py.resolve().as_posix()
         cards.append(_card(py.stem, TOOL_DOMAIN, _first_doc_paragraph(py), entry=entry, has_path=True,
-                           run=f"python {entry} --help"))
+                           run=f"python {entry} --help", dep=portable_depends_path(py, project_root=root)))
     return cards
 
 
@@ -289,9 +298,10 @@ def write_card(card: Dict[str, object], *, project_cwd: Path, owner: str, dry_ru
         title=name, scope="shared", confidence="[臨]", triggers=triggers,
         knowledge=[f"[臨] {card['desc']}"], actions=[str(card["run"])],
         author=owner, status="production", provenance=entry,
-        depends=[f"path:{entry}"] if card["has_path"] else None,
+        depends=[f"path:{card.get('dep') or entry}"] if card["has_path"] else None,
     )
-    err = validate_atom_content(content)
+    # 工具說明整句進知識行：帶敘事日期就不建卡（寫入閘 KNOWLEDGE_LINE_NO_NARRATIVE_DATE，與 write_atom 同一份判式）
+    err = validate_atom_content(content) or narrative_date_error(card_body_lines(content))
     if err:
         return f"失敗 {slug}：{err}"
     target = Path(loc.extra["target_dir"]) / f"{slug}.md"
@@ -309,8 +319,10 @@ def write_card(card: Dict[str, object], *, project_cwd: Path, owner: str, dry_ru
 
 
 def deprecate_missing(mem_dir: Path, *, dry_run: bool) -> List[str]:
-    """shared/工具/ 下 path 型 Depends 任一不存在的卡 → Status: deprecated（不刪卡；已 deprecated 不重寫）。"""
+    """shared/工具/ 下 path 型 Depends 任一「本機該在卻不在」的卡 → Status: deprecated（不刪卡；已 deprecated 不重寫）。
+    別台機器的絕對路徑（classify_depends_path 判 foreign）本機驗不到，不退役：公司層的卡是作者機寫的，在別台機器掃不能把它們全退役。"""
     msgs: List[str] = []
+    base = depends_base_for(mem_dir)
     for e in load_atom_index_json(mem_dir).get("atoms", []):
         rel = str(e.get("path") or "").replace("\\", "/")
         if f"/{TOOL_DOMAIN}/" not in rel:
@@ -323,7 +335,7 @@ def deprecate_missing(mem_dir: Path, *, dry_run: bool) -> List[str]:
         if not dm:
             continue
         missing = [d["value"] for d in parse_depends(dm.group(1))
-                   if d["type"] == "path" and d["value"] and not resolve_depends_path(d["value"]).exists()]
+                   if d["type"] == "path" and d["value"] and classify_depends_path(d["value"], base=base)[0] == "missing"]
         if not missing:
             continue
         sm = _STATUS_RE.search(text)

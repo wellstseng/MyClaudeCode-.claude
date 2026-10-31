@@ -1,6 +1,8 @@
 """verify_vcs_sync_worker.py — 記憶庫背景上版控（wg_vcs_sync.sync_targets_inline）實倉測試。
 
-全部用 tmp 的 `git init` / `svnadmin create` 實倉，直接呼叫同步主邏輯，不 spawn worker、不碰真實 repo。
+情境照舊用 tmp 的 `git init` / `svnadmin create` 實倉寫成，直接呼叫同步主邏輯，不 spawn worker、不碰真實 repo；
+但 git／svn 呼叫走錄製重播（lib/git_cassette.py，錄製檔在 cassettes/verify_vcs_sync_worker/）：平常重播、不開 git，
+同步程式的 git 互動改了 → 失敗並要求 `pytest --git-record` 重錄（那次才跑真 git、照舊驗下面的不變式）。
 
 不變式：
 git — untracked 新 atom 進 commit；exclude（*.access.json、memory/_meta/**）不進，已追蹤被改的 exclude 檔也不進；
@@ -86,6 +88,15 @@ def sync_dir(tmp_path, monkeypatch):
 def _logs():
     out = []
     return out, out.append
+
+
+@pytest.fixture(autouse=True)
+def _cassette(git_cassette, sync_dir):
+    """git／svn 子程序錄製重播（lib/git_cassette.py）：平常重播一次真實執行的紀錄、不開 git；同步程式改了 git 互動
+    （指令或寫的檔不同）→ 測試失敗要求 --git-record 重錄。暫時 worktree 與 svn 訊息檔由共用 fixture 改落 tmp_path/_tmp、
+    名稱用序號，重播才對得上。_sync 是鎖檔、請求與時間戳，不掃不比。合併驅動（%O %A %B 模式）由 git 叫起來、重播時
+    不會跑，它的程式改了就自動重錄；同一支的 --resolve 模式由同步程式直接開子程序叫，重播時照常真跑。"""
+    git_cassette(exclude=["_sync"], code=["tools/merge-atom-index.py"])
 
 
 @pytest.fixture(autouse=True)
@@ -277,6 +288,29 @@ def test_git_nothing_to_commit(repo):
     assert _git(repo, "rev-parse", "HEAD").stdout == before
 
 
+def test_git_extra_doc_only_marker_change_committed_other_edits_held(repo):
+    """EXTRA_DOC_MARKER_ONLY：單檔 pathspec 的文件（TECH.md）只代上計數標記的變動；別處也改了 → 不進 commit、留在工作樹、
+    log 印規則名，同輪的記憶檔照常 commit。"""
+    doc = repo / "TECH.md"
+    doc.write_text("# T\n\n共 <!-- atom-total -->10<!-- /atom-total --> 顆\n\n本文\n", encoding="utf-8", newline="\n")
+    _git(repo, "add", "TECH.md")
+    _git(repo, "commit", "-q", "-m", "doc")
+    target = _target(repo, specs=("memory", "TECH.md"))
+    doc.write_text("# T\n\n共 <!-- atom-total -->11<!-- /atom-total --> 顆\n\n本文\n", encoding="utf-8", newline="\n")
+    res = vs.sync_targets_inline([target], CFG_NOPUSH, log=lambda m: None)
+    assert res[0]["status"] == "ok" and res[0]["committed"] == 1, res
+    assert _head_files(repo) == {"TECH.md"}
+
+    doc.write_text("# T\n\n共 <!-- atom-total -->12<!-- /atom-total --> 顆\n\n改寫中的本文\n", encoding="utf-8", newline="\n")
+    (repo / "memory" / "new.md").write_text("# new\n", encoding="utf-8")
+    logs, log = _logs()
+    res = vs.sync_targets_inline([target], CFG_NOPUSH, log=log)
+    assert res[0]["status"] == "ok" and res[0]["committed"] == 1, (res, logs)
+    assert _head_files(repo) == {"memory/new.md"}
+    assert _git(repo, "status", "--porcelain").stdout.rstrip() == " M TECH.md"
+    assert any("TECH.md" in m and "EXTRA_DOC_MARKER_ONLY" in m for m in logs), logs
+
+
 def test_git_push_when_pending_all_memory(repo_with_remote):
     repo, bare = repo_with_remote
     (repo / "memory" / "new.md").write_text("# new\n", encoding="utf-8")
@@ -407,7 +441,8 @@ def test_index_sync_failure_stops_before_commit(repo, tmp_path, monkeypatch):
     fake = tmp_path / "fake_claude"
     (fake / "tools").mkdir(parents=True)
     (fake / "tools" / "sync-memory-index.py").write_text("import sys; sys.exit(3)\n", encoding="utf-8")
-    monkeypatch.setattr(vs, "CLAUDE_DIR", fake)
+    monkeypatch.setattr(vs, "CODE_DIR", fake)                    # 索引工具從程式碼根找
+    monkeypatch.setattr(vs, "CLAUDE_DIR", fake)                  # 跑工具時的 cwd（資料根）也落 tmp
     (repo / "memory" / "_atom_index.json").write_text("{}", encoding="utf-8")
     (repo / "memory" / "new.md").write_text("# new\n", encoding="utf-8")
     before = _git(repo, "rev-parse", "HEAD").stdout
@@ -1262,7 +1297,24 @@ def test_collect_targets_groups_by_vcs_root(tmp_path, monkeypatch):
     monkeypatch.setattr(wg_core, "resolve_project_root", None)
     targets = vs.collect_sync_targets(str(proj), CFG, claude_dir=claude)
     by_root = {t.root: t for t in targets}
-    assert by_root[claude.resolve()].pathspecs == ["memory", "_AIDocs/_atoms"]
+    # 預設 root_extra_pathspecs（計數標記檔）接在記憶 pathspec 之後；git 不要求檔案已存在
+    assert by_root[claude.resolve()].pathspecs == [
+        "memory", "_AIDocs/_atoms", "TECH.md", "_AIDocs/_INDEX.md", "_AIDocs/DocIndex-System.md"]
+    assert by_root[proj.resolve()].pathspecs == [".claude/memory"]
+
+
+def test_collect_targets_root_extra_pathspecs_join_root_target_only(tmp_path, monkeypatch):
+    """根層計數標記檔（TECH.md 等）進根層 pathspec、不進 mem_dirs；git 不要求檔案已存在；專案層不受影響。"""
+    claude = _git_repo(tmp_path / "claude")
+    proj = _git_repo(tmp_path / "proj")
+    (proj / ".claude" / "memory").mkdir(parents=True)
+    import wg_core
+    monkeypatch.setattr(wg_core, "resolve_project_root", None)
+    cfg = {"vcs_sync": {**CFG["vcs_sync"], "root_extra_pathspecs": ["TECH.md", "_AIDocs/_INDEX.md"]}}
+    by_root = {t.root: t for t in vs.collect_sync_targets(str(proj), cfg, claude_dir=claude)}
+    root_t = by_root[claude.resolve()]
+    assert root_t.pathspecs == ["memory", "TECH.md", "_AIDocs/_INDEX.md"]
+    assert [p.name for p in root_t.mem_dirs] == ["memory"]
     assert by_root[proj.resolve()].pathspecs == [".claude/memory"]
 
 
@@ -1610,7 +1662,10 @@ def test_session_start_spawns_pull_sync_before_index_read(ss, monkeypatch):
 
 def test_post_git_pull_sh_syntax_and_status_keys():
     sh = CLAUDE / "hooks" / "post-git-pull.sh"
-    r = subprocess.run(["bash", "-n", str(sh)], capture_output=True, text=True)
+    # 裸 "bash" 在 Windows 會先命中 System32 的 WSL 存根（CreateProcess 先找 System32 再找 PATH），
+    # 無 distro 時 exit 1 且無輸出；用 PATH 解析出的 Git bash
+    bash = shutil.which("bash") or "bash"
+    r = subprocess.run([bash, "-n", str(sh)], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     src = sh.read_text(encoding="utf-8")
     assert "index_job" in src and "'indexing'" not in src
@@ -1631,3 +1686,21 @@ def test_pull_restore_exception_after_rebase_also_skips_push(tmp_path, repo_with
     assert any("本輪不 push" in m for m in logs), logs
     assert vs.recover_path(repo).exists()
     assert _git(bare, "rev-parse", "main").stdout.strip() == upstream
+
+
+def test_git_many_long_paths_use_pathspec_file(repo):
+    """變更檔多到逐檔 pathspec 超過 Windows 指令列上限（WinError 206）時仍要 add＋commit 成功：
+    改走 --pathspec-from-file。300 個長中文檔名 ≈ 4 萬字，舊寫法整輪同步失敗。"""
+    stem = "整理卡池換位置的工具路徑-local卡換子夾用categorize的local冒號範疇斜線子夾-改personal要mv加reconcile"
+    for i in range(300):
+        (repo / "memory" / f"{stem}-{i:03d}.md").write_text(f"# {i}\n", encoding="utf-8")
+    res = vs.sync_targets_inline([_target(repo)], CFG_NOPUSH, log=lambda m: None)
+    assert res[0]["status"] == "ok" and res[0]["committed"] == 300, res
+    assert _git(repo, "status", "--porcelain").stdout.strip() == ""
+
+
+def test_short_pathspec_list_stays_on_command_line():
+    """短清單照舊放指令列（既有錄製檔的參數不變）。"""
+    calls = []
+    vs._git_with_paths(lambda *a: calls.append(a) or None, ("add", "-A"), [":(literal)memory/a.md"])
+    assert calls == [("add", "-A", "--", ":(literal)memory/a.md")]

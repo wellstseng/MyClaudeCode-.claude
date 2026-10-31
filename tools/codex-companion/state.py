@@ -1,7 +1,8 @@
 """state.py — Per-session state management for Codex Companion.
 
-State files: ~/.claude/workflow/companion-state-{session_id}.json
-Assessment files: ~/.claude/workflow/companion-assessment-{session_id}.json
+State files: <資料根>/workflow/companion-state-{session_id}.json
+Assessment files: <資料根>/workflow/companion-assessment-{session_id}.json
+資料根＝WG_CLAUDE_DIR 或 ~/.claude；hooks/codex_companion.py 從同一個 workflow 讀這些檔。
 
 Atomic writes: .tmp + rename (same pattern as wg_core).
 """
@@ -10,13 +11,19 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-WORKFLOW_DIR = Path.home() / ".claude" / "workflow"
+_CODE_ROOT = Path(__file__).resolve().parents[2]   # 程式碼根：lib.* 從本樹載
+if str(_CODE_ROOT) not in sys.path:
+    sys.path.insert(0, str(_CODE_ROOT))
+from lib.project_root import claude_data_dir  # noqa: E402
+
+WORKFLOW_DIR = claude_data_dir() / "workflow"
 
 _TZ = timezone(timedelta(hours=8))
 
@@ -51,7 +58,6 @@ def new_state(session_id: str, cwd: str) -> Dict[str, Any]:
         "assessments_requested": 0,
         "assessments_by_type": {},   # Q8 配額分桶：{type: count}
         "acceptance_reviews": {},    # {spec_path: count}，同一份規格的重審上限
-        "acceptance_blocks": {},     # {spec_path: count}，enforce block 次數（達上限強制放行）
         "assessments_completed": 0,
         "turn_index": 0,
         "last_assistant_tail": "",
@@ -284,33 +290,12 @@ _METRIC_KEYS = (
     "sandbox_failures",
     "behavior_gap_blocks",
     "quality_gap_advises",
-    # acceptance_review（影子 + enforce 雙軌）
+    # acceptance_review（只記錄、不擋收尾）
     "acceptance_reviews_spawned",   # 實際發給裁判的次數
     "acceptance_unbound",           # 綁不到規格檔 → 直接記 uncertain 未發審計
     "acceptance_quota_blocked",     # 撞配額上限被擋（可觀測性：不得無聲跳過）
-    "acceptance_enforce_blocks",    # enforce 閘實際 block 收尾次數
-    "acceptance_forced_release",    # 達上限強制放行次數（附揭露）
     "acceptance_judge_degraded",    # 裁判逾時/無效 → uncertain 放行（揭露訊號）
 )
-
-
-def increment_spec_blocks(session_id: str, spec_path: str) -> int:
-    """enforce block 計數 +1 並回新值。Thread-safe。"""
-    key = spec_path.replace("\\", "/")
-    with _state_lock:
-        st = read_state(session_id)
-        if st is None:
-            st = new_state(session_id, "")
-        blocks = st.setdefault("acceptance_blocks", {})
-        blocks[key] = int(blocks.get(key, 0)) + 1
-        write_state(session_id, st)
-        return blocks[key]
-
-
-def get_spec_blocks(session_id: str, spec_path: str) -> int:
-    st = read_state(session_id) or {}
-    return int((st.get("acceptance_blocks", {}) or {}).get(
-        spec_path.replace("\\", "/"), 0))
 
 
 def increment_metric(session_id: str, name: str, delta: int = 1) -> None:

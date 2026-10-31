@@ -2,9 +2,11 @@
 
 「AI 審查 AI」的裁判鏈，由本檔單一決定：
 
-  1. codex        跨廠獨立 → 獨立性滿血，擁有 block 權
-  2. claude -p    同廠不同模型（預設 Sonnet）→ 獨立性降級，預設**無** block 權
+  1. codex        跨廠獨立 → 獨立性最高
+  2. claude -p    同廠不同模型（預設 Sonnet）→ 獨立性降級
   3. 皆不可用     回 BACKEND_NONE，上層退回 heuristics-only
+
+不論哪個後端，裁判結果都只當 advisory、不擋收尾。
 
 codex 未安裝、或裝了但未開通授權（未登入 / 401 / 額度用盡）→ 自動退 (2)。
 授權類失敗會落 `workflow/companion-backend.json` 抑制標記，`reprobe_hours`
@@ -27,7 +29,12 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-CLAUDE_DIR = Path.home() / ".claude"
+CODE_DIR = Path(__file__).resolve().parents[2]   # 程式碼根：lib.* 從本樹載
+if str(CODE_DIR) not in sys.path:
+    sys.path.insert(0, str(CODE_DIR))
+from lib.project_root import claude_data_dir  # noqa: E402
+
+CLAUDE_DIR = claude_data_dir()   # 使用者資料根（WG_CLAUDE_DIR 或 ~/.claude），和 hooks 同一支算法
 STATE_PATH = CLAUDE_DIR / "workflow" / "companion-backend.json"
 
 BACKEND_CODEX = "codex"
@@ -73,15 +80,6 @@ def fallback_enabled(config: Dict[str, Any]) -> bool:
     return bool(fallback_cfg(config).get("enabled", True))
 
 
-def fallback_can_block(config: Dict[str, Any]) -> bool:
-    """備援裁判是否有 block 權。預設 False。
-
-    同廠同家族的模型盲點相關，獨立性低於跨廠的 codex；預設只發 advisory，
-    要升級成硬閘是使用者的明示選擇（config `fallback.allow_block`）。
-    """
-    return bool(fallback_cfg(config).get("allow_block", False))
-
-
 # ─── binary 解析 ─────────────────────────────────────────────────────────────
 
 
@@ -95,6 +93,29 @@ def resolve_codex_bin(config: Dict[str, Any]) -> Optional[str]:
     if raw and os.path.isfile(raw):
         return raw
     return shutil.which(raw) or shutil.which("codex")
+
+
+def resolve_model_slug(config: Dict[str, Any], cache_path: Optional[str] = None) -> Tuple[Optional[str], str]:
+    """config `model` → `~/.codex/models_cache.json` 精確比對（lib/codex_models 單一驗證點）。
+
+    回 (slug, error)：找到＝(slug, "")；config 沒填、cache 缺檔、或名字不在 cache 裡＝(None, 原因)。
+    查不到就是錯，不猜、不退預設；帶錯名的症狀是 -o 檔不存在而錯因只在 stderr 尾，寧可在這裡擋。
+    """
+    name = str((config or {}).get("model") or "").strip()
+    if not name:
+        return None, "config 未填 model"
+    root = Path(__file__).resolve().parents[2]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from lib.codex_models import CodexModelsError, list_slugs, load_models_cache, resolve_slug
+    try:
+        cache = load_models_cache(Path(cache_path) if cache_path else None)
+    except CodexModelsError as e:
+        return None, str(e)
+    slug = resolve_slug(name, cache)
+    if slug is None:
+        return None, f"model `{name}` 不在 models_cache（可用：{', '.join(list_slugs(cache))}）"
+    return slug, ""
 
 
 def _ver_key(name: str) -> Tuple[int, int, int]:

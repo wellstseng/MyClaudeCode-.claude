@@ -20,9 +20,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from wg_core import (
-    CLAUDE_DIR, WORKFLOW_DIR, MEMORY_DIR, EPISODIC_DIR,
+    CLAUDE_DIR, CODE_DIR, WORKFLOW_DIR, MEMORY_DIR, EPISODIC_DIR,
     MEMORY_INDEX,
-    _now_iso, _atom_debug_error,
+    _now_iso, _atom_debug_error, v6_enabled,
     get_project_memory_dir, find_project_root,
     register_project,
     read_state, write_state, new_state, _find_active_sibling_state,
@@ -30,37 +30,77 @@ from wg_core import (
     _is_under_claude_dir,
     iter_realm_category_dirs,
     REALM_AUTOMOVE_MARKER,
-    find_vcs_root, memory_dir_candidates,
+    find_vcs_root, find_svn_root, memory_dir_candidates,
     resolve_project_root, org_memory_root, load_config, load_org_local,
 )
 from wg_atoms import (
     parse_memory_index, parse_aidocs_index, extract_aidocs_keywords,
     build_candidate_pool,
 )
+from project_root import claude_config_dir   # lib/（wg_core 已放進 sys.path）：Claude Code 設定目錄，啟動檔在這裡
 from wg_evasion import (
-    _load_oscillation_warnings, _detect_rut_patterns, _check_periodic_review_due,
+    _load_oscillation_warnings, _check_periodic_review_due,
 )
 from wg_roles import (
     get_current_user, load_user_role, is_management, bootstrap_personal_dir,
 )
 from handlers._shared import (
     _MEMORY_MD_AUTO_HEADER,
-    _call_project_hook, _cleanup_old_states,
+    _call_project_hook, _cleanup_old_states, prune_workflow_records,
     WISDOM_AVAILABLE, get_reflection_summary,
 )
+import wg_hook_timing as _hook_timing
+from wg_hook_timing import lap as _hook_lap
 
-# Ollama client 在 tools/ 下（dispatcher 已加 sys.path）
-sys.path.insert(0, str(Path.home() / ".claude" / "tools"))
+# Ollama client 在 tools/ 下（dispatcher 已加 sys.path）；用本檔位置推樹根，不用 Path.home()
+_TOOLS_DIR = str(Path(__file__).resolve().parents[2] / "tools")
+if _TOOLS_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_DIR)
+
+try:
+    from vcs_ignore import (  # lib/：衍生檔退出版控（wg_core 已把 CODE_DIR/lib 放上 sys.path）
+        DERIVED_DIRS as _DERIVED_DIR_NAMES,
+        DERIVED_FILES as _DERIVED_INDEX_NAMES,
+        REBUILD_HINT as _REBUILD_MANUAL,
+        advisory_lines as _vcs_ignore_lines,
+        derived_exit_hint as _derived_exit_hint,
+        under_claude_dir as _under_claude_dir,
+    )
+except ImportError as _e:  # lib 不在（hooks 升了、lib 沒升）：缺檔重建與衝突提示照舊，只少「退出版控」那段；留痕不無聲
+    _atom_debug_error("session_start:vcs_ignore_import", _e)
+    _DERIVED_INDEX_NAMES = ("_atom_index.json", "_ATOM_INDEX.md")
+    _DERIVED_DIR_NAMES = ("_staging", "episodic", "vector-db")
+    _REBUILD_MANUAL = 'python ~/.claude/tools/sync-atom-index.py --rebuild --memory-dir "{mem}"'
+    _vcs_ignore_lines = None
+    _derived_exit_hint = None
+    _under_claude_dir = lambda _p: True  # noqa: E731  分不出是不是根層記憶 → 不做過期檢查，只保留缺檔重建
 try:
     from ollama_client import check_long_die_status
 except ImportError:
     check_long_die_status = lambda: None  # noqa: E731
 
 
+def check_identity_integrity(live_dir: Path, data_dir: Path) -> List[str]:
+    """IDENTITY.md 完整性哨兵：Claude Code 實際載入的那份（設定目錄 live_dir 的 CLAUDE.md @IDENTITY.md）被覆寫成 stub、
+    缺核心契約段 → 告警行。資料根（WG_CLAUDE_DIR）不放啟動檔，不看它；兩者不同時訊息註明查的是哪一份。"""
+    identity = live_dir / "IDENTITY.md"
+    size, text = 0, ""
+    if identity.exists():
+        size = identity.stat().st_size
+        text = identity.read_text(encoding="utf-8", errors="ignore")
+    if "自主行為契約" in text and size >= 2000:
+        return []
+    note = "" if os.path.normcase(str(live_dir)) == os.path.normcase(str(data_dir)) else \
+        f"（查的是 Claude Code 設定目錄這份；資料根 {data_dir} 不放啟動檔）"
+    return [f"[Guardian:Identity⚠] {identity} 疑似損毀/被覆寫（現 {size} bytes）{note}，"
+            "完整版在 templates/IDENTITY.template.md，請比對回復。"]
+
+
 def check_always_load_contracts(claude_dir: Path) -> List[str]:
     """必載檔硬契約哨兵：memory/_meta/always-load-contracts.json 登記的句子在 live 檔缺席 → 告警行。
 
     契約句被修剪／覆寫時，模型當 session 就失去事前依據（事後閘只看狀態不懂語意）。
+    claude_dir 給 Claude Code 設定目錄（live 檔是 Claude Code 載入的那幾份），不是資料根。
     登記表缺或壞 → 回一行告警（不阻斷）。
     """
     reg_path = claude_dir / "memory" / "_meta" / "always-load-contracts.json"
@@ -119,6 +159,104 @@ def wg_core_workflow_dir() -> Path:
     """取 wg_core.WORKFLOW_DIR 的即時值（測試 monkeypatch wg_core 後仍生效）。"""
     import wg_core
     return wg_core.WORKFLOW_DIR
+
+
+def _index_stale_reason(memory_dir: Path, json_path: Path) -> str:
+    """索引在，但磁碟上的記憶卡已經變了 → 回一句原因；沒變回空字串。
+
+    索引不入版控之後，隊友的卡經 svn／git 更新進來，本機那份舊索引不會跟著動，
+    新卡就不會被注入。這裡只看兩件事：有沒有記憶卡比索引新、索引登記的檔還在不在。
+    索引讀不到就當沒變——判斷失敗不該變成每次都重建。
+    """
+    try:
+        index_mtime = json_path.stat().st_mtime
+        data = json.loads(json_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    for p in memory_dir.rglob("*.md"):
+        rel = p.relative_to(memory_dir)
+        if rel.parts[0] in _DERIVED_DIR_NAMES or p.name.startswith("_") or p.name == "MEMORY.md":
+            continue
+        try:
+            if p.stat().st_mtime > index_mtime:
+                return f"{rel.as_posix()} 比索引新"
+        except OSError:
+            continue
+    for a in data.get("atoms") or []:
+        path = a.get("path") or ""
+        if path and not (memory_dir.parent / path).exists():
+            return f"索引登記的 {path} 已不在"
+    return ""
+
+
+def _rebuild_index_if_missing(memory_dir: Optional[Path]) -> str:
+    """索引檔不在（沒入版控／被清掉／新 clone）、或專案記憶卡比索引新 → 就地從磁碟重建。
+
+    索引是衍生檔，本來就該能從 atom 重生；能重生才敢不入版控，
+    不入版控才不會「兩個人各加一顆 atom ＝ 同一區塊各插一列 ＝ 衝突」。
+    專案記憶的索引不入版控，所以隊友更新進來的卡要靠這裡的過期檢查才進得了索引；
+    ~/.claude 自己的記憶索引在版控裡、隨 pull 更新，不做過期檢查。
+    _ATOM_INDEX.md（mirror）缺檔同理：JSON 在就直接重生、不起子行程。
+    回傳要顯示的一行（沒事做回空字串）。重建失敗要大聲並附手動指令——
+    否則 trigger 注入靜默變空，沒人知道。
+    """
+    if not memory_dir or not memory_dir.is_dir():
+        return ""
+    json_path = memory_dir / "_atom_index.json"
+    md_path = memory_dir / "_ATOM_INDEX.md"
+    manual = _REBUILD_MANUAL.format(mem=memory_dir)
+    stale = ""
+    if json_path.exists() and md_path.exists():
+        if _under_claude_dir(memory_dir):
+            return ""
+        stale = _index_stale_reason(memory_dir, json_path)
+        if not stale:
+            return ""
+    elif json_path.exists():
+        try:
+            from atom_index_json import regenerate_atom_index_md
+            regenerate_atom_index_md(memory_dir)
+        except Exception as e:  # noqa: BLE001
+            _atom_debug_error("session_start:regenerate_mirror", e)
+            return f"[Guardian:Index] ⚠ _ATOM_INDEX.md 不在且重生失敗（{e}）→ 手動 {manual}"
+        if not md_path.exists():
+            return f"[Guardian:Index] ⚠ _ATOM_INDEX.md 不在且重生沒產出檔案 → 手動 {manual}"
+        return f"[Guardian:Index] _ATOM_INDEX.md 不在 → 已從 _atom_index.json 重生（{memory_dir}）。"
+    elif not any(memory_dir.rglob("*.md")):
+        return ""
+    what = f"索引過期（{stale}）" if stale else "索引不在"
+    harm = "新進的記憶卡這輪不會被注入" if stale else "trigger 注入這輪會是空的"
+    import subprocess as _sp
+    cmd = [sys.executable, str(CODE_DIR / "tools" / "sync-atom-index.py"),
+           "--memory-dir", str(memory_dir), "--rebuild"]
+    try:
+        r = _sp.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+                    creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0))
+    except (OSError, _sp.SubprocessError) as e:
+        return f"[Guardian:Index] ⚠ {what}且重建失敗（{e}）——{harm} → 手動 {manual}"
+    if not json_path.exists():
+        return (f"[Guardian:Index] ⚠ 索引不在且重建沒產出檔案：{(r.stderr or '').strip()[:200]}"
+                f"——trigger 注入這輪會是空的 → 手動 {manual}")
+    if stale:
+        if r.returncode != 0:
+            return (f"[Guardian:Index] ⚠ {what}且重建失敗：{(r.stderr or '').strip()[:200]}"
+                    f"——{harm} → 手動 {manual}")
+        # 內容沒變時重建工具可能不改寫檔案：碰一下時間，否則同一張卡每次開 session 都判過期
+        try:
+            os.utime(json_path)
+        except OSError:
+            pass
+    # 帶上條目數：從零重建只收「磁碟掃得到的 atom」，舊索引若登記過非 atom 檔
+    #（_reference/ 下的參考文、沒有元資料的敘事文），重建後條目會變少。
+    # 不報數字的話那個落差是隱形的。
+    try:
+        import json as _json
+        n = len(_json.loads(json_path.read_text(encoding="utf-8")).get("atoms") or [])
+        count = f"，共 {n} 筆"
+    except (OSError, ValueError):
+        count = ""
+    mirror = "" if md_path.exists() else f"；⚠ _ATOM_INDEX.md 仍不在 → 手動 {manual}"
+    return f"[Guardian:Index] {what} → 已從磁碟重建（{memory_dir}）{count}{mirror}。"
 
 
 def _regenerate_role_filtered_memory_index(
@@ -252,56 +390,26 @@ def _refresh_vector_flag(
     return "kept"
 
 
-def _prune_aec_files(max_age_days: int = 7) -> int:
-    """清 workflow/ 下 per-turn 執行期狀態檔的 TTL GC（mtime 超過 max_age_days）。
+def _vector_index_advisory(config: Dict[str, Any]) -> list:
+    """向量服務活著、但上次索引重建失敗 → 一行 advisory；其餘回 []。
 
-    對象：aec-report/ 與 aec-decision/（*.json，Python 寫報告 / Node 寫決策）。
-    寫了不清會無限累積。在 SessionStart 順手掃一次（比照上方 log rotation 的開機
-    打掃時機）。glob 副檔名白名單自然略過 atomic write 的 .tmp 過渡檔。
-    fail-open：目錄不存在 / 單檔被別進程刪或鎖 → 略過不炸。回傳刪除檔數（供測試 / 觀測）。"""
-    cutoff = (datetime.now() - timedelta(days=max_age_days)).timestamp()
-    pruned = 0
-    for sub, patterns in (
-        ("aec-report", ("*.json",)),
-        ("aec-decision", ("*.json",)),
-    ):
-        for pattern in patterns:
-            try:
-                entries = list((WORKFLOW_DIR / sub).glob(pattern))
-            except Exception:
-                continue
-            for p in entries:
-                try:
-                    if p.stat().st_mtime < cutoff:
-                        p.unlink()
-                        pruned += 1
-                except Exception:
-                    continue
-    # 殘檔帳本 aec-tempfiles/<sid>.jsonl：過期且「帳上路徑全都已不在磁碟」才清——
-    # 只要還有一個殘檔在，帳本就得留著讓 HUD 繼續列（帳本存在的意義就是追到處置為止）。
+    服務活著時 statusline 照亮 vec✓，重建失敗只寫在 /status 的 index_job.error，
+    不浮出就是新卡與搬過的卡長期搜不到卻沒人知道。服務沒回應不在這裡報（flag 會拆、statusline 顯示 vec✗）。
+    """
+    port = config.get("vector_search", {}).get("service_port", 3849)
     try:
-        ledgers = list((WORKFLOW_DIR / "aec-tempfiles").glob("*.jsonl"))
+        import urllib.request
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/status", timeout=1.0) as resp:
+            job = (json.loads(resp.read().decode("utf-8")) or {}).get("index_job") or {}
     except Exception:
-        ledgers = []
-    for p in ledgers:
-        try:
-            if p.stat().st_mtime >= cutoff:
-                continue
-            alive = False
-            for line in p.read_text(encoding="utf-8").splitlines():
-                try:
-                    path = json.loads(line).get("path", "")
-                except Exception:
-                    continue
-                if path and os.path.exists(path):
-                    alive = True
-                    break
-            if not alive:
-                p.unlink()
-                pruned += 1
-        except Exception:
-            continue
-    return pruned
+        return []
+    err = job.get("error")
+    if not err:
+        return []
+    return [
+        f"[Guardian:Vector] ⚠ 向量索引上次重建失敗：{str(err)[:120]}——新卡與搬過的卡語意搜不到；"
+        "修好原因後重建索引（/vector），細節看 Logs/vector-service.log。"
+    ]
 
 
 HEALTH_RUN_STALE_DAYS = 10  # 週排程 + 3 天寬限；超過 = 排程器本身死了
@@ -358,22 +466,97 @@ def _scope_layout_advisory(project_mem_dir) -> list:
         from atom_locations import scope_layout_classified
         if scope_layout_classified(Path(project_mem_dir)):
             return []
-        return [
-            "[Guardian:ScopeLayout] 記憶系統已改為 scope 分層：personal 只給本人、針對專案的規則進 shared "
-            "並記提出者、他專案 atom 不再注入。本專案的記憶尚未依此整理（無 layout 標記／shared/_taxonomy.json）。"
-            "使用者說「整理記憶分類」→ 走 /memory classify：plan 出建議表 → 使用者確認 personal 去向 → "
-            "apply（搬檔、索引 scope 回寫、標記）→ 提醒把 .claude/memory 上傳版控。"
-        ]
+        return ["[Guardian:ScopeLayout] 記憶尚未依 scope 分層整理，要整理說「整理記憶分類」"]
     except Exception as e:  # noqa: BLE001
         _atom_debug_error("session_start:scope_layout_advisory", e)
         return []
+
+
+def _aidocs_opening_lines(aidocs_entries, project_root) -> List[str]:
+    """開場 _AIDocs 一行：有索引就指 _INDEX.md（檔名清單不印，要用再 Read）；沒 _AIDocs 目錄才提示建立。"""
+    if aidocs_entries:
+        return [f"[AIDocs] {len(aidocs_entries)} docs → Read _AIDocs/_INDEX.md"]
+    if project_root and not (Path(project_root) / "_AIDocs").is_dir():
+        return ["[Guardian] No _AIDocs found. Run /init-project to create."]
+    return []
+
+
+def _local_catalog_lines(cwd: str) -> List[str]:
+    """本地範疇 catalog 一行指標（只在核心環境 cwd∈~/.claude；整張表要用再 Read）。
+
+    core catalog 走 CLAUDE.md @import memory/MEMORY.md；本地範疇明細在側檔 memory/_local_catalog.md。
+    fail-safe：缺檔／非核心 → []（local atom 仍走 trigger 注入）。
+    """
+    try:
+        if not _is_under_claude_dir(cwd):
+            return []
+        lc = MEMORY_DIR / "_local_catalog.md"
+        if not lc.exists():
+            return []
+        return [f"[LocalCatalog] 本地範疇索引：Read {lc.as_posix()}"]
+    except Exception as e:  # noqa: BLE001
+        _atom_debug_error("realm:local_catalog_inject", e)
+        return []
+
+
+def _tracking_advisory(cwd: str, state: Dict[str, Any]) -> list:
+    """本專案追蹤帳本（AEC (k) 與交付時「順手看到最該修」寫的）：一個 session 只列一次（state["tracking_advisory_sent"]，
+    重建 state 時照搬）。先列附了建議、還沒解的項目（不分部位，最新 3 筆＋要 AI 第一則回覆告訴使用者）；再列沒標部位、
+    沒附建議的未結項筆數＋最舊 3 筆；最後列標了部位、沒附建議的未結項（各部位筆數＋最舊 3 筆＋帳本路徑）。
+    同專案疑似由舊算法（子目錄 cwd）分裂出的帳本只在 stderr 列，不自動合併。讀不到只 stderr，回 []。"""
+    if not cwd or state.get("tracking_advisory_sent"):
+        return []
+    state["tracking_advisory_sent"] = True
+    try:
+        from wg_harvest import open_tracking_items, proposal_lines, read_tracking, tracking_path, tracking_slug
+        slug = tracking_slug(cwd)
+        tdir = WORKFLOW_DIR / "tracking"
+        split = sorted(p.name for p in tdir.glob(f"{slug}-*.jsonl")) if tdir.is_dir() else []
+        if split:
+            print(f"[Guardian:Tracking] 疑似同專案分裂的追蹤帳本（舊版用子目錄 cwd 命名，不自動合併）：{', '.join(split)}；"
+                  f"本專案帳本＝{slug}.jsonl", file=sys.stderr)
+        open_items = open_tracking_items(read_tracking(slug))
+        proposals = proposal_lines(open_items)
+        unproposed = [e for e in open_items if not str(e.get("proposal") or "").strip()]
+        items = [e for e in unproposed if not str(e.get("part") or "").strip()]
+        parted = [e for e in unproposed if str(e.get("part") or "").strip()]
+        ledger = tracking_path(slug)
+    except Exception as e:  # noqa: BLE001
+        print(f"[Guardian:Tracking] 讀追蹤項失敗：{type(e).__name__}: {e}", file=sys.stderr)
+        return []
+    out = ["\n".join(proposals)] if proposals else []
+    tail = [_parted_tracking_block(parted, ledger)] if parted else []
+    if not items:
+        return out + tail
+    oldest = sorted(items, key=lambda e: str(e.get("at") or ""))[:3]
+    lines = [f"[Guardian:Tracking] 本專案未結追蹤項 {len(items)} 筆（未標部位）；最舊 3 筆："]
+    lines += [f"- {str(e.get('text') or '')[:200]}（{str(e.get('at') or '')[:10]}）" for e in oldest]
+    lines.append("處理完在 AEC (k) 寫「結案：<原文開頭至少 8 字；原文不足 8 字就寫全文>」（未標部位的項目，結案行也不帶部位）；"
+                 "新記的追蹤項可在行尾加「｜建議：<怎麼解>｜該誰解：<誰>」；跟帳上某一筆是同一件就加「｜同追蹤項：<那筆裡連續至少 8 字>」，"
+                 "系統換成新說法、不另記一筆。")
+    return out + ["\n".join(lines)] + tail
+
+
+def _parted_tracking_block(items: List[Dict[str, Any]], ledger: Path) -> str:
+    """標了部位、沒附建議的未結追蹤項：各部位筆數＋最舊 3 筆＋帳本路徑＋帶部位的結案寫法。"""
+    counts: Dict[str, int] = {}
+    for e in items:
+        part = str(e.get("part") or "").strip()
+        counts[part] = counts.get(part, 0) + 1
+    oldest = sorted(items, key=lambda e: str(e.get("at") or ""))[:3]
+    lines = [f"[Guardian:Tracking] 本專案標了部位的未結追蹤項 {len(items)} 筆（"
+             + "、".join(f"{part} {n}" for part, n in counts.items()) + "）；最舊 3 筆："]
+    lines += [f"- [{str(e.get('part') or '').strip()}] {str(e.get('text') or '')[:200]}（{str(e.get('at') or '')[:10]}）"
+              for e in oldest]
+    lines.append(f"全部的帳在 {ledger}；處理完在 AEC (k) 寫「[部位] 結案：<原文開頭至少 8 字；原文不足 8 字就寫全文>」。")
+    return "\n".join(lines)
 
 
 def _followup_advisory() -> list:
     """回訪到期 → 開場自動跑 tools/followup-check.py，把檢查結果＋自足交接推進 context。
 
     存在理由：「一週後再看數據」在 session 關掉後必然被遺忘；登記表 workflow/followups.json
-    以「接手者零記憶」寫交接，到期後使用者任何一次開 CC 都會看到並能直接行動。
+    以「接手者零記憶」寫 handoff，到期後使用者任何一次開 CC 都會看到並能直接行動（登記項標了 owner／host 的，只有那個人、那台機器看得到）。
     每日提醒一次（--mark-shown），PASS 自動結案（--auto-close），首次整份、之後精簡（--brief）。
     純子程序、fail-open：失敗只 debug log，不阻斷 SessionStart。無到期項回 []。
     """
@@ -383,7 +566,7 @@ def _followup_advisory() -> list:
         if not reg.exists():
             return []
         r = subprocess.run(
-            [sys.executable, str(CLAUDE_DIR / "tools" / "followup-check.py"),
+            [sys.executable, str(CODE_DIR / "tools" / "followup-check.py"),
              "--run", "--auto-close", "--brief", "--mark-shown"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=25,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
@@ -405,6 +588,41 @@ def _spawn_pull_sync(session_id: str, cwd: str, config: Dict[str, Any]) -> int:
         return _vs.spawn_vcs_sync(session_id, cwd, reason="pull", config=config)
     except Exception as e:
         _atom_debug_error("session_start:spawn_pull_sync", e)
+        return 0
+
+
+def _maybe_spawn_provenance_backfill(config: Dict[str, Any]) -> int:
+    """舊 atom 來源回填：有比上次更新的 transcript 才 detached 跑 `tools/atom-provenance-backfill.py --apply --quiet`。
+    判定只比 mtime（<50ms）；config `provenance.backfill.enabled=false` 關。fail-open：失敗只進 atom-debug log。回 pid（0＝未起）。"""
+    try:
+        prov = (config or {}).get("provenance") or {}
+        if not prov.get("enabled", True) or not (prov.get("backfill") or {}).get("enabled", True):
+            return 0
+        import importlib.util
+        tool = CODE_DIR / "tools" / "atom-provenance-backfill.py"
+        if not tool.exists():
+            return 0
+        spec = importlib.util.spec_from_file_location("atom_provenance_backfill", tool)
+        mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+        sys.modules["atom_provenance_backfill"] = mod
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+        if not mod.needs_run():
+            return 0
+        import subprocess as _sp
+        import wg_vcs_sync as _vs
+        kwargs: Dict[str, Any] = {}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = _sp.CREATE_NO_WINDOW | _sp.DETACHED_PROCESS
+        else:
+            kwargs["start_new_session"] = True
+        mod.LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(mod.LOG_PATH, "a", encoding="utf-8", newline="\n") as log_fh:
+            proc = _sp.Popen([_vs._gui_python(), str(tool), "--apply", "--quiet"],
+                             stdin=_sp.DEVNULL, stdout=_sp.DEVNULL, stderr=log_fh,
+                             env=_vs.worker_env(), **kwargs)
+        return int(proc.pid or 0)
+    except Exception as e:
+        _atom_debug_error("session_start:provenance_backfill", e)
         return 0
 
 
@@ -537,60 +755,87 @@ def _index_conflict_advisory(cwd: str) -> list:
     唯讀 git；非 repo／git 不在／任何失敗 → []。PreToolUse 的 check_merge_driver 會在下一個
     `rebase --continue`／`commit` 前自動 --resolve，這行只是讓人先知道現況。
     """
+    lines: list = []
     try:
         if not cwd or not Path(cwd).is_dir():
             return []
-        vcs = find_vcs_root(Path(cwd))  # 零子行程：非工作區直接零行；svn WC（含住在 git repo 裡的）走 svn 分支
-        if vcs is None:
-            return []
-        if vcs[0] == "svn":
-            return _svn_index_conflict_advisory(cwd, vcs[1])
+        # svn 側獨立找：git 疊在 svn 上（同層兩個都有）時 find_vcs_root 回 git，svn 衝突會被略過
+        svn_root = find_svn_root(Path(cwd))
+        if svn_root is not None:
+            lines += _svn_index_conflict_advisory(cwd, svn_root)
+        vcs = find_vcs_root(Path(cwd))  # 零子行程：非工作區直接零行
+        if vcs is None or vcs[0] != "git":
+            return lines
         r = subprocess.run(
             ["git", "rev-parse", "--git-dir"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=2, cwd=cwd, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if r.returncode != 0:
-            return []
+            return lines
         gitdir = Path((r.stdout or "").strip())
         if not gitdir.is_absolute():
             gitdir = Path(cwd) / gitdir
         if not any((gitdir / n).exists()
                    for n in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "rebase-merge", "rebase-apply")):
-            return []
+            return lines
         r = subprocess.run(
             ["git", "ls-files", "-u", "-z"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=2, cwd=cwd, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if r.returncode != 0:
-            return []
+            return lines
         index_names = {"MEMORY.md", "_ATOM_INDEX.md", "_atom_index.json", "_INDEX.md", "_local_catalog.md"}
         names = sorted({
             entry.split("\t", 1)[1].rsplit("/", 1)[-1]
             for entry in (r.stdout or "").split("\0") if "\t" in entry
         } & index_names)
-        if not names:
-            return []
-        return [
-            f"[Guardian:IndexConflict] ⚠ 索引三檔尚未合併（{', '.join(names)}）"
-            "→ python ~/.claude/tools/merge-atom-index.py --resolve 後 git rebase --continue"
-        ]
+        if names:
+            lines.append(
+                f"[Guardian:IndexConflict] ⚠ 索引三檔尚未合併（{', '.join(names)}）"
+                "→ python ~/.claude/tools/merge-atom-index.py --resolve 後 git rebase --continue")
+        return lines
     except Exception as e:
         _atom_debug_error("session_start:index_conflict_advisory", e)
-        return []
+        return lines
+
+
+_SVN_INDEX_NAMES = ("MEMORY.md", "_ATOM_INDEX.md", "_atom_index.json")
 
 
 def _svn_index_conflict_advisory(cwd: str, root: Path) -> list:
-    """SVN 工作副本：update 停在索引三檔衝突會留下 <檔>.mine；memory dir 候選裡有就提示一行（零子行程）。"""
-    names = sorted({
-        n for d in memory_dir_candidates(Path(cwd), root)
-        for n in ("MEMORY.md", "_ATOM_INDEX.md", "_atom_index.json") if (d / f"{n}.mine").exists()
-    })
-    if not names:
-        return []
-    return [
-        f"[Guardian:IndexConflict] ⚠ SVN 索引三檔尚未解（{', '.join(names)}）"
-        "→ 在 CC 下 svn commit 前 hook 會自動解，或手動 python ~/.claude/tools/merge-atom-index.py --resolve"
-    ]
+    """SVN 工作副本：update 衝突會在原檔旁留下 <檔>.mine。memory dir 候選裡有就提示（零子行程）。
+
+    索引三檔與 atom 分開講。索引裡的 _atom_index.json／_ATOM_INDEX.md 是衍生檔，衝突的正解是退出版控
+    （指令與 [Guardian:VcsIgnore] 同源），hook 的自動合併只是暫時處置；atom 衝突要人判斷，
+    而且在解完之前 SessionEnd 的反向連結修補會跳過它們——放著不解，連結就一直補不上。
+    """
+    index_names: set = set()
+    derived_paths: list = []
+    atoms: list = []
+    for d in memory_dir_candidates(Path(cwd), root):
+        for mine in d.rglob("*.mine"):
+            original = mine.name[:-len(".mine")]
+            if original in _SVN_INDEX_NAMES:
+                index_names.add(original)
+                if original in _DERIVED_INDEX_NAMES:
+                    derived_paths.append(mine.with_name(original))
+            elif original.endswith(".md"):
+                atoms.append(original[:-3])
+    out = []
+    if index_names:
+        msg = f"[Guardian:IndexConflict] ⚠ SVN 索引三檔尚未解（{', '.join(sorted(index_names))}）"
+        if derived_paths and _derived_exit_hint is not None:
+            msg += f"。{_derived_exit_hint('svn', derived_paths)}；暫時處置："
+        else:
+            msg += "→ "
+        msg += "在 CC 下 svn commit 前 hook 會自動解，或手動 python ~/.claude/tools/merge-atom-index.py --resolve"
+        out.append(msg)
+    if atoms:
+        shown = "、".join(sorted(atoms)[:3]) + ("…" if len(atoms) > 3 else "")
+        out.append(
+            f"[Guardian:IndexConflict] ⚠ SVN 有 {len(atoms)} 顆 atom 衝突未解（{shown}）"
+            "→ 先解衝突再收工；未解期間自動修補會跳過這些檔")
+    return out
 
 
 def _org_advisory(org_root, pool: Dict[str, Any]) -> List[str]:
@@ -606,7 +851,9 @@ def _org_advisory(org_root, pool: Dict[str, Any]) -> List[str]:
             return []
         cmd = "python ~/.claude/tools/org-memory.py"
         default_root = str(shared.get("default_root") or "")
-        opt_default = (f"(1) 接上，放在預設路徑 {default_root}（推薦）→ 執行 `{cmd} --join`；" if default_root else "")
+        if default_root.startswith("~"):
+            default_root = str(Path(default_root).expanduser())  # config 寫家目錄相對路徑，問人時給展開後的真路徑
+        opt_default = (f"(1) 接上，放在預設路徑 {default_root} (Recommended) → 執行 `{cmd} --join`；" if default_root else "")
         return [
             f"❓ [Org] 公司有一層所有專案共用的記憶（{shared.get('repo_url')}），這台機器還沒接上，使用者也還沒被問過。"
             f"第一則回覆前先用 AskUserQuestion 問使用者：{opt_default}"
@@ -623,6 +870,20 @@ def _org_advisory(org_root, pool: Dict[str, Any]) -> List[str]:
     if not (Path(pool["org_base"]) / "memory" / "_atom_index.json").is_file():
         return [f"[Org] 公司層索引缺檔：{root}/.claude/memory/_atom_index.json（請在該 repo 跑 sync-atom-index）"]
     return [f"[Org] 公司層 {len(pool.get('org') or [])} 顆（{root}）"]
+def _vcs_ignore_advisory(project_mem_dir) -> list:
+    """專案記憶庫的衍生檔退出版控：設 svn:ignore／.gitignore＋「已被版控」告警一次（lib/vcs_ignore）。
+
+    每個記憶庫每種 VCS 只處理一次（marker：workflow/vcs-ignore.json），之後零子行程；
+    記憶庫目錄尚未版控時不記、下次再試。無 VCS／~/.claude 自己的記憶 → []。
+    """
+    try:
+        if not project_mem_dir or _vcs_ignore_lines is None:
+            return []
+        return _vcs_ignore_lines(Path(project_mem_dir), WORKFLOW_DIR / "vcs-ignore.json", timeout=4.0)
+    except Exception as e:  # noqa: BLE001
+        _atom_debug_error("session_start:vcs_ignore_advisory", e)
+        return ["[Guardian:VcsIgnore] ⚠ 衍生檔版控檢查失敗（見 atom-debug log）"
+                "——手動 python -m lib.vcs_ignore <memory-dir> 檢視"]
 
 
 def _personal_sync_advisory(project_mem_dir, user: str) -> list:
@@ -756,10 +1017,10 @@ def _project_root_notice(res, cwd: str) -> List[str]:
         lines.append(
             f"❓ [Guardian:ProjectRoot] 上層 {cands} 有記憶層但未宣告與本層（{cwd}）的關係。"
             f"第一則回覆前先用 AskUserQuestion 問使用者，四選一："
-            f"(1) 認領 {best}（推薦）→ 執行 `{_ROOT_ASK_CMD} claim --root \"{best}\" --cwd \"{cwd}\"`；"
+            f"(1) 認領 {best} (Recommended) → 執行 `{_ROOT_ASK_CMD} claim --root \"{best}\" --cwd \"{cwd}\"`；"
             f"(2) 本層獨立 → `{_ROOT_ASK_CMD} standalone on --cwd \"{cwd}\"`；"
             f"(3) 瀏覽選別的資料夾 → `{_ROOT_ASK_CMD} pick --cwd \"{cwd}\"`；"
-            f"(4) 這次先不決定（不寫檔，下次再問）。選定後由你執行指令，並告知「重開 session 生效」。")
+            f"(4) 這次先不決定（不寫檔，下次開場會再問一次）。選定後由你執行指令，並告知「重開 session 生效」。")
     return lines
 
 
@@ -773,7 +1034,80 @@ def _root_fingerprint_matches(existing: Dict[str, Any], res) -> bool:
 _CARRY_ON_REBUILD = (
     "modified_files", "accessed_files", "vcs_queries", "knowledge_queue", "sync_pending",
     "stop_blocked_count", "topic_tracker", "session_context_injected",
+    # A2.4：專案根指紋變了重建 atom_index 時，OverviewHub 的讀檔帳／意圖／Depends 已提示的卡照搬，不重送
+    "overview_hub", "turn_intent", "depends_hints",
+    # 一 session 一次的旗標也要照搬，否則重建後權威地圖、未結追蹤項提示會重送
+    "authority_map_injected", "tracking_advisory_sent",
+    # 收尾同步提醒的額度與底部一般擋擋過的項目（一 session 一次／同一筆不重擋），不搬的話重建後同一個 session 又提醒一次
+    "sync_reminder_count", "sync_block_shown",
+    # 回合編號與使用者回合鍵（規則 USER_TURN_KEY_KEPT）：只搬鍵的話 turn_seq 歸零、鍵比 turn_seq 還大；不搬的話之後只進同伴訊息時
+    # user_turn 退回 turn_seq、每則同伴訊息都當成新使用者回合（PickOne 每則重問、各閘每回合的擋次重來）。照搬的 modified_files
+    # 也帶著舊的 turn_seq，編號接著走才對得上
+    "turn_seq", "turn_prompts_seq", "user_turn_count", "turn_open", "turn_typed", "exec_turn_seq",
+    # 事件序號：modified_files 的 last_seq 照搬了，event_seq 不搬就從頭算，壓縮後的收據 seq 全小於舊的 last_seq、等值證法閘整批略過
+    "event_seq",
+    # 各閘的「問過／放行／擋過」帳本（鍵都是 session id，compact 不換 session）：不搬的話重建後 PickOne、對帳閘、清理閘、
+    # 收據全部重來，使用者剛選的「放行這一回合」當場失效
+    "pick_one", "user_released", "pending_release", "last_block", "verify_receipts",
+    "reconcile_gate_turn", "cleanup_gate_turn",
 )
+
+
+def _mod_turn_of(m: Dict[str, Any]) -> int:
+    try:
+        return int(m.get("last_turn_seq") or m.get("turn_seq") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def floor_turn_seq(state: Dict[str, Any]) -> None:
+    """規則 USER_TURN_KEY_KEPT 的底線：回合編號不倒退。更舊版本寫的 state 沒有 turn_seq，照搬的 modified_files 卻帶著 2..11，
+    各閘的「問過／放行」會記在第 0 回合、pick_due 的「改檔回合 > 問過的回合」永遠成立（實測一場 PickOne 連問 12 次）。
+    以 modified_files 最大的回合墊底；turn_prompts_seq 不動，下一則 UserPromptSubmit 會自己錨定。"""
+    floor = max((_mod_turn_of(m) for m in state.get("modified_files") or [] if isinstance(m, dict)), default=0)
+    if floor > int(state.get("turn_seq") or 0):
+        state["turn_seq"] = floor
+
+
+def carry_on_rebuild(existing: Dict[str, Any], state: Dict[str, Any]) -> None:
+    """專案根指紋變了重建 state：_CARRY_ON_REBUILD 的鍵照搬、phase 沿用，回合編號墊到不倒退。"""
+    for key in _CARRY_ON_REBUILD:
+        if key in existing:
+            state[key] = existing[key]
+    state["phase"] = existing.get("phase", "working")
+    floor_turn_seq(state)
+
+
+def _harvest_staged_line(n: int) -> str:
+    """開場一行：資料根有 n 張背景收割候選待審。規則 OPENING_NOTICE_NOT_TODO：處置句寫清誰決定、要不要現在處理——寫成待辦口吻
+    （「…不要的刪掉」）時，使用者說「先告訴我、再等我說要做什麼」，AI 仍照提示刪了草稿。"""
+    return (f"[Harvest] {n} 張背景收割候選待審（memory/_staging/harvest-candidates/，背景模型草擬的記憶草稿，核可前不注入）。"
+            "要不要現在處理由使用者決定：使用者這回合要的是別的事，只在回覆裡轉述這一行、不動這些檔；"
+            "使用者說要處理，再由你逐張判斷，值得留的用 atom_write 落卡、不要的刪掉。")
+
+
+def _first_session_hint_lines(root_res, cwd: str) -> list:
+    """first_session_hint 掛 SessionStart：無部位表的專案給 scaffold 指令；表有「骨架」列就列每張卡的空段；
+    表齊或不在任何專案 → 空。根層 cwd 以 ~/.claude 當根（它的表在 ~/.claude/.claude/overview-map.md）。fail-open。"""
+    try:
+        root = None
+        if cwd:
+            c = Path(cwd)
+            if c == CLAUDE_DIR or CLAUDE_DIR in c.parents:
+                root = CLAUDE_DIR
+        if root is None and root_res is not None and getattr(root_res, "path", None):
+            root = Path(root_res.path)
+        if root is None:
+            return []
+        lib_dir = str(Path(__file__).resolve().parents[2] / "lib")   # 程式碼用本檔位置；CLAUDE_DIR 只拿來判根層與定位卡
+        if lib_dir not in sys.path:
+            sys.path.insert(0, lib_dir)
+        from overview_scaffold import first_session_hint
+        hint = first_session_hint(root, CLAUDE_DIR / "memory" if root == CLAUDE_DIR else None)
+        return [hint] if hint else []
+    except Exception as e:  # noqa: BLE001
+        _atom_debug_error("session_start:first_session_hint", e)
+        return []
 
 
 def _next_phase_pointer(cwd: str, source: str) -> list:
@@ -808,10 +1142,47 @@ def _next_phase_pointer(cwd: str, source: str) -> list:
         return []
 
 
+def _take_git_snapshot(state: Dict[str, Any], cwd: str) -> None:
+    """開場快照：記下 cwd 所在 repo 的工作樹與本地分支（Stop 拿來比對，補抓 python 腳本裡開的工作樹這類指令解析看不到的
+    建立，見 handlers/aec_ledger.snapshot_entries）。compact／resume 沿用開場那份；不是 repo 就不記。"""
+    if (state.get("git_snapshot") or {}).get("repo") or not cwd:
+        return
+    try:
+        from handlers import aec_ledger
+        snap = aec_ledger.git_snapshot(cwd)
+    except Exception as e:  # noqa: BLE001
+        _atom_debug_error("session_start:git_snapshot", e)
+        return
+    if snap:
+        state["git_snapshot"] = snap
+
+
+def _ss_output(lines: List[str]) -> str:
+    return json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "\n".join(lines)}},
+                      ensure_ascii=False)
+
+
+def _fallback_output(lines: List[str]) -> str:
+    """背景鬧鐘代送（到上限 95% 還沒送出）：當下已備好的開場提示（追蹤提示在前段）＋一行說明；state 這次沒寫回。"""
+    return _ss_output([*lines, "[Guardian:HookTiming] 開場 hook 快到上限被取消，先送出已備好的開場提示，其餘這次沒跑、"
+                               "session 狀態這次沒寫回（下一則提問會重建）；各段耗時記在 Logs/guard-hook_timing.jsonl。"])
+
+
+def _degraded_exit(session_id: str, state: Dict[str, Any], lines: List[str]) -> None:
+    """開場超時降級（累計過上限 80%）：state 寫回、已備好的提示照送（追蹤提示在最前段），後面的選配提示與檢查
+    這次跳過（含開場 git 快照、清舊 state、向量服務旗標與啟動）。"""
+    lines.append(_hook_timing.degrade_note())
+    write_state(session_id, state)
+    _hook_timing.claim_output()
+    print(_ss_output(lines))
+    sys.exit(0)
+
+
 def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
     session_id = input_data.get("session_id", "unknown")
     cwd = input_data.get("cwd", "")
     source = input_data.get("source", "startup")
+    v6 = v6_enabled(config)     # 關＝只送 9e476fd0 就有的開場注入與提示
     root_res = None
     root_lines: List[str] = []
     try:
@@ -819,6 +1190,8 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         root_lines = _project_root_notice(root_res, cwd)
     except Exception as e:
         _atom_debug_error("session_start:project_root", e)
+    if v6:
+        root_lines = [*root_lines, *_first_session_hint_lines(root_res, cwd)]
 
     # log rotation — prevent runaway log bloat
     try:
@@ -826,7 +1199,8 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         rotate_log_if_oversized(WORKFLOW_DIR / "guardian-crash.log", max_mb=10)
         rotate_log_if_oversized(WORKFLOW_DIR / "extract-worker.log", max_mb=10)
         rotate_log_if_oversized(CLAUDE_DIR / "Logs" / "codex-companion.log", max_mb=10)
-        _prune_aec_files(max_age_days=7)  # AEC 報告/決策檔 7 天 TTL（防執行期狀態檔無限累積）
+        if v6:
+            prune_workflow_records(current_sid=session_id)  # workflow/ 執行紀錄照 _shared.WORKFLOW_RETENTION 清
     except Exception as e:
         _atom_debug_error("session_start:log_rotation", e)
 
@@ -854,6 +1228,8 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             sys.exit(0)
 
     existing = read_state(session_id)
+    _hook_lap("前置")
+    _index_rebuild_notes: List[str] = []   # resume 分支不重建，仍要有值供收尾組訊息
     root_rebuilt = False
     if existing and source in ("compact", "resume") and not _root_fingerprint_matches(existing, root_res):
         # 專案根指紋變了（cwd 換了、宣告檔改了、或舊 state 還沒有指紋）→ 走下方重建分支重算
@@ -862,6 +1238,7 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
     if existing and source in ("compact", "resume") and not root_rebuilt:
         # compact/resume 複用舊 state 的 atom_index 快取（指紋相同才走到這裡）
         state = existing
+        floor_turn_seq(state)
         prev_atoms = state.get("injected_atoms", [])
         state["injected_atoms"] = []
         mod_count = len(state.get("modified_files", []))
@@ -891,19 +1268,24 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
     else:
         state = new_state(session_id, cwd, source)
         if root_rebuilt and existing:
-            for key in _CARRY_ON_REBUILD:
-                if key in existing:
-                    state[key] = existing[key]
-            state["phase"] = existing.get("phase", "working")
+            carry_on_rebuild(existing, state)
         if sibling and source == "startup":
             state["_skip_vector_init"] = True
+
+        # 追蹤提示最先算（只要 cwd 與 state）：開場超時降級、或背景鬧鐘代送時，最該到眼前的這段已經備好
+        tracking_lines = _tracking_advisory(cwd, state) if v6 else []
+        lines = ["[Workflow Guardian] Active.", *root_lines, *tracking_lines]
+        _hook_timing.set_fallback(lambda: _fallback_output(lines))
+        _hook_lap("追蹤提示")
 
         # ── 記憶層背景「拉」：在首次讀索引之前 detached 起 vcs-sync worker（秒回、不等）。
         # 趕不趕得上本次候選池隨緣——拉入的 atom 下一個 session 才一定進候選池，advisory 只報同步事實。
         _spawn_pull_sync(session_id, cwd, config)
 
+        _index_rebuild_notes.append(_rebuild_index_if_missing(MEMORY_DIR))
         global_atoms = parse_memory_index(MEMORY_DIR)
         project_mem_dir = get_project_memory_dir(cwd)
+        _index_rebuild_notes.append(_rebuild_index_if_missing(project_mem_dir))
         project_root = find_project_root(cwd)
 
         register_project(cwd)
@@ -919,6 +1301,7 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             v4_mgmt = is_management(cwd, v4_user)
         except Exception as e:
             _atom_debug_error("role_bootstrap", e)
+        _hook_lap("索引與職能")
 
         state["user_identity"] = {
             "user": v4_user,
@@ -976,8 +1359,12 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             "[Workflow Guardian] Active." if not root_rebuilt
             else f"[Workflow Guardian] Session resumed ({source}); 專案根變更，atom index 已重建.",
             f"Global: {len(g_names)} atoms. Project: {len(p_names)}.",
+            *[n for n in _index_rebuild_notes if n],
             *root_lines,
+            *tracking_lines,
         ]
+        if _hook_lap("候選池"):
+            _degraded_exit(session_id, state, lines)
 
         # ── 全域 index 解析 fail-loud ──
         # 全域 index 檔存在但解析出 0 atom = 解析失敗（_ATOM_INDEX.md 表內空行/檔
@@ -1052,7 +1439,7 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         try:
             if (config or {}).get("skill_index", {}).get("enabled", True):
                 import json as _json
-                _sk_dir = CLAUDE_DIR / "skills"
+                _sk_dir = CODE_DIR / "skills"   # skills 屬程式碼樹（與 tools／hooks／lib 並列）
                 _true_sk = sum(1 for _ in _sk_dir.glob("*/SKILL.md"))
                 _idx = _sk_dir / "_skill_index.json"
                 _idx_n = None
@@ -1070,21 +1457,38 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                     )
         except Exception as e:
             _atom_debug_error("session_start:skill_index_validate", e)
+        if _hook_lap("索引校驗"):
+            _degraded_exit(session_id, state, lines)
+
+        # 選配提示：每段跑完打一點，累計過上限 80% 就送出收掉，後面的這次不跑。
 
         # ── 週健檢死人開關 ──────────────────────────────────
         # tools/health-weekly.py（Task Scheduler 每週跑）落 health-last-run.json。
         # 缺檔/逾期 = 排程器本身死了；red>0 = 上次健檢有待處理項。兩者都必須
         # 在 session 內浮出（fail-open 必告知）——「靜默死 27 天」的最後防線。
         lines.extend(_health_advisory(WORKFLOW_DIR / "health-last-run.json"))
+        lines.extend(_vector_index_advisory(config))
+        if _hook_lap("健檢"):
+            _degraded_exit(session_id, state, lines)
 
         # ── 未推送 commit ─────────────────────────────────────
         # SessionEnd 晉升自動提交的 push 走背景、失敗當下無人知 → 這裡補可見性。
         lines.extend(_unpushed_advisory())
         lines.extend(_index_conflict_advisory(cwd))
+        if _hook_lap("未推送與索引衝突"):
+            _degraded_exit(session_id, state, lines)
         lines.extend(_followup_advisory())
+        if _hook_lap("回訪"):
+            _degraded_exit(session_id, state, lines)
         lines.extend(_scope_layout_advisory(project_mem_dir))
+        lines.extend(_vcs_ignore_advisory(project_mem_dir))
         lines.extend(_personal_sync_advisory(project_mem_dir, v4_user))
+        if _hook_lap("分層與同步"):
+            _degraded_exit(session_id, state, lines)
         lines.extend(_org_advisory(org_root, pool))
+        _maybe_spawn_provenance_backfill(config)
+        if _hook_lap("公司層"):
+            _degraded_exit(session_id, state, lines)
 
         if v4_user:
             lines.append(
@@ -1094,6 +1498,15 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             pending = _count_pending_review(project_mem_dir)
             if pending > 0:
                 lines.append(f"[Pending Review] {pending} 件待裁決（shared/_pending_review/）")
+        try:   # 背景收割（wg_bg_harvest）落在資料根的待審候選：有才提一行，讓它有人看（不看就是死路）；寫碼守門關不載
+            _staged = 0
+            if v6:
+                from wg_bg_harvest import staged_count
+                _staged = staged_count()
+            if _staged:
+                lines.append(_harvest_staged_line(_staged))
+        except Exception as e:  # noqa: BLE001
+            print(f"[Harvest] 數待審候選失敗：{type(e).__name__}: {e}", file=sys.stderr)
 
         if v4_user and config.get("userExtraction", {}).get("enabled", False):
             try:
@@ -1105,13 +1518,7 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             except Exception as e:
                 _atom_debug_error("daily_push", e)
 
-        max_entries = config.get("aidocs", {}).get("max_session_start_entries", 15)
-        if aidocs_entries:
-            fnames = [f for f, _d, _kw in aidocs_entries[:max_entries]]
-            lines.append(f"[AIDocs] {len(aidocs_entries)} docs: {', '.join(fnames)}")
-            lines.append("[查閱知識庫] Read _AIDocs/_INDEX.md")
-        elif project_root and not (Path(project_root) / "_AIDocs").is_dir():
-            lines.append("[Guardian] No _AIDocs found. Run /init-project to create.")
+        lines.extend(_aidocs_opening_lines(aidocs_entries, project_root))
 
         if project_root:
             try:
@@ -1126,6 +1533,10 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             except Exception as e:
                 _atom_debug_error("project_hook:session_start", e)
 
+    _hook_timing.set_fallback(lambda: _fallback_output(lines))   # compact／resume 那支也有代送（startup 前面已登記）
+    if _hook_lap("開場主段"):
+        _degraded_exit(session_id, state, lines)
+
     # config.json 解析失敗 → 一行告警（load_config 標旗；fail-open 必浮出）
     if config.get("_config_parse_failed"):
         lines.append(
@@ -1133,20 +1544,8 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             "——請修復 JSON（詳 Logs/atom-debug）。"
         )
 
-    # ── V5+ realm：本地範疇 catalog 注入（補完 index 層 realm 一致性）────────────
-    # core catalog 走 CLAUDE.md @import memory/MEMORY.md（全專案，fail-safe 退路）；
-    # 本地範疇明細抽到側檔 memory/_local_catalog.md，僅核心環境（cwd∈~/.claude）此處注入，
-    # 外部專案不注入 → always-load 省本地段。對 startup/resume/compact 兩分支皆生效。
-    # fail-safe：缺檔/讀錯/非核心 → 靜默略過（catalog 本屬 readability，local atom 仍 trigger 注入）。
-    try:
-        if _is_under_claude_dir(cwd):
-            _lc = MEMORY_DIR / "_local_catalog.md"
-            if _lc.exists():
-                _lc_txt = _lc.read_text(encoding="utf-8-sig").strip()
-                if _lc_txt:
-                    lines.append(_lc_txt)
-    except Exception as e:
-        _atom_debug_error("realm:local_catalog_inject", e)
+    # ── V5+ realm：本地範疇 catalog 一行指標（僅核心環境 cwd∈~/.claude）────────────
+    lines.extend(_local_catalog_lines(cwd))
 
     # V5+ Realm 維度：上個 session 自動歸類搬移的不靜默提示（永不靜默；讀後清 marker）
     try:
@@ -1206,6 +1605,8 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                 pass
     except Exception as e:
         print(f"Outcome-watch notice error: {e}", file=sys.stderr)
+    if _hook_lap("標記檔提示"):
+        _degraded_exit(session_id, state, lines)
 
     try:
         review_reminder = _check_periodic_review_due(config)
@@ -1216,18 +1617,11 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         print(f"Review check error: {e}", file=sys.stderr)
 
     try:
-        osc_warning = _load_oscillation_warnings()
+        osc_warning = _load_oscillation_warnings(state, config)
         if osc_warning:
             lines.append(osc_warning)
     except Exception as e:
         print(f"Oscillation load error: {e}", file=sys.stderr)
-
-    try:
-        rut_warning = _detect_rut_patterns(state, config)
-        if rut_warning:
-            lines.append(rut_warning)
-    except Exception as e:
-        print(f"Rut detection error: {e}", file=sys.stderr)
 
     if WISDOM_AVAILABLE:
         try:
@@ -1235,6 +1629,8 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             lines.extend(wisdom_lines)
         except Exception as e:
             print(f"Wisdom reflection error: {e}", file=sys.stderr)
+    if _hook_lap("回顧提示"):
+        _degraded_exit(session_id, state, lines)
 
     try:
         long_die = check_long_die_status()
@@ -1275,31 +1671,27 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                 )
     except Exception:
         pass
+    if _hook_lap("服務檢查"):
+        _degraded_exit(session_id, state, lines)
 
-    # 可觀測性：IDENTITY.md 完整性哨兵——被覆寫成 stub / 缺核心契約段時浮出告警
-    # （完整版備份在 templates/IDENTITY.template.md；檢查本身出錯不阻斷）
+    # 可觀測性：IDENTITY.md 完整性哨兵與必載檔硬契約哨兵（登記表驅動；USER.md 已由 user-init.sh 從 USER-{user}.md 拷好）。
+    # 兩者都看 Claude Code 設定目錄（實際載入的那幾份），不看資料根：WG_CLAUDE_DIR 指到別處時那裡沒有啟動檔
     try:
-        _identity = CLAUDE_DIR / "IDENTITY.md"
-        _id_ok = False
-        _id_size = 0
-        if _identity.exists():
-            _id_size = _identity.stat().st_size
-            _id_text = _identity.read_text(encoding="utf-8", errors="ignore")
-            _id_ok = "自主行為契約" in _id_text and _id_size >= 2000
-        if not _id_ok:
-            lines.append(
-                f"[Guardian:Identity⚠] IDENTITY.md 疑似損毀/被覆寫（現 {_id_size} bytes），"
-                "完整版在 templates/IDENTITY.template.md，請比對回復。"
-            )
-    except Exception:
-        pass
-
-    # 必載檔硬契約哨兵（登記表驅動；USER.md 已由 user-init.sh 從 USER-{user}.md 拷好）
+        if v6:
+            lines.extend(check_identity_integrity(claude_config_dir(), CLAUDE_DIR))
+    except Exception as e:
+        print(f"identity integrity check error: {e}", file=sys.stderr)
     try:
-        lines.extend(check_always_load_contracts(CLAUDE_DIR))
+        lines.extend(check_always_load_contracts(claude_config_dir()))
     except Exception as e:
         print(f"always-load contract check error: {e}", file=sys.stderr)
+    if _hook_lap("必載檔哨兵"):
+        _degraded_exit(session_id, state, lines)
 
+    if v6:
+        _take_git_snapshot(state, cwd)
+    if _hook_lap("git 快照"):
+        _degraded_exit(session_id, state, lines)
     write_state(session_id, state)
 
     try:
@@ -1312,19 +1704,17 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         _refresh_vector_flag(config)
     except Exception as e:
         _atom_debug_error("SessionStart:vector_flag_refresh", e)
+    _hook_lap("清舊 state 與向量旗標")
 
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "SessionStart",
-            "additionalContext": "\n".join(lines),
-        }
-    }, ensure_ascii=False))
+    _hook_timing.claim_output()
+    print(_ss_output(lines))
 
     # ── Vector service：fire-and-forget 啟動器（自癒/觀測邏輯在 starter.py）──
+    # 已降級就不起：輸出送出後行程還得在上限內結束（Claude Code 取消時不保證採用已印的輸出）
     if (config.get("vector_search", {}).get("auto_start_service", True)
-            and not state.get("_skip_vector_init")):
+            and not state.get("_skip_vector_init") and not _hook_timing.degraded()):
         try:
-            starter = CLAUDE_DIR / "tools" / "memory-vector-service" / "starter.py"
+            starter = CODE_DIR / "tools" / "memory-vector-service" / "starter.py"
             _bg_kwargs: dict = {
                 "stdin": subprocess.DEVNULL,
                 "stdout": subprocess.DEVNULL,

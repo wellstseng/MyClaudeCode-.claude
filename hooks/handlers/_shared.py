@@ -6,7 +6,7 @@ handlers/_shared.py — module-level state + 跨 handler 共用 helper
 - lazy import flag（WISDOM_AVAILABLE / DOCDRIFT_AVAILABLE）
 - _call_project_hook（subprocess invoke project hook）
 - _cleanup_old_states（state 檔 TTL 清理）
-- _is_ephemeral_path（路徑過濾）
+- _is_ephemeral_path（路徑過濾）／note_ephemeral_skip（暫存目錄專案的寫入不記帳時，一個專案根說一次）
 - _maybe_spawn_user_extract_worker（user extract worker spawn）
 """
 
@@ -22,11 +22,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from wg_core import (
-    CLAUDE_DIR, WORKFLOW_DIR,
+    CLAUDE_DIR, CODE_DIR, WORKFLOW_DIR,
     _now_iso, _atom_debug_error,
     write_state,
 )
 from wg_extraction import _is_lease_valid, _set_lease
+from wg_roles import get_current_user
 
 # Windows: 外呼 python/git 等 console 程式時若不帶此 flag，無主控台的 hook 父行程會被配一個可見 console 視窗
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
@@ -74,7 +75,6 @@ except ImportError:
     build_drift_advisory = None
     prune_committed_entries = None
 
-
 # ─── AEC HUD 活性判定（post_tool_use 標旗 / stop 再查一次，兩端共用）─────────────
 
 
@@ -110,19 +110,104 @@ def _hud_alive(port: int, threshold_s: int) -> Tuple[bool, Dict[str, Any]]:
 # ─── Path helpers ────────────────────────────────────────────────────────────
 
 
+def _long_path(path: str) -> str:
+    """Windows 8.3 短路徑 → 長路徑（GetLongPathNameW）。檔案還不存在就往上找到存在的祖先轉，再接回其餘部分；
+    非 Windows、UNC 網路路徑（不為了改檔去查網路）或整條都轉不了 → 原樣。暫存目錄在這台機器同時以長路徑與 `HOLYLI~1`
+    這種短路徑出現，比對前兩邊都要轉。"""
+    if os.name != "nt" or not path or path.startswith("\\\\"):
+        return path
+    import ctypes
+    buf = ctypes.create_unicode_buffer(32768)
+    head, tail = path, []
+    while head:
+        n = ctypes.windll.kernel32.GetLongPathNameW(head, buf, 32768)
+        if 0 < n < 32768:
+            return os.path.join(buf.value, *reversed(tail))
+        parent, name = os.path.split(head)
+        if not name or parent == head:
+            break
+        tail.append(name)
+        head = parent
+    if re.search(r"~\d", path):                           # 只有帶短檔名記號的路徑轉不了才影響比對：說一聲，不靜默
+        print(f"[_shared] 8.3 短路徑轉長路徑失敗（GetLongPathNameW 對 {path} 與各層祖先都回 0），照原樣比對", file=sys.stderr)
+    return path
+
+
+def _comparable(path: str) -> str:
+    """暫存判斷用的統一表示（路徑與系統 tmp 兩側都走這個）：Windows 先拿掉 `\\\\?\\` 長路徑前綴（磁碟機路徑去前綴、
+    `\\\\?\\UNC\\server\\share\\…` → `\\\\server\\share\\…`；normpath 對帶前綴的路徑整條原樣不動，連 .. 都不消），再 normpath 消
+    . 與 ..、轉長路徑（8.3 短路徑）、轉完再 normpath 一次（API 會保留 ..），斜線統一成 /。"""
+    p = path
+    if os.name == "nt":
+        p = p.replace("/", "\\")
+        if p[:8].upper() == "\\\\?\\UNC\\":
+            p = "\\\\" + p[8:]
+        elif p.startswith("\\\\?\\"):
+            p = p[4:]
+    return os.path.normpath(_long_path(os.path.normpath(p))).replace("\\", "/")
+
+
 def _is_ephemeral_path(path: str) -> bool:
-    """過濾測試/快取/系統 tmp 路徑，避免污染 modified_files。"""
+    """過濾測試/快取/系統 tmp 路徑，避免污染 modified_files。兩側都轉成同一種表示（_comparable：去 `\\\\?\\` 前綴、長路徑、
+    消 . 與 ..）才比包含：8.3 短路徑、`\\\\?\\` 寫法都認得；`<tmp>\\..\\..\\專案\\x.py` 是專案原碼，不是暫存；含 `~1` 的字樣
+    本身不算暫存。"""
     if not path:
         return False
-    norm = path.replace("\\", "/")
-    try:
-        tmp_root = tempfile.gettempdir().replace("\\", "/").rstrip("/")
-        if tmp_root and norm.lower().startswith(tmp_root.lower() + "/"):
-            return True
-    except Exception:
-        pass
+    norm = _comparable(path)
+    if _temp_root_of(norm):
+        return True
     norm_low = norm.lower()
     return any(tok in norm_low for tok in _EPHEMERAL_DIR_TOKENS)
+
+
+def _temp_root_of(norm: str) -> str:
+    """norm（_comparable 過的路徑）在系統暫存目錄底下 → 回暫存根（同一種表示）；不在、判不了回空字串。"""
+    try:
+        tmp_root = _comparable(tempfile.gettempdir()).rstrip("/")
+        return tmp_root if tmp_root and norm.lower().startswith(tmp_root.lower() + "/") else ""
+    except Exception as e:  # noqa: BLE001  判不了暫存目錄 → 當一般路徑（照記改檔），浮一行
+        print(f"[_shared] 判斷暫存目錄失敗，路徑照一般檔處理：{type(e).__name__}: {e}", file=sys.stderr)
+        return ""
+
+
+EPHEMERAL_NOTED_KEY = "ephemeral_noted_roots"
+EPHEMERAL_NOTED_CAP = 20
+
+
+def note_ephemeral_skip(state: Dict[str, Any], path: str) -> bool:
+    """規則 EPHEMERAL_WRITE_NOTED_ONCE：寫入目標在系統暫存目錄底下（_is_ephemeral_path 的暫存根那一支）→ 照舊不記進改檔清單，
+    同一 session（state）、同一個專案根第一次印一行 stderr 說明為什麼沒記，state 記下這個根；回 True＝這次印了（呼叫端要寫回 state）。
+    不在暫存根底下、只因快取目錄（__pycache__、.pytest_cache）判成暫存的那一支不是專案，不印。專案根＝檔所在的版控根；沒有就 session 的 cwd（檔在它底下時）；
+    再沒有就暫存根底下第一層資料夾。"""
+    norm = _comparable(path) if path else ""
+    tmp_root = _temp_root_of(norm) if norm else ""
+    if not tmp_root:
+        return False
+    root = _ephemeral_project_root(norm, tmp_root, str((state.get("session") or {}).get("cwd") or ""))
+    seen = state.get(EPHEMERAL_NOTED_KEY)
+    seen = [str(r) for r in seen] if isinstance(seen, list) else []
+    if root.lower() in seen:
+        return False
+    state[EPHEMERAL_NOTED_KEY] = (seen + [root.lower()])[-EPHEMERAL_NOTED_CAP:]
+    print(f"[Guardian:EphemeralWrite] {root} 在系統暫存目錄底下，這個專案的寫入照暫存檔處理、不記進改檔清單："
+          "收尾的對帳、同步提醒都看不到這些改動。要讓閘照看，把專案放到暫存目錄以外。本 session 這個專案只說這一次。",
+          file=sys.stderr)
+    return True
+
+
+def _ephemeral_project_root(norm: str, tmp_root: str, cwd: str) -> str:
+    try:
+        from wg_verify_ledger import vcs_root_of
+        vcs = vcs_root_of(norm)
+    except Exception as e:  # noqa: BLE001  找不到版控根 → 退回 cwd／暫存根第一層
+        print(f"[_shared] 找暫存專案的版控根失敗，改用 cwd 或暫存根第一層：{type(e).__name__}: {e}", file=sys.stderr)
+        vcs = None
+    if vcs is not None:
+        return _comparable(str(vcs))
+    base = _comparable(cwd) if cwd else ""
+    if base and norm.lower().startswith(base.lower().rstrip("/") + "/"):
+        return base.rstrip("/")
+    return f"{tmp_root}/{norm[len(tmp_root) + 1:].split('/', 1)[0]}"
 
 
 # ─── Project delegate hook ───────────────────────────────────────────
@@ -205,35 +290,251 @@ def _cleanup_old_states() -> None:
                 f.unlink(missing_ok=True)
         except OSError:
             pass
+    # 其餘 workflow/ 紀錄的保留規則都在下面的 WORKFLOW_RETENTION（SessionStart 由 prune_workflow_records 照表清）
 
-    # codex companion 旁路檔（companion-state/assessment/metrics-*.json）原無
-    # 自帶清理，易累積。>7d 一律清（與上方 state 檔 catch-all 同標準；活躍 session <7d 不動）。
-    for f in WORKFLOW_DIR.glob("companion-*.json"):
-        try:
-            if now - f.stat().st_mtime > 7 * 86400:
-                f.unlink(missing_ok=True)
-        except OSError:
-            pass
 
-    # 跨 session 協調旁路檔：warn-cache（含殘留 .tmp）同 7d 標準；observation log 30d
-    for f in WORKFLOW_DIR.glob("coord-warn-cache-*.tmp"):
+# ─── workflow/ 執行紀錄保留規則表（SessionStart 照表清一次）─────────────────────
+# 每列：dir（相對 workflow/；"../Logs/…" 是 workflow 的上一層）｜patterns（只看該層，不往下找）｜kind＋param｜keep（保留多久，給人讀）｜why（為什麼刪了不會壞事）。
+# 依據：每類在 session 結束後還有沒有讀者、讀者看多久以前的資料。檔名含目前 session id 的一律不動（resume 回來還要用）。
+# kind：age＝mtime 超過 param 天就刪；aec_tempfiles／tracking_pairs＝下面同名的判斷；
+# rotate＝超過大小輪替；elsewhere＝規則在別支程式（param 寫在哪），表上只登記；keep＝永久保留。
+
+RETENTION_KINDS = ("age", "aec_tempfiles", "tracking_pairs", "rotate", "elsewhere", "keep")
+OVERVIEW_LOG_MAX_MB = 10
+
+WORKFLOW_RETENTION: List[Dict[str, Any]] = [
+    {"dir": "", "patterns": ("state-*.json",), "kind": "elsewhere", "param": "handlers/_shared._cleanup_old_states（SessionStart、SessionEnd）",
+     "keep": "10 分鐘到 6 小時分級，最長 7 天", "why": "只有該 session 自己讀；分級要看檔案內容，留在 _cleanup_old_states"},
+    {"dir": "", "patterns": ("companion-*.json",), "kind": "age", "param": 7,
+     "keep": "7 天", "why": "codex 旁路紀錄只給當時那個 session 用"},
+    {"dir": "", "patterns": ("coord-warn-cache-*.tmp", "state-*.tmp", "companion-*.tmp", "*.corrupt*", "coord-warn-cache-*.json",
+                             "state-*.pending", "_overview-hub-retired-warned.json.*.tmp"),
+     "kind": "age", "param": 7, "keep": "7 天",
+     "why": "寫到一半被砍的殘檔、壞檔備份與協調快取，沒人讀；state 待併帳只有同一個 session 下一支 hook 併，7 天沒併＝session 早結束"},
+    {"dir": "", "patterns": ("read-log-*.jsonl", "read-log-*.lock"), "kind": "age", "param": 7, "keep": "7 天（同 state 檔最長）",
+     "why": "Read 快路徑的待補帳只有同一個 session 下一個事件或 SessionEnd 補進 state，7 天沒補＝session 早結束、state 也已清；"
+            "鎖檔在 Windows 以外刻意不刪（刪了會讓等鎖的人鎖到另一個檔），只能在這裡清"},
+    {"dir": "../Logs/session-coordination", "patterns": ("*.jsonl*",), "kind": "age", "param": 30,
+     "keep": "30 天", "why": "多 session 協調的觀測紀錄，只拿來查近期"},
+    {"dir": "aec-report", "patterns": ("*.json", "*.tmp"), "kind": "age", "param": 7,
+     "keep": "7 天", "why": "收尾報告只給近期 session 的 HUD 看；.tmp 是寫入殘檔"},
+    {"dir": "aec-decision", "patterns": ("*.json",), "kind": "age", "param": 7,
+     "keep": "7 天", "why": "舊版 HUD 按鈕留的決策紙條；現在按鈕當場執行、不再產生，只清舊檔"},
+    {"dir": "aec-tempfiles", "patterns": ("*.jsonl",), "kind": "aec_tempfiles", "param": 7,
+     "keep": "超過 7 天而且帳上列的東西都已不在（檔案看磁碟、分支看 git）",
+     "why": "session 留下的東西還在，HUD 就要一直列出來讓使用者處置（原設計者拒絕「放 N 天就刪」）"},
+    {"dir": "dpm-done", "patterns": ("*.flag",), "kind": "age", "param": 7,
+     "keep": "7 天", "why": "只防同一 session 重複要求 post-mortem"},
+    {"dir": "need-goal", "patterns": ("*.json", "*.tmp", "*.lock"), "kind": "age", "param": 30,
+     "keep": "30 天", "why": "沒有程式寫入也沒有讀者，只清各機留下的舊檔"},
+    {"dir": "git-launchers", "patterns": ("*.json",), "kind": "age", "param": 7,
+     "keep": "7 天", "why": "只給同一 session 收尾判「這支是一次性 git 啟動器、不算改程式」用（wg_verify_ledger LAUNCHER_NOT_CODE）"},
+    {"dir": "ups-sentinel", "patterns": ("*.json",), "kind": "age", "param": 7,
+     "keep": "7 天", "why": "只給同一 session 下一輪偵測「上一輪被中斷」用"},
+    {"dir": "mcp-boot", "patterns": ("*.json", "*.tmp"), "kind": "age", "param": 7,
+     "keep": "7 天", "why": "活著的工具服務每分鐘更新心跳；收尾只看 3 分鐘內有心跳的，關掉的程序留下的檔沒人讀"},
+    {"dir": "acceptance-spec", "patterns": ("*.json",), "kind": "age", "param": 30,
+     "keep": "30 天", "why": "只在該 session 內讀；規格本體在專案 .claude/verify/，不受影響"},
+    {"dir": "harvest-ledger", "patterns": ("*.jsonl",), "kind": "age", "param": 30,
+     "keep": "30 天", "why": "SessionEnd 同步時已交接到 vcs-sync 佇列；只有 resume 同一 session 才會再讀"},
+    {"dir": "verify-ledger", "patterns": ("*.jsonl",), "kind": "age", "param": 14,
+     "keep": "14 天（含 .agents.jsonl；_runs/ 另列）",
+     "why": "查核閘看 state 裡的收據、不讀這檔；收尾報告 7 天就清"},
+    {"dir": "verify-ledger/_runs", "patterns": ("*.json",), "kind": "elsewhere", "param": "lib/self_receipt.prune_self_runs（SessionEnd）",
+     "keep": "留最新 200 份、超過 30 天也刪", "why": "對帳閘只讀最新 50 份"},
+    {"dir": "usage-snapshots", "patterns": ("*-FAILED.png",), "kind": "age", "param": 30,
+     "keep": "30 天", "why": "失敗診斷圖只看當次；用量 log 與成功截圖是成品，不刪"},
+    {"dir": "tracking", "patterns": ("*.jsonl",), "kind": "tracking_pairs", "param": 90,
+     "keep": "已結案的一對（開項＋結案）結案超過 90 天就拿掉；沒結案的永遠留",
+     "why": "沒結案的就是這本帳存在的目的；結案的一對沒有程式再讀"},
+    {"dir": "tool-results", "patterns": ("*.jsonl",), "kind": "elsewhere", "param": "wg_friction.flush_tool_result_stats（SessionEnd）",
+     "keep": "彙整完刪自己的，其他 7 天", "why": "只有自己的 session 彙整時讀"},
+    {"dir": "health-reports", "patterns": ("health-*.md",), "kind": "elsewhere", "param": "tools/health-weekly.py（寫報告時）",
+     "keep": "留最新 12 份", "why": "週報只需要近幾週對照"},
+    {"dir": "se-sentinel", "patterns": ("*.json",), "kind": "elsewhere", "param": "session_start._check_se_sentinel_residual",
+     "keep": "開 session 時偵測、告警、刪", "why": "要先告警才刪，不能併進靜默清理"},
+    {"dir": "", "patterns": ("_overview-hub.log",), "kind": "rotate", "param": "OVERVIEW_LOG_MAX_MB",
+     "keep": "超過 10 MB 輪替成 .1～.3", "why": "沒有程式讀，只會一直長"},
+    {"dir": "", "patterns": ("config.json", "followups.json", "org-memory.local.json", "health-last-run.json", "world-dev.json",
+                             "_overview-hub-retired-warned.json"),
+     "kind": "keep", "param": None, "keep": "永久",
+     "why": "設定與本機狀態（退役鍵警告標記每個設定檔一筆、不會一直長；刪了只是再警告一次）"},
+    {"dir": "", "patterns": ("inbox/", "vcs-sync/", "usage-snapshots/usage-log.jsonl", "usage-snapshots/<成功截圖>"),
+     "kind": "keep", "param": None, "keep": "永久", "why": "信件匣、版控同步佇列（鎖刻意不刪）、使用者的成品"},
+]
+
+_DAY = 86400
+
+
+def _file_sig(p: Path) -> Tuple[int, int]:
+    st = p.stat()
+    return st.st_size, st.st_mtime_ns
+
+
+def _rm(p: Path, dry_run: bool, res: Dict[str, Any]) -> bool:
+    """刪一個檔或目錄並記帳：成功列 deleted、刪不掉（被占用、權限）列 failed、已經被別人刪掉不算。"""
+    if dry_run:
+        res["deleted"].append(str(p))
+        return True
+    try:
+        if p.is_dir():
+            import shutil
+            shutil.rmtree(p)
+        else:
+            p.unlink()
+        res["deleted"].append(str(p))
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError:
+        res["failed"].append(str(p))
+        return False
+
+
+def _older(p: Path, cutoff: float) -> bool:
+    try:
+        return p.stat().st_mtime < cutoff
+    except OSError:
+        return False
+
+
+def _prune_age(d: Path, patterns, days: float, now: float, sid: str, dry_run: bool, res: Dict[str, Any]) -> None:
+    cutoff = now - days * _DAY
+    for pattern in patterns:
+        for f in d.glob(pattern):
+            if f.is_file() and not (sid and sid in f.name) and _older(f, cutoff):
+                _rm(f, dry_run, res)
+
+
+def _prune_aec_tempfiles(d: Path, days: float, now: float, dry_run: bool, res: Dict[str, Any]) -> None:
+    """產出物帳本：過期而且帳上列的東西全都不在了才清（檔案看磁碟、分支看 git）；
+    只要還有一樣在，帳本就要留著讓 HUD 繼續列。"""
+    from handlers.aec_ledger import rec_alive
+    cutoff = now - days * _DAY
+    for p in d.glob("*.jsonl"):
+        if not _older(p, cutoff):
+            continue
         try:
-            if now - f.stat().st_mtime > 7 * 86400:
-                f.unlink(missing_ok=True)
+            lines = p.read_text(encoding="utf-8").splitlines()
         except OSError:
-            pass
-    for f in WORKFLOW_DIR.glob("coord-warn-cache-*.json"):
+            continue
+        alive = False
+        for line in lines:
+            try:
+                rec = json.loads(line)
+            except Exception:  # noqa: BLE001
+                continue
+            if isinstance(rec, dict) and rec_alive(rec):
+                alive = True
+                break
+        if not alive:
+            _rm(p, dry_run, res)
+
+
+def _prune_tracking_pairs(d: Path, days: float, now: float, dry_run: bool, res: Dict[str, Any]) -> None:
+    """追蹤帳本：結案列（closed 且 closes.id 指到同本帳的開項）的 at 超過期限 → 那一對一起拿掉；其他列逐字原樣保留。
+    帳本會被多個 session 同時追加且沒有鎖：改寫前後各看一次檔案大小與時間，中間有變就這一輪不動。"""
+    try:
+        from wg_harvest import tracking_entry_id
+    except Exception:  # noqa: BLE001
+        def tracking_entry_id(e):  # type: ignore[no-redef]
+            return str(e.get("id") or "")
+    cutoff = now - days * _DAY
+    for t in d.glob("*.jsonl.*.tmp"):   # 改寫途中被砍留下的暫存
+        if _older(t, now - _DAY):
+            _rm(t, dry_run, res)
+    for p in d.glob("*.jsonl"):
         try:
-            if now - f.stat().st_mtime > 7 * 86400:
-                f.unlink(missing_ok=True)
-        except OSError:
-            pass
-    for f in (WORKFLOW_DIR.parent / "Logs" / "session-coordination").glob("*.jsonl*"):
+            sig = _file_sig(p)
+            text = p.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        lines = text.split("\n")
+        rows: Dict[int, Dict[str, Any]] = {}
+        for i, line in enumerate(lines):
+            try:
+                row = json.loads(line)
+            except Exception:  # noqa: BLE001
+                continue
+            if isinstance(row, dict):
+                rows[i] = row
+        open_at = {tracking_entry_id(r): i for i, r in rows.items() if r.get("status") == "open"}
+        drop = set()
+        for i, r in rows.items():
+            closes = r.get("closes")
+            if r.get("status") != "closed" or not isinstance(closes, dict):
+                continue
+            target = open_at.get(str(closes.get("id")))
+            if target is None or target in drop:
+                continue
+            try:
+                at = datetime.fromisoformat(str(r.get("at"))).timestamp()
+            except (TypeError, ValueError):
+                continue
+            if at < cutoff:
+                drop.update((i, target))
+        if not drop:
+            continue
+        kept = [line for i, line in enumerate(lines) if i not in drop]
+        if dry_run:
+            res["compacted"][str(p)] = len(drop)
+            continue
+        tmp = p.with_name(f"{p.name}.{os.getpid()}.tmp")
         try:
-            if now - f.stat().st_mtime > 30 * 86400:
-                f.unlink(missing_ok=True)
+            tmp.write_text("\n".join(kept), encoding="utf-8", newline="\n")
+            if _file_sig(p) != sig:
+                tmp.unlink()
+                continue
+            os.replace(tmp, p)
+            res["compacted"][str(p)] = len(drop)
         except OSError:
-            pass
+            res["failed"].append(str(p))
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
+def prune_workflow_records(wf: Optional[Path] = None, current_sid: str = "", now: Optional[float] = None,
+                           dry_run: bool = False) -> Dict[str, Any]:
+    """照 WORKFLOW_RETENTION 清 workflow/ 底下的執行紀錄（SessionStart 跑一次）。
+    回 {deleted: [...], failed: [...], compacted: {帳本: 拿掉幾列}, rotated: [...]}；dry_run 只列不刪。
+    單列出錯不影響其他列；有刪不掉的檔或某列出錯，各寫一行 atom-debug（不靜默）。"""
+    wf = Path(wf) if wf is not None else WORKFLOW_DIR
+    now = time.time() if now is None else now
+    res: Dict[str, Any] = {"deleted": [], "failed": [], "compacted": {}, "rotated": []}
+    if not wf.is_dir():
+        return res
+    for row in WORKFLOW_RETENTION:
+        kind = row["kind"]
+        if kind in ("elsewhere", "keep"):
+            continue
+        rel = row["dir"]
+        d = wf.parent / rel[3:] if rel.startswith("../") else (wf / rel if rel else wf)
+        if not d.is_dir():
+            continue
+        try:
+            if kind == "age":
+                _prune_age(d, row["patterns"], row["param"], now, current_sid, dry_run, res)
+            elif kind == "aec_tempfiles":
+                _prune_aec_tempfiles(d, row["param"], now, dry_run, res)
+            elif kind == "tracking_pairs":
+                _prune_tracking_pairs(d, row["param"], now, dry_run, res)
+            elif kind == "rotate":
+                from wg_core import rotate_log_if_oversized
+                for name in row["patterns"]:
+                    log = d / name
+                    if dry_run:
+                        continue
+                    if rotate_log_if_oversized(log, max_mb=OVERVIEW_LOG_MAX_MB):
+                        res["rotated"].append(str(log))
+        except Exception as e:  # noqa: BLE001
+            _atom_debug_error(f"workflow_retention:{row['dir'] or 'workflow'}", e)
+    if res["failed"]:
+        names = "、".join(Path(f).name for f in res["failed"][:5])
+        _atom_debug_error("workflow_retention",   # OSError 才會把訊息原文寫進 log（其他型別只記 traceback）
+                          OSError(f"{len(res['failed'])} 個刪不掉（被占用或沒權限）：{names}"))
+    return res
 
 
 # ─── User Extract Worker Spawning ──────────────────────────────────────
@@ -258,13 +559,13 @@ def _maybe_spawn_user_extract_worker(
     if _is_lease_valid(state, "user_extract_worker_pid"):
         return False
 
-    worker_path = CLAUDE_DIR / "hooks" / "user-extract-worker.py"
+    worker_path = CODE_DIR / "hooks" / "user-extract-worker.py"
     if not worker_path.exists():
         return False
 
     cwd = state.get("session", {}).get("cwd", "")
     user_id = state.get("user_identity", {})
-    user = user_id.get("user", "unknown")
+    user = user_id.get("user") or get_current_user()
 
     worker_ctx = {
         "session_id": session_id,
@@ -285,14 +586,18 @@ def _maybe_spawn_user_extract_worker(
         env["PYTHONIOENCODING"] = "utf-8"
 
         json_ctx = json.dumps(worker_ctx, ensure_ascii=False)
-        proc = _sp.Popen(
-            [sys.executable, str(worker_path)],
-            stdin=_sp.PIPE,
-            stdout=_sp.DEVNULL,
-            stderr=_sp.DEVNULL,
-            env=env,
-            **kwargs,
-        )
+        # worker 的錯誤（例如萃取紀錄寫不進）落到資料根 Logs/user-extract-worker.log，不丟進 DEVNULL
+        worker_log = CLAUDE_DIR / "Logs" / "user-extract-worker.log"
+        worker_log.parent.mkdir(parents=True, exist_ok=True)
+        with open(worker_log, "a", encoding="utf-8", newline="\n") as worker_log_fh:
+            proc = _sp.Popen(
+                [sys.executable, str(worker_path)],
+                stdin=_sp.PIPE,
+                stdout=_sp.DEVNULL,
+                stderr=worker_log_fh,
+                env=env,
+                **kwargs,
+            )
         proc.stdin.write(json_ctx.encode("utf-8"))
         proc.stdin.close()
 

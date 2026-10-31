@@ -78,7 +78,7 @@ python "$HOME/.claude/tools/install.py" --verify
 - **向量套件**：指令以 `--apply`／`--check` 輸出為準（要裝進 hook 用的那支 Python，輸出會寫出完整指令），請使用者自己跑。
 - **公司層記憶**：請使用者對 Claude Code 說「接上公司記憶」（`/org` skill）。說明 → [TECH.md](TECH.md) §4.4。
 - **多子專案佈局**（把 Claude 開在子專案也接上專案根的記憶）：`python ~/.claude/tools/project-tree.py claim --root <專案根>`。說明 → TECH.md §4.6。
-- **其他 AI 客戶端查記憶**（Codex／Gemini CLI，不裝 hooks）：`python ~/.claude/tools/ai-client-setup.py`。說明 → TECH.md §5.8。
+- **其他 AI 客戶端查記憶**（Codex／Gemini CLI／Antigravity，不裝 hooks）：`python ~/.claude/tools/ai-client-setup.py`。說明 → TECH.md §5.8。
 - **遠端 Ollama backend、MCP 註冊細節、各依賴缺了會怎樣、疑難排解** → TECH.md §9。
 - **關掉某個功能** → TECH.md §12「功能開關」。
 - **多台電腦／多人同時寫記憶的索引合併**（自動，不需安裝）→ [_AIDocs/MultiMachineMemorySync.md](_AIDocs/MultiMachineMemorySync.md)。
@@ -92,6 +92,7 @@ python "$HOME/.claude/tools/install.py" --upgrade
 - 結束碼 0 → 請使用者重開 Claude Code，再跑步驟 5 的 `--verify`。
 - 結束碼 1 → 原樣轉述輸出後停下。安裝器會嘗試把設定檔還原，逐檔印「已還原」或「還原失敗」；有還原失敗的檔，輸出會寫出使用者版本存在哪裡，一併轉述。它說「有未解衝突」或「rebase／merge 進行中」時，請使用者決定怎麼處理。
 - 不要用手動 `git pull` 取代這條指令：安裝器管理的機器上，`settings.json` 與 `workflow/config.json` 的使用者設定要靠它重新合併。
+- **更新 hooks 後同步 config 的 PYTEST／PYTEST_MEASURE 規則**：合併只做頂層，使用者保留的舊 `workflow/config.json` 裡 `verify_ledger.sentinel_regex` 兩條內建規則（名稱 `PYTEST`、`PYTEST_MEASURE`）不會被覆寫。缺 `pytest_summary` 旗標的舊規則 hook 會自動補；但 regex 若不是現行版，`1 passed, 1 error` 這類摘要仍會被判 PASS，要手動把兩條的 `regex` 與 `verdict_map` 對成版控庫 `workflow/config.json` 的現行值。週健檢看到「config 內建 PYTEST regex 非現行版」就是這件事。
 
 ## 4. 移除
 

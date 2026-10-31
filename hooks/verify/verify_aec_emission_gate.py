@@ -47,7 +47,9 @@ def driven(monkeypatch):
     monkeypatch.setattr(st, "_hud_alive", lambda *a, **k: (False, {"reason": "test"}))  # Stop 再查：仍死
     monkeypatch.setattr(st, "append_guard_log", lambda *a, **k: None)
 
-    def drive(modified_files, capsys, **extra):
+    monkeypatch.setattr(st, "coding_turn", lambda *a, **k: True)   # 測閘本身：當成寫碼回合（CODING_TURN_ONLY 的案在 verify_gate_trim）
+
+    def drive(modified_files, capsys, config=None, **extra):
         state = {
             "phase": "working",
             "modified_files": modified_files,
@@ -58,8 +60,10 @@ def driven(monkeypatch):
         state.update(extra)
         monkeypatch.setattr(st, "_ensure_state", lambda *a, **k: state)
         with pytest.raises(SystemExit):
-            st.handle_stop({"session_id": _SID, "cwd": ""}, {})
-        return capsys.readouterr().out
+            st.handle_stop({"session_id": _SID, "cwd": ""}, config or {})
+        cap = capsys.readouterr()
+        drive.err = cap.err   # stderr 另存（HUD 開不起來的一行提示印在這裡），回傳值照舊只有 stdout
+        return cap.out
 
     return drive
 
@@ -87,6 +91,12 @@ def test_own_core_no_emit_blocks(driven, capsys):
     assert "anti_evasion_report" in out
 
 
+def test_scan_report_gate_switch_off_does_not_block(driven, capsys):
+    """收尾瘦身：aec.scan_report_gate=false → 沒交收尾檢核也不擋收尾。前置：同一情境預設照擋。舊碼不認這個鍵 → 紅。"""
+    assert "[Guardian:ScanReport]" in driven([_mf(_CORE)], capsys, turn_seq=5)
+    assert "ScanReport" not in driven([_mf(_CORE)], capsys, turn_seq=5, config={"aec": {"scan_report_gate": False}})
+
+
 def test_emit_this_turn_passes(driven, capsys):
     """本回合 emit（turn_seq+session_id 雙鍵皆符）→ 放行，不 block。"""
     out = driven([_mf(_CORE)], capsys, turn_seq=5, anti_evasion_report=_emit(5))
@@ -103,9 +113,11 @@ def test_sibling_emit_still_blocks(driven, capsys):
 
 
 def test_prior_turn_emit_not_satisfied(driven, capsys):
-    """emit 發生在別 turn（turn_seq 不符）→ 不滿足，照 block（不因歷史 emit 永久放行）。"""
+    """emit 發生在別 turn（turn_seq 不符）→ 不滿足，照 block（不因歷史 emit 永久放行）。
+    改檔紀錄沒有回合號（legacy entry）→ 不知道是不是報告之後改的，aec_up_to_date 不成立。"""
     out = driven([_mf(_CORE)], capsys, turn_seq=5, anti_evasion_report=_emit(4))
     assert "[Guardian:ScanReport]" in out
+
 
 
 def test_turn_seq_zero_guard(driven, capsys):
@@ -137,14 +149,15 @@ def test_coordinator_docs_only_not_triggered(driven, capsys):
 # ─── HUD 不可達 fallback（可觀測性鐵律：push 不到窗不得 fail-silent）──────
 
 def test_hud_fallback_surfaces_notable(driven, capsys):
-    """emit 為 notable + HUD 不可達（aec_hud_fallback）→ Stop 大聲補 (a) 回 chat。"""
+    """emit 為 notable + HUD 不可達（aec_hud_fallback）→ Stop 印一行告知報告檔在哪（不 fail-silent），
+    但不擋、不把報告內容貼回聊天（原設計者裁定：報告任何理由都不進聊天）。"""
     out = driven(
         [_mf(_CORE)], capsys, turn_seq=5,
         anti_evasion_report=_emit(5, severity="notable", a="- x.py:10 — 修了 y"),
         aec_hud_fallback=True,
     )
-    assert "[Guardian:AEC]" in out
-    assert "缺失修補" in out
+    assert "[Guardian:AEC]" in driven.err and "aec-report" in driven.err
+    assert "修了 y" not in out + driven.err and "[Guardian:AEC]" not in out
 
 
 # ─── severity 模型（Python/Node single source of truth）──────────
@@ -208,13 +221,16 @@ def test_detect_core_emitted_not_blocked():
 
 
 def test_detect_dismiss_prompt_not_blocked():
+    """使用者說「先這樣」＝這次收尾檢核整批不做：不用再逐項引用原話。"""
     assert detect_missing_aec_emission(_DONE, _mfs(_CORE), ["先這樣"], 2, False) is False
+    cited = _DONE + "\n不做｜收尾檢核：使用者說「先這樣」"
+    assert detect_missing_aec_emission(cited, _mfs(_CORE), ["先這樣"], 2, False) is False
 
 
 # ─── one-writer：post_tool_use 收 MCP emit → 獨佔寫 state + 落報告檔 ──────
 
-def _drive_ptu(monkeypatch, tmp_path, tool_input, turn_seq=7, session_id=_SID):
-    state = {"turn_seq": turn_seq}
+def _drive_ptu(monkeypatch, tmp_path, tool_input, turn_seq=7, session_id=_SID, **extra):
+    state = {"turn_seq": turn_seq, **extra}
     monkeypatch.setattr(pt, "_ensure_state", lambda *a, **k: state)
     monkeypatch.setattr(pt, "write_state", lambda *a, **k: None)
     monkeypatch.setattr(pt, "WORKFLOW_DIR", tmp_path)
@@ -296,27 +312,6 @@ def test_aec_pending_items(d, h, n, why):
     assert len(aec_pending_items(d, h)) == n, why
 
 
-@pytest.mark.skipif(not __import__("shutil").which("node"), reason="node not available")
-def test_aec_pending_py_js_parity():
-    """MIRROR 守法：Node aecPendingItems 對同一組 fixture 的結果與 Python 逐項相同。"""
-    import subprocess
-    root = HOOKS_DIR.parent
-    js = root / "tools" / "workflow-guardian-mcp" / "lib" / "anti-evasion.js"
-    cases = [[c[0], c[1]] for c in _PENDING_CASES]
-    script = (
-        "const ae=require(process.argv[1]);const cases=JSON.parse(process.argv[2]);"
-        "console.log(JSON.stringify(cases.map(([d,h])=>ae.aecPendingItems(d,h))));"
-    )
-    res = subprocess.run(
-        ["node", "-e", script, str(js), json.dumps(cases, ensure_ascii=False)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-    )
-    assert res.returncode == 0, res.stderr
-    got = json.loads(res.stdout)
-    want = [aec_pending_items(d, h) for d, h in cases]
-    assert got == want
-
-
 def test_ptu_emit_pending_marks_report(monkeypatch, tmp_path):
     """emit 帶「尚未寫」→ report/state 落 d_pending（HUD 標紅、Stop 閘讀）。"""
     state = _drive_ptu(
@@ -350,9 +345,202 @@ def test_stop_pending_blocks_once(driven, capsys):
     assert "AEC-Pending" not in out2
 
 
+# ─── B7：收尾欄 (j) 證據持久路徑／(k) 追蹤項 ─────────────────────────────────
+
+def _full_input(**over):
+    base = {"a": "無", "b": "無", "c": "無", "d": "無", "e": "無", "f": "無", "g": "無", "h": "可關閉", "i": "無",
+            "j_evidence_path": "無", "k_followups": "無"}
+    base.update(over)
+    return base
+
+
+def test_ptu_emit_stores_j_k_and_missing_flags(monkeypatch, tmp_path):
+    """無收據：j「無」合法（j_missing False）；k 空字串 → k_missing True 並回告。"""
+    state = _drive_ptu(monkeypatch, tmp_path, _full_input(k_followups=""))
+    aec = state["anti_evasion_report"]
+    assert aec["j_evidence_path"] == "無" and aec["k_followups"] == ""
+    assert aec["j_missing"] is False and aec["k_missing"] is True
+    data = json.loads((tmp_path / "aec-report" / f"{_SID}-t7.json").read_text(encoding="utf-8"))
+    assert data["k_missing"] is True
+
+
+def test_ptu_emit_j_missing_when_receipts_exist(monkeypatch, tmp_path):
+    """本 session 有驗證收據而 j「無」→ j_missing True；j 指到真存在的檔 → False。"""
+    receipts = {"verify_receipts": {_SID: [{"turn_seq": 7, "sentinels": [{"name": "X_CHECK", "verdict": "PASS"}], "exit_code": None}]}}
+    state = _drive_ptu(monkeypatch, tmp_path, _full_input(), **receipts)
+    assert state["anti_evasion_report"]["j_missing"] is True
+    ledger = tmp_path / "ledger.jsonl"
+    ledger.write_text("{}\n", encoding="utf-8", newline="\n")
+    state = _drive_ptu(monkeypatch, tmp_path, _full_input(j_evidence_path=str(ledger)), **receipts)
+    assert state["anti_evasion_report"]["j_missing"] is False
+
+
+_RECEIPTS = {"verify_receipts": {_SID: [{"turn_seq": 7, "sentinels": [{"name": "PYTEST", "verdict": "PASS"}], "exit_code": 0}]}}
+
+
+def _ledger(tmp_path):
+    p = tmp_path / "verify-ledger" / f"{_SID}.jsonl"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("{}\n", encoding="utf-8", newline="\n")
+    return p
+
+
+@pytest.mark.parametrize("j", ["無", "", "  "])
+def test_b5_j_autofilled_from_ledger_when_receipts(monkeypatch, tmp_path, capsys, j):
+    """B5：pytest 有收據、j 空／「無」→ 系統帶入本 session 帳本絕對路徑（資料根底下），不擋、回告「已自動帶入」（改前 j_missing、要模型自己找）。"""
+    ledger = _ledger(tmp_path)
+    state = _drive_ptu(monkeypatch, tmp_path, _full_input(j_evidence_path=j), **_RECEIPTS)
+    aec = state["anti_evasion_report"]
+    assert aec["j_evidence_path"] == str(ledger) and aec["j_autofilled"] is True and aec["j_missing"] is False
+    out = capsys.readouterr().out
+    assert f"(j) 已自動帶入 {ledger}".replace("\\", "\\\\") in out and "證據持久路徑缺或不存在" not in out
+
+
+def test_b5_j_not_touched_without_receipts(monkeypatch, tmp_path, capsys):
+    """沒收據、j「無」→ 不帶入、不回告 (j)。"""
+    _ledger(tmp_path)
+    state = _drive_ptu(monkeypatch, tmp_path, _full_input(j_evidence_path="無"))
+    aec = state["anti_evasion_report"]
+    assert aec["j_evidence_path"] == "無" and "j_autofilled" not in aec and aec["j_missing"] is False
+    assert "(j)" not in capsys.readouterr().out
+
+
+def test_b5_j_model_path_wins(monkeypatch, tmp_path, capsys):
+    """有收據、模型填了別的真存在路徑 → 用模型填的；填的不存在 → j_missing，回告印帳本絕對路徑（改前印相對路徑 workflow/verify-ledger/…）。"""
+    ledger = _ledger(tmp_path)
+    own = tmp_path / "out.csv"
+    own.write_text("x", encoding="utf-8")
+    state = _drive_ptu(monkeypatch, tmp_path, _full_input(j_evidence_path=str(own)), **_RECEIPTS)
+    aec = state["anti_evasion_report"]
+    assert aec["j_evidence_path"] == str(own) and "j_autofilled" not in aec and aec["j_missing"] is False
+    capsys.readouterr()
+    state = _drive_ptu(monkeypatch, tmp_path, _full_input(j_evidence_path="workflow/verify-ledger/x.jsonl"), **_RECEIPTS)
+    assert state["anti_evasion_report"]["j_missing"] is True
+    assert str(ledger).replace("\\", "\\\\") in capsys.readouterr().out
+
+
+def test_b5_stop_does_not_block_autofilled_j(monkeypatch, tmp_path, driven, capsys):
+    """Stop 對帳閘 (e) 讀報告裡帶入後的 j：有收據、模型 j「無」→ 不出 AEC_EVIDENCE_PATH。"""
+    _ledger(tmp_path)
+    aec = _drive_ptu(monkeypatch, tmp_path, _full_input(), **_RECEIPTS)["anti_evasion_report"]
+    rec = {**aec, "turn_seq": 5}
+    out = driven([_mf(_CORE)], capsys, turn_seq=5, anti_evasion_report=rec, verify_receipts=_RECEIPTS["verify_receipts"])
+    assert "AEC_EVIDENCE_PATH" not in out
+
+
+@pytest.mark.skipif(not __import__("shutil").which("node"), reason="node not available")
+def test_b5_node_chip_does_not_print_j(tmp_path):
+    """Node 端不知收據與 session，不印 (j)（改前一律印「(j) 證據持久路徑未填…請填 workflow/verify-ledger/<sid>.jsonl」）；
+    aecEvidenceAutofill 與 Python 同結果（MIRROR）。"""
+    import subprocess
+    from wg_verify_ledger import aec_evidence_autofill
+    ledger = _ledger(tmp_path)
+    js = HOOKS_DIR.parent / "tools" / "workflow-guardian-mcp" / "lib" / "anti-evasion.js"
+    cases = [["無", True, str(ledger)], ["", True, str(ledger)], ["無", False, str(ledger)], ["x.csv", True, str(ledger)],
+             ["無", True, str(tmp_path / "nope.jsonl")]]
+    script = ("const p=require('path');const js=process.argv[1];const mp=require.resolve(p.join(p.dirname(js),'mcp.js'));"
+              "require.cache[mp]={id:mp,filename:mp,loaded:true,exports:{sendToolResult:(id,t)=>console.log(JSON.stringify(t))}};"
+              "const ae=require(js);const c=JSON.parse(process.argv[2]);"
+              "console.log(JSON.stringify(c.map(([j,r,l])=>ae.aecEvidenceAutofill(j,r,l))));"
+              "ae.toolAntiEvasionReport(1,{a:'無',b:'無',d:'無',e:'無',f:'無',g:'無',h:'可關閉',j_evidence_path:'',k_followups:'無'});")
+    res = subprocess.run(["node", "-e", script, str(js), json.dumps(cases, ensure_ascii=False)],
+                         capture_output=True, text=True, encoding="utf-8", errors="replace")
+    assert res.returncode == 0, res.stderr
+    fills, chip = [json.loads(l) for l in res.stdout.strip().splitlines()]
+    assert fills == [aec_evidence_autofill(j, r, l) for j, r, l in cases]
+    assert "(j)" not in chip and "例行" in chip   # 回條一行白話（不再印英文嚴重度）
+
+
+def test_ptu_legacy_emit_without_jk_keys_is_exempt(monkeypatch, tmp_path, driven, capsys):
+    """舊格式呼叫（a～i，沒有 j／k 鍵）：報告不寫 j／k、不標 k_missing；Stop 對帳閘 (e) 不拿缺鍵當空字串擋（只有明給空字串才擋）。"""
+    receipts = {"verify_receipts": {_SID: [{"turn_seq": 7, "sentinels": [{"name": "X_CHECK", "verdict": "PASS"}], "exit_code": None}]}}
+    legacy_input = {k: "無" for k in "abcdefghi"}
+    legacy_input["h"] = "可關閉"
+    state = _drive_ptu(monkeypatch, tmp_path, legacy_input, **receipts)
+    aec = state["anti_evasion_report"]
+    assert "j_evidence_path" not in aec and "k_followups" not in aec
+    assert "j_missing" not in aec and "k_missing" not in aec
+    rec = {**aec, "turn_seq": 5}
+    out = driven([_mf(_CORE)], capsys, turn_seq=5, anti_evasion_report=rec, verify_receipts=receipts["verify_receipts"])
+    assert "ReconcileGate" not in out and "空字串" not in out
+
+
+def test_scan_report_message_lists_j_and_k(driven, capsys):
+    out = driven([_mf(_CORE)], capsys, turn_seq=5)
+    assert "(j) 證據持久路徑" in out and "(k) 追蹤項" in out and "十參" in out and "(c) Token" not in out
+
+
+def test_ptu_k_followups_tracking_hook(monkeypatch, tmp_path):
+    """(k)≠「無」→ 呼叫 wg_harvest.append_tracking；k=「無」不呼叫。wg_harvest 的兩函式以 monkeypatch 提供。
+    本案的輸入沒有 cwd → slug＝tracking_slug("")＝"_no-cwd"（舊版寫 "root"，讀回端永遠對不上）。"""
+    import wg_harvest
+    calls = []
+    monkeypatch.setattr(wg_harvest, "tracking_entries",
+                        lambda sid, turn, k: [] if str(k).strip() in ("", "無") else [{"text": k, "turn_seq": turn}],
+                        raising=False)
+    monkeypatch.setattr(wg_harvest, "append_tracking", lambda slug, entries: calls.append((slug, entries)), raising=False)
+    _drive_ptu(monkeypatch, tmp_path, _full_input(k_followups="[hooks] 補 PowerShell 案"))
+    assert len(calls) == 1 and calls[0][0] == "_no-cwd" and calls[0][1][0]["text"] == "[hooks] 補 PowerShell 案"
+    _drive_ptu(monkeypatch, tmp_path, _full_input(k_followups="無"))
+    assert len(calls) == 1
+
+
+@pytest.mark.skipif(not __import__("shutil").which("node"), reason="node not available")
+def test_aec_evidence_py_js_parity(tmp_path):
+    """MIRROR：aecEvidenceMissing／aecFollowupsMissing 與 Python 同結果。"""
+    import subprocess
+    from wg_verify_ledger import aec_evidence_missing, aec_followups_missing
+    exists = tmp_path / "e.txt"
+    exists.write_text("x", encoding="utf-8", newline="\n")
+    cases = [["無", True], ["無", False], ["", True], [str(exists), True], [str(tmp_path / "nope"), True],
+             [f"{exists} \u2014 帳本", True], [f"{exists}\n{tmp_path / 'nope'}", True]]
+    ks = ["", "  ", "無", "x \u2014 y"]
+    js = HOOKS_DIR.parent / "tools" / "workflow-guardian-mcp" / "lib" / "anti-evasion.js"
+    script = ("const ae=require(process.argv[1]);const c=JSON.parse(process.argv[2]);const k=JSON.parse(process.argv[3]);"
+              "console.log(JSON.stringify([c.map(([j,r])=>ae.aecEvidenceMissing(j,r)),k.map(x=>ae.aecFollowupsMissing(x))]));")
+    res = subprocess.run(["node", "-e", script, str(js), json.dumps(cases, ensure_ascii=False), json.dumps(ks, ensure_ascii=False)],
+                         capture_output=True, text=True, encoding="utf-8", errors="replace")
+    assert res.returncode == 0, res.stderr
+    got_j, got_k = json.loads(res.stdout)
+    assert got_j == [aec_evidence_missing(j, r) for j, r in cases]
+    assert got_k == [aec_followups_missing(k) for k in ks]
+
+
+@pytest.mark.skipif(not __import__("shutil").which("node"), reason="node not available")
+def test_mcp_schema_requires_j_k():
+    import subprocess
+    js = HOOKS_DIR.parent / "tools" / "workflow-guardian-mcp" / "lib" / "mcp.js"
+    script = ("const m=require(process.argv[1]);const t=m.TOOL_DEFINITIONS.find(x=>x.name==='anti_evasion_report');"
+              "console.log(JSON.stringify(t.inputSchema.required));")
+    res = subprocess.run(["node", "-e", script, str(js)], capture_output=True, text=True, encoding="utf-8")
+    assert res.returncode == 0, res.stderr
+    req = json.loads(res.stdout)
+    # (c) Token 警示欄已刪；e／f／g 只上 HUD，給了 report（白話全文）可省，沒給由 Node 端照擋（CLOSING_REPORT_ONE_CALL）
+    assert req == ["a", "b", "d", "h", "i", "j_evidence_path", "k_followups"]
+
+
 def test_stop_pending_sibling_not_blocked(driven, capsys):
     """隔壁 session 的 pending 報告（session_id 不符）不擋本 session；本 session 也未 emit → 走 ScanReport。"""
     rec = _emit(5, session_id="other")
     rec["d_pending"] = ["x"]
     out = driven([_mf(_CORE)], capsys, turn_seq=5, anti_evasion_report=rec)
     assert "AEC-Pending" not in out
+
+
+@pytest.mark.parametrize("harvest_turn, pending", [(5, False), (4, True)])
+def test_044_6_harvest_validated_earlier_in_user_turn_skips_d_pending(monkeypatch, tmp_path, harvest_turn, pending):
+    """044 第 6 項（規則 TURN_SINCE_USER_PROMPT；post_tool_use 判 (d) pending 前看「本回合收割已核過」）：使用者 turn 5 打字、收割在
+    turn 5 核過 → 同伴訊息讓 turn_seq 到 7 → emit 的 (d) 寫「尚未寫」：收割已核過，(d) 不判 pending。舊碼要收割的 turn_seq 剛好是 7，
+    判不到、照標 d_pending（Stop 再擋 AEC-Pending）。配對：收割在使用者打字之前（turn 4）→ 照標。"""
+    vals = {"a": "無", "b": "無", "c": "無", "d": _D_REAL, "e": "無", "f": "無", "g": "無", "h": "可關閉", "i": "無"}
+    state = _drive_ptu(monkeypatch, tmp_path, vals, turn_seq=7, turn_prompts_seq=5,
+                       knowledge_harvest={_SID: {"turn_seq": harvest_turn, "validated": True}})
+    assert ("d_pending" in state["anti_evasion_report"]) is pending
+
+
+@pytest.fixture(autouse=True)
+def _block_mode(monkeypatch):
+    """規則 GATE_MODE_TABLE：送法只讀 wg_release_rules.RULE_MODE。這個檔的案例驗的是判定與擋訊息內容，把送法釘成 block 讓它們照驗；
+    v6 預設的提醒送法（Stop 只留帳、提醒掛改檔那則工具結果）由 verify_gate_mode_stop.py 驗。"""
+    import wg_release_rules as _rr
+    monkeypatch.setattr(_rr, "mode_of", lambda rule: _rr.BLOCK)

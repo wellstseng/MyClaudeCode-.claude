@@ -2,23 +2,28 @@
 """
 memory-write-gate.py — Atomic Memory Write Gate (v2.1)
 
-寫入前品質評估 + 去重檢查。用於 session-end 同步前過濾低品質知識。
+寫入前品質評估 + 去重檢查。呼叫端：MCP atom_write（tools/workflow-guardian-mcp/lib/funnel.js execWriteGate，stdin JSON）。
 
 Usage:
     python memory-write-gate.py --content "知識文字" [--classification "[觀]"] [--trigger-context "..."]
     python memory-write-gate.py --content "知識" --explicit-user
     python memory-write-gate.py --batch items.jsonl
 
-Output: JSON {action, quality_score, reason, dedup_match?}
+Output: JSON {action, quality_score, reason, dedup_match?, kind, route_to, budget, missing_sections, depends_missing, how}
+stdin JSON 另收 mode/existing_path/actions/depends/kind_hint/skip_gate（分型；舊呼叫端不給＝create 全檢）
+與 dedupe（去重宣告 {verdict, of, why}：相似度達門檻時不再直接拒寫，回要宣告（need_declaration）＋候選卡，
+等 AI 宣告同一條／取代／不同；config write_gate.dedupe_declaration=false 退回舊行為）
 
 Requirements: Python 3.8+. Vector dedup needs Memory Vector Service @ port 3849.
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import re
 import sys
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -28,17 +33,29 @@ from typing import Any, Dict, List, Optional, Tuple
 
 # ─── Constants ───────────────────────────────────────────────────────────────
 
-CLAUDE_DIR = Path.home() / ".claude"
+# lib 一律從本腳本所在 repo 根載入（worktree 內跑 verify 不得撈到 live 的 lib）；CLAUDE_DIR 只管 config／audit 落點
+_SELF_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_SELF_ROOT))
+from lib.project_root import claude_data_dir  # noqa: E402
+try:
+    from lib.atom_io import gate_bypass_refusal  # noqa: E402
+except Exception as _e:  # pragma: no cover
+    print(f"[write-gate] 繞閘卡片檢查載不起來（這次不判）：{_e}", file=sys.stderr)
+
+    def gate_bypass_refusal(title, knowledge, actions):
+        return None
+
+CLAUDE_DIR = claude_data_dir()   # 使用者資料根（WG_CLAUDE_DIR 或 ~/.claude），和 hooks 同一支算法
 CONFIG_PATH = CLAUDE_DIR / "workflow" / "config.json"
 AUDIT_LOG = CLAUDE_DIR / "memory" / "_vectordb" / "audit.log"
 
 # 大小預算 + 樣式警告：規則單一來源 lib/atom_spec；import 失敗時退最小 fallback
 # （預算常數內建、樣式警告停用）並照舊放行其餘檢查——本 gate 不因依賴缺失而更擋人。
 try:
-    sys.path.insert(0, str(CLAUDE_DIR))
     from lib.atom_spec import (
         KNOWLEDGE_BUDGET_BYTES as _BUDGET_DEFAULT,
         knowledge_style_warnings as _style_warnings,
+        knowledge_sections_bytes as _knowledge_bytes,
     )
 except Exception as _e:  # pragma: no cover
     print(f"[write-gate] lib.atom_spec unavailable, minimal fallback ({_e})",
@@ -47,6 +64,41 @@ except Exception as _e:  # pragma: no cover
 
     def _style_warnings(text):
         return []
+
+    def _knowledge_bytes(text):
+        return len((text or "").encode("utf-8"))
+
+# 分型（指標／互補／現況帳／導讀／一般）的五段表與 hub 預算：lib/hub_card 單一來源。
+# import 失敗時退最小 fallback（沒有 hub 判定＝全部當一般卡、預算照舊），但訊號必浮出。
+try:
+    from lib.hub_card import (
+        HUB_CARD_BUDGET, HUB_STANDARD_NAMES, check_hub_card_sections, is_hub_card, missing_labels,
+        depends_paths, route_doc_for, ROUTE_FALLBACK, budget_limit_for,
+    )
+except Exception as _e:  # pragma: no cover
+    print(f"[write-gate] lib.hub_card unavailable, kind detection degraded ({_e})",
+          file=sys.stderr)
+    HUB_CARD_BUDGET = 4096
+    HUB_STANDARD_NAMES = "做什麼／部位與權威／動手前必問／已知病灶／驗法"
+    ROUTE_FALLBACK = "_AIDocs"
+
+    def check_hub_card_sections(text):
+        return {"found": [], "missing": [], "headings": []}
+
+    def is_hub_card(text, title="", kind_hint=None):
+        return kind_hint == "hub"
+
+    def budget_limit_for(text, default_limit, title="", kind_hint=None):
+        return HUB_CARD_BUDGET if kind_hint == "hub" else int(default_limit)
+
+    def missing_labels(keys):
+        return list(keys)
+
+    def depends_paths(depends):
+        return [str(d) for d in (depends or [])]
+
+    def route_doc_for(paths):
+        return ROUTE_FALLBACK
 
 # Quality score components
 QUALITY_RULES = {
@@ -151,6 +203,93 @@ def regenerable_signals(content: str) -> List[str]:
     return signals
 
 
+# ─── 分型（寫進去的東西要有用）─────────────────────────────────────────
+# kind ∈ pointer（指標卡：只留一行指標）／complement（互補：append 前算預算）／
+# ledger（現況帳：放文件）／hub（導讀卡：五段齊＋Depends、預算 4096）／plain（一般）。
+# 超預算不截斷內容，改告訴寫入者該去哪（route_to）、缺哪段（missing_sections）。
+
+KINDS = ("pointer", "complement", "ledger", "hub", "plain")
+MODES = ("create", "append", "replace")
+
+_LEDGER_DATE_RE = re.compile(r"\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b|\b\d{1,2}/\d{1,2}\b")
+# 帳目數字＝「數字＋量詞或單位」；純技術名詞裡的數字（HTTP 429、UTF-8、TLS 1.2、v1.2.3）不算
+_LEDGER_QTY_RE = re.compile(
+    r"\d+(?:\.\d+)?\s*(?:筆|次|個|項|行|檔|張|顆|條|件|列|人|天|日|週|月|年|萬|倍|分鐘|小時|秒|"
+    r"%|％|ms|s|m|h|KB|MB|GB|k|K|px|tok|tokens?|errors?|warnings?|fails?|failed|pass(?:ed)?|tests?|cases?)"
+    r"(?![A-Za-z0-9.])",
+    re.IGNORECASE,
+)
+_LEDGER_HEADER_RE = re.compile(r"^\s*\|[^\n]*(?:現況|狀態|進度|日期|結果|完成度)[^\n]*\|", re.MULTILINE)
+LEDGER_MIN_ROWS = 3
+
+HOW_BY_KIND = {
+    "pointer": "指標卡只留一行指標：位置＋動手前必問，不複述本體；本體住內容卡或文件",
+    "complement": "互補卡 append 前先算預算（既有＋新增 ≤ 上限）；超了把個案細節寫進 route_to 的文件，卡只留結論一行＋路徑",
+    "ledger": "現況帳（逐筆日期／數字、狀態表）放 route_to 的文件；卡只留「現況見 <路徑>」一行",
+    "hub": "導讀卡五段必齊（做什麼／權威在哪／動手前必問／已知病灶／驗法）＋ Depends 指主要檔；預算 4096 bytes",
+    "plain": "一般卡：結論／判斷／教訓一行一條；個案事實與逐筆清單移文件，卡留路徑一行",
+}
+
+
+def ledger_signals(content: str) -> List[str]:
+    """現況帳訊號：≥LEDGER_MIN_ROWS 行「日期＋（數字＋量詞／單位）」、或表格列、或現況表頭；空＝不是帳。
+    日期去掉後只剩技術名詞裡的數字（HTTP 429、UTF-8、TLS 1.2）不算帳目行。"""
+    rows = 0
+    for line in (content or "").splitlines():
+        if not _LEDGER_DATE_RE.search(line):
+            continue
+        rest = _LEDGER_DATE_RE.sub(" ", line)
+        if line.lstrip().startswith("|") or _LEDGER_QTY_RE.search(rest):
+            rows += 1
+    out: List[str] = []
+    if rows >= LEDGER_MIN_ROWS:
+        out.append(f"dated_rows x{rows}")
+    if _LEDGER_HEADER_RE.search(content or ""):
+        out.append("status_table")
+    return out
+
+
+def _read_existing(existing_path: Optional[str]) -> str:
+    if not existing_path:
+        return ""
+    try:
+        return Path(existing_path).read_text(encoding="utf-8-sig")
+    except (OSError, ValueError):
+        return ""
+
+
+def classify_kind(
+    content: str,
+    title: str = "",
+    mode: str = "create",
+    existing_content: str = "",
+    kind_hint: Optional[str] = None,
+    config: Optional[Dict[str, Any]] = None,
+    actions: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """回 {kind, hub:{found,missing}, ledger:[訊號], existing_hub:bool}。
+    優先序：pointer（明給或指標標題且無段）> hub > ledger > complement（append）> plain。kind_hint 只在合法時採用，
+    且 hub 仍要過五段檢查（hint 不能把缺段卡變成合格 hub）。"""
+    config = config or {}
+    hint = kind_hint if kind_hint in KINDS else None
+    scan = content + ("\n" + "\n".join(str(a) for a in (actions or [])) if actions else "")
+    hub = check_hub_card_sections(scan)
+    existing_hub = bool(existing_content) and is_hub_card(existing_content)
+    ledger = ledger_signals(content)
+    # 指標卡優先：明給 kind_hint=pointer，或標題帶指標詞（導讀／hub索引…）且內容一段都沒有（一行指標）
+    if hint == "pointer" or (mode != "append" and is_pointer_title(title, config) and not hub["found"]):
+        kind = "pointer"
+    elif mode != "append" and is_hub_card(scan, title, hint):
+        kind = "hub"
+    elif ledger or hint == "ledger":
+        kind = "ledger"
+    elif mode == "append" or hint == "complement":
+        kind = "complement"
+    else:
+        kind = hint or "plain"
+    return {"kind": kind, "hub": hub, "ledger": ledger, "existing_hub": existing_hub, "scan": scan}
+
+
 # ─── Config ──────────────────────────────────────────────────────────────────
 
 
@@ -158,9 +297,10 @@ def load_config() -> Dict[str, Any]:
     """Load write_gate config from workflow config."""
     defaults = {
         "enabled": True,
-        "auto_threshold": 0.5,
-        "ask_threshold": 0.3,
+        # 品質分數只分寫／不寫：舊的 ask 級（0.3～0.5）呼叫端從沒接過、一律照寫，故拿掉，線留在原 ask 線
+        "quality_floor": 0.3,
         "dedup_score": 0.80,
+        "dedupe_declaration": True,   # 相似度達門檻 → 要 AI 宣告（false＝舊行為：>0.95 skip、其餘 suggest update）
         "skip_on_explicit_user": True,
         "knowledge_budget_bytes": _BUDGET_DEFAULT,  # <=0 停用大小硬拒
     }
@@ -171,7 +311,26 @@ def load_config() -> Dict[str, Any]:
             defaults.update(cfg.get("write_gate", {}))
         except (json.JSONDecodeError, OSError):
             pass
+    if not _v6_on():
+        defaults["dedupe_declaration"] = False   # 寫碼守門關閉：相似不要求宣告，回 9e476fd0 的 skip／suggest update
     return defaults
+
+
+def _v6_on() -> bool:
+    """寫碼守門總開關（判法只在 hooks/wg_core.v6_enabled：WG_CODING_GUARD／舊名 WG_V6 環境變數、config.local.json 覆寫）；載不進來當關（出廠預設）並 stderr。"""
+    for name in ("WG_CODING_GUARD", "WG_V6"):   # 同 wg_core.coding_guard_env：新名優先、舊名仍認
+        env = os.environ.get(name, "").strip()
+        if env in ("0", "1"):
+            return env == "1"
+    try:
+        hooks_dir = str(_SELF_ROOT / "hooks")
+        if hooks_dir not in sys.path:
+            sys.path.insert(0, hooks_dir)
+        from wg_core import load_config as _wg_load_config, v6_enabled
+        return v6_enabled(_wg_load_config())
+    except Exception as e:  # noqa: BLE001
+        print(f"[write-gate] 讀寫碼守門開關失敗，當成關（相似不要求宣告）：{type(e).__name__}: {e}", file=sys.stderr)
+        return False
 
 
 # ─── Quality Score ───────────────────────────────────────────────────────────
@@ -246,15 +405,168 @@ def compute_quality_score(
 # ─── Dedup Check ─────────────────────────────────────────────────────────────
 
 
+_POINTER_MARKERS_DEFAULT = ["導讀", "hub索引", "指標卡", "索引卡", "知識地圖"]
+
+
+def is_pointer_title(title: str, config: Dict[str, Any]) -> bool:
+    """指標卡（導讀／hub 索引／知識地圖）：只列位置與必問、不複述本體，跟內容卡的詞彙天生重疊。"""
+    markers = config.get("pointer_markers") or _POINTER_MARKERS_DEFAULT
+    t = (title or "").lower()
+    return any(m.lower() in t for m in markers)
+
+
+def dedup_threshold_for(config: Dict[str, Any], title: str = "") -> float:
+    """一般卡用 dedup_score（0.80）；指標卡用 dedup_pointer_score（0.95，只擋真重複）。"""
+    if is_pointer_title(title, config):
+        return float(config.get("dedup_pointer_score", 0.95))
+    return float(config.get("dedup_score", 0.80))
+
+
+# ─── 去重宣告（相似 → AI 判同一條／取代／不同；程式只核形狀、照宣告路由、留帳）──────────
+# 判斷交 AI：程式不判「像到什麼程度算同一條」，門檻只決定要不要問。
+# 核對只看三件事：verdict 三選一、of 指得到一張卡（這次列出的候選，或這次比對的層裡同名的卡）、why 有字（不是空白／佔位／純標點）。
+
+DEDUPE_VERDICTS = ("same", "supersedes", "different")
+DEDUPE_FORMS = (
+    ("same", "同一條（知識段改併入那張卡；triggers／actions 不併）"),
+    ("supersedes", "取代（寫新卡，Supersedes 標那張；舊卡留檔、不再注入）"),
+    ("different", "不同（照常寫新卡）"),
+)
+DEDUPE_CANDIDATES_MAX = 3   # 候選張數＝向量查詢 top_k：要逐張對照，3 張已涵蓋同主題的改名／拆卡，再多只是雜訊
+DEDUPE_EXCERPT_LINES = 2    # 每張節錄知識段前 2 行：認得出那張卡在講什麼就夠判；要細看 AI 自己開檔
+_DEDUPE_WHY_TEMPLATE = "一句理由"   # 寫法範本裡的佔位字，照抄回來不算理由
+_KNOWLEDGE_BODY_RE = re.compile(r"^##[ \t]+(?:知識|印象)[ \t]*\n([\s\S]*?)(?=^## |\Z)", re.MULTILINE)
+_BULLET_RE = re.compile(r"^[-*]\s+")
+
+
+def _knowledge_excerpt(file_path: str, fallback_text: str) -> List[str]:
+    """候選卡知識段前 DEDUPE_EXCERPT_LINES 行（去 bullet、每行 ≤120 字）；檔讀不到就退用向量命中的那段文字。"""
+    body = ""
+    if file_path:
+        try:
+            m = _KNOWLEDGE_BODY_RE.search(Path(file_path).read_text(encoding="utf-8-sig"))
+            body = m.group(1) if m else ""
+        except (OSError, ValueError):
+            body = ""
+    lines = (_BULLET_RE.sub("", ln.strip()) for ln in (body or fallback_text or "").splitlines())
+    return [ln[:120] for ln in lines if ln][:DEDUPE_EXCERPT_LINES]
+
+
+def _dedupe_candidates(results: List[Dict[str, Any]], threshold: float) -> List[Dict[str, Any]]:
+    """門檻以上的命中，依分數排、取前 DEDUPE_CANDIDATES_MAX 張（同層同名只留一次）。
+    ref＝of 要照抄的名字：卡名在候選裡唯一就是卡名；不同層有同名卡就寫成 <layer>:<卡名>，兩張都列、交 AI 選。"""
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for r in sorted(results, key=lambda r: r.get("score", 0), reverse=True):
+        name, layer = r.get("atom_name", ""), r.get("layer", "")
+        if not name or (layer, name) in seen or r.get("score", 0) < threshold:
+            continue
+        seen.add((layer, name))
+        out.append({
+            "atom_name": name,
+            "score": round(r.get("score", 0), 3),
+            "layer": layer,
+            "excerpt": _knowledge_excerpt(r.get("file_path", ""), r.get("text", "")),
+        })
+    out = out[:DEDUPE_CANDIDATES_MAX]
+    names = [c["atom_name"] for c in out]
+    for c in out:
+        c["ref"] = c["atom_name"] if names.count(c["atom_name"]) == 1 else f"{c['layer']}:{c['atom_name']}"
+    return out
+
+
+def _why_has_content(why: Any) -> bool:
+    """why 去掉標點／符號／空白／控制字元後還有字，且不是範本佔位字照抄。"""
+    core = "".join(ch for ch in str(why or "") if unicodedata.category(ch)[0] not in "PSZC")
+    return bool(core) and core != _DEDUPE_WHY_TEMPLATE
+
+
+def _cards_in_layers(name: str, layers: Optional[List[str]]) -> Tuple[List[str], str]:
+    """這次比對的層（layers；None＝全部層）裡叫 name 的卡 → 所在層名清單（同層多張只算一次）。
+    層與卡的認定和向量索引同一套（tools/memory-vector-service/indexer：候選就是從那裡搜出來的）。
+    查不了回 ([], 原因)：呼叫端當「找不到」，原因帶進訊息、stderr 也浮一行。"""
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "write_gate_indexer", _SELF_ROOT / "tools" / "memory-vector-service" / "indexer.py")
+        idx = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(idx)
+        picked = [lay for lay in idx.discover_layers() if layers is None or lay[0] in layers]
+        found = sorted({layer for layer, p, _ in idx.discover_atoms(picked) if p.stem == name})
+        return found, ""
+    except Exception as e:  # noqa: BLE001
+        print(f"[write-gate] 查這次比對的層裡有沒有「{name}」失敗：{type(e).__name__}: {e}", file=sys.stderr)
+        return [], f"{type(e).__name__}: {e}"
+
+
+def resolve_dedupe(dedupe: Any, candidates: List[Dict[str, Any]], layers: Optional[List[str]]
+                   ) -> Tuple[List[str], Optional[Dict[str, Any]]]:
+    """核對 AI 的去重宣告形狀並找出 of 指的卡，回 (問題清單, 卡{atom_name, layer, score})；問題清單空才有卡。
+    不判宣告內容對不對——那是 AI 的判斷，抽查靠 audit。
+    of 先比這次列出的候選（ref 原字）；不在候選就到這次比對的層找同名卡（候選只是相似度前幾名，內容一改名單就換，
+    宣告的卡還在那幾層就收；不同層同名寫成 <layer>:<卡名>），這種卡沒有分數（score=None）。"""
+    if not isinstance(dedupe, dict):
+        return ["dedupe 要是物件 {verdict, of, why}"], None
+    problems = []
+    verdict = dedupe.get("verdict")
+    if verdict not in DEDUPE_VERDICTS:
+        problems.append(f"verdict 要是 same／supersedes／different 其中一個（收到 {verdict!r}）")
+    of = str(dedupe.get("of") or "").strip()
+    target = next((c for c in candidates if c["ref"] == of), None)
+    same_name = [c["ref"] for c in candidates if c["atom_name"] == of]
+    if target is None and same_name:
+        problems.append(f"of「{of}」在不同層各有一張，寫成 {' 或 '.join(same_name)}")
+    elif target is None:
+        layer, _, name = of.rpartition(":")
+        scope = [layer] if layer else layers
+        found, err = _cards_in_layers(name, scope) if name and (not layer or layers is None or layer in layers) else ([], "")
+        if len(found) == 1:
+            target = {"atom_name": name, "layer": found[0], "score": None}
+        elif found:
+            problems.append(f"of「{of}」在不同層各有一張，寫成 {' 或 '.join(f'{lay}:{name}' for lay in found)}")
+        else:
+            where = "、".join(layers) if layers else "全部層"
+            problems.append(f"of「{of}」不在這次列出的候選卡裡，這次比對的層（{where}）也沒有這張卡（卡名原字照抄）"
+                            + (f"；查詢失敗：{err}" if err else ""))
+    if target is not None and verdict == "supersedes":
+        # Supersedes 行只記卡名，落檔後先解析寫入者同層、再退全域（lib/atom_io._resolve_supersedes_target）：
+        # 比對的層裡有兩張同名卡，就保證不了取代到的是宣告的那張
+        found, _ = _cards_in_layers(target["atom_name"], layers)
+        if len(found) > 1:
+            problems.append(f"supersedes 的「{target['atom_name']}」在 {'、'.join(found)} 都有同名卡，Supersedes 只記卡名、"
+                            "分不出要取代哪一張——改宣告 same（併入指定層那張）或 different（照常寫新卡）")
+    if not _why_has_content(dedupe.get("why")):
+        problems.append("why 要寫一句理由（收到空白、佔位或純標點）")
+    return problems, (None if problems else target)
+
+
+def declaration_request(candidates: List[Dict[str, Any]], threshold: float, problems: List[str]) -> str:
+    """要宣告（need_declaration）的 reason：（宣告不收的原因）＋候選卡（名、分數、層、知識段節錄）＋三種寫法。js 原文轉述。"""
+    lines = [f"宣告不收：{'；'.join(problems)}。"] if problems else []
+    lines.append(f"需要宣告（這次不寫檔）：新內容和既有卡相似度達 {threshold:.2f}，"
+                 "請判斷是同一條、取代、還是不同，帶 dedupe 欄位重送。")
+    lines.append("候選卡：")
+    for i, c in enumerate(candidates, 1):
+        layer = f"，layer={c['layer']}" if c.get("layer") else ""
+        lines.append(f"{i}. {c['ref']}（score={c['score']}{layer}）")
+        lines.extend(f"   ｜{ln}" for ln in c["excerpt"])
+    lines.append("三種寫法（of 照抄上面一張卡名）：")
+    for verdict, meaning in DEDUPE_FORMS:
+        lines.append(f'- {meaning}：dedupe={{"verdict":"{verdict}","of":"<卡名>","why":"<{_DEDUPE_WHY_TEMPLATE}>"}}')
+    lines.append("（atom_write 沒有 dedupe 欄位＝這個 session 的 MCP 還是舊碼：Reload Window 後重送）")
+    return "\n".join(lines)
+
+
 def check_dedup(
     content: str,
     config: Dict[str, Any],
     layers: Optional[List[str]] = None,
+    title: str = "",
 ) -> Optional[Dict[str, Any]]:
     """Check for duplicate knowledge via Vector Service. Returns match info or None.
 
     layers：只跟這幾層比（global + 當前專案自己的層）。不傳 = 全庫比對，會撞到
     別的專案／別人 personal 層的 atom（寫入者根本不能 append 到那裡）。
+    title：指標卡（見 is_pointer_title）門檻提高，避免導讀卡撞內容卡。
     """
     try:
         port = 3849
@@ -267,10 +579,10 @@ def check_dedup(
     except Exception:
         pass
 
-    dedup_threshold = config.get("dedup_score", 0.80)
+    dedup_threshold = dedup_threshold_for(config, title)
 
     try:
-        query: Dict[str, Any] = {"q": content, "top_k": 3, "min_score": dedup_threshold}
+        query: Dict[str, Any] = {"q": content, "top_k": DEDUPE_CANDIDATES_MAX, "min_score": dedup_threshold}
         if layers:
             query["layers"] = ",".join(layers)
         params = urllib.parse.urlencode(query)
@@ -292,6 +604,7 @@ def check_dedup(
             "score": round(score, 3),
             "text_preview": top.get("text", "")[:80],
             "verdict": "duplicate" if score > 0.95 else "similar",
+            "candidates": _dedupe_candidates(results, dedup_threshold),
         }
     except Exception as e:
         # Vector service unavailable — fail-open skip dedup，但必留訊號（可觀測性鐵律）
@@ -305,8 +618,7 @@ def check_dedup(
 
 
 def write_audit_log(action: str, content_preview: str, quality: float, **extra: Any) -> None:
-    """Append to audit.log (JSONL)."""
-    AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
+    """Append to audit.log (JSONL)。寫不進去不擋閘、但必浮出 stderr（去重宣告靠這本帳抽查）。"""
     entry = {
         "ts": datetime.now().isoformat(timespec="seconds"),
         "action": action,
@@ -315,14 +627,16 @@ def write_audit_log(action: str, content_preview: str, quality: float, **extra: 
     }
     entry.update(extra)
     try:
+        # mkdir 也在 try 裡：建不起來時若讓例外冒出去，整個閘沒輸出，MCP 端會走 fail-open 直接落檔
+        AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
         with open(AUDIT_LOG, "a", encoding="utf-8", newline="\n") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
         # Log rotation: >10MB → rotate
         if AUDIT_LOG.stat().st_size > 10 * 1024 * 1024:
             _rotate_log()
-    except OSError:
-        pass
+    except OSError as e:
+        print(f"[write-gate] audit log write failed ({action}): {e}", file=sys.stderr)
 
 
 def _rotate_log() -> None:
@@ -357,34 +671,147 @@ def evaluate(
     explicit_user: bool = False,
     config: Optional[Dict[str, Any]] = None,
     layers: Optional[List[str]] = None,
+    title: str = "",
+    mode: str = "create",
+    existing_path: Optional[str] = None,
+    actions: Optional[List[str]] = None,
+    depends: Optional[List[str]] = None,
+    kind_hint: Optional[str] = None,
+    skip_gate: bool = False,
+    dedupe: Any = None,
 ) -> Dict[str, Any]:
     """Main Write Gate evaluation. Returns decision dict.
 
-    layers：去重只比這幾層（見 check_dedup）。
+    舊鍵不變：action／quality_score／reason／dedup_match?／warnings?／regenerable_signals?。
+    新鍵（每次都回）：kind ∈ KINDS、route_to（部位文件路徑或層名）、budget{bytes,limit,existing_bytes}、
+    missing_sections[]（hub 缺段白話名）、depends_missing（hub 無 Depends）、how（一句怎麼做）。
+    layers：去重只比這幾層（見 check_dedup）。title：指標卡去重門檻提高。
+    mode≠create 或 skip_gate：跳 dedup／quality，只做預算與分型（append 預算＝既有 knowledge 區＋新增）。
+    dedupe：去重宣告（見 resolve_dedupe）。相似度達門檻時：沒宣告或宣告不收 → 拒寫要宣告（action=skip＋
+    need_declaration=true、candidates[]、reason 列候選與三種寫法）；收 → audit dedupe_declared，same 回 action=append＋append_to{atom_name,layer}，
+    supersedes／different 照常往下判，結果帶 dedupe_declared{verdict,of,why,score}（of 不在候選、在比對層找到的卡 score=None）。
+    沒命中仍給：same／supersedes 照宣告走（of 找不到 → 拒寫並說明，不另建新卡）；different 或形狀不對 → dedupe_note。
     """
     if config is None:
         config = load_config()
+    mode = mode if mode in MODES else "create"
+    existing = _read_existing(existing_path) if mode != "create" else ""
+    cls = classify_kind(content, title, mode, existing, kind_hint, config, actions)
+    kind = cls["kind"]
+    hub_check = cls["hub"]
 
-    # 大小預算硬拒 — 排最前：explicit_user / pitfall 捷徑皆不豁免（「記住」不等於
-    # 可以把個案敘事整坨塞進 atom）。落檔端 lib/atom_io_cli 另有同源 floor 檢查
-    # （skip_gate 繞過本 gate 時仍會被攔）。
+    # 預算：hub（或 append 到既有 hub 卡）用 HUB_CARD_BUDGET（根層固定）；其餘用 config。
     try:
         budget = int(config.get("knowledge_budget_bytes", _BUDGET_DEFAULT))
     except (TypeError, ValueError):
         budget = _BUDGET_DEFAULT
+    # 預算上限與落檔端同源（lib/hub_card.budget_limit_for）：append 看既有卡全文（H1 含導讀／五段齊），
+    # create／replace 看新內容＋標題＋kind_hint
+    hint = kind_hint if kind_hint in KINDS else None
+    limit = (budget_limit_for(existing, budget) if mode == "append"
+             else budget_limit_for(cls["scan"], budget, title, hint))
     nbytes = len(content.encode("utf-8"))
-    if 0 < budget < nbytes:
-        write_audit_log("skip", content, 0, reason="over_budget",
-                        bytes=nbytes, budget=budget)
-        return {
+    existing_bytes = _knowledge_bytes(existing) if (mode == "append" and existing) else 0
+    total = nbytes + existing_bytes
+    route_paths = depends_paths(depends) + ([existing_path] if existing_path else [])
+    route_to = route_doc_for(route_paths)
+    missing = missing_labels(hub_check["missing"]) if kind == "hub" else []
+    # Depends 三態：None＝未提供（replace 沿用舊檔的 Depends 行）；[]＝明給清空（視為沒有）；非空＝用新的
+    if depends is None:
+        has_depends = _existing_depends(existing)
+    else:
+        has_depends = bool(depends_paths(depends))
+    depends_missing = kind == "hub" and not has_depends
+
+    def _kinded(result: Dict[str, Any]) -> Dict[str, Any]:
+        result.update({
+            "kind": kind,
+            "route_to": route_to,
+            "budget": {"bytes": nbytes, "limit": limit, "existing_bytes": existing_bytes},
+            "missing_sections": missing,
+            "depends_missing": bool(depends_missing),
+            "how": HOW_BY_KIND[kind],
+        })
+        return result
+
+    # 繞閘做法拒寫（T2.19 ATOM_BYPASS_HOWTO_REFUSED）：MCP atom_write 三種 mode 都經過這裡；判式與 lib/atom_io.write_atom 同一支
+    bypass_err = gate_bypass_refusal(title, content.splitlines(), actions)
+    if bypass_err:
+        write_audit_log("skip", content, 0, reason="gate_bypass_howto")
+        return _kinded({"action": "skip", "quality_score": 0, "reason": bypass_err})
+
+    # 現況帳：不進 atom，路由到文件（不看預算、不看 explicit_user）
+    if kind == "ledger":
+        write_audit_log("skip", content, 0, reason="ledger", signals=cls["ledger"], route_to=route_to)
+        return _kinded({
             "action": "skip",
             "quality_score": 0,
             "reason": (
-                f"knowledge 區 {nbytes} bytes 超過預算 {budget} bytes——"
-                "個案事實移文件；atom 只留結論/判斷/教訓/現況/檔案錨點"
-                "（大段逐筆內容改為文件路徑一行）"
+                f"現況帳（{', '.join(cls['ledger']) or kind_hint}）不進 atom；放文件 {route_to}；"
+                f"卡只留「現況見 {route_to}」一行"
             ),
+        })
+
+    # 大小預算硬拒：排最前：explicit_user / pitfall 捷徑皆不豁免（「記住」不等於
+    # 可以把個案敘事整坨塞進 atom）。不截斷內容：告訴寫入者該去哪、剩多少。
+    # 落檔端 lib/atom_io_cli 另有同源 floor 檢查（skip_gate 繞過本 gate 時仍會被攔）。
+    if 0 < limit < total:
+        if mode == "append":
+            kind = "complement"
+        write_audit_log("skip", content, 0, reason="over_budget",
+                        bytes=total, budget=limit, kind=kind, route_to=route_to)
+        detail = (f"（既有 {existing_bytes}＋新增 {nbytes}）" if existing_bytes else "")
+        hub_hint = (
+            f"。若這是導讀卡：補齊五段標準名（{HUB_STANDARD_NAMES}）或帶 kind_hint=hub"
+            if kind == "plain" else ""
+        )
+        if mode == "append":   # 舊卡已滿：縮新內容再 append 照樣滿，直接給兩條出路
+            reason = (f"既有卡 {title} 的 knowledge 區已滿：{total} bytes{detail} 超過預算 {limit} bytes，這次不寫（不截斷）。"
+                      f"二選一：壓縮舊卡（mode=replace 把舊卡＋這次的內容重寫成精簡版），或把這次的內容改寫進文件 {route_to}"
+                      "（舊卡不動）")
+        else:
+            reason = (f"knowledge 區 {total} bytes{detail} 超過預算 {limit} bytes；個案事實移文件"
+                      f"（不截斷：個案細節寫進 {route_to}；atom 只留結論/判斷/教訓/檔案錨點，"
+                      "大段逐筆內容改為文件路徑一行）" + hub_hint)
+        return _kinded({"action": "skip", "quality_score": 0, "reason": reason})
+
+    # 導讀卡：五段齊＋Depends 必填（缺的列出來，不放行）
+    if kind == "hub" and (missing or depends_missing):
+        parts = []
+        if missing:
+            parts.append(f"五段缺 {len(missing)} 段：{'、'.join(missing)}")
+        if depends_missing:
+            parts.append("缺 Depends（path:<主要檔>，健檢靠它驗過期）")
+        write_audit_log("skip", content, 0, reason="hub_incomplete",
+                        missing=hub_check["missing"], depends_missing=bool(depends_missing))
+        return _kinded({
+            "action": "skip",
+            "quality_score": 0,
+            "reason": "導讀卡不合格；" + "；".join(parts) + "；補齊再寫（不截斷、不代填）",
+        })
+
+    # write_gate.enabled=false：品質／去重評分整段關（同 skip_gate）；上面的繞閘拒寫、現況帳、預算、導讀卡檢查照做
+    if not config.get("enabled", True):
+        print("[write-gate] write_gate.enabled=false：不跑品質與去重評分，直接放行（預算、分型、繞閘拒寫照做）",
+              file=sys.stderr)
+        write_audit_log("add", content, 1.0, reason="gate_disabled", kind=kind)
+        return _kinded({
+            "action": "add",
+            "quality_score": 1.0,
+            "reason": f"write_gate disabled: budget {total}/{limit} ok, kind={kind}",
+        })
+
+    # mode≠create／skip_gate：只做預算與分型，不跑 dedup／quality
+    if mode != "create" or skip_gate:
+        write_audit_log("add", content, 1.0, reason=f"{mode}_budget_only", kind=kind)
+        result = {
+            "action": "add",
+            "quality_score": 1.0,
+            "reason": f"{mode}: budget {total}/{limit} ok, kind={kind}",
         }
+        if dedupe is not None:
+            result["dedupe_note"] = f"dedupe 宣告已忽略：{'skip_gate' if skip_gate else 'mode=' + mode} 不跑去重"
+        return _kinded(result)
 
     # 內容樣式軟警 + 可再生內容判準（都不擋、不進分數，附掛在放行結果上；caller 端轉述給寫入者）
     style_warns = list(_style_warnings(content))
@@ -393,12 +820,19 @@ def evaluate(
         [f"可再生內容疑似（{', '.join(regen)}）：{REGENERABLE_HINT}"] if regen else []
     )
 
+    declared: Optional[Dict[str, Any]] = None   # 收下的去重宣告（supersedes／different 往下判時帶出去）
+    dedupe_note: Optional[str] = None
+
     def _with_warnings(result: Dict[str, Any]) -> Dict[str, Any]:
-        if soft_warns and result.get("action") in ("add", "ask"):
+        if soft_warns and result.get("action") == "add":
             result["warnings"] = soft_warns
         if regen:
             result["regenerable_signals"] = regen
-        return result
+        if declared:
+            result["dedupe_declared"] = declared
+        if dedupe_note:
+            result["dedupe_note"] = dedupe_note
+        return _kinded(result)
 
     # Fast path: explicit user trigger → always add
     # Note: [固] no longer fast-paths here — 移除反向激勵，[固] 也需過 dedup/quality
@@ -411,26 +845,70 @@ def evaluate(
         })
 
     # Dedup check（先於 pitfall 捷徑：pitfall 只豁免品質評分，不豁免去重——
-    # 重複的坑知識 >0.95 仍 skip、相似仍建議 update）
-    dedup = check_dedup(content, config, layers)
-    if dedup:
+    # 相似的坑知識照樣要宣告；舊行為 >0.95 skip、相似建議 update）
+    dedup = check_dedup(content, config, layers, title)
+    dedup_match = {k: v for k, v in (dedup or {}).items() if k != "candidates"}   # 舊鍵形狀不變
+    if dedup and not config.get("dedupe_declaration", True):
         if dedup["verdict"] == "duplicate":
             write_audit_log("skip", content, 0, reason="duplicate", dedup_match=dedup["atom_name"])
-            return {
+            return _kinded({
                 "action": "skip",
                 "quality_score": 0,
                 "reason": f"duplicate of {dedup['atom_name']} (score={dedup['score']})",
-                "dedup_match": dedup,
-            }
-        else:
-            # Similar but not identical → suggest update
-            write_audit_log("update", content, 0.6, dedup_match=dedup["atom_name"])
-            return {
-                "action": "update",
-                "quality_score": 0.6,
-                "reason": f"similar to {dedup['atom_name']} (score={dedup['score']}), suggest update",
-                "dedup_match": dedup,
-            }
+                "dedup_match": dedup_match,
+            })
+        # Similar but not identical → suggest update
+        write_audit_log("update", content, 0.6, dedup_match=dedup["atom_name"])
+        return _kinded({
+            "action": "update",
+            "quality_score": 0.6,
+            "reason": f"similar to {dedup['atom_name']} (score={dedup['score']}), suggest update",
+            "dedup_match": dedup_match,
+        })
+    candidates = (dedup or {}).get("candidates") or []   # 命中卻沒卡名＝無從宣告，當沒命中
+    # 沒候選但宣告了併入／取代：照宣告走（of 要是這次比對的層裡存在的卡），不悄悄另建新卡
+    acts_on_card = (config.get("dedupe_declaration", True) and isinstance(dedupe, dict)
+                    and dedupe.get("verdict") in ("same", "supersedes"))
+    if candidates or acts_on_card:
+        problems, target = ([], None) if dedupe is None else resolve_dedupe(dedupe, candidates, layers)
+        if problems and not candidates:
+            write_audit_log("need_declaration", content, 0, candidates=[], problems=problems)
+            return _kinded({
+                "action": "skip",
+                "need_declaration": True,
+                "quality_score": 0,
+                "reason": (f"宣告不收：{'；'.join(problems)}。這次沒有相似候選（相似度未達 "
+                           f"{dedup_threshold_for(config, title):.2f}，或向量服務沒回應）：要併入／取代就把 of 改成存在的卡名"
+                           "（不同層同名寫成 <layer>:<卡名>）；不需要就拿掉 dedupe，照常寫新卡。"),
+                "candidates": [],
+            })
+        if dedupe is None or problems:
+            write_audit_log("need_declaration", content, 0,
+                            candidates=[c["ref"] for c in candidates], problems=problems)
+            # action 用 skip（不用新動作名）：合併後 py 立即生效、各 session 的 MCP js 要 Reload 才換新碼，
+            # 舊 js 只認 skip／update 為拒寫，新動作名會被它當放行直接落檔；新 js 認 need_declaration 轉述
+            return _kinded({
+                "action": "skip",
+                "need_declaration": True,
+                "quality_score": 0,
+                "reason": declaration_request(candidates, dedup_threshold_for(config, title), problems),
+                "dedup_match": dedup_match,
+                "candidates": candidates,
+            })
+        declared = {"verdict": dedupe["verdict"], "of": target["atom_name"],
+                    "why": str(dedupe["why"]).strip(), "score": target["score"]}
+        write_audit_log("dedupe_declared", content, 0, **declared)
+        if declared["verdict"] == "same":
+            score = f"score={target['score']}；" if target["score"] is not None else ""
+            return _kinded({
+                "action": "append",
+                "quality_score": 1.0,
+                "reason": f"dedupe 宣告 same：知識段改併入既有卡 {target['atom_name']}（{score}triggers／actions 不併）",
+                "append_to": {"atom_name": target["atom_name"], "layer": target["layer"]},
+                "dedupe_declared": declared,
+            })
+    elif dedupe is not None:
+        dedupe_note = "dedupe 宣告已忽略：這次沒有候選卡（相似度未達門檻，或向量服務沒回應）"
 
     # Pitfall/trap detection → add with [觀]（僅豁免品質評分；dedup 已在上方跑過）
     pitfall_keywords = ["陷阱", "坑", "pitfall", "gotcha", "注意", "caution", "bug", "重入"]
@@ -443,26 +921,40 @@ def evaluate(
             "reason": "pitfall/trap detected, auto-add as [觀]",
         })
 
-    # Quality score
+    # Quality score：只分寫／不寫（寫的人就是要寫的 AI，沒有「再問一次」的中間級）
     quality, reasons = compute_quality_score(content, explicit_user, trigger_context)
-
-    auto_threshold = config.get("auto_threshold", 0.5)
-    ask_threshold = config.get("ask_threshold", 0.3)
-
-    if quality >= auto_threshold:
-        action = "add"
-    elif quality >= ask_threshold:
-        action = "ask"
-    else:
-        action = "skip"
+    # 沒設 quality_floor 的舊 config：實際生效的寫入線一直是 ask_threshold（ask 級照寫），沿用它
+    quality_floor = config.get("quality_floor", config.get("ask_threshold", 0.3))
+    action = "add" if quality >= quality_floor else "skip"
 
     write_audit_log(action, content, quality, classification=classification, reasons=reasons)
 
     return _with_warnings({
         "action": action,
         "quality_score": round(quality, 2),
-        "reason": f"quality={quality:.2f} ({'>=auto' if action == 'add' else 'ask' if action == 'ask' else '<skip'} threshold), factors: {', '.join(reasons)}",
+        "reason": f"quality={quality:.2f} ({'>=' if action == 'add' else '<'}floor {quality_floor}), factors: {', '.join(reasons)}",
     })
+
+
+_DEPENDS_LINE_RE = re.compile(r"^- Depends:\s*(.+)$", re.MULTILINE)
+
+
+def _existing_depends(existing: str) -> bool:
+    """既有卡檔頭已有 `- Depends:` 行（replace 未給 depends 時沿用原行，不算缺）。"""
+    m = _DEPENDS_LINE_RE.search(existing or "")
+    return bool(m and m.group(1).strip())
+
+
+_GATE_OPT_KEYS = ("mode", "existing_path", "actions", "depends", "kind_hint", "skip_gate", "dedupe")
+
+
+def _gate_opts(item: Dict[str, Any]) -> Dict[str, Any]:
+    """stdin／batch 的分型選項：只取有給的鍵（舊呼叫端不給＝create 全檢，行為不變）。"""
+    out: Dict[str, Any] = {}
+    for k in _GATE_OPT_KEYS:
+        if item.get(k) is not None:
+            out[k] = item[k]
+    return out
 
 
 # ─── CLI ─────────────────────────────────────────────────────────────────────
@@ -502,6 +994,8 @@ def main():
                         explicit_user=item.get("explicit_user", False),
                         config=config,
                         layers=item.get("layers") or None,
+                        title=item.get("title", "") or "",
+                        **_gate_opts(item),
                     )
                     print(json.dumps(result, ensure_ascii=False))
         except (OSError, json.JSONDecodeError) as e:
@@ -529,6 +1023,8 @@ def main():
                     explicit_user=item.get("explicit_user", False),
                     config=config,
                     layers=item.get("layers") or None,
+                    title=item.get("title", "") or "",
+                    **_gate_opts(item),
                 )
                 print(json.dumps(result, ensure_ascii=False, indent=2))
             except json.JSONDecodeError:

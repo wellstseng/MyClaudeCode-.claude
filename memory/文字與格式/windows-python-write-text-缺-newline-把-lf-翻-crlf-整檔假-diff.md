@@ -3,7 +3,7 @@
 - Scope: global
 - Author: holylight
 - Confidence: [臨]
-- Trigger: write_text, newline, CRLF, LF, EOL, 換行, phantom diff, 整檔假 diff, 一位改動整檔 diff, os.linesep, 檔案改寫工具, 換行翻轉, marker 同步, read_text universal newline, git diff 整檔
+- Trigger: write_text, newline, CRLF, LF, EOL, 換行, phantom diff, 整檔假 diff, 一位改動整檔 diff, os.linesep, 檔案改寫工具, 換行翻轉, marker 同步, read_text universal newline, git diff 整檔, 查 CRLF, git ls-files --eol, grep -c 假數字, 解合併衝突腳本, git status 一直顯示 M, index 時間戳
 - Created-at: 2026-07-01
 - Related: toolchain, bash-heredoc-會折掉一層反斜線-精確字串比對靜默失敗
 

@@ -6,7 +6,8 @@
 - Trigger: inbox機制, 並行LLM, 即時通訊, 跨session通訊, 檔案當信箱, 並行分工, grok協作, ai-inbox, 斷線喚回, monitor喚醒, compat hooks
 - Status: 通道運作中；面板 guardian 定調不依賴走 CLI；PostCompact 未驗
 - Created-at: 2026-08-24
-- Related: workflow-parallel-agents, handoff-綜觀品質與抗失真寫法, 併發session共用的不只工作樹-執行中的應用程式行程也是共用資源, 跨session資訊失真機制與對策, 歸因早停-找到合理嫌疑機制就停止驗證, vscode-reload-對並行ai-session的影響, grok協作實戰認知-特質與監工分工手感, feedback-高速推進每步跨大-禁越執行越偏細節越耗時, 雙claude協作實戰認知-fable監工opus主力的分工手感
+- Related: workflow-parallel-agents, handoff-綜觀品質與抗失真寫法, 併發session共用的不只工作樹-執行中的應用程式行程也是共用資源, 跨session資訊失真機制與對策, 歸因早停-找到合理嫌疑機制就停止驗證, vscode-reload-對並行ai-session的影響, grok協作實戰認知-特質與監工分工手感, feedback-高速推進每步跨大-禁越執行越偏細節越耗時, 雙claude協作實戰認知-fable監工opus主力的分工手感, feedback-多session協作時主持端要派工問進度分工寫文件-不要只回信等信-閒置session要給解決問題的工作-文件分開寫再彙整, 根層與專案session對齊認知用root-link雙槽與tri-link三槽信箱-落專案inbox
+- Source: commit:d823a10 2026-08-24（原對話已逾保留期）
 
 ## 知識
 
@@ -18,7 +19,7 @@
 - [觀] guardian MCP 案結論：Grok 面板 session 連線非決定性（同條件 reload 紅→綠→紅）、CLI/無頭穩定綠；曾後的兩輪歸因（wrapper std handle、hooks spawn 風暴）均被後續證據推翻/降級，根因未明、停止追查 → 定調：面板 MCP 不依賴，面板寫 atom 一律 `python -m lib.atom_io_cli`。案卷：.ai-inbox 信 006-011。
 - [觀] 跨 harness 相容層風險：Grok 預設執行 `~\.claude\settings.json` 的 hooks（注入類 observe-only 無效＝白跑＋墯 state 風險）；`[compat.claude] hooks=false` 設定層生效但 hook 表仍列 19 條、是否真停 spawn 未證實。分層原則：atom 資料層共用；行為閘門各自（grok-guardian 若做只做 PreToolUse deny＋Stop block）。
 - [觀] grok-guardian 紅線閘已落地：`~\.grok\hooks\grok-guardian.py`+`.json`（PreToolUse deny，Grok 寫檔工具禁寫 `~\.claude\` 除 `memory\_staging\`），無頭探針三發實證（核心區 deny、兩合法區放行）；fail-open+stderr 留痕；已知邊界：終端指令繞寫不擋。Grok hook stdin 用 `toolInput`、deny＝stdout `{"decision":"deny"}`；工具本名 `write`/`search_replace`。
-- [臨]（2026-08-25）第二通道實戰：`c:\Users\holylight\.grok\.ai-inbox\to-opus\`（Fable 寫）／`to-fable\`（Opus 寫），規則與 Grok 通道同（PROTOCOL.md 末段）；一夜 12 封來回跟完八包。每封信首行校準三項（目標／現況差／偏移）＋必有交付物或裁決，禁進度信——有效防飄。資源通知用 `status-notice-*.md`（不佔序號）宣告「我要佔 port 4321／上實機」。Grok 通道待命未動（最後 to-claude\085）。
+- [臨] 第二通道實戰：`c:\Users\holylight\.grok\.ai-inbox\to-opus\`（Fable 寫）／`to-fable\`（Opus 寫），規則與 Grok 通道同（PROTOCOL.md 末段）；一夜 12 封來回跟完八包。每封信首行校準三項（目標／現況差／偏移）＋必有交付物或裁決，禁進度信——有效防飄。資源通知用 `status-notice-*.md`（不佔序號）宣告「我要佔 port 4321／上實機」。Grok 通道待命未動（最後 to-claude\085）。
 
 ## 行動
 

@@ -3,8 +3,9 @@
 - Scope: global
 - Author: holylight
 - Confidence: [觀]
-- Trigger: sed -i, CRLF, LF, gitattributes, eol=crlf, 換行差異, 批改多檔, git status 多出檔, autocrlf, 機械式取代, perl -pi, LF 變 CRLF
+- Trigger: sed -i, CRLF, gitattributes, eol=crlf, 換行差異, 批改多檔, git status 多出檔, autocrlf, 機械式取代, perl -pi, LF 變 CRLF
 - Created-at: 2026-08-07
+- Source: commit:e15269f 2026-08-07（原對話已逾保留期）
 
 - Related: commit-前必須核對-staged-清單而非只信自己-add-了什麼, git-合併與換行的實證事實-text-auto-不回頭轉-stage-方向-孤立-cr-是-binary-driver-缺-command-會-fatal, 併發-session-共用工作樹-收尾選擇性-staging-勿-git-add-a
 
@@ -17,11 +18,11 @@
 - [觀] **Python 文字模式讀寫是同一個地雷，而且更隱微**：`io.open(p).read()` 走 universal newlines 把 `\r\n` 讀成 `\n`，寫回又轉成 `os.linesep`——「只改一行」的腳本實際把整檔換行重寫（實測 358/358、238/236 行全點亮）；用 `"\r\n" in s` 偵測原換行永遠偵不到。正解：**讀寫兩端都帶 `newline=''`**，新插入行用檔案原本的換行字串接；或干脆不用腳本——**小幅改檔用 Edit 工具，它不動換行**。已踩到的補救：`git checkout -- <path>` 還原後重做（前提是還沒 commit）。驗法：`git diff --numstat` 對 `--ignore-cr-at-eol` 的結果，差很多就是換行被動了。
 - [觀] 另一個相關坑：**Bash tool 的 heredoc 會吃掉反斜線**——`'\\'` 到了 python 裡變成 `'\'`、`\\n` 變成真的換行，導致語法錯誤或字串比對失敗。要在腳本裡處理包含反斜線的內容，改用 Write 工具寫腳本檔再執行，不要用 heredoc 夾帶。
 - [觀] **heredoc 裡的 Python 字串跳脫會被吃掉一層**：要產出別的語言的字串字面值（例如 C# 的 `"...\n" +`、Windows 路徑 `%APPDATA%\\Dir`）時，普通引號字串會把 `\n` 直接變成真的換行、`\\` 變成一個反斜線，編譯就炒了（審註兩次）。**正解：用 raw string（`r'...'`）或直接改用 Edit 工具做精確取代**；路徑這種改成目標語言的 verbatim 字串（C# 的 `@"..."`）最安全。
-- [臨] 強制 LF 的 repo（如 ~/.claude）無此坑；`newline=''` 保留法只給仍混行尾的外部 repo，LF repo 正解是寫入端 `newline="\n"`／write_text_lf。
-- [臨] 反向同坑：MSYS2 `perl -pi` 就地改 LF 檔會整檔寫成 CRLF（sed -i 對 LF 檔則不會）；復原 `tr -d '\r'`，改前後用 `git ls-files --eol` 比 i/ w/。
+- [觀] 強制 LF 的 repo（如 ~/.claude）無此坑；`newline=''` 保留法只給仍混行尾的外部 repo，LF repo 正解是寫入端 `newline="\n"`／write_text_lf。
+- [觀] 反向同坑：MSYS2 `perl -pi` 就地改 LF 檔會整檔寫成 CRLF（sed -i 對 LF 檔則不會）；復原 `tr -d '\r'`，改前後用 `git ls-files --eol` 比 i/ w/。
 
 ## 行動
 
-- 批改完立刻以 python 把動過的檔還原：`data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")`（先降 LF 再升 CRLF，幂等）
+- 批改完立刻以 python 把動過的檔還原：`data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")`（先降 LF 再升 CRLF，冪等）
 - commit 前用 `git diff --cached --name-only` 逐行核對；只有換行殘影的檔不要 stage
 - 改檔前先確認 `.gitattributes` 的 eol 宣告，別預設 repo 是 LF

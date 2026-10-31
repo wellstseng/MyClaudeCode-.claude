@@ -34,15 +34,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-CLAUDE_DIR = Path.home() / ".claude"
-if str(CLAUDE_DIR) not in sys.path:
-    sys.path.insert(0, str(CLAUDE_DIR))
+_CODE_ROOT = Path(__file__).resolve().parent.parent   # 程式碼根：lib.* 從本樹載
+if str(_CODE_ROOT) not in sys.path:
+    sys.path.insert(0, str(_CODE_ROOT))
 
+# CLAUDE_DIR＝使用者資料根（index path 的基準），和 lib 同一份；_CLAUDE_ROOT 是同一個值，搬移落點算相對路徑用
 from lib.atom_locations import (  # noqa: E402
-    CLAUDE_DIR as _CLAUDE_ROOT, FAILURES_ROOT_NAME,
+    CLAUDE_DIR, CLAUDE_DIR as _CLAUDE_ROOT, FAILURES_ROOT_NAME,
     GLOBAL_MEMORY_DIR, LOCAL_ATOMS_DIR, LOCAL_ATOMS_REL, LOCAL_REALM_DOMAINS,
     core_write_target, enumerate_local_paths, failures_write_target,
-    is_local_realm_path, normalize_domain_path, unclassified_error,
+    is_local_realm_path, local_realm_path_segments, normalize_domain_path, unclassified_error,
+    ENTRY_BOUND_STAYS_CORE, entry_bound_ids,
 )
 try:
     from lib.atom_taxonomy import core_categories as _core_categories  # noqa: E402
@@ -172,8 +174,9 @@ def set_realm(
             return {"ok": False, "error": "empty domain (need --domain <path> or --to-core)"}
         # 多段階層路徑：canon（對既有樹 snap）取代舊 allow-list 驗證
         dom_path = normalize_domain_path(domain, enumerate_local_paths())
-        if cur_is_local:
-            return {"ok": True, "noop": True, "msg": f"{slug} already local ({cur_path})"}
+        # 已在 local 的卡：同一夾 → noop；不同夾 → 照搬（local 內換子夾，realm 不變）
+        if cur_is_local and "/".join(local_realm_path_segments(cur_path)).casefold() == dom_path.casefold():
+            return {"ok": True, "noop": True, "msg": f"{slug} already local at {cur_path}"}
         segs = [s for s in dom_path.split("/") if s]
         dst_md = LOCAL_ATOMS_DIR.joinpath(*segs, f"{slug}.md")
         new_rel = f"{LOCAL_ATOMS_REL}/{dom_path}/{slug}.md"
@@ -185,6 +188,11 @@ def set_realm(
         return {"ok": False, "error": f"target already exists: {dst_md}"}
 
     cur_scope_field = _read_scope(src_md)
+    # ENTRY_BOUND_STAYS_CORE：自動搬移會擋；手動搬是人判斷過的動作，只警告、照搬
+    entry_ids = entry_bound_ids(entry, src_md) if new_realm == "local" else []
+    warn = ({"warning": f"{ENTRY_BOUND_STAYS_CORE}: {slug} 綁 Entry {', '.join(entry_ids)}；"
+                        "搬到 local 後只在 ~/.claude 注入，其他專案與受測資料根在那個切入點送不到（照搬，不擋）"}
+            if entry_ids else {})
 
     if dry_run:
         if to_core:  # core_write_target 已 mkdir 落點：dry-run 不留空目錄鏈
@@ -198,7 +206,7 @@ def set_realm(
             "from": cur_path, "to": new_rel,
             "from_realm": "local" if cur_is_local else "core", "to_realm": new_realm,
             "scope": scope, "scope_field": cur_scope_field,
-            "sidecar": access_sidecar_path(src_md).exists(),
+            "sidecar": access_sidecar_path(src_md).exists(), **warn,
         }
 
     # 1) 實體檔 + sidecar 原子搬
@@ -236,7 +244,7 @@ def set_realm(
     return {
         "ok": True, "slug": slug, "from": cur_path, "to": new_rel,
         "to_realm": new_realm, "scope": scope, "scope_field": cur_scope_field,
-        "sidecar_moved": sidecar_moved, "md_path": str(dst_md),
+        "sidecar_moved": sidecar_moved, "md_path": str(dst_md), **warn,
     }
 
 
@@ -261,6 +269,8 @@ def main() -> int:
 
     args = p.parse_args()
     result = args.func(args)
+    if result.get("warning"):
+        print(f"[警告] {result['warning']}", file=sys.stderr)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result.get("ok") else 1
 

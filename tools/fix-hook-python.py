@@ -15,7 +15,7 @@ settings.json 不帶機器專屬路徑。
   python tools/fix-hook-python.py --write    # 用「跑本腳本的這支 python」改寫
   python tools/fix-hook-python.py --write --use "D:/py/python.exe"
 
-hook 全部只用標準函式庫，任何 CPython 3.9+ 皆可；本腳本會實際跑一次候選
+hook 全部只用標準函式庫，CPython 3.10+ 皆可（與安裝器 tools/install.py 同一條下限）；本腳本會實際跑一次候選
 直譯器驗證版本，不合格就拒絕寫入。原檔備份為 settings.json.bak。
 """
 
@@ -31,9 +31,15 @@ import sys
 from pathlib import Path
 from typing import List, Tuple
 
-CLAUDE_DIR = Path(__file__).resolve().parent.parent
-SETTINGS = CLAUDE_DIR / "settings.json"
-MIN_VERSION = (3, 9)
+CODE_DIR = Path(__file__).resolve().parent.parent   # 程式碼根（本檔所在的樹）：lib.* 從這裡載
+if str(CODE_DIR) not in sys.path:
+    sys.path.insert(0, str(CODE_DIR))
+from lib.project_root import claude_config_dir  # noqa: E402
+
+# settings.json 是 Claude Code 自己讀的設定：跟 Claude Code 的設定目錄（CLAUDE_CONFIG_DIR，沒設就 ~/.claude），
+# 不跟記憶系統的資料根（WG_CLAUDE_DIR）走；一般安裝三者同一處。
+SETTINGS = claude_config_dir() / "settings.json"
+MIN_VERSION = (3, 10)
 
 # 指令開頭的直譯器（可帶引號、可為 Windows 絕對路徑或 POSIX 路徑或裸名）
 _INTERP_RE = re.compile(

@@ -12,9 +12,9 @@ import sys
 from typing import Any, Dict
 
 from wg_core import (
-    CLAUDE_DIR, EPISODIC_DIR, WORKFLOW_DIR,
+    CLAUDE_DIR, CODE_DIR, EPISODIC_DIR, WORKFLOW_DIR,
     _ensure_state, _now_iso, write_state,
-    _atom_debug_error,
+    _atom_debug_error, v6_enabled,
     discover_all_project_memory_dirs, get_project_memory_dir, resolve_staging_dir,
 )
 from wg_atoms import (
@@ -25,6 +25,7 @@ from wg_episodic import (
     _detect_atom_conflicts, _generate_episodic_atom, _purge_expired_episodic,
 )
 from wg_handoff import build_handoff_stub, should_write_stub
+import chain_store
 from wg_recall_miss import detect_recall_misses
 from wg_evasion import (
     evaluate_session, flush_outcome_stats,
@@ -79,6 +80,7 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
         return
 
     _se_sentinel_arm(session_id)
+    v6 = v6_enabled(config)     # 關＝只跑 9e476fd0 就有的收尾
 
     state["ended_at"] = _now_iso()
     state["phase"] = "done"
@@ -99,6 +101,15 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
         _cleanup_old_states()
     except Exception as e:
         print(f"SessionEnd cleanup error: {e}", file=sys.stderr)
+    chain_store.session_cleanup(session_id)   # 連鎖斷路器：這個 session 的快照；7 天沒動的別 session 快照與連鎖帳（刪不掉浮 stderr）
+    try:
+        # run_verify 自寫的驗證收據（workflow/verify-ledger/_runs/）：留最新 200 份、刪 30 天以上；單份刪不掉在函式內浮 stderr
+        if v6:
+            from wg_core import CLAUDE_DIR as _CD
+            from self_receipt import prune_self_runs
+            prune_self_runs(_CD)
+    except Exception as e:
+        print(f"SessionEnd 自寫收據清理失敗：{type(e).__name__}: {e}", file=sys.stderr)
 
     rc = config.get("response_capture", {})
     # session_end 全文萃取 worker 的唯一下游是 session_end_flush（已停產）；
@@ -166,7 +177,7 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
                     f"({osc['count']} sessions)",
                     file=sys.stderr,
                 )
-        _save_oscillation_state(oscillations if oscillations else [])
+        _save_oscillation_state(oscillations if oscillations else [], state)
     except Exception as e:
         print(f"Self-iteration metrics error: {e}", file=sys.stderr)
 
@@ -288,27 +299,6 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
     except Exception as e:
         print(f"Conflict detection error: {e}", file=sys.stderr)
 
-    # atom-health-check 修參照：fire-and-forget（不 wait）——SessionEnd 30s 窗擁擠，
-    # 兩個子行程各可吃 10s；其輸出本就丟棄、結果不影響收尾流程，detach 即可。
-    try:
-        import subprocess as _sp
-        _hc_script = str(CLAUDE_DIR / "tools" / "atom-health-check.py")
-        _hc_kwargs: Dict[str, Any] = {
-            "stdin": _sp.DEVNULL, "stdout": _sp.DEVNULL, "stderr": _sp.DEVNULL,
-        }
-        if sys.platform == "win32":
-            _hc_kwargs["creationflags"] = _sp.CREATE_NO_WINDOW
-        else:
-            _hc_kwargs["start_new_session"] = True
-        _sp.Popen([sys.executable, _hc_script, "--fix-refs"], **_hc_kwargs)
-        _proj_mem = get_project_memory_dir(state.get("session", {}).get("cwd", ""))
-        if _proj_mem:
-            _sp.Popen(
-                [sys.executable, _hc_script, "--fix-refs", "--memory-root", str(_proj_mem)],
-                **_hc_kwargs,
-            )
-    except Exception as e:
-        print(f"fix-refs error: {e}", file=sys.stderr)
 
     episodic_generated = state.get("episodic_checkpoint_done", False)
     if not episodic_generated and config.get("episodic", {}).get("auto_generate", True):
@@ -351,6 +341,16 @@ def handle_session_end(input_data: Dict[str, Any], config: Dict[str, Any]) -> No
         except Exception as e:
             print(f"[recall-miss] error: {e}", file=sys.stderr)
             _atom_debug_error("session_end:recall_miss", e)
+
+    # 規則 READ_FAST_PATH：session 最後幾次 Read 還躺在 read-log（之後沒有非 Read 事件來補帳）→ 這裡補完、檔也清掉
+    # （讀檔帳與工具結果體積才算完整；有累積才載 post_tool_use）
+    try:
+        import wg_read_fast
+        if wg_read_fast.pending(session_id):
+            from handlers.post_tool_use import replay_read_log
+            replay_read_log(state, session_id, config, v6)
+    except Exception as e:
+        _atom_debug_error("session_end:read_fast_replay", e)
 
     # ── 工具結果體積：整場 per-tool 次數／總量／最大值聚合成一筆
     # Logs/guard-tool-result-stats.jsonl，per-session 暫存檔聚合後刪。純本地、fail-open。

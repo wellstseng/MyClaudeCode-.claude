@@ -10,7 +10,7 @@ warn-only advisory（systemMessage + stderr，可觀測不阻斷）。**寧漏�
 高精度 pattern，模糊者（裸 Phase N / 日期 / v2.x）不納入，避免噪音。
 
 範圍：只掃 ~/.claude 內的檔（政策針對本系統自身）；正位/歸檔檔（DevHistory /
-_CHANGELOG / TECH / Architecture / SPEC / plans / verify / _staging）豁免。
+_CHANGELOG / TECH 與 TECH/ 細節檔 / Architecture / SPEC / plans / verify / _staging）豁免。
 
 規則：rules/core.md「版本與文件治理」；pattern/KEEP 邊界 single source＝atom
 [[feedback-live-檔與記憶不留版本操作脈絡歷史歸專門檔]]。config: workflow/config.json
@@ -26,7 +26,12 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-CLAUDE_DIR = Path.home() / ".claude"
+_CODE_ROOT = Path(__file__).resolve().parents[1]   # 程式碼根（本檔所在的樹）
+if str(_CODE_ROOT / "lib") not in sys.path:
+    sys.path.insert(0, str(_CODE_ROOT / "lib"))
+from project_root import claude_data_dir  # noqa: E402
+
+CLAUDE_DIR = claude_data_dir()   # 使用者資料根（WG_CLAUDE_DIR 或 ~/.claude），和 hooks 同一支算法
 CONFIG_PATH = CLAUDE_DIR / "workflow" / "config.json"
 
 
@@ -65,7 +70,7 @@ _WHITELIST_TOKENS = (
 
 # 路徑含這些片段 → 整檔豁免（版本正位 / 歸檔 / 測試 fixture / 規劃）
 _WHITELIST_PATH_PARTS = (
-    "_aidocs/devhistory/", "_changelog", "/tech.md", "tech.md",
+    "_aidocs/devhistory/", "_changelog", "/tech.md", "tech.md", "/tech/",
     "architecture.md", "readme.md", "spec_atom", "/plans/",
     "/verify/", "_staging/", "/.git/", "__pycache__",
     # atom 本身列舉 pattern 作範例 → 豁免自身與本 hook/測試
@@ -76,12 +81,12 @@ _TEXT_SUFFIXES = (".py", ".js", ".md", ".json", ".sh", ".txt", ".ts", ".mjs")
 
 
 def is_scannable_path(file_path: str) -> bool:
-    """只掃 ~/.claude 內、非正位/歸檔、文字副檔名的檔。"""
+    """只掃本系統自己的檔（資料根或程式碼根內）、非正位/歸檔、文字副檔名的檔。"""
     if not file_path:
         return False
     norm = file_path.replace("\\", "/").lower()
-    claude_norm = str(CLAUDE_DIR).replace("\\", "/").lower()
-    if claude_norm not in norm:  # 政策只針對本系統自身
+    roots = (str(r).replace("\\", "/").lower() for r in (CLAUDE_DIR, _CODE_ROOT))
+    if not any(r in norm for r in roots):  # 政策只針對本系統自身
         return False
     if not norm.endswith(_TEXT_SUFFIXES):
         return False

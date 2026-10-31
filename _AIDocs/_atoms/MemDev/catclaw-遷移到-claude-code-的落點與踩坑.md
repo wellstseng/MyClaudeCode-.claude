@@ -16,7 +16,7 @@
 - [臨] `sync-atom-index.py --memory-dir <專案>` 會把每顆 atom 報成 scope_drift，因為 write_index 對專案層一律寫 scope=global；這是工具落差不是資料錯誤，判讀時略過該欄。
 - [臨] 專案層 atom 仍會跨專案召回：ups_search 在 trigger 命中 ≥2 時納入其他專案的 atom，向量查詢不分專案。
 - [臨] 排程工具 `~/project/wendy/cron/cronctl.py` 用 launchd 觸發，`install` 之前不會排進任何 job；claude 型 job 依賴 CLI 登入有效，過期時回 `OAuth session expired`。
-- [臨] 完整紀錄在 `_AIDocs/DevHistory/catclaw-migration-2026-10.md`，一次性腳本在 `memory/_staging/catclaw-migration/`。
+- [臨] 完整紀錄在 `_AIDocs/DevHistory/設定與遷移/catclaw-migration-2026-10.md`，一次性腳本在 `memory/_staging/catclaw-migration/`。
 - [臨] 現況（2026-10-05 快照）：這是預防性遷移、尚未切換。CatClaw 仍是主力並持續寫入，Claude 這邊是靜止副本，之後可能要再遷一次補差量。現況與再遷移手冊在 `memory/_staging/catclaw-migration/STATUS.md`。
 - [臨] 再遷移前先跑 `07_drift_report.py`（唯讀）看 CatClaw 自基準後變了什麼；基準是 `skills-baseline.json`，補完後用 `--save-baseline` 重設。
 - [臨] 再遷移的兩個地雷：(1) `04_import_atoms.py` 對來源有變的 atom 是整顆覆寫目標，Claude 這邊改過同一顆會被蓋掉；(2) 技能不可整包重新複製，已轉換的 SKILL.md 與 references 會被蓋回 CatClaw 格式，只能依漂移報告逐檔處理。

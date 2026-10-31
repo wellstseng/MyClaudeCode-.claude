@@ -9,10 +9,19 @@
 
 from __future__ import annotations
 
+import os
 import re
+import sys
 from datetime import date
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
+
+try:
+    from .project_root import claude_data_dir
+except ImportError:  # 頂層模組載入（含單獨按檔案載入、lib/ 不在 sys.path）：從本檔所在的 lib/ 找
+    if str(Path(__file__).resolve().parent) not in sys.path:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from project_root import claude_data_dir
 
 
 # ─── Constants（單一規則來源） ───────────────────────────────────────────────
@@ -25,10 +34,11 @@ from typing import Dict, Iterable, List, Optional
 # - _pending_review/: shared 敏感原子待裁決區，非活躍 atom
 # - _rejected/: memory-undo 撤銷歸檔區，非活躍 atom
 # - _drafts/: auto-capture 草稿隔離區（extract-worker），不入索引不注入
+# - _archived/: 封存區（例 personal/_archived/），封存的舊卡不再當活躍 atom
 SKIP_DIRS = frozenset({
     "_meta", "_reference", "_staging", "_vectordb", "_distant",
     "episodic", "templates", "personal", "wisdom", "_pending_review",
-    "_rejected", "_drafts",
+    "_rejected", "_drafts", "_archived",
 })
 
 # 系統檔前綴（檔名等級跳過）
@@ -47,9 +57,13 @@ OPTIONAL_METADATA = frozenset({
     "Expires-at", "Tags", "Related", "Supersedes", "Quality",
     "Audience", "Author", "Pending-review-by", "Merge-strategy", "Created-at",
     "Decided-by",  # conflict-review 核可 shared atom 時寫入（核可者）
+    "Aka",  # 這顆 atom 用過的舊檔名（逗號分隔）；索引把它登錄成指向同一顆的鍵，
+            # 改名後舊 Related 仍解析得到，不必去改所有連進來的檔（那些是別人的檔）
     "Depends", "Evidence",  # 壞滅緣（validity conditions）/ 證據等級（了義裁決）
     "Status",  # 選填現況一行（如「案結 2026-07-29」）；cold/skip 一行注入時附帶。
+    "Quote",  # 觸發這張卡片的使用者原話引述（單行 ≤200 字）；PostToolUse 自動填、回填腳本補
                # 只寫現況，禁歷史敘事/版本脈絡（feedback-live-檔與記憶不留版本操作脈絡）
+    "Entry",  # 切入點代號標記（逗號分隔，如 E04, E08）；沒有程式依它送卡，realm 自動搬移照它擋（ENTRY_BOUND_STAYS_CORE）
 })
 
 # 行動 always required; 知識 or 印象（指標型 atom 變體）二選一
@@ -83,6 +97,13 @@ PROJECT_INDEX_MAX_LINES = 150  # 專案層 MEMORY.md 上限：專案層不生成
 # 單顆 byte 硬門檻可直接反推，取 3KB 為硬拒線：低於截斷點的 3 倍餘裕內仍容
 # 得下正常結論型 atom；超過即代表在堆個案敘事而非結論。
 KNOWLEDGE_BUDGET_BYTES = 3072
+
+# 達預算此比例即預警：撞牆才發現要重整時，選項只剩「刪既有內容」
+KNOWLEDGE_BUDGET_WARN_RATIO = 0.8
+
+# 清單型內容的硬拒門檻（待辦標記數）。清單會一直長大，放 atom 必然撞預算，
+# 且知識段注入上限 200 tok 會先把它截掉——第一次寫入就擋，不等它長到上限。
+TASK_LIST_MIN_ITEMS = 3
 
 # 內容樣式軟警門檻（逐筆表格列數 / 含路徑行數）
 STYLE_TABLE_MIN_ROWS = 6
@@ -148,7 +169,7 @@ def is_personal_atom_rel_parts(rel_parts) -> bool:
     return parts[-1] != "role.md"
 
 
-_META_LINE_RE = re.compile(r"^-\s+([\w-]+):\s*(.+)$")
+_META_LINE_RE = re.compile(r"^-\s+([\w-]+):[ \t]*(.*)$")
 
 
 def parse_frontmatter(content: str) -> Dict[str, str]:
@@ -156,6 +177,7 @@ def parse_frontmatter(content: str) -> Dict[str, str]:
 
     從 # 標題後的 `- Key: Value` 區塊抽 metadata；空行不結束區塊（conflict-review 核可會在
     標題下插 `- Decided-by:` 再接空行），第一個非空、非 `- Key:` 的行（通常 `## 知識`）才結束。
+    值為空的欄位（如 `- Related:`）仍屬區塊、但不放進 dict，呼叫端的 `.get(k, 預設)` 照常生效。
     支援 BOM。回傳 dict（無 `_format` key — atom_spec 不關心 Claude-native YAML）。
     """
     if content.startswith("﻿"):
@@ -167,11 +189,78 @@ def parse_frontmatter(content: str) -> Dict[str, str]:
             continue
         m = _META_LINE_RE.match(line) if line.startswith("- ") else None
         if m:
-            fm[m.group(1)] = m.group(2).strip()
+            value = m.group(2).strip()
+            if value:
+                fm[m.group(1)] = value
             in_meta = True
         elif in_meta:
             break
     return fm
+
+
+# `- Related:` 行。冒號後只吃同行空白：`\s*` 會跨過換行，值為空時把下一行（通常 `## 知識`）
+# 當成值——讀的一方會拿標題當連結名，寫的一方會把連結接到標題後面。
+RELATED_LINE_RE = re.compile(r"^- Related:[ \t]*(.*)$", re.MULTILINE)
+AKA_LINE_RE = re.compile(r"^- Aka:[ \t]*(.*)$", re.MULTILINE)
+ENTRY_LINE_RE = re.compile(r"^- Entry:[ \t]*(.*)$", re.MULTILINE)
+_SECTION_START_RE = re.compile(r"^## ", re.MULTILINE)
+
+
+def _find_meta_line(text: str, pattern: "re.Pattern[str]") -> Optional["re.Match[str]"]:
+    """metadata 區塊內第一個符合的行（第一個 `## ` 標題之前）；沒有回 None。"""
+    section = _SECTION_START_RE.search(text)
+    return pattern.search(text, 0, section.start() if section else len(text))
+
+
+def find_related_line(text: str) -> Optional["re.Match[str]"]:
+    """metadata 區塊的 `- Related:` 行。
+
+    讀寫都以這一行為準。檔內留有版控衝突區段時會同時存在多行 Related，
+    只要讀與寫定位到不同行，去重判斷就擋不住重複追加。
+    """
+    return _find_meta_line(text, RELATED_LINE_RE)
+
+
+def find_aka_line(text: str) -> Optional["re.Match[str]"]:
+    """metadata 區塊的 `- Aka:` 行（改名前用過的檔名）。"""
+    return _find_meta_line(text, AKA_LINE_RE)
+
+
+def find_entry_line(text: str) -> Optional["re.Match[str]"]:
+    """metadata 區塊的 `- Entry:` 行（這張卡是哪幾個切入點的判準卡）。"""
+    return _find_meta_line(text, ENTRY_LINE_RE)
+
+
+def split_related(value: str) -> List[str]:
+    """逗號分隔的名稱欄（Related / Aka / Entry）→ 名稱清單；空值與 `(none)` 都是零項。"""
+    if not value or value.strip() == "(none)":
+        return []
+    return [n.strip().removesuffix(".md") for n in value.split(",") if n.strip()]
+
+
+_CONFLICT_OPEN_RE = re.compile(r"^<{7}(?: |$)")
+_CONFLICT_CLOSE_RE = re.compile(r"^>{7}(?: |$)")
+
+
+def has_conflict_markers(text: str) -> bool:
+    """內容含未解的版控衝突區段：先有 `<<<<<<<` 起頭行、後有 `>>>>>>>` 收尾行。
+
+    git merge-file / diff3 / svn 產生的標記同形。``` 區塊內的不算——談衝突處理的 atom
+    會在範例裡放標記，那是內容不是衝突。
+    """
+    in_fence = False
+    opened = False
+    for line in text.splitlines():
+        if line.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if _CONFLICT_OPEN_RE.match(line):
+            opened = True
+        elif opened and _CONFLICT_CLOSE_RE.match(line):
+            return True
+    return False
 
 
 def parse_depends(raw: Optional[str]) -> List[Dict[str, str]]:
@@ -195,18 +284,148 @@ def parse_depends(raw: Optional[str]) -> List[Dict[str, str]]:
     return entries
 
 
-def resolve_depends_path(value: str, claude_dir: Optional[Path] = None) -> Path:
+def resolve_depends_path(value: str, claude_dir: Optional[Path] = None,
+                         base: Optional[Path] = None) -> Path:
     """path 型 Depends 條目 → 絕對路徑。
 
     - `~` 開頭 → expanduser
     - 絕對路徑 → 原樣
-    - 相對路徑 → 以 claude_dir（預設 ~/.claude）為根
+    - 相對路徑 → 以 base 為根（專案卡＝專案根；根層卡＝資料根）；沒給 base 用 claude_dir（預設資料根 claude_data_dir()）
     """
-    claude_dir = claude_dir or Path.home() / ".claude"
+    root = base or claude_dir or claude_data_dir()
     p = Path(value).expanduser()
     if not p.is_absolute():
-        p = claude_dir / p
+        p = root / p
     return p
+
+
+def depends_base_for(mem_dir: Path) -> Path:
+    """索引目錄 → 該索引卡片 `path:` 相對路徑的解析根：根層 `<資料根>/memory` → 資料根；
+    專案層 `<root>/.claude/memory` → `<root>`；其他佈局退 mem_dir 的上一層。"""
+    mem_dir = Path(mem_dir)
+    try:
+        if mem_dir.resolve() == (claude_data_dir() / "memory").resolve():
+            return mem_dir.parent
+    except OSError:
+        pass
+    if mem_dir.parent.name == ".claude":
+        return mem_dir.parent.parent
+    return mem_dir.parent
+
+
+def depends_base_for_file(atom_path: Path) -> Optional[Path]:
+    """卡片檔 → 它 `path:` 相對路徑的解析根：往上找名為 memory 的索引目錄交 depends_base_for；找不到回 None（退資料根）。"""
+    for anc in Path(atom_path).parents:
+        if anc.name == "memory":
+            return depends_base_for(anc)
+    return None
+
+
+_OTHER_HOME_CLAUDE_RE = re.compile(r"^(?:[A-Za-z]:[\\/]Users[\\/][^\\/]+|/home/[^/]+|/Users/[^/]+)[\\/]\.claude(?P<rest>[\\/].*)?$", re.I)
+
+
+def _anchor_missing(p: Path) -> bool:
+    """絕對路徑的最上層錨點本機不存在（C:/Projects、C:/Users/<別人>）→ 這是別台機器的路徑。家目錄多看一層到 <名>。"""
+    if not p.is_absolute() or len(p.parts) < 2:
+        return False
+    anchor = Path(p.parts[0]) / p.parts[1]
+    if p.parts[1].lower() in ("users", "home") and len(p.parts) >= 3:
+        anchor = anchor / p.parts[2]
+    return not anchor.exists()
+
+
+def classify_depends_path(value: str, claude_dir: Optional[Path] = None,
+                          base: Optional[Path] = None) -> Tuple[str, Path]:
+    """path 型 Depends 的存在性分級，回 (級別, 判定用的路徑)：
+    ok      — 解析後存在
+    missing — 本機該在卻不在：本機路徑；或別人 `<家目錄>/.claude/<rest>` 換到本機資料根後也不在（卡片跨機共享，作者機的
+              .claude 對應本機的 .claude，例：tools/x.py 搬走了）
+    foreign — 別台機器的絕對路徑（最上層錨點本機沒有：C:/Projects/…、C:/Users/<別人>/<非 .claude>）：本機驗不到，不算壞滅緣。
+    健檢只把 missing 當壞滅緣；foreign 另列資訊。"""
+    resolved = resolve_depends_path(value, claude_dir, base)
+    if resolved.exists():
+        return "ok", resolved
+    m = _OTHER_HOME_CLAUDE_RE.match(str(value).strip())
+    if m:
+        local = (claude_dir or claude_data_dir()) / (m.group("rest") or "").lstrip("\\/")
+        return ("ok" if local.exists() else "missing"), local
+    if _anchor_missing(resolved):
+        return "foreign", resolved
+    return "missing", resolved
+
+
+def portable_depends_path(p: Path, project_root: Optional[Path] = None, claude_dir: Optional[Path] = None) -> str:
+    """寫 `path:` 時用能跨機器的寫法：在專案根下 → 專案相對（專案卡的解析根就是專案根）；在資料根下 → `~/.claude/<rel>`；
+    其他照絕對路徑（posix）。作者機的絕對路徑寫進卡片，別台機器的健檢會判成他機路徑、召回也對不到。"""
+    p = Path(p)
+    for root, head in ((project_root, ""), (claude_dir or claude_data_dir(), "~/.claude/")):
+        if root is None:
+            continue
+        try:
+            return head + p.resolve().relative_to(Path(root).resolve()).as_posix()
+        except (ValueError, OSError):
+            continue
+    return p.as_posix()
+
+
+def _norm_fs_path(p: Path) -> str:
+    """路徑比對鍵：resolve（不要求存在）→ 剝 `\\\\?\\`／`\\\\?\\UNC\\` → 正斜線 → Windows 不分大小寫。"""
+    try:
+        s = str(Path(p).resolve(strict=False))
+    except (OSError, ValueError, RuntimeError):
+        s = str(p)
+    if s.startswith("\\\\?\\UNC\\"):     # Path.resolve 對 extended-length 前綴的處理隨版本不同，兩邊都剝掉才可比
+        s = "\\\\" + s[8:]
+    elif s.startswith("\\\\?\\"):
+        s = s[4:]
+    s = s.replace("\\", "/").rstrip("/")
+    return s.lower() if os.name == "nt" else s
+
+
+def atoms_depending_on(path, mem_dirs) -> List[Dict[str, Any]]:
+    """哪些卡的索引 `depends` 有 `path:` 條目指到這個檔（或它所在目錄的前綴）。
+
+    mem_dirs：索引目錄清單；每項是 Path（解析根由 depends_base_for 推）或 (mem_dir, base) 二元組（明給根）。
+    命中規則：條目解析成絕對路徑後與 path 相等，或 path 在該條目之下（`src/x` 只命中 `src/x/**`，不命中 `src/xy.cs`）。
+    回 [{"name", "path"（索引相對路徑）, "card"（卡絕對路徑）, "dep"（原條目）, "mem_dir"}]，依 mem_dirs 順序、同卡只列一次。
+    索引讀不到／條目壞掉一律略過（召回是旁路，不得讓讀檔 hook 炸）。
+    """
+    try:
+        from .atom_index_json import load_atom_index_json
+    except ImportError:  # 頂層模組載入（hooks 以 sys.path.insert(lib) 方式）
+        from atom_index_json import load_atom_index_json  # type: ignore
+    target = _norm_fs_path(Path(path))
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for item in mem_dirs or []:
+        if isinstance(item, (tuple, list)) and len(item) == 2:
+            mem_dir, base = Path(item[0]), Path(item[1])
+        else:
+            mem_dir = Path(item)
+            base = depends_base_for(mem_dir)
+        try:
+            atoms = load_atom_index_json(mem_dir).get("atoms", [])
+        except (OSError, ValueError):
+            continue
+        for a in atoms:
+            name = a.get("name") or ""
+            deps = a.get("depends")
+            if not name or not isinstance(deps, list) or name in seen:
+                continue
+            for raw in deps:
+                if not isinstance(raw, str) or not raw.strip().startswith(DEPENDS_PATH_PREFIX):
+                    continue
+                value = raw.strip()[len(DEPENDS_PATH_PREFIX):].strip()
+                if not value:
+                    continue
+                dep = _norm_fs_path(resolve_depends_path(value, base=base))
+                if target == dep or target.startswith(dep + "/"):
+                    seen.add(name)
+                    out.append({"name": name, "path": a.get("path") or "",
+                                "card": str(mem_dir.parent / (a.get("path") or "")),
+                                "dep": raw.strip(), "mem_dir": str(mem_dir)})
+                    break
+    return out
 
 
 def depends_warnings(raw: Optional[str]) -> List[str]:
@@ -254,7 +473,9 @@ def validate_atom_content(content: str) -> Optional[str]:
         return "Missing ## 知識 or ## 印象 section"
     if "## 行動" not in content:
         return "Missing ## 行動 section"
-    m = re.search(r"^- Confidence:\s*(.+)$", content, re.MULTILINE)
+    # 只在檔頭（第一個 `## ` 之前）找、[ \t]* 不跨行：空的 Confidence 行不能拿下一行的 [臨] 充數（同 js atom-render.validateAtomContent）
+    h = re.search(r"^## ", content, re.MULTILINE)
+    m = re.search(r"^- Confidence:[ \t]*(.+)$", content[:h.start()] if h else content, re.MULTILINE)
     if not m or m.group(1).strip() not in VALID_CONFIDENCE:
         return "Missing or invalid Confidence metadata"
     return None
@@ -280,7 +501,51 @@ def knowledge_budget_error(nbytes: int, budget: int = KNOWLEDGE_BUDGET_BYTES) ->
     return (
         f"knowledge 區 {nbytes} bytes 超過預算 {budget} bytes——"
         "個案事實移文件；atom 只留結論/判斷/教訓/現況/檔案錨點"
-        "（大段逐筆內容改為文件路徑一行）"
+        "（大段逐筆內容改為文件路徑一行）。"
+        "注入端知識段上限約 200 tok，放寬本預算也不會讓內容送達"
+    )
+
+
+def knowledge_budget_warning(nbytes: int, budget: int = KNOWLEDGE_BUDGET_BYTES,
+                             ratio: float = KNOWLEDGE_BUDGET_WARN_RATIO) -> Optional[str]:
+    """已達預算 ratio 但未超額 → 預警訊息；否則 None。budget<=0 停用。"""
+    if budget <= 0 or nbytes > budget or nbytes < int(budget * ratio):
+        return None
+    return (
+        f"knowledge 區 {nbytes} bytes 已達預算 {budget} bytes 的 {int(ratio * 100)}%——"
+        "接近上限；先分辨這是結論還是清單："
+        "清單型改為正本進 memory/_staging/、atom 留指標，別等撞牆才刪既有內容"
+    )
+
+
+# 清單型的訊號＝待辦標記。不能用「條列多」當判準——atom 本來就通篇條列
+_TASK_ITEM_RE = re.compile(r"^[ \t]*[-*][ \t]+\[[ xX]\]", re.MULTILINE)
+
+
+def knowledge_task_list_error(content: str,
+                              min_items: int = TASK_LIST_MIN_ITEMS) -> Optional[str]:
+    """knowledge 區是待辦清單（待辦標記 >= min_items）→ 錯誤訊息；否則 None。min_items<=0 停用。
+
+    清單會持續長大，而 atom 每次 trigger 整顆注入：越完整越貴，且知識段注入上限約
+    200 tok 會先把它截斷——長清單放 atom 根本到不了模型眼前。故於第一次寫入即擋。
+    """
+    if min_items <= 0:
+        return None
+    items = 0
+    for sec in KNOWLEDGE_SECTIONS:
+        m = re.search(
+            r"^##[ \t]+" + re.escape(sec) + r"[ \t]*\n([\s\S]*?)(?=^## |\Z)",
+            content, re.MULTILINE,
+        )
+        if m:
+            items += len(_TASK_ITEM_RE.findall(m.group(1)))
+    if items < min_items:
+        return None
+    return (
+        f"knowledge 區有 {items} 個待辦標記（`- [ ]`／`- [x]`）＝清單型內容——"
+        "清單正本請寫 memory/_staging/<主題>.md，atom 只留指標"
+        "（正本在哪／怎麼改／什麼不寫這裡）。"
+        "理由：atom 隨 trigger 整顆注入、知識段上限約 200 tok，長清單會被截斷"
     )
 
 
@@ -304,6 +569,23 @@ def _is_block_knowledge(item: str) -> bool:
     """knowledge 元素是否為原樣輸出 block（markdown 表格列，或三反引號 fence）。"""
     s = item.lstrip()
     return s.startswith("|") or s.startswith("```")
+
+
+# 繞閘卡片宣告（規則 ATOM_BYPASS_HOWTO_REFUSED）：知識段第一行「不是教繞閘｜<理由>」只給寫入閘看（hooks/wg_gate_bypass 讀同一個樣子），
+# 理由留在 guard-gate_bypass.jsonl；建卡落檔前剝掉，不讓它每次注入都佔知識段預算。可帶 [臨] 這類信心前綴。
+BYPASS_DECLARATION_RE = re.compile(r"^\s*(?:\[[臨觀固]\]\s*)?不是教繞閘\s*[｜|]\s*(.*?)\s*$")
+
+
+def strip_bypass_declaration(knowledge: Iterable[str]) -> List[str]:
+    """knowledge 第一個元素的第一行是「不是教繞閘｜…」宣告 → 拿掉那一行（同一元素其餘行保留）；其他行一律不動。
+    對拍 tools/workflow-guardian-mcp/lib/atom-render.js stripBypassDeclaration。"""
+    items = list(knowledge)
+    if not items:
+        return items
+    first, _, rest = str(items[0]).partition("\n")
+    if not BYPASS_DECLARATION_RE.match(first):
+        return items
+    return ([rest] if rest.strip() else []) + items[1:]
 
 
 def render_knowledge_lines(knowledge: Iterable[str]) -> List[str]:
@@ -346,26 +628,31 @@ def build_atom_content(
     supersedes: Optional[Iterable[str]] = None,
     provenance: Optional[str] = None,
     depends: Optional[Iterable[str]] = None,
+    quote: Optional[str] = None,
+    entry: Optional[Iterable[str]] = None,
 ) -> str:
     """從結構化參數構造 atom 檔內容。
 
     對拍 tools/workflow-guardian-mcp/lib/atom-render.js buildAtomContent —— byte-identical 等價契約。
-    SPEC §4 metadata 順序：Scope → Audience → Author → Source → Confidence → Trigger →
+    SPEC §4 metadata 順序：Scope → Audience → Author → Source → Quote → Confidence → Trigger →
     Status → Last-used → Confirmations → ReadHits → Pending-review-by →
-    Merge-strategy → Created-at → Depends → Related → Supersedes。空值欄位省略（status /
-    supersedes / provenance / depends 未給時輸出與既有 parity fixture byte-identical）。
+    Merge-strategy → Created-at → Depends → Entry → Related → Supersedes。空值欄位省略（status /
+    supersedes / provenance / depends / entry 未給時輸出與既有 parity fixture byte-identical）。
+    entry：切入點代號標記，渲染為 `- Entry:`。
     supersedes：本顆取代的舊 atom（被取代者不再注入、檔案保留）；None 或空 → 不輸出。
     provenance：來源（路徑／URL／commit），渲染為 `- Source:`（write_atom 的 source 是稽核白名單，故另名）。
     depends：壞滅緣條目（`path:<路徑>` 或自由文字），渲染為逗號清單 `- Depends:`。
+    quote：觸發寫入的使用者原話（已消毒單行），渲染為 `- Quote:`，緊接 Source 之後。
     """
     today = today or date.today().isoformat()
     triggers_list = list(triggers)
-    knowledge_list = list(knowledge)
+    knowledge_list = strip_bypass_declaration(knowledge)
     actions_list = list(actions) if actions else []
     related_list = list(related) if related else []
     supersedes_list = list(supersedes) if supersedes else []
     audience_list = list(audience) if audience else []
     depends_list = list(depends) if depends else []
+    entry_list = list(entry) if entry else []
 
     lines: List[str] = [f"# {title}", ""]
     lines.append(f"- Scope: {scope}")
@@ -375,6 +662,8 @@ def build_atom_content(
         lines.append(f"- Author: {author}")
     if provenance:
         lines.append(f"- Source: {provenance}")
+    if quote:
+        lines.append(f"- Quote: {quote}")
     lines.append(f"- Confidence: {confidence}")
     lines.append(f"- Trigger: {', '.join(triggers_list)}")
     if status:
@@ -387,6 +676,8 @@ def build_atom_content(
     lines.append(f"- Created-at: {created_at or today}")
     if depends_list:
         lines.append(f"- Depends: {', '.join(depends_list)}")
+    if entry_list:
+        lines.append(f"- Entry: {', '.join(entry_list)}")
     if related_list:
         lines.append(f"- Related: {', '.join(related_list)}")
     if supersedes_list:

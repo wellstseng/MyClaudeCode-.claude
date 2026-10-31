@@ -60,7 +60,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from wg_core import (
-    CLAUDE_DIR, WORKFLOW_DIR, _now_iso, _atom_debug_error,
+    CLAUDE_DIR, CODE_DIR, WORKFLOW_DIR, _now_iso, _atom_debug_error,
     append_guard_log, find_project_root, find_vcs_root, load_config, org_memory_root,
 )
 
@@ -73,8 +73,10 @@ DEFAULTS: Dict[str, Any] = {
     "push": True,
     "root_pathspecs": ["memory", "_AIDocs/_atoms"],
     "project_pathspecs": [".claude/memory"],
+    # 根層非記憶但隨 atom 寫入連動的檔（sync_doc_counts 的計數標記）：只進 pathspec、不進 mem_dirs
+    "root_extra_pathspecs": ["TECH.md", "_AIDocs/_INDEX.md", "_AIDocs/DocIndex-System.md"],
     "org_extra_pathspecs": ["usage-snapshots"],
-    "exclude": ["**/*.access.json"],
+    "exclude": ["**/*.access.json", "memory/_meta/**"],
     "timeout_s": 60,
     "pull": {"enabled": True, "fetch_timeout_s": 20, "cooldown_s": 600},
 }
@@ -160,14 +162,27 @@ def collect_sync_targets(cwd: str, config: Dict[str, Any],
             if rel not in t.pathspecs:
                 t.pathspecs.append(rel)
                 t.mem_dirs.append(mem_dir.resolve())
-    # 公司層 repo 另收非記憶路徑（週用量截圖）：只進 pathspec（算純記憶 commit、一起自動推拉），不進 mem_dirs（無索引）。
-    # git 不要求本機已有該目錄（上游先有時要能拉進來）；svn 對不存在的路徑會報錯，目錄在才收。
+    # 公司層 repo 另收非記憶路徑（週用量截圖）
     org_t = targets.get(org.resolve().as_posix().lower()) if org and org.is_dir() else None
-    if org_t:
-        for spec in vs["org_extra_pathspecs"]:
-            if spec not in org_t.pathspecs and (org_t.vcs == "git" or (org_t.root / spec).is_dir()):
-                org_t.pathspecs.append(spec)
+    _add_extra_pathspecs(org_t, vs["org_extra_pathspecs"])
+    # 根層同理：atom 寫入連動的文件計數標記（TECH.md 等）跟索引一起自動上，否則每寫一顆 atom 留髒檔等人手動 commit
+    _add_extra_pathspecs(_root_target(targets, base_root), vs["root_extra_pathspecs"])
     return list(targets.values())
+
+
+def _root_target(targets: Dict[str, SyncTarget], base_root: Path) -> Optional[SyncTarget]:
+    vcs = find_vcs_root(Path(base_root))
+    return targets.get(vcs[1].resolve().as_posix().lower()) if vcs else None
+
+
+def _add_extra_pathspecs(t: Optional[SyncTarget], specs: Sequence[str]) -> None:
+    """非記憶路徑只進 pathspec（算純記憶 commit、一起推拉），不進 mem_dirs（無索引）。
+    git 不要求本機已有該路徑（上游先有時要能拉進來）；svn 對不存在的路徑會報錯，存在才收。"""
+    if not t:
+        return
+    for spec in specs:
+        if spec not in t.pathspecs and (t.vcs == "git" or (t.root / spec).exists()):
+            t.pathspecs.append(spec)
 
 
 # ─── 鎖（OS 互斥） ───────────────────────────────────────────────────────────
@@ -583,7 +598,7 @@ def spawn_vcs_sync(session_id: str, cwd: str, reason: str,
         targets = collect_sync_targets(cwd, cfg)
         if not targets:
             return 0
-        worker_path = CLAUDE_DIR / "hooks" / "vcs-sync-worker.py"
+        worker_path = CODE_DIR / "hooks" / "vcs-sync-worker.py"
         if not worker_path.exists():
             raise FileNotFoundError(str(worker_path))
         retired = list(retired_paths or [])
@@ -687,7 +702,7 @@ def _run_index_tools(target: SyncTarget, timeout: float, env: Dict[str, str], lo
                      tool_args: Sequence[List[str]]) -> None:
     """對每個有 _atom_index.json 的記憶目錄跑 tools/ 下的索引工具；`--write` 者失敗即 _Stop（半套索引不能
     進版控），其餘（--check）漂移只記 log。"""
-    tools = CLAUDE_DIR / "tools"
+    tools = CODE_DIR / "tools"   # 程式碼；跑的時候 cwd 與 --memory-dir（資料）仍是 CLAUDE_DIR／mem
     for mem in target.mem_dirs:
         if not (mem / "_atom_index.json").exists():
             continue
@@ -804,6 +819,48 @@ def _git_changed_files(git, t: SyncTarget, exclude: Sequence[str]) -> List[Tuple
         seen.add(path)
         entries.append((xy, path))
     return entries
+
+
+_COUNT_MARKER_RE = re.compile(r"(<!-- ([a-z][a-z0-9-]*) -->).*?(<!-- /\2 -->)", re.S)
+
+
+def _strip_count_markers(text: str) -> str:
+    return _COUNT_MARKER_RE.sub(r"\1\3", text.replace("\r\n", "\n"))
+
+
+def _marker_only_change(git, t: SyncTarget, path: str) -> bool:
+    """單檔 pathspec（root_extra_pathspecs 的 TECH.md 等文件）只代上計數標記的變動（規則 EXTRA_DOC_MARKER_ONLY）：
+    跟 HEAD 比、拿掉 `<!-- x -->…<!-- /x -->` 標記內的數字後要一模一樣；HEAD 沒有、檔已刪或讀不到都不算。
+    人手改到一半的文件不會被當成記憶自動提交。"""
+    r = git("show", f"HEAD:{path}")
+    if r.returncode != 0:
+        return False
+    try:
+        new = (t.root / path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    return _strip_count_markers(r.stdout or "") == _strip_count_markers(new)
+
+
+# Windows 單條指令列上限 32767 字；逐檔 pathspec 超過這個量就改走 --pathspec-from-file（短清單照舊放指令列，
+# 讓既有錄製檔的參數不變）。
+_PATHSPEC_ARGV_MAX = 8000
+
+
+def _git_with_paths(git_retry_lock, args: Sequence[str], specs: Sequence[str]) -> subprocess.CompletedProcess:
+    """`git <args> -- <specs>`；specs 太長時寫成 NUL 分隔暫存檔用 --pathspec-from-file 傳（WinError 206 檔名太長）。"""
+    if sum(len(x) + 1 for x in specs) <= _PATHSPEC_ARGV_MAX:
+        return git_retry_lock(*args, "--", *specs)
+    fd, tmp = tempfile.mkstemp(prefix="wg-pathspec-", suffix=".txt")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(b"\0".join(x.encode("utf-8") for x in specs))
+        return git_retry_lock(*args, f"--pathspec-from-file={tmp}", "--pathspec-file-nul")
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def _git_retry_lock(git):
@@ -1020,7 +1077,7 @@ def _git_pull(t: SyncTarget, vs: Dict[str, Any], git, git_retry_lock, log: Logge
     """拉段（見檔頭）。回 {"status": up-to-date|pulled|behind|no-upstream, "pulled_commits", "reason"}；
     自己吞掉所有失敗（記 log／`.behind`／pull_error），永不讓 commit+push 段跟著死。"""
     root = t.root
-    exclude = vs.get("exclude", [])
+    exclude = vs.get("exclude", DEFAULTS["exclude"])
     pull_cfg = vs.get("pull") or {}
     fetch_to = float(pull_cfg.get("fetch_timeout_s", 20))
     res: Dict[str, Any] = {"status": "behind", "pulled_commits": 0, "reason": None, "recover_pending": False}
@@ -1175,7 +1232,7 @@ def _git_isolated_rebase(t: SyncTarget, vs: Dict[str, Any], git, log: Logger, he
             missing_attr = [p for p in unmerged if attrs.get(p) != "atomindex"]
             if chk.returncode != 0 or missing_attr:
                 raise _Behind(f"衝突檔沒有 merge=atomindex 屬性（{(missing_attr or unmerged)[0]}），不自動解")
-            rr = _run([sys.executable, str(CLAUDE_DIR / "tools" / "merge-atom-index.py"),
+            rr = _run([sys.executable, str(CODE_DIR / "tools" / "merge-atom-index.py"),
                        "--resolve", "--quiet", "--cwd", str(tmp)], tmp, timeout, wt_env)
             try:
                 rep = json.loads((rr.stdout or "").strip().splitlines()[-1]) if (rr.stdout or "").strip() else {}
@@ -1287,9 +1344,13 @@ def _git_sync_body(t: SyncTarget, vs: Dict[str, Any], git, git_retry_lock, log: 
                    branch: str, timeout: float, env: Dict[str, str], config: Dict[str, Any],
                    reasons: Sequence[str] = ()) -> Dict[str, Any]:
     root = t.root
-    exclude = vs.get("exclude", [])
+    exclude = vs.get("exclude", DEFAULTS["exclude"])
     # ── add + commit：同一份允許路徑集合（`:(literal)` 防路徑被當 glob）──
     entries = _git_changed_files(git, t, exclude)
+    held = [path for _, path in entries if path in t.pathspecs and not _marker_only_change(git, t, path)]
+    for path in held:
+        log(f"[git] {root}: {path} 除了計數標記還有別的改動，不代上（EXTRA_DOC_MARKER_ONLY，留給上GIT）")
+    entries = [(xy, path) for xy, path in entries if path not in held]
     files = [path for _, path in entries]
     specs = [f":(literal){f}" for f in files]
     # 只 add 工作樹仍與 index 不同的項（Y 欄非空白）；已 staged 的直接進 commit pathspec
@@ -1300,12 +1361,12 @@ def _git_sync_body(t: SyncTarget, vs: Dict[str, Any], git, git_retry_lock, log: 
         # -f：已追蹤但路徑被 .gitignore 蓋到的檔（如 memory/personal/ 下的 role.md）被刪除時，
         # 沒有 -f 的 add 會 rc≠0「paths are ignored」；add_specs 只含 status 列出的變更檔（!! 已濾），
         # 不會順手把被忽略的未追蹤檔加進來。
-        r = git_retry_lock("add", "-A", "-f", "--", *add_specs)
+        r = _git_with_paths(git_retry_lock, ("add", "-A", "-f"), add_specs)
         if r.returncode != 0:
             raise _Stop(f"git add 失敗: {(r.stderr or r.stdout).strip()[:200]}")
     if files:
         msg = f"chore(memory): knowledge harvest {date.today().isoformat()}（{len(files)} 檔）"
-        r = git_retry_lock("commit", "-q", "-m", msg, "--", *specs)
+        r = _git_with_paths(git_retry_lock, ("commit", "-q", "-m", msg), specs)
         if r.returncode != 0:
             raise _Stop(f"git commit 失敗: {(r.stderr or r.stdout).strip()[:200]}")
         result["committed"] = len(files)
@@ -1550,7 +1611,7 @@ def svn_update_targets(svn: "_Svn", t: SyncTarget, retired_rel: set, env: Dict[s
     if hard:
         return "conflict", f"update 後衝突在驅動解不了的檔：{', '.join(hard[:3])}", deleted
     try:
-        r = _run([sys.executable, str(CLAUDE_DIR / "tools" / "merge-atom-index.py"),
+        r = _run([sys.executable, str(CODE_DIR / "tools" / "merge-atom-index.py"),
                   "--resolve", "--quiet", "--cwd", str(root)], root, svn.timeout, env)
     except subprocess.TimeoutExpired as e:
         return "conflict", f"索引檔衝突 resolver 逾時 {e.timeout}s（工作副本仍在衝突態）", deleted
@@ -1593,7 +1654,7 @@ def _svn_sync(t: SyncTarget, vs: Dict[str, Any], env: Dict[str, str], log: Logge
               retired: Sequence[str], reasons: Sequence[str] = ()) -> Dict[str, Any]:
     root = t.root
     svn = _Svn(t, vs, env)
-    exclude = vs.get("exclude", [])
+    exclude = vs.get("exclude", DEFAULTS["exclude"])
 
     retired_rel = {rel for rel in (_rel_to(root, p) for p in retired) if rel}
     if svn.has_conflict(t.pathspecs):

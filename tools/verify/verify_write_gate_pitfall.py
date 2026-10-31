@@ -1,8 +1,8 @@
 """verify_write_gate_pitfall.py — write-gate pitfall 捷徑 × dedup 順序守門.
 
 守住規則：pitfall/坑 關鍵詞捷徑**只豁免品質評分**，不豁免去重——
-dedup 先跑：>0.95 duplicate 仍 skip、0.80~0.95 similar 仍建議 update；
-無 dedup 命中時 pitfall 才以 quality=0.7 直接 add（[觀]）。
+dedup 先跑：命中仍要宣告（skip＋need_declaration）；舊行為（dedupe_declaration=false）>0.95 duplicate 仍 skip、
+0.80~0.95 similar 仍建議 update；無 dedup 命中時 pitfall 才以 quality=0.7 直接 add（[觀]）。
 另守 check_dedup fail-open 訊號：vector service 掛掉時 audit 記
 dedup_skipped_service_down（可觀測性鐵律）。
 """
@@ -12,6 +12,8 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+
+import pytest
 
 CLAUDE_DIR = Path(__file__).resolve().parent.parent.parent  # tools/verify/ → ~/.claude/
 SPEC = importlib.util.spec_from_file_location(
@@ -32,31 +34,46 @@ PITFALL_CONTENT = "這是一個坑：Windows 下 Path.write_text 會翻整檔行
 
 
 def _dedup_stub(verdict: str, score: float):
-    def stub(content, config, layers=None):
+    def stub(content, config, layers=None, title=None):
         return {
             "atom_name": "existing-atom", "score": score,
             "text_preview": "preview", "verdict": verdict,
+            "candidates": [{"atom_name": "existing-atom", "ref": "existing-atom", "score": score, "layer": "global",
+                        "excerpt": ["preview"]}],
         }
     return stub
 
 
-def test_pitfall_duplicate_still_skipped(monkeypatch):
-    monkeypatch.setattr(WG, "check_dedup", _dedup_stub("duplicate", 0.97))
+def _needs_declaration(r):
+    return r["action"] == "skip" and r.get("need_declaration") is True
+
+
+@pytest.mark.parametrize("verdict,score", [("duplicate", 0.97), ("similar", 0.88)])
+def test_pitfall_hit_still_needs_declaration(monkeypatch, verdict, score):
+    monkeypatch.setattr(WG, "check_dedup", _dedup_stub(verdict, score))
     monkeypatch.setattr(WG, "write_audit_log", lambda *a, **k: None)
     r = WG.evaluate(PITFALL_CONTENT, config=CONFIG)
+    assert _needs_declaration(r)
+    assert r["dedup_match"]["atom_name"] == "existing-atom"
+
+
+def test_pitfall_duplicate_still_skipped_when_declaration_off(monkeypatch):
+    monkeypatch.setattr(WG, "check_dedup", _dedup_stub("duplicate", 0.97))
+    monkeypatch.setattr(WG, "write_audit_log", lambda *a, **k: None)
+    r = WG.evaluate(PITFALL_CONTENT, config={**CONFIG, "dedupe_declaration": False})
     assert r["action"] == "skip"
     assert r["dedup_match"]["atom_name"] == "existing-atom"
 
 
-def test_pitfall_similar_still_suggests_update(monkeypatch):
+def test_pitfall_similar_still_suggests_update_when_declaration_off(monkeypatch):
     monkeypatch.setattr(WG, "check_dedup", _dedup_stub("similar", 0.88))
     monkeypatch.setattr(WG, "write_audit_log", lambda *a, **k: None)
-    r = WG.evaluate(PITFALL_CONTENT, config=CONFIG)
+    r = WG.evaluate(PITFALL_CONTENT, config={**CONFIG, "dedupe_declaration": False})
     assert r["action"] == "update"
 
 
 def test_pitfall_without_dedup_hit_auto_adds(monkeypatch):
-    monkeypatch.setattr(WG, "check_dedup", lambda content, config, layers=None: None)
+    monkeypatch.setattr(WG, "check_dedup", lambda content, config, layers=None, title=None: None)
     monkeypatch.setattr(WG, "write_audit_log", lambda *a, **k: None)
     r = WG.evaluate(PITFALL_CONTENT, config=CONFIG)
     assert r["action"] == "add"
@@ -67,7 +84,7 @@ def test_pitfall_without_dedup_hit_auto_adds(monkeypatch):
 def test_explicit_user_fast_path_precedes_dedup(monkeypatch):
     called = []
     monkeypatch.setattr(WG, "check_dedup",
-                        lambda content, config, layers=None: called.append(1) or None)
+                        lambda content, config, layers=None, title=None: called.append(1) or None)
     monkeypatch.setattr(WG, "write_audit_log", lambda *a, **k: None)
     r = WG.evaluate("記住這個", explicit_user=True, config=CONFIG)
     assert r["action"] == "add" and not called

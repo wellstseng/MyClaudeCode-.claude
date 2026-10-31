@@ -7,7 +7,7 @@
 宣告檔欄位：root（相對本層、只准指祖先）、root_abs（本機絕對路徑，目錄存在時優先）、
 subs（相對本層的路徑前綴，"*" 表全部）、standalone（true＝獨立、停止向上、不提問）。
 路徑規則：沿字面路徑往上走，比對時才 resolve；回傳路徑保持字面形式。
-排除：家目錄、~/.claude 本身、磁碟根永不當專案根，走到就停。
+排除：家目錄、資料根（claude_data_dir()，一般安裝就是 ~/.claude）本身、磁碟根永不當專案根，走到就停。
 本模組只讀不寫；宣告檔的增刪改在 tools/project-tree.py。
 """
 from __future__ import annotations
@@ -15,12 +15,31 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+
+def claude_data_dir() -> Path:
+    """使用者資料根（memory、workflow、config、Logs、projects、atom 卡片）的唯一算法：
+    環境變數 WG_CLAUDE_DIR（去頭尾空白後非空）→ 該路徑；否則 Path.home()/".claude"。
+    hooks（wg_core.CLAUDE_DIR）與 tools 都呼叫這支；程式碼根另由各檔的 Path(__file__) 推。"""
+    override = os.environ.get("WG_CLAUDE_DIR", "").strip()
+    return Path(override) if override else Path.home() / ".claude"
+
+
+def claude_config_dir() -> Path:
+    """Claude Code 自己的設定目錄（settings.json、shell-snapshots、debug、plugins）：CLAUDE_CONFIG_DIR 有值就用，
+    否則 Path.home()/".claude"。取值和 Claude Code 一樣（空字串當沒設、不去空白）；和資料根是兩件事，一般安裝才同一處。"""
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+
+
+def claude_global_config() -> Path:
+    """Claude Code 的全域設定檔 .claude.json：CLAUDE_CONFIG_DIR 有值就在它底下，否則在家目錄本身（不是家目錄/.claude）。"""
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home()) / ".claude.json"
+
+
 HOME = Path.home()
-CLAUDE_DIR = HOME / ".claude"
+CLAUDE_DIR = claude_data_dir()
 MEMORY_INDEX = "MEMORY.md"
 DECL_NAME = "project-tree.json"
 MAX_ROOT_HOPS = 3
@@ -34,37 +53,49 @@ CLAIM_LABEL = {
 }
 
 
-@dataclass
-class Declaration:
-    path: Path
-    valid: bool
-    root: Optional[str] = None
-    root_abs: Optional[str] = None
-    subs: List[str] = field(default_factory=list)
-    standalone: bool = False
-    error: str = ""
-    warnings: List[str] = field(default_factory=list)
-    raw: Dict = field(default_factory=dict)
+class _Record:
+    """欄位與預設值照 _FIELDS 的輕量資料類（取代 dataclass：每個 hook 事件都 import 本模組，dataclasses 連帶 inspect 約 20 ms，
+    HOOK_IMPORT_ON_USE）。只收關鍵字參數；list／dict 預設每次新建一份；== 比所有欄位。"""
+    _FIELDS: Tuple[Tuple[str, object], ...] = ()
+
+    def __init__(self, **kw: object) -> None:
+        names = {n for n, _ in self._FIELDS}
+        bad = set(kw) - names
+        if bad:
+            raise TypeError(f"{type(self).__name__} 沒有欄位：{'、'.join(sorted(bad))}")
+        for name, default in self._FIELDS:
+            if name in kw:
+                val = kw[name]
+            elif default is _REQUIRED:
+                raise TypeError(f"{type(self).__name__} 缺欄位 {name}")
+            else:
+                val = default() if callable(default) else default
+            setattr(self, name, val)
+
+    def __eq__(self, other: object) -> bool:
+        return type(other) is type(self) and all(getattr(self, n) == getattr(other, n) for n, _ in self._FIELDS)
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}(" + ", ".join(f"{n}={getattr(self, n)!r}" for n, _ in self._FIELDS) + ")"
+
+
+_REQUIRED = object()
+
+
+class Declaration(_Record):
+    _FIELDS = (("path", _REQUIRED), ("valid", _REQUIRED), ("root", None), ("root_abs", None), ("subs", list),
+               ("standalone", False), ("error", ""), ("warnings", list), ("raw", dict))
 
     @property
     def declares_root(self) -> bool:
         return bool(self.root or self.root_abs)
 
 
-@dataclass
-class Resolution:
-    path: Optional[Path]
-    claimed_by: str                      # self | own-root | ancestor-root | ancestor-subs | nearest | none
-    nearest: Optional[Path]
-    via: Optional[Path] = None           # 認領依據所在的層（印宣告行用）
-    candidates: List[Path] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
-    infos: List[str] = field(default_factory=list)
-    hops: List[Path] = field(default_factory=list)
-    standalone: bool = False
-    fork_atoms: int = 0
-    fingerprint: str = ""
-    decl_files: List[Tuple[str, float]] = field(default_factory=list)
+class Resolution(_Record):
+    # claimed_by：self | own-root | ancestor-root | ancestor-subs | nearest | none；via＝認領依據所在的層（印宣告行用）
+    _FIELDS = (("path", _REQUIRED), ("claimed_by", _REQUIRED), ("nearest", _REQUIRED), ("via", None), ("candidates", list),
+               ("warnings", list), ("infos", list), ("hops", list), ("standalone", False), ("fork_atoms", 0),
+               ("fingerprint", ""), ("decl_files", list))
 
     @property
     def declared(self) -> bool:
@@ -250,27 +281,47 @@ def _fork_atom_count(layer: Path) -> int:
 # ─── 舊規則（無宣告時的 fallback）─────────────────────────────────────────────
 
 
-def has_project_marker(root: Path) -> bool:
-    """四標記 ∪ 有效宣告檔。取代 wg_core / atom_io 各自複製的判斷。"""
+def has_strong_project_marker(root: Path) -> bool:
+    """強標記：memory index / _AIDocs / .git / 有效宣告檔。**不含裸 .svn**。
+
+    子目錄自己是一個 SVN 工作副本很常見（把 repo 的某一層單獨 checkout 出來用）。
+    裸 .svn 與其他標記同級時，「最近標記」會停在那個子目錄，真正的專案根被蓋掉。
+    """
     if (root / ".claude" / "memory" / MEMORY_INDEX).exists():
         return True
     if (root / "_AIDocs").is_dir():
         return True
-    if (root / ".git").exists() or (root / ".svn").exists():
+    if (root / ".git").exists():
         return True
     d = load_declaration(root)
     return bool(d and d.valid)
 
 
+def has_project_marker(root: Path) -> bool:
+    """四標記 ∪ 有效宣告檔。取代 wg_core / atom_io 各自複製的判斷。"""
+    return has_strong_project_marker(root) or (root / ".svn").exists()
+
+
 def _legacy_nearest(start: Path) -> Optional[Path]:
-    """舊規則：最近四標記、最多 4 層。家目錄與磁碟根永不當專案根（~/.claude 本身仍可，核心層語意）。"""
+    """無宣告認領時的專案根：最多 4 層，家目錄與磁碟根永不當專案根
+    （~/.claude 本身仍可，核心層語意）。
+
+    兩趟：強標記先掃滿整條鏈，掃不到才考慮裸 .svn。一趟掃描會讓巢狀的 SVN 工作副本
+    蓋掉真正的專案根——專案記憶被切成第二棵殘缺的 .claude 樹，而且不會有任何錯誤訊號。
+    """
+    chain: List[Path] = []
     p = start
     for _ in range(LEGACY_MAX_LEVELS):
         if _norm(p) == _norm(HOME) or p.parent == p:
             break
-        if has_project_marker(p):
-            return p
+        chain.append(p)
         p = p.parent
+    for q in chain:
+        if has_strong_project_marker(q):
+            return q
+    for q in chain:
+        if (q / ".svn").exists():
+            return q
     return None
 
 

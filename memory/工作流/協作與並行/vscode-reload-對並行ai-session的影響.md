@@ -2,6 +2,7 @@
 
 - Scope: global
 - Author: holylight
+- Source: commit:d823a10 2026-08-24（原對話已逾保留期）
 - Confidence: [臨]
 - Trigger: VSCode Reload, Reload Window, 雙 sessionstart, monitor 重掛, 並行 session, 面板 MCP
 - Created-at: 2026-08-24
@@ -13,6 +14,7 @@
 - [臨] Reload 殺掉 Grok persistent monitor；Reload 後聲盲直到使用者戳醒，開場自檢（`ai-inbox.md`）才重掛。常出現雙 sessionstart：短命 id 無 sessionend + 本尊 resume。
 - [臨] Grok 面板 workflow-guardian MCP 非決定性（同條件 reload 紅/綠互現）；CLI/無頭穩定綠。面板寫 atom 定調可先試 MCP，紅則 `python -m lib.atom_io_cli`。
 - [臨] grok-guardian PreToolUse 紅線在面板 session 也會攔截：直接 `write` `~/.claude\` 下路徑被 deny（例外 `memory\_staging\`）。終端指令繞寫不擋。
+- [臨] Reload Window 後跨 session 的訊息名字（ListAgents 的 claude-xx）會換：同一個 a2 工作分頁 reload 前叫 claude-21、之後叫 claude-2d；舊名 SendMessage 回「No agent named … is reachable」。分頁要等它被 resume 才出現在 ListAgents（列上顯示 started N 分鐘前），所以剛 reload 時清單可能缺人、過幾分鐘又多出新名字。接手時先 ListAgents，對不認得的名字先問身份再送訊息，不要憑舊名或清單順序猜。
 
 ## 行動
 

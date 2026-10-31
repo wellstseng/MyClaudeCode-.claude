@@ -6,6 +6,8 @@
 - Trigger: claude.ai, 用量截圖, usage snapshot, Cloudflare, headless, launch_persistent_context, channel chrome, Chrome profile, Cookies WinError 32, Register-ScheduledTask, WakeToRun, SC_MONITORPOWER, LockWorkStation, SeShutdownPrivilege, SetSuspendState, powercfg /requests
 - Created-at: 2026-09-21
 - Related: 在使用者活躍桌面彈視窗做gui實驗會被順手關掉污染數據-改headless-edge加cdp或先查前景視窗
+- Source: session:918286a5#a211000c 2026-09-21
+- Quote: 「我想要有一個工具，可以每個禮拜固定在此 CC 帳號的 "token 用量刷新 (目前觀察是每周二的凌晨4:00或5:00)以前"，將使用量 usage 進行"截圖"，不論是開啟 web 來拍圖或用 vs code 的 cc 插件來拍都可以，就像截圖那樣。」
 
 ## 知識
 
@@ -14,6 +16,7 @@
 - [臨] 螢幕狀態：關螢幕（SC_MONITORPOWER）、鎖定（LockWorkStation）下 Playwright 截圖都正常（亮度 214）——走 Chromium 合成器非抓螢幕；抓螢幕類工具才會黑圖。只有登出、關機不行（排程為 Interactive logon）。
 - [臨] 睡眠：CC 工具程序與 Task Scheduler 啟動的程序 token 都無 SeShutdownPrivilege，`SetSuspendState` 回 True 但不睡（force 時 1314）；使用者機器電源計畫睡眠=永不、且 NVIDIA HD Audio「音訊串流使用中」持續擋閒置睡眠（07-31 起無 Kernel-Power 42/107）。「螢幕黑掉」= 關螢幕非睡眠。
 - [臨] 排程用 `Register-ScheduledTask` 才能給 -WakeToRun -StartWhenAvailable；pythonw 靜默跑。在使用者活躍桌面彈有頭視窗測試會被順手關（TargetClosedError），先講再彈。
+- [臨] 手動補跑截圖要用排程登記的那個 Python（`(Get-ScheduledTask Claude-Usage-WeeklySnapshot).Actions.Execute`，pythonw.exe 換 python.exe）；終端機 PATH 上的 `python` 可能指到別的 venv（實測曾是某第三方 agent 的 venv）而沒裝 playwright，工具會直接印出該換哪個 Python。
 
 ## 行動
 

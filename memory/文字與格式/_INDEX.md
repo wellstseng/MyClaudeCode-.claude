@@ -7,6 +7,7 @@
 | Atom | 說明 |
 |------|------|
 | bash-heredoc-會折掉一層反斜線-精確字串比對靜默失敗 | bash-heredoc-會折掉一層反斜線-精確字串比對靜默失敗 |
+| claude-code的edit工具改混合行尾檔會把整檔統一成多數那種行尾-混合檔改用保留逐行行尾的寫法-改壞用file-history備份還原 | claude-code的edit工具改混合行尾檔會把整檔統一成多數那種行尾-混合檔改用保留逐行行尾的寫法-改壞用file-history備份還原 |
 | identity-變動需同步更新-identity-template-且所有文件 | identity-變動需同步更新-identity-template-且所有文件 |
 | markdown文件裡角括號佔位符要包反引號-裸寫u會被當成底線標籤把後半份文件全畫線 | markdown文件裡角括號佔位符要包反引號-裸寫u會被當成底線標籤把後半份文件全畫線 |
 | powershell傳null給dotnet-string參數會變空字串-nullstring才是真null | powershell傳null給dotnet-string參數會變空字串-NullString才是真null |
@@ -16,4 +17,8 @@
 | toolchain-ps51-getcontent-utf8-file-corruption | toolchain-ps51-getcontent-utf8-file-corruption |
 | toolchain-svn-powershell-中文log編碼 | toolchain-svn-powershell-中文log編碼 |
 | windows-python-write-text-缺-newline-把-lf-翻-crlf-整檔假-diff | Windows Python write_text 缺 newline 把 LF 翻 CRLF 整檔假 diff |
+| 彙整多份來源寫現況文件時-追蹤表裡的修法建議不是現況-每句現況要能指到程式 | 彙整多份來源寫現況文件時-追蹤表裡的修法建議不是現況-每句現況要能指到程式 |
+| 技術文件寫到開關或量測要標明範疇與量測條件-否則局部開關會被讀成整個系統的開關 | 技術文件寫到開關或量測要標明範疇與量測條件-否則局部開關會被讀成整個系統的開關 |
+| 按空白斷詞的token比對拿去比中文原話會失效-中文整句是一個token-比原話要用前後不是英數字的regex | 按空白斷詞的token比對拿去比中文原話會失效-中文整句是一個token-比原話要用前後不是英數字的regex |
+| 給github與gitlab網頁讀的markdown-標題別用前後帶空格的箭頭破折號斜線-寬表格改每項一個小區塊 | 給GitHub與GitLab網頁讀的Markdown-標題別用前後帶空格的箭頭破折號斜線-寬表格改每項一個小區塊 |
 | 規格裡未實證的前提要先取樣再實作-不然整包白做 | 規格裡未實證的前提要先取樣再實作-不然整包白做 |

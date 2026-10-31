@@ -15,7 +15,6 @@ JS mirror：tools/workflow-guardian-mcp/server.js:applyFeedbackRouting
 
 from __future__ import annotations
 
-import difflib
 import json
 import re
 import sys
@@ -29,13 +28,15 @@ from typing import Any, Dict, Iterable, List, Optional
 # `atom_locations`（絕對）兩種載入路徑；atom_classify 為 leaf（不 import 本模組）→ 無 cycle。
 try:
     from .atom_classify import score_by_lexicon
+    from .project_root import claude_data_dir
 except ImportError:  # 頂層模組載入（wg_core / CLI sys.path.insert）
     from atom_classify import score_by_lexicon
+    from project_root import claude_data_dir
 
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
-CLAUDE_DIR = Path.home() / ".claude"
+CLAUDE_DIR = claude_data_dir()   # 使用者資料根（WG_CLAUDE_DIR 或 ~/.claude），和 hooks 同一支算法
 GLOBAL_MEMORY_DIR = CLAUDE_DIR / "memory"
 CORE_ATOMS_REL = "memory"
 # 失敗家族（feedback-* / cognitive-patterns / memory-pipeline-*）是核心層的一個 Lv1 範疇
@@ -271,6 +272,33 @@ def classify_realm(name: str, triggers: Optional[Iterable[str]] = None,
     }
 
 
+# 有名規則：綁了 Entry 的卡（切入點判準卡）不自動搬 realm。Entry 卡要在切入點那一刻送到眼前，
+# local 只在 ~/.claude 注入、受測資料根也只帶 memory/，自動搬過去那個切入點就只剩退路雜訊。
+# 詞庫照樣會命中這種卡（例：卡名含 codex → Tools），所以擋在搬移候選、不改詞庫判法。
+ENTRY_BOUND_STAYS_CORE = "ENTRY_BOUND_STAYS_CORE"
+
+
+def entry_bound_ids(index_entry: Optional[Dict[str, Any]], md_path: Optional[Path] = None) -> List[str]:
+    """這張卡綁的 Entry 代號：讀得到檔就照檔頭 metadata 區的 `- Entry:` 行（真相；索引由它同步），
+    沒給檔或讀不到才退用索引 `entry` 欄；都沒有回 []。
+
+    ENTRY_BOUND_STAYS_CORE 的判定只住這裡：realm 自動搬移（wg_atoms._sweep_realm_auto_migrate）靠它擋，
+    手動搬（tools/atom-set-realm.py）靠它印警告。
+    """
+    try:
+        text = Path(md_path).read_text(encoding="utf-8-sig") if md_path is not None else None
+    except OSError:
+        text = None
+    if text is None:
+        return [str(e).strip() for e in (index_entry or {}).get("entry") or [] if str(e).strip()]
+    try:  # lazy import：同 is_failures_routed_title，雙載入路徑都可用
+        from .atom_spec import find_entry_line, split_related
+    except ImportError:
+        from atom_spec import find_entry_line, split_related
+    m = find_entry_line(text)
+    return split_related(m.group(1)) if m else []
+
+
 # ─── Search / scan（從 atom_spec 搬入，本檔為唯一源） ─────────────────────────
 
 
@@ -440,7 +468,7 @@ def project_subdir_target(base: Path, subdir: str) -> tuple:
 _LOCATE_SKIP_DIRS = frozenset({
     "_meta", "_reference", "_staging", "_vectordb", "_distant",
     "episodic", "templates", "personal", "roles", "wisdom", "_pending_review",
-    "_drafts",
+    "_drafts", "_rejected",   # _rejected：被退回的卡，append／replace 不得找到它
 })
 
 
@@ -1103,6 +1131,7 @@ def _snap_segment(seg: str, siblings: Dict[str, str]) -> str:
         if len(low) >= _SEG_PREFIX_MIN and len(cl) >= _SEG_PREFIX_MIN and \
                 (low.startswith(cl) or cl.startswith(low)):
             return canon
+    import difflib   # 惰性：只有段名對不上才比相似度
     best, best_ratio = None, 0.0
     for cl, canon in siblings.items():
         r = difflib.SequenceMatcher(None, low, cl).ratio()
@@ -1206,20 +1235,35 @@ _LEXICON_TOKEN_SPLIT_RE = re.compile(r"[\s\-_/]+")
 # 的葉夾（trigger 標籤被當分類維度）。三類絕不該成為實例分類詞：
 #   - 系統 trigger 標籤（auto-capture/auto-captured/觸發詞）：extract-worker 預設標籤，非實例詞。
 #   - realm 自名（memdev/world/tools/continuity）：分類『維度』本身，不該回頭當分類『詞』。
-#   - 已知外部專案（sgi/uba…）：其知識屬專案層、非 ~/.claude-local；**新外部專案在此擴充**。
+#   - 已知外部專案：其知識屬專案層、非 ~/.claude-local。名單取自本機已登記專案名
+#     （lib.realm_gate.known_project_names，registry 不進版控），程式裡不寫任何專案名。
 # 主防線是 SessionEnd sweep 對 auto-captured 碎片整體 defer（wg_atoms._is_unconfirmed_autocapture，
 # 斷『學詞』來源）；本集合為 sink 端 belt-and-suspenders，蓋非 auto-capture 途徑寫入的詞。
 _RESERVED_LEXICON_TERMS = frozenset({
     "auto-capture", "auto-captured", "觸發詞",
     "memdev", "world", "tools", "continuity",
-    "sgi", "uba",
 })
+
+
+def _known_project_terms() -> frozenset:
+    """本機已登記專案名（小寫）。取不到就空集合（fail-safe，不擋寫入）。"""
+    try:
+        from .realm_gate import known_project_names
+    except ImportError:
+        try:
+            from realm_gate import known_project_names  # type: ignore
+        except ImportError:
+            return frozenset()
+    try:
+        return frozenset(name.lower() for name, _src, _ci in known_project_names())
+    except Exception:  # noqa: BLE001 — 詞庫守門的輔助訊號，壞了只少一層防線
+        return frozenset()
 
 
 def is_generic_lexicon_term(term: str) -> bool:
     """term 是否泛用詞 / 保留標籤（不具實例辨識度）→ 詞庫拒收。空字串視為泛用。"""
     tl = (term or "").strip().lower()
-    if tl in _RESERVED_LEXICON_TERMS:
+    if tl in _RESERVED_LEXICON_TERMS or tl in _known_project_terms():
         return True  # 保留標籤 / realm 自名 / 已知外部專案：絕不收
     tokens = [t for t in _LEXICON_TOKEN_SPLIT_RE.split(tl) if t]
     return not tokens or all(t in _LEXICON_GENERIC_TOKENS for t in tokens)
@@ -1368,7 +1412,8 @@ def _lexicon_category(name: str, triggers: Iterable[str], layer: str) -> Dict[st
 def _default_llm_category_classifier():
     """lazy 取 tools/realm_llm_classify.llm_classify_category（tools 反依賴 lib，故不在模組頂層 import）。
     取不到 → None（caller 視同 LLM 不可用 → error 態）。"""
-    for p in (CLAUDE_DIR / "tools", CLAUDE_DIR):
+    code_root = Path(__file__).resolve().parents[1]   # 程式碼用本檔位置推樹根；CLAUDE_DIR（家目錄）只拿來定位資料
+    for p in (code_root / "tools", code_root):
         if str(p) not in sys.path:
             sys.path.insert(0, str(p))
     try:

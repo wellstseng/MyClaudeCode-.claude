@@ -3,15 +3,16 @@
 - Scope: global
 - Author: holylight
 - Confidence: [臨]
-- Trigger: MSBuild, 亂碼, StandardOutputEncoding, Encoding.Default, Big5, cp950, RedirectStandardOutput, 編譯 log, ProcessStartInfo, UTF-8
+- Trigger: MSBuild, 亂碼, StandardOutputEncoding, Encoding.Default, Big5, RedirectStandardOutput, 編譯 log, ProcessStartInfo, UTF-8
 - Created-at: 2026-08-28
 - Related: svn-commit-中文訊息在-cp950-主控台會亂碼-必加-encoding-utf-8
+- Source: commit:bf22d6f 2026-08-28（原對話已逾保留期）
 
 ## 知識
 
 - [臨] MSBuild 17.14（VS2022）在 stdout/stderr 被重導向時輸出 **UTF-8** 位元組（實測 hexdump：`e7 9a 84`=「的」，iconv 驗證整檔合法 UTF-8），與主控台字碼頁 950 無關。
 - [臨] .NET Framework 下 `Encoding.Default` = 系統 ANSI（台灣 = Big5/950）；.NET Core+ 下 `Encoding.Default` = UTF-8。同一行碼在兩個 runtime 意義不同。
-- [臨] 用 `ProcessStartInfo.StandardOutputEncoding = Encoding.Default` 讀 MSBuild 輸出 → UTF-8 位元組被當 Big5 拆讀，中文警告訊息變成 `擅寫??` 類亂碼（無效序列被換成 `?`）。實例：GPT_SGISerLauncher「編譯全部」路徑。
+- [臨] 用 `ProcessStartInfo.StandardOutputEncoding = Encoding.Default` 讀 MSBuild 輸出 → UTF-8 位元組被當 Big5 拆讀，中文警告訊息變成 `擅寫??` 類亂碼（無效序列被換成 `?`）。實例：某伺服器啟動器工具的「編譯全部」路徑。
 - [臨] 只設 StandardOutputEncoding 不設 StandardErrorEncoding，stderr 仍走 Default，錯誤行照樣亂碼。
 
 ## 行動

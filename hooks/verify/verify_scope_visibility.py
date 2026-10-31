@@ -52,7 +52,7 @@ def test_scope_from_rel_path():
 
 def test_entry_visible_rules():
     assert entry_visible("memory/personal/holylight/x.md", "holylight", [])
-    assert not entry_visible("memory/personal/wellstseng/x.md", "holylight", [])
+    assert not entry_visible("memory/personal/otheruser/x.md", "holylight", [])
     assert not entry_visible("memory/personal/holylight/x.md", "", [])
     assert entry_visible("memory/roles/programmer/x.md", "anyone", ["programmer"])
     assert not entry_visible("memory/roles/planner/x.md", "anyone", ["programmer"])
@@ -64,7 +64,7 @@ def test_filter_visible_v3_layout_same_rule():
     """V3 佈局（parse_memory_index 全量）也要按人過濾——他人 personal 不得進池。"""
     entries = [
         ("mine", "memory/personal/holylight/mine.md", ["a"]),
-        ("theirs", "memory/personal/wellstseng/theirs.md", ["a"]),
+        ("theirs", "memory/personal/otheruser/theirs.md", ["a"]),
         ("shared1", "memory/shared/s.md", ["a"]),
         ("legacy", "memory/legacy.md", ["a"]),
         ("roleok", "memory/roles/programmer/r.md", ["a"]),
@@ -125,7 +125,7 @@ def test_locate_personal_global_from_claude_dir_and_cross_project(tmp_path):
     assert r.extra["scope_label"] == "personal:holylight"
     assert r.extra["target_dir"].replace("\\", "/").endswith("/memory/personal/holylight")
     assert r.extra["create_rel_path"] == "memory/personal/holylight/my-cross-pref.md"
-    assert r.extra["index_dir"].replace("\\", "/").endswith("/.claude/memory")
+    assert Path(r.extra["index_dir"]).resolve() == atom_io.GLOBAL_MEMORY_DIR.resolve()   # 全域索引＝資料根/memory
     # 從專案 cwd：預設本專案 personal；cross_project=True 才進全域
     proj = tmp_path / "proj"
     (proj / ".git").mkdir(parents=True)
@@ -201,7 +201,7 @@ def _base_state(mem_dir: Path):
             "project_slug": "", "scopes": {"own": "global"},
         },
         "injected_atoms": [],
-        "session": {"cwd": "C:/Projects" if sys.platform == "win32" else "/tmp/fakeproj"},
+        "session": {"cwd": "C:/Work"},
         "user_identity": {"user": "holylight", "roles": ["programmer"], "management": True},
     }
 
@@ -223,10 +223,10 @@ def _collect(tmp_path, monkeypatch, prompt, state=None, cross=None, sem=None):
 
 
 def test_other_project_atoms_never_enter_pool(tmp_path, monkeypatch):
-    other = _mk_other_project(tmp_path / "LineMate")
+    other = _mk_other_project(tmp_path / "AppB")
     prompt = "討論 client 與 server 端的協定送收"  # 兩顆洩漏 atom 各命中 2 個 trigger
     matched, all_atoms, lines, _ = _collect(
-        tmp_path, monkeypatch, prompt, cross=[("c--linemate", other)])
+        tmp_path, monkeypatch, prompt, cross=[("c--appb", other)])
     pool = {e[0][0] for e in all_atoms}
     assert "leak-personal" not in pool and "leak-shared" not in pool
     assert not any(e[0][0].startswith("leak-") for e in matched)
@@ -234,12 +234,12 @@ def test_other_project_atoms_never_enter_pool(tmp_path, monkeypatch):
 
 
 def test_alias_brings_memory_md_directory_only(tmp_path, monkeypatch):
-    other = _mk_other_project(tmp_path / "LineMate", alias="linemate")
-    prompt = "LineMate 的 server 跟 client 怎麼發布"
+    other = _mk_other_project(tmp_path / "AppB", alias="appb")
+    prompt = "AppB 的 server 跟 client 怎麼發布"
     _matched, all_atoms, lines, alias_projs = _collect(
-        tmp_path, monkeypatch, prompt, cross=[("c--linemate", other)])
-    assert alias_projs == {"c--linemate"}
-    block = next(l for l in lines if l.startswith("[ProjectMemory:c--linemate]"))
+        tmp_path, monkeypatch, prompt, cross=[("c--appb", other)])
+    assert alias_projs == {"c--appb"}
+    block = next(l for l in lines if l.startswith("[ProjectMemory:c--appb]"))
     assert "shared/leak-shared.md" in block
     assert "personal/" not in block and "roles/" not in block
     assert "| leak-shared |" not in block  # 表格列去掉
@@ -258,19 +258,19 @@ def test_vector_layers_whitelist_even_for_management(tmp_path, monkeypatch):
     mem_dir = tmp_path / "memory"
     mem_dir.mkdir(exist_ok=True)
     state = _base_state(mem_dir)
-    state["atom_index"]["project_slug"] = "c--projects"
+    state["atom_index"]["project_slug"] = "c--work"
     _collect(tmp_path, monkeypatch, "完全無關的句子 nothing", state=state, sem=fake_sem)
     assert seen["user"] == "holylight" and seen["roles"] == ["programmer"]
     assert seen["layers"] == [
-        "global", "personal:global:holylight", "shared:c--projects",
-        "role:c--projects:programmer", "personal:c--projects:holylight",
+        "global", "personal:global:holylight", "shared:c--work",
+        "role:c--work:programmer", "personal:c--work:holylight",
     ]
 
 
 def test_vector_hits_outside_pool_are_dropped(tmp_path, monkeypatch):
     """舊服務不認 layers 時仍安全：服務回了池外名字 → _merge_hit 找不到就丟。"""
     def fake_sem(*a, **k):
-        return [("leak-shared", "c:/LineMate/.claude/memory/shared/leak-shared.md", [], [])]
+        return [("leak-shared", "c:/Work/AppB/.claude/memory/shared/leak-shared.md", [], [])]
     matched, _all, _lines, _ = _collect(tmp_path, monkeypatch, "完全無關 nothing", sem=fake_sem)
     assert not any(e[0][0] == "leak-shared" for e in matched)
 
@@ -309,3 +309,35 @@ def test_ups_search_has_no_cross_project_atom_scan():
     src = (HOOKS_DIR / "handlers" / "ups_search.py").read_text(encoding="utf-8")
     assert "parse_memory_index" not in src, "ups_search 不得再讀他專案的 atom 索引"
     assert "count_trigger_hits(triggers, prompt_lower) >= 2" not in src
+
+
+# ─── v4 佈局的掃描根：failures/ 不得漏 ───────────────────────────────────────
+
+def test_v4_scan_covers_failures_layer(tmp_path):
+    """候選池含 P/shared(+failures)（見本檔頂 SPEC）。v4 佈局下（memory 有 shared/roles/
+    personal 任一）索引讀來的那份會被整份丟棄，掃描根漏了 failures/ 等於那些 atom
+    永遠不會被注入——而且沒有任何錯誤訊號，只表現成「這顆 atom 好像沒在運作」。"""
+    from wg_atoms import _collect_v4_role_atoms
+
+    mem = tmp_path / ".claude" / "memory"
+
+    def atom(path, name, trig):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"""# {name}
+
+- Scope: shared
+- Trigger: {trig}
+
+## 知識
+
+- [臨] x
+""", encoding="utf-8")
+
+    atom(mem / "shared" / "架構" / "a.md", "a", "alpha")
+    atom(mem / "failures" / "版控" / "b.md", "b", "beta")
+    atom(mem / "personal" / "u" / "c.md", "c", "gamma")
+
+    got = {n: (p, t) for n, p, t in _collect_v4_role_atoms(mem, "u", ["programmer"])}
+    assert set(got) == {"a", "b", "c"}, set(got)
+    assert got["b"][0] == "memory/failures/版控/b.md", got["b"]
+    assert got["b"][1] == ["beta"], got["b"]

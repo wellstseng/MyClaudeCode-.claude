@@ -10,6 +10,7 @@
 4. **端到端 round-trip**：PreCompact→PostCompact→PostToolBatch 後，注入內容含復原 atom 內文。
 5. **接線**：dispatcher.HANDLERS 與 settings.json 皆註冊 PostCompact + PostToolBatch。
 6. **budget 守紅線**：印象式 strip + budget 上限，blob 不爆量。
+7. **重建 state 照搬**：session_start _CARRY_ON_REBUILD 帶讀檔帳、意圖、Depends 已提示與權威地圖旗標。
 
 受控 tmp 索引 + monkeypatch state I/O，不依賴磁碟既有 atom / 真實 state。
 """
@@ -124,13 +125,50 @@ def test_post_compact_stashes_blob_and_flag(tmp_path, monkeypatch, capsys):
     assert capsys.readouterr().out.strip() == "", "PostCompact 不應有 stdout 輸出"
 
 
-def test_post_compact_empty_when_no_injected(tmp_path, monkeypatch, capsys):
+def test_post_compact_empty_when_no_atoms(tmp_path, monkeypatch, capsys):
+    """無 atom 就什麼都不 stash；有讀檔帳（overview_hub）也一樣，部位紀錄不重注。"""
     holder = _setup(tmp_path, monkeypatch, [])
     holder["state"]["injected_atoms"] = []
     holder["state"].pop("pre_compact_injected_atoms", None)
+    holder["state"]["overview_hub"] = {"c:/p|戰鬥": {"root": "c:/p", "part": "戰鬥", "part_files_read": ["c:/p/a.cs"]}}
     _run(pc.handle_post_compact, {"session_id": "test-sid", "trigger": "manual"})
     assert holder["state"].get("pending_reinjection") is not True
+    assert not any(k.startswith("pending_reinjection_") for k in holder["state"])
     assert capsys.readouterr().out.strip() == ""
+
+
+# ─── 重建 state 照搬 ──────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _no_org(monkeypatch):
+    import wg_overview as wo
+    monkeypatch.setattr(wo, "org_memory_root", lambda: None)
+    monkeypatch.setattr(wo, "_ORG_ROOT_CACHE", [])
+    monkeypatch.setattr(wo, "_WARNED", set())
+
+
+def test_rebuild_carry_keeps_one_shot_flags_so_nothing_resends(tmp_path, monkeypatch):   # 退件 BLOCK 8
+    """照 session_start 重建分支的搬法（for key in _CARRY_ON_REBUILD）搬舊 state，權威地圖不得重送。"""
+    from handlers import session_start as ss
+    import wg_depends as wd
+    existing = {"authority_map_injected": True, "depends_hints": ["c"], "turn_intent": "general", "overview_hub": {}}
+    rebuilt = {"session": {"cwd": str(tmp_path)}}
+    for key in ss._CARRY_ON_REBUILD:
+        if key in existing:
+            rebuilt[key] = existing[key]
+    assert rebuilt["authority_map_injected"] is True
+    assert wd._authority_map_text(rebuilt, "s", str(tmp_path / "a.md"), {"authority_map": {"*.md": "m.md"},
+                                                                         "max_card_chars": 100}, tmp_path) is None
+
+
+def test_session_start_carry_on_rebuild_includes_overview_keys():
+    from handlers import session_start as ss
+    for key in ("overview_hub", "turn_intent", "depends_hints", "authority_map_injected"):
+        assert key in ss._CARRY_ON_REBUILD, key
+    assert isinstance(ss._CARRY_ON_REBUILD, tuple)
+    src = (HOOKS_DIR / "handlers" / "session_start.py").read_text(encoding="utf-8")
+    assert "_first_session_hint_lines(root_res, cwd)" in src                                  # d2 的 first_session_hint 掛上
 
 
 # ─── 不變式 4：PostToolBatch idle 極輕 + 一次性注入 ──────────────────────────

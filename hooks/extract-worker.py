@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 # ─── Import centralized paths from wg_core (V5: wg_paths merged into wg_core) ─
-_HOOKS_DIR = str(Path.home() / ".claude" / "hooks")
+_HOOKS_DIR = str(Path(__file__).resolve().parent)   # 本檔所在的 hooks/（不用 Path.home()）
 if _HOOKS_DIR not in sys.path:
     sys.path.insert(0, _HOOKS_DIR)
 
@@ -35,15 +35,16 @@ from wg_core import (
     resolve_failures_dir,
     find_project_root,
     CLAUDE_DIR,
+    CODE_DIR,
     MEMORY_DIR,
 )
 from wg_extraction import classify_extracted_item
 
 # route failure atom writes through atom_io funnel
-_LIB_PARENT = str(Path.home() / ".claude")
+_LIB_PARENT = str(Path(__file__).resolve().parents[1])
 if _LIB_PARENT not in sys.path:
     sys.path.insert(0, _LIB_PARENT)
-from lib.atom_io import build_atom_content, write_raw  # noqa: E402
+from lib.atom_io import build_atom_content, narrative_date_error, write_raw  # noqa: E402
 from lib.atom_spec import slugify  # noqa: E402
 
 WORKFLOW_DIR = CLAUDE_DIR / "workflow"
@@ -55,10 +56,11 @@ if sys.platform == "win32":
             stream.reconfigure(encoding="utf-8", errors="replace")
 
 # ─── Import shared core from lib/ ───────────────────────────────────────────
-_CLAUDE_ROOT = str(CLAUDE_DIR)
+_CLAUDE_ROOT = str(Path(__file__).resolve().parents[1])   # 程式碼用本檔位置，CLAUDE_DIR 只定位資料
 if _CLAUDE_ROOT not in sys.path:
     sys.path.insert(0, _CLAUDE_ROOT)
 
+from lib.state_rmw import update_state_locked
 from lib.ollama_extract_core import (
     _call_ollama,
     _parse_llm_response,
@@ -240,7 +242,7 @@ _FORMAT_SPEC = (
     "輸出 JSON array: [{\"content\": \"精簡事實，最多150字\", "
     "\"type\": \"factual|procedural|architectural|pitfall|decision\"}]\n\n"
     "範例（值得萃取）:\n"
-    '  {"content": "rdchat Open WebUI LDAP 端點是 /api/v1/auths/ldap，用 user 欄位（非 email）", "type": "factual"}\n'
+    '  {"content": "某 Open WebUI 的 LDAP 端點是 /api/v1/auths/ldap，用 user 欄位（非 email）", "type": "factual"}\n'
     '  {"content": "GTX 1050 Ti 跑 qwen3:1.7b generate 約 30s，qwen3-embedding embed 約 5s", "type": "factual"}\n'
     '  {"content": "LanceDB search 用 cosine metric，min_score 0.65 以下多為噪音", "type": "architectural"}\n\n'
     "範例（不要萃取）:\n"
@@ -294,6 +296,8 @@ _FAILURE_PROMPT = (
     '"domain_tags": ["tag1"]}]\n\n'
     "規則:\n"
     "- 如果對話中不是真正的失敗（使用者只是描述需求），輸出 []\n"
+    "- 使用者給這個 session 的一次性指示（角色、工作步驟、檔案路徑、操作限制，例如「你是…session」「第一步…」"
+    "「只准讀寫 <路徑>」）不是失敗知識，不要抽成修復規則；只萃取跨 session 也成立的失敗模式\n"
     "- content 遵循「觸發 → 錯誤 → 正確（根因）」格式，最多 150 字\n"
     "- 最多萃取 2 條\n"
     "- domain_tags: 1-3 個領域標籤（如 gameplay, memory-system, git, unity, ollama）\n"
@@ -340,6 +344,8 @@ def _cross_session_search(
     items: List[dict], session_id: str, config: Dict[str, Any]
 ) -> List[dict]:
     """Vector search each item for cross-session patterns."""
+    if not (config.get("cross_session") or {}).get("enabled", True):
+        return []   # config cross_session.enabled=false：整個跨 session 去重關掉（TECH §12.1 的一鍵關）
     vs_config = config.get("vector_search", {})
     if not vs_config.get("enabled", True):
         return []
@@ -540,50 +546,22 @@ def run_extraction(ctx: Dict[str, Any]) -> Dict[str, Any]:
 # ─── State writeback (for per-turn mode) ─────────────────────────────────
 
 
-def _write_state_atomic(state_path: Path, state: dict) -> bool:
-    """Atomic write: temp file → rename. Returns True on success."""
-    tmp = state_path.with_suffix(".tmp")
-    try:
-        with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-            json.dump(state, f, ensure_ascii=False, indent=2)
-        tmp.replace(state_path)
-        return True
-    except OSError as e:
-        _atom_debug_error("extract_worker:state_write", e)
-        if tmp.exists():
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
-        return False
-
-
 def _per_turn_writeback(ctx: dict, result: dict) -> None:
-    """Write per-turn extraction results back to session state."""
+    """Write per-turn extraction results back to session state（update_state_locked：跟 hook 同一把 state 鎖，拿不到留待併帳）。"""
     session_id = ctx.get("session_id", "")
     if not session_id:
         return
-    state_path = WORKFLOW_DIR / f"state-{session_id}.json"
-    if not state_path.exists():
-        return
-    try:
-        with open(state_path, "r", encoding="utf-8") as f:
-            state = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return
-
     items = result.get("extracted_items", [])
-    if items:
-        kq = state.get("knowledge_queue", [])
-        kq.extend(items)
-        state["knowledge_queue"] = kq
 
-    if result.get("final_offset"):
-        state["extraction_offset"] = result["final_offset"]
+    def _apply(state: dict) -> bool:
+        if items:
+            state["knowledge_queue"] = state.get("knowledge_queue", []) + items
+        if result.get("final_offset"):
+            state["extraction_offset"] = result["final_offset"]
+        state["extract_worker_pid"] = 0  # clear lease (worker done)
+        return True
 
-    state["extract_worker_pid"] = 0  # clear lease (worker done)
-    state["last_updated"] = _now_iso()
-    _write_state_atomic(state_path, state)
+    update_state_locked(session_id, _apply)
     # Note: ack_then_clear (imported from lib/) is available for
     # user-extract-worker.py to pop from pending_user_extract after
     # successful atom_write. Not called here — per_turn appends to
@@ -726,8 +704,7 @@ def _session_end_writeback(ctx: dict, result: dict) -> None:
         # failed → 不清，留 queue 下次重試
 
     if written_q_indices and session_id:
-        ack_then_clear(WORKFLOW_DIR / f"state-{session_id}.json",
-                       "knowledge_queue", written_q_indices)
+        ack_then_clear(session_id, "knowledge_queue", written_q_indices)
 
     _atom_debug_log(
         "session_end_writeback",
@@ -919,6 +896,11 @@ def _failure_writeback(ctx: dict, items: list) -> None:
         entry_block = _build_failure_skeleton(
             content, tags, now,
             sources=item.get("sources"), source_session=item.get("source_session", ""))
+        # 失敗回寫走 write_raw 不經 write_atom，日期閘在這裡看同一份判式（標題行的日期是標題，不算）；擋下一律記 ERROR
+        date_err = narrative_date_error(entry_block.split("\n"))
+        if date_err:
+            _atom_debug_log("ERROR", f"[failure_writeback] {target.name} 擋下：{date_err}", config)
+            continue
 
         # 走 atom_io.write_raw funnel（保留原 marker fallback 行為，
         # 但統一經過 audit log + PreToolUse 強制門禁放行）
@@ -958,7 +940,7 @@ def _failure_catalog_sync(failures_dir: Path, config: dict) -> None:
     要等下次 MCP 寫入或人工跑 sync-memory-index 才更新（一條龍中斷）。同步跑、
     收 stderr、失敗只 debug log（fail-open）。專案層 failures 走 --memory-dir。"""
     try:
-        script = CLAUDE_DIR / "tools" / "sync-memory-index.py"
+        script = CODE_DIR / "tools" / "sync-memory-index.py"   # 程式碼；--memory-dir（資料）仍由 CLAUDE_DIR 判
         if not script.exists():
             return
         argv = [sys.executable, str(script), "--write"]
@@ -1008,7 +990,7 @@ def _create_failure_atom(path: Path, ftype: str, first_block: str) -> None:
         f"- Confidence: [臨]\n"
         f"- Trigger: {_FAILURE_TRIGGERS.get(ftype, _FAILURE_TRIGGERS['assumption'])}\n"
         f"- Type: procedural\n"
-        f"- Created: {datetime.now().strftime('%Y-%m-%d')}\n\n"
+        f"- Created-at: {datetime.now().strftime('%Y-%m-%d')}\n\n"
         f"## 知識\n\n{first_block}\n\n"
         f"## 行動\n\n- 同全域 failures 共通行動規則\n"
     )
@@ -1110,26 +1092,12 @@ def _legacy_main():
     }
     result = run_extraction(ctx)
 
-    # Legacy mode: write results back to state file (same as old behavior)
+    # Legacy mode: write results back to state file（同一把 state 鎖，拿不到留待併帳）
     if result.get("extracted_items"):
-        try:
-            with open(state_path, "r", encoding="utf-8") as f:
-                state = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            return
-        state["pending_extraction"] = result["extracted_items"]
-        state["last_updated"] = _now_iso()
-        tmp = state_path.with_suffix(".tmp")
-        try:
-            with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-                json.dump(state, f, ensure_ascii=False, indent=2)
-            tmp.replace(state_path)
-        except OSError:
-            if tmp.exists():
-                try:
-                    tmp.unlink()
-                except OSError:
-                    pass
+        def _apply(st: dict) -> bool:
+            st["pending_extraction"] = result["extracted_items"]
+            return True
+        update_state_locked(session_id, _apply)
 
 
 if __name__ == "__main__":

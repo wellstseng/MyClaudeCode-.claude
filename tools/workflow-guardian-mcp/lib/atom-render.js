@@ -3,7 +3,7 @@
 
 /** Build atom file content from structured parameters.
  *  V4: scopeLabel may be plain "shared"/"global" or composite "role:art"/"personal:alice".
- *  Optional metadata (audience/author/pending_review_by/merge_strategy/created_at)
+ *  Optional metadata (audience/author/provenance/quote/pending_review_by/merge_strategy/created_at)
  *  written only when present, in SPEC §4 order. */
 function isBlockKnowledge(item) {
   // 表格列（| 開頭）或程式碼 fence（三反引號開頭）→ 原樣輸出 block。對拍 atom_spec.py
@@ -27,6 +27,20 @@ function renderKnowledgeLines(knowledge) {
   return out;
 }
 
+// 繞閘卡片宣告：知識段第一行「不是教繞閘｜<理由>」只給寫入閘看，建卡時剝掉。對拍 lib/atom_spec.py strip_bypass_declaration
+const BYPASS_DECLARATION_RE = /^\s*(?:\[[臨觀固]\]\s*)?不是教繞閘\s*[｜|]\s*(.*?)\s*$/;
+
+function stripBypassDeclaration(knowledge) {
+  const items = [...knowledge];
+  if (!items.length) return items;
+  const s = String(items[0]);
+  const nl = s.indexOf("\n");
+  const first = nl < 0 ? s : s.slice(0, nl);
+  const rest = nl < 0 ? "" : s.slice(nl + 1);
+  if (!BYPASS_DECLARATION_RE.test(first)) return items;
+  return (rest.trim() ? [rest] : []).concat(items.slice(1));
+}
+
 function buildAtomContent({
   title,
   scope,
@@ -44,6 +58,8 @@ function buildAtomContent({
   today,
   provenance,
   depends,
+  quote,
+  entry,
 }) {
   const _today = today || new Date().toISOString().slice(0, 10);
   const lines = [`# ${title}`, ""];
@@ -57,6 +73,10 @@ function buildAtomContent({
   // Source：來源（路徑／URL／commit）；參數名 provenance 與 py 一致（source 是稽核白名單）。
   if (provenance) {
     lines.push(`- Source: ${provenance}`);
+  }
+  // Quote：觸發這張卡片的使用者原話（單行 ≤200 字）；緊接 Source 之後（Source 缺時仍佔此位）。
+  if (quote) {
+    lines.push(`- Quote: ${quote}`);
   }
   lines.push(`- Confidence: ${confidence}`);
   lines.push(`- Trigger: ${triggers.join(", ")}`);
@@ -72,6 +92,10 @@ function buildAtomContent({
   if (depends && depends.length > 0) {
     lines.push(`- Depends: ${depends.join(", ")}`);
   }
+  // Entry：切入點代號標記；未給／空陣列不輸出。
+  if (entry && entry.length > 0) {
+    lines.push(`- Entry: ${entry.join(", ")}`);
+  }
   if (related && related.length > 0) {
     lines.push(`- Related: ${related.join(", ")}`);
   }
@@ -80,7 +104,7 @@ function buildAtomContent({
     lines.push(`- Supersedes: ${supersedes.join(", ")}`);
   }
   lines.push("", "## 知識", "");
-  for (const line of renderKnowledgeLines(knowledge)) {
+  for (const line of renderKnowledgeLines(stripBypassDeclaration(knowledge))) {
     lines.push(line);
   }
   lines.push("", "## 行動", "");
@@ -109,11 +133,18 @@ function validateAtomContent(content) {
   if (!content.includes("## 行動")) {
     return "Missing ## 行動 section";
   }
-  const confMatch = content.match(/^- Confidence:\s*(.+)$/m);
+  // 只在檔頭找、[ \t]* 不跨行（同 py lib/atom_spec.validate_atom_content）：空的 Confidence 行不能拿下一行的 [臨] 充數
+  const confMatch = headerOf(content).match(/^- Confidence:[ \t]*(.+)$/m);
   if (!confMatch || !["[固]", "[觀]", "[臨]"].includes(confMatch[1].trim())) {
     return "Missing or invalid Confidence metadata";
   }
   return null;
 }
 
-module.exports = { isBlockKnowledge, renderKnowledgeLines, buildAtomContent, validateAtomContent };
+/** atom 檔頭＝第一個 `## ` 標題之前（沒有就全文）；檔頭欄位只在這裡找（py lib/atom_io._header_end 同一個界線）。 */
+function headerOf(content) {
+  const m = /^## /m.exec(content);
+  return m ? content.slice(0, m.index) : content;
+}
+
+module.exports = { isBlockKnowledge, renderKnowledgeLines, buildAtomContent, validateAtomContent, stripBypassDeclaration, headerOf };

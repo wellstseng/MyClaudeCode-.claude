@@ -17,12 +17,16 @@ from pathlib import Path
 if sys.stdout.encoding != "utf-8":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
-CLAUDE = Path.home() / ".claude"
-MEMORY = CLAUDE / "memory"
+CODE_DIR = Path(__file__).resolve().parent.parent     # 程式碼根（本檔所在的樹）
+if str(CODE_DIR) not in sys.path:
+    sys.path.insert(0, str(CODE_DIR))
+from lib.project_root import claude_data_dir          # noqa: E402
+CLAUDE_DIR = claude_data_dir()                        # 使用者資料根（WG_CLAUDE_DIR 或 ~/.claude）
+MEMORY = CLAUDE_DIR / "memory"
 REVIEW = MEMORY / "_heal_review"
-TOOLS = CLAUDE / "tools"
+TOOLS = CODE_DIR / "tools"
 
-sys.path.insert(0, str(CLAUDE / "hooks"))
+sys.path.insert(0, str(CODE_DIR / "hooks"))
 try:
     from wg_roles import is_management, get_current_user   # noqa: E402
 except Exception:

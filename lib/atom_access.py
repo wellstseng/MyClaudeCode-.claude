@@ -11,7 +11,7 @@ Schema v3（<atom>.access.json）:
     "schema": "atom-access-v3",
     "read_hits": int,             # 純曝光計數（注入次數）— v3 後不再單獨晉升
     "last_used": "YYYY-MM-DD",
-    "confirmations": int,         # 跨 session 萃取命中（真實確認，主軌）
+    "confirmations": int,         # 跨 session 萃取命中；不參與晉升，只進封存分數
     "useful_hits": number,        # α — Beta-Bernoulli「被用且成功」累積（預設 1，Laplace prior）
     "used_fail": number,          # β — Beta-Bernoulli「被用但失敗」累積（預設 1）
     "last_promoted_at": "YYYY-MM-DD" 或 None,
@@ -37,6 +37,7 @@ CLI 入口（給 tools/workflow-guardian-mcp/server.js 透過子程序呼叫）�
   python -m lib.atom_access init <path> --first-seen YYYY-MM-DD --source mcp
   python -m lib.atom_access increment-read-hits <path> --source hook:atom-inject
   python -m lib.atom_access increment-confirmation <path> --source hook:episodic-confirm [--event-json '{...}']
+  python -m lib.atom_access increment-confirmation <path> --source user:confirm --event-json '{"by":"user","note":"原話"}'  # 使用者明說確認
   python -m lib.atom_access record-usefulness <path> --used true --success true|false|unknown --source hook:usefulness
   python -m lib.atom_access decay-usefulness <path> --lambda 0.97 --source hook:atom-decay
   python -m lib.atom_access record-promotion <path> --target [固] --source mcp
@@ -65,6 +66,7 @@ ACCESS_VALID_SOURCES = frozenset({
     "hook:atom-inject",          # workflow-guardian.py atom 注入時 increment_read_hits
     "hook:episodic",             # episodic atom 建立時 init_access
     "hook:episodic-confirm",     # cross-session confirmation
+    "user:confirm",              # 使用者明說「對、記下來」：記一筆 confirmation（event 帶 by=user），晉升門檻不變
     "hook:usefulness",           # stop.py 注入→使用→結果 α/β 更新
     "hook:atom-decay",           # SessionEnd _self_iterate_atoms 慢衰減
     "hook:user-extract",
@@ -90,7 +92,7 @@ TIMESTAMPS_MAX = 50
 USEFULNESS_PRIOR = 1
 # Wilson 下界預設參數（py↔js 鏡像，SYNC: tools/workflow-guardian-mcp/server.js usefulnessStats）。
 # z=1.28（80% 單尾信賴）：小樣本場景 z=1.96 過度保守——3 連勝 lb 僅 0.44 遠不及升門 0.6，
-# 6 連勝才達標，晉升軌實質凍結；1.28 下 3 連勝 lb≈0.647 即過門，與 confirmations 主軌步調相稱。
+# 6 連勝才達標，晉升軌實質凍結；1.28 下 3 連勝 lb≈0.647 即過 [臨]→[觀]（[觀]→[固] 另要 n≥fix_min_n）。
 WILSON_Z_DEFAULT = 1.28
 PROMOTE_LB_DEFAULT = 0.6
 DEMOTE_LB_DEFAULT = 0.35

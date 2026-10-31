@@ -27,9 +27,10 @@ description: 跨 Session Handoff Prompt Builder — 強制 6 區塊 self-suffici
 ## 必填 6 區塊（缺一拒絕完成）
 
 ### 1.【前置脈絡】
-- 專案根目錄絕對路徑（例：`c:/projects/.claude/`）
+- 專案根目錄絕對路徑（例：`D:/work/acme-shop/.claude/`）
 - 工作分支 / 工作目錄
 - 為什麼做這件事（**含 why**，不只 what）
+- **目標的始末（四段都要，小任務也一樣）**：原始目標（使用者原話）→ 階段目標（拆成哪幾段、各段狀態）→ 簡略經過（每段一兩句、附 commit）→ 對原始目標而言的結果（做到哪、還差什麼、憑什麼數據判斷）。只寫做法或只指向文件，下個 session 會只知道「去做 X」，不知道做完拿來判斷什麼。
 
 ### 2.【已完成】
 - Phase 編號或階段名稱
@@ -60,7 +61,8 @@ description: 跨 Session Handoff Prompt Builder — 強制 6 區塊 self-suffici
 ## 輸出格式
 
 整段 prompt 包在 ` ``` ` code block，使用者可直接複製貼上。
-若使用者要求存到 `_staging/`，寫成 `{project}/.claude/memory/_staging/next-phase-{name}.md`，由下次 `/continue` 自動讀取。
+同一份內容一律落檔到專案 `{project}/.claude/memory/_staging/next-phase-{name}.md`（`.claude/memory/_staging/` 不存在就建），由下次 `/continue` 自動讀取。
+寫入被擋（閘門 deny、權限拒絕）時不得改寫到 scratchpad 或其他暫存位置：把被擋訊息原文與原本要寫的路徑印給使用者，code block 照給。
 
 ---
 
@@ -70,6 +72,7 @@ description: 跨 Session Handoff Prompt Builder — 強制 6 區塊 self-suffici
 
 - ❌ 「繼續 X Phase 2」這種一句話 prompt
 - ❌ 只有 what 沒有 why（下個 Claude 不知道判斷標準）
+- ❌ 沒有目標的始末：只交做法、量測方法或一個文件路徑，沒寫原始目標、階段、經過、對目標的結果（例：「明天重量被擋次數」只附數法與基準數字）
 - ❌ 使用「我們」「剛才」「之前」「那個」等指代當前對話的代詞
 - ❌ 引用「對話中的決定」但未列出該決定本身
 - ❌ 缺權威來源（下個 Claude 不知道該先讀哪個檔）
@@ -90,42 +93,42 @@ description: 跨 Session Handoff Prompt Builder — 強制 6 區塊 self-suffici
 
 ## 範例對照
 
-### ❌ 反例（截圖事件 2026-04，FcgiHandler）
+### ❌ 反例（截圖事件 2026-04，ApiHandler）
 ```
-繼續 FcgiHandler 知識庫建置 Phase 2：phpUjAdmin 後台交叉對應。
+繼續 ApiHandler 知識庫建置 Phase 2：AcmeAdmin 後台交叉對應。
 ```
-→ 下個 Claude 不知道：專案在哪、Phase 1 做了什麼、權威來源在哪、phpUjAdmin 怎麼進
+→ 下個 Claude 不知道：專案在哪、Phase 1 做了什麼、權威來源在哪、AcmeAdmin 怎麼進
 
 ### ✅ 正例（self-sufficient 版）
 ```
 【前置脈絡】
-- 專案：c:/projects/.claude/（SGI Server，team memory repo）
-- 任務：FcgiHandler 知識庫建置 Phase 2 — phpUjAdmin 後台交叉對應
-- Why：team 同事 wellstseng 之前在 ba3bc84 補齊了 92 路由參數，需與後台路由對齊
+- 專案：D:/work/acme-shop/.claude/（acme-shop 伺服器，team memory repo）
+- 任務：ApiHandler 知識庫建置 Phase 2 — AcmeAdmin 後台交叉對應
+- Why：team 同事 alice 之前在 a1b2c3d 補齊了 92 路由參數，需與後台路由對齊
 
 【已完成】
-- Phase 1：commit d33b896 已 push origin/master
+- Phase 1：commit e4f5a6b 已 push origin/master
 - 權威來源：_AIDocs/API_Endpoints_Report.md（92 路由完整參數）
-- Phase 1 產出：c:/projects/.claude/memory/fcgi-api-directory.md（98 路由 §1-4 + §5 phpUjAdmin 占位）
+- Phase 1 產出：D:/work/acme-shop/.claude/memory/api-directory.md（98 路由 §1-4 + §5 AcmeAdmin 占位）
 
 【權威來源】
-- 後台路由：BackendServer 92 路由（fcgi-api-directory.md §1-4）
-- 同事補齊：commit ba3bc84
+- 後台路由：BackendServer 92 路由（api-directory.md §1-4）
+- 同事補齊：commit a1b2c3d
 
 【產出位置】
-- 既有：fcgi-api-directory.md §5 phpUjAdmin 占位
-- 接下來：phpujadmin-route-map.md（新檔）→ 回寫 §5
+- 既有：api-directory.md §5 AcmeAdmin 占位
+- 接下來：acmeadmin-route-map.md（新檔）→ 回寫 §5
 
 【做法】
 1. 從本機直接連內網後台（不開瀏覽器，省 Playwright 開銷）
 2. 用 curl 逐頁抓 HTML，比對 BackendServer 92 路由
 3. curl 抓不下來的頁才改用瀏覽器補
-4. 產出 phpujadmin-route-map.md → 回寫 §5 → commit + push
+4. 產出 acmeadmin-route-map.md → 回寫 §5 → commit + push
 
 【決策依據】
 - 為什麼用 curl：本機背景連內網夠用，不需開視窗（之前討論結論）
 - 為什麼不全用 Playwright：開銷大且非必要；只在 curl 失敗時 fallback
-- 已知坑：phpUjAdmin 帳密在 c:/projects/.claude/secrets/（git ignore），讀檔取
+- 已知坑：AcmeAdmin 帳密在 D:/work/acme-shop/.claude/secrets/（git ignore），讀檔取
 ```
 
 ---
@@ -154,6 +157,7 @@ description: 跨 Session Handoff Prompt Builder — 強制 6 區塊 self-suffici
 逐項自問，任一「否」→ 回去補，不交付：
 
 - [ ] 新 session 讀完知道**為何而做**（outcome / why），不只知道做什麼？
+- [ ] prompt 本身帶著**目標的始末**四段（原始目標、階段目標、簡略經過、對目標而言的結果），不靠「去讀某文件」才補得回來？
 - [ ] 每個已鎖定決策都附**一行理由**？被否決的 alternative 有寫原因？
 - [ ] **未解問題 / 不確定性**獨立成區，每條是「可被回答的具體問句」？
 - [ ] 只寫了 **delta**（本 session 特有、會變、接手必知）？通用規則 / SOP 用 `[[連結]]` 帶過、沒整段重貼？
@@ -161,10 +165,12 @@ description: 跨 Session Handoff Prompt Builder — 強制 6 區塊 self-suffici
 - [ ] **假設 vs 已驗證**有標記？未驗證項標「待確認、勿據此鎖死」？
 - [ ] 新舊矛盾**顯式裁決**（以 X 為準、作廢 Y）、沒並列丟給下游？
 - [ ] 關鍵約束 / 否定條件放在**首尾**、沒被埋在中段？
+- [ ] **判斷入口**：需要判斷的事（該測哪些、影響到誰、是不是誤判）寫成「留給下個 session 判斷＋要附理由」，沒被寫死成固定規則？已經判斷完的才寫死。
+- [ ] **交出前再對一次**：先逐句對使用者原話，再對計畫；這個 session 剛改的東西影響哪些已經給出去的內容（清單、計畫）？有就一起改。
 
 知識依據見 atom [[handoff-綜觀品質與抗失真寫法]]、[[跨session資訊失真機制與對策]]。
 
-> **獨立他評後盾（codex-companion 開啟時）**：把 handoff 寫入 `_staging/next-phase*.md` 後，Codex 會以本 8 問當對抗式 checklist 自動複審該檔（PostToolUse 觸發 `handoff_review`），中度以上缺口會在下一輪以 `[Codex Companion: Handoff 自檢]` 注入。這是「他評」補「自評抓不到自身盲點」——但**不取代** Step 3.5 自審（codex 可能離線/未開）；自審仍是必經硬閘。
+> **獨立他評後盾（codex-companion 開啟時）**：把 handoff 寫入 `_staging/next-phase*.md` 後，Codex 會以前 8 問當對抗式 checklist 自動複審該檔（最後兩問要知道這個 session 改了什麼、判斷過什麼，只能作者自審）（PostToolUse 觸發 `handoff_review`），中度以上缺口會在下一輪以 `[Codex Companion: Handoff 自檢]` 注入。這是「他評」補「自評抓不到自身盲點」——但**不取代** Step 3.5 自審（codex 可能離線/未開）；自審仍是必經硬閘。
 
 ## Step 4：輸出
 

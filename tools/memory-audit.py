@@ -8,7 +8,7 @@ memory-audit.py — Atomic Memory System Health Checker
 Usage:
     python memory-audit.py
     python memory-audit.py --global-only
-    python memory-audit.py --project c--Projects
+    python memory-audit.py --project <專案 slug，如 d--repo-app>
     python memory-audit.py --search-distant handler
     python memory-audit.py --restore path/to/atom.md
     python memory-audit.py --move-distant path/to/atom.md
@@ -34,10 +34,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 # route memory-audit atom writes through funnel
-_CLAUDE_DIR = Path.home() / ".claude"
-if str(_CLAUDE_DIR) not in sys.path:
-    sys.path.insert(0, str(_CLAUDE_DIR))
-from lib.atom_io import write_raw, write_index_full  # noqa: E402
+_CODE_ROOT = Path(__file__).resolve().parent.parent   # 程式碼根：lib.* 從本樹載
+if str(_CODE_ROOT) not in sys.path:
+    sys.path.insert(0, str(_CODE_ROOT))
+from lib.atom_io import narrative_date_error, write_raw, write_index_full  # noqa: E402
 
 _AUDIT_SOURCE = "tool:memory-audit"
 
@@ -48,7 +48,7 @@ from lib.atom_spec import (
     REQUIRED_SECTIONS, KNOWLEDGE_SECTIONS, VALID_CONFIDENCE,
     INDEX_MAX_LINES, PROJECT_INDEX_MAX_LINES, ATOM_MAX_LINES, TRIGGER_MIN, TRIGGER_MAX,
     MEMORY_INDEX,
-    parse_depends, resolve_depends_path, depends_warnings, evidence_warning,
+    parse_depends, resolve_depends_path, classify_depends_path, depends_base_for_file, depends_warnings, evidence_warning,
 )
 from lib.atom_locations import (
     GLOBAL_MEMORY_DIR, FAILURES_DIR, LEGACY_FAILURES_DIR, LOCAL_ATOMS_DIR,
@@ -60,7 +60,7 @@ from lib.atom_access import read_access, usefulness_promote_eligible, move_atom_
 # _atom_index.json 為索引唯一機器源：delete/restore 必同步（含 _ATOM_INDEX.md mirror regen）
 from lib.atom_index_json import (
     delete_atom as index_delete_atom,
-    upsert_atom as index_upsert_atom,
+    upsert_atom as index_upsert_atom, find_index_dir,
     load_atom_index_json,
 )
 # 範疇資料夾硬規則：memory/ 根下散檔須歸入 memory/<範疇>/。gate 由 workflow/config.json
@@ -195,6 +195,8 @@ class HealthReport:
     audit_stats: Dict[str, Any] = field(default_factory=dict)
     # 壞滅緣（validity conditions）：path 型 Depends 指向已消失路徑的 atoms
     stale_deps: List[Dict[str, str]] = field(default_factory=list)
+    # 他機路徑：path 型 Depends 是別台機器的絕對路徑（本機不可驗，資訊級、不算壞滅緣）
+    foreign_deps: List[Dict[str, str]] = field(default_factory=list)
 
 
 # ─── Parsing ─────────────────────────────────────────────────────────────────
@@ -506,26 +508,31 @@ def validate_format(atom: AtomMetadata) -> List[Issue]:
     return issues
 
 
-def check_stale_deps(atom: AtomMetadata) -> List[Dict[str, str]]:
-    """壞滅緣檢查：path 型 Depends 條目指向不存在的路徑（warning 級）。
-
-    無 Depends 欄一律靜默（optional，向後相容）；自由文字型條目不可驗、跳過。
-    """
+def _depends_by_level(atom: AtomMetadata) -> Dict[str, List[Dict[str, str]]]:
+    """path 型 Depends 分級（atom_spec.classify_depends_path；相對路徑以卡片所在層的根解析）：missing＝壞滅緣、
+    foreign＝別台機器的絕對路徑。無 Depends 欄一律靜默（optional，向後相容）；自由文字型條目不可驗、跳過。"""
+    out: Dict[str, List[Dict[str, str]]] = {"missing": [], "foreign": []}
     raw = atom.raw_metadata.get("Depends", "")
     if not raw or atom.is_claude_native:
-        return []
-    out: List[Dict[str, str]] = []
+        return out
+    base = depends_base_for_file(atom.file_path)
     for e in parse_depends(raw):
         if e["type"] != "path" or not e["value"]:
             continue
-        resolved = resolve_depends_path(e["value"])
-        if not resolved.exists():
-            out.append({
-                "file": _rel_path(atom.file_path),
-                "dep": e["value"],
-                "resolved": str(resolved),
-            })
+        level, resolved = classify_depends_path(e["value"], base=base)
+        if level in out:
+            out[level].append({"file": _rel_path(atom.file_path), "dep": e["value"], "resolved": str(resolved)})
     return out
+
+
+def check_stale_deps(atom: AtomMetadata) -> List[Dict[str, str]]:
+    """壞滅緣檢查：path 型 Depends 條目指向本機該在卻不在的路徑（warning 級）。他機絕對路徑歸 check_foreign_deps。"""
+    return _depends_by_level(atom)["missing"]
+
+
+def check_foreign_deps(atom: AtomMetadata) -> List[Dict[str, str]]:
+    """path 型 Depends 是別台機器的絕對路徑（作者機寫進卡片、跨機共享後本機驗不到）：資訊級，不是壞滅緣。"""
+    return _depends_by_level(atom)["foreign"]
 
 
 def _forget_config() -> Dict[str, Any]:
@@ -786,6 +793,18 @@ def search_distant(memory_dir: Path, keyword: str) -> List[Tuple[Path, str]]:
     return results
 
 
+def _restore_index_home(dest: Path, fallback_mem: Path) -> Tuple[Path, Path]:
+    """還原卡登進哪份索引 (index_dir, index_root)：在資料根下一律全域 memory/_atom_index.json
+    （範疇子夾與 _AIDocs/_atoms 的 _distant 上一層不是索引根，拿它會在子夾生一份假索引）；
+    專案層上溯最近的 _atom_index.json；都找不到才退回 _distant 的上一層。"""
+    if _is_under(dest, CLAUDE_DIR):
+        return GLOBAL_MEMORY_DIR, CLAUDE_DIR
+    found = find_index_dir(dest.parent)
+    if found is not None:
+        return found, found.parent
+    return fallback_mem, fallback_mem.parent
+
+
 def restore_from_distant(atom_path: Path) -> Tuple[bool, str]:
     """Move atom from _distant/ back to active area, reset Confidence to [臨]."""
     if not atom_path.exists():
@@ -813,6 +832,11 @@ def restore_from_distant(atom_path: Path) -> Tuple[bool, str]:
         text = atom_path.read_text(encoding="utf-8-sig")
     except (OSError, UnicodeDecodeError) as e:
         return False, f"讀取失敗: {e}"
+
+    # _distant 不受 lint 掃，恢復＝整張舊卡重新進索引：先過寫入閘的同一份判式（看整卡，與 lint 掃法相同）
+    date_err = narrative_date_error(text.split("\n"))
+    if date_err:
+        return False, f"{date_err}；先跑 python tools/atom-date-lint.py --fix --path {atom_path} 清掉再恢復"
 
     # Reset confidence to [臨]
     text = re.sub(
@@ -863,8 +887,9 @@ def restore_from_distant(atom_path: Path) -> Tuple[bool, str]:
             fm = parse_frontmatter(text)
             triggers = [t.strip() for t in re.split(r"[,，]", fm.get("Trigger", ""))
                         if t.strip()]
-            rel = dest.relative_to(memory_dir.parent).as_posix()
-            index_upsert_atom(memory_dir, dest.stem, rel, triggers,
+            idx_dir, idx_root = _restore_index_home(dest, memory_dir)
+            rel = dest.relative_to(idx_root).as_posix()
+            index_upsert_atom(idx_dir, dest.stem, rel, triggers,
                               scope=fm.get("Scope", "global") or "global")
         except (OSError, ValueError) as e:
             index_note = f"；_atom_index.json 更新失敗: {e}"
@@ -1280,6 +1305,10 @@ def delete_atom(
     # ① 護欄（全部在任何異動之前）
     layers = discover_layers(project_dir=project_dir)
     mem_dir: Optional[Path] = next((mdir for name, mdir in layers if name == layer), None)
+    if mem_dir is None and layer == "project" and atom_path is not None and project_dir and Path(project_dir).is_dir():
+        # caller 已定位到檔（atom_io_cli retire）：專案記憶層只有 hook 自動寫的卡、還沒生 MEMORY.md 時 discover_layers
+        # 不認它是一層；atom_path 要落在 project_dir 之下的檢查照做，所以直接拿 project_dir 當這一層
+        mem_dir = Path(project_dir)
     if mem_dir is None:
         hint = " (layer=project requires project_dir)" if layer == "project" and not project_dir else ""
         return _fail("locate", f"Atom '{atom_name}' not found in layer '{layer}'{hint}")
@@ -1504,7 +1533,9 @@ def move_to_distant(atom_path: Path) -> Tuple[bool, str]:
 
 # ─── Layer Discovery ─────────────────────────────────────────────────────────
 
-CLAUDE_DIR = Path.home() / ".claude"
+from lib.project_root import claude_data_dir  # noqa: E402
+
+CLAUDE_DIR = claude_data_dir()   # 使用者資料根（WG_CLAUDE_DIR 或 ~/.claude），和 hooks 同一支算法
 AUDIT_LOG_PATH = CLAUDE_DIR / "memory" / "_vectordb" / "audit.log"
 
 
@@ -1645,6 +1676,8 @@ def generate_markdown_report(report: HealthReport) -> str:
         lines.append(f"- Duplicate suspects: {len(report.duplicates)}")
     if report.stale_deps:
         lines.append(f"- Stale depends（壞滅緣觸發）: {len(report.stale_deps)}")
+    if report.foreign_deps:
+        lines.append(f"- Foreign depends（他機路徑、本機不可驗、不算壞滅緣）: {len(report.foreign_deps)}")
     lines.append("")
 
     # Issues
@@ -1742,6 +1775,7 @@ def generate_json_report(report: HealthReport) -> str:
         ],
         "audit_stats": report.audit_stats,
         "stale_deps": report.stale_deps,
+        "foreign_deps": report.foreign_deps,
     }
     return json.dumps(data, ensure_ascii=False, indent=2)
 
@@ -1903,6 +1937,7 @@ def run_audit(args: argparse.Namespace) -> HealthReport:
 
             # 壞滅緣（path 型 Depends 存在性）
             report.stale_deps.extend(check_stale_deps(atom))
+            report.foreign_deps.extend(check_foreign_deps(atom))
 
     # Detect cross-layer duplicates
     report.duplicates.extend(detect_duplicates(all_atoms))

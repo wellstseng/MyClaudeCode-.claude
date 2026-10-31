@@ -2,24 +2,24 @@
 
 - Scope: global
 - Author: holylight
+- Source: commit:0ef3546 2026-09-03（原對話已逾保留期）；2026-10-23 同步提醒修補實測
 - Confidence: [臨]
-- Trigger: codex exec, codex 沙箱, read-only sandbox, CreateProcessWithLogonW, 1385, 第二意見, 獨立掃碼, codex 報告, --output-last-message
+- Trigger: codex exec, codex 沙箱, read-only sandbox, unelevated, CreateProcessWithLogonW, 1385, 獨立掃碼, codex 報告, --output-last-message, 材料不足, unelevated 仍 1385, codex 讀實檔, 無法完成審查, 差異內嵌提示
 - Created-at: 2026-09-03
-
-- Related: codex裁判停用個別mcp用-c-mcp-servers名enabledfalse-mcp-servers空表是合併不是清空
+- Related: codex裁判停用個別mcp用-c-mcp-servers名enabledfalse-mcp-servers空表是合併不是清空, 審查者回沒問題或回得很短時-採用前先看執行紀錄確認真的讀到檔
+- Quote: 「施工agent若能多開就多開，提速吧」
 
 ## 知識
 
-- [臨] 本機 `codex exec -s read-only` 連 Get-Location 都跑不了：Windows 沙箱回 `CreateProcessWithLogonW failed: 1385`（登入型別未授權），Codex 誠實回報無法讀碼、不出報告。可用做法：`codex exec --dangerously-bypass-approvals-and-sandbox --ephemeral -o <報告檔> - < <prompt檔>`，前後各存一份 `git status --porcelain` 做 diff 當「它沒動檔」的證據。
-- [臨] 拿 Codex 當獨立第二意見時，prompt 給使用者原話＋評判依據全文（它讀不到 ~/.claude/rules），不給方法指引；它的斷言全是靜態讀碼（不 build、不跑自測），逐條實證後再整合——2026-09-03 MudClient 一輪它抓到 HelperRoutine 三個真 bug（插播上限失效、歸還早標完成、空清單負索引），選檔判斷比純量化縮排指標準。
-- [臨] stdout 會夾 `codex_models_manager` 的 cache 錯誤（missing field base_instructions），不影響執行，最後訊息以 -o 檔為準。
-- [臨] Codex 跟我共用同一個工作樹：它在讀碼期間我若同時改檔／ commit，它會偵測到「外部 Git 變更」並重讀，報告裡的行號與判斷會混到兩個版本（2026-09-03 地圖那輪它對我改到一半的 MapPilot 評論）。要不就等它跑完再動手，要不就給它 `git worktree` 獨立工作樹（`--cd`）。
-- [臨] Codex 這類靈時獨立審查的價值在正確性缺陷，不在可讀性：地圖那輪它抓到 FindPath 不穩定邊誤擋、JSON 載入丟失字典 comparer、存檔非原子，三項都是我量化縮排掃不到的。給它的 prompt 可以明講「重點在正確性與邊界」。
-- [臨] 2026-09-10 實測 Codex CLI 0.154.0：`codex exec --skip-git-repo-check -s read-only "Reply CODEX_OK"` 直接回 CODEX_OK，1385 不再出現；升級後先試 read-only，bypass 只留給舊版。
-- [臨] 2026-09-22 另一条保持 read-only 的路：純審查任務不必 bypass。把 prompt + `cat -n 完整檔` + `svn diff`/`git diff` + plumbing 片段全部組成一份 md，`codex exec --skip-git-repo-check --sandbox read-only - < prompt.md`，並在 prompt 明寫「你的 sandbox 無法 spawn 程序，不要跑指令」。Codex 當純推理器照样給帶行號的具體 finding（650 行素材約 3 萬 token），靈零寫檔風險。SVN 工作副本必加 `--skip-git-repo-check`，否則直接印 `Not inside a trusted directory` 退出。
-- [臨] 對抗審查 prompt 有效結構：①改了什麼 ②逐消費端列舊行為（從 diff 的 - 行整理）③列 6~8 個專攻面（幀一致性、狀態機邊界、行為漂移、平台差異、熱重載、過度設計）④要求輸出「檔:行 / 輸入序列→錯誤結果 / bug|drift|nit / 一行修法 / ship或fix-first」。它會把有意的行為統一也列成 drift，要自己判接受並寫進收尾報告。實測一輪抓到 2 個確定 bug + 3 個值得補的洞。
+- [臨] **現況：唯讀沙箱加 unelevated 就起得來，不必 bypass**（標題是舊結論）。可用指令：`Get-Content '<prompt檔>' -Raw | codex exec -m gpt-6-astra -s read-only -C '<目錄>' --ephemeral --skip-git-repo-check -c 'windows.sandbox="unelevated"' -c 'mcp_servers.unityMCP.enabled=false' -o '<回覆檔>' -`；它能自己跑 git 讀檔與做記憶體內探針。沒加 unelevated 或舊版 CLI 才出 `CreateProcessWithLogonW failed: 1385`，那時退回 `--dangerously-bypass-approvals-and-sandbox`＋前後 `git status --porcelain` 比對當沒動檔證據。
+- [臨] 加了 unelevated 有時仍 1385：讀檔工具全掛，codex 照實回「無法完成審查」或只審提示裡的 diff。繞法①差異＋相關函式全文內嵌進提示經 stdin 送（實例約 9.7 萬字一輪審完、報出一條真問題）；②要它讀實檔就先 commit、不開沙箱、提示明令唯讀，跑完核對 HEAD 與 git status 沒變。
+- [臨] 路徑寫字面絕對路徑；不在 git 目錄（含 SVN）必加 `--skip-git-repo-check`（否則 stderr 一行就退出、輸出空檔）；提示一律經 stdin（當參數傳，codex.cmd 只送第一行且 exit 0）；最後訊息以 -o 檔為準；背景跑。
+- [臨] 跟別的 session 共用工作樹時：prompt 要求讀檔用 git show <commit>:<路徑>、diff 用 git diff <起> <迄>，結論固定在指定 commit。
+- [臨] 審查 prompt 結構：原話目標 → 交付方自述（逐條核實）→ 兼看能不能被繞過／誠實流程能不能過 → 已知不必再報 → VERDICT＋每條檔:行＋重現。BLOCK 要親自讀碼重現才退件；價值在正確性與邊界反例。純推理用法：prompt＋完整檔＋diff 組成一份 md，明寫不要跑指令。
+- [臨] 自己組 codex 指令時 Windows 要帶 `-c windows.sandbox="unelevated"`：少了它每個指令都 1385、只看得到提示內嵌材料，卻照樣回答、不報錯。認法：codex 的 stderr 紀錄有 `exec_command failed … 1385`（只 grep 1385 會撞到材料內文）。
 
 ## 行動
 
-- 跑 Codex 前先試 read-only；起不來就 bypass＋git status 前後 diff
-- Codex 的 bug 斷言逐條讀碼核實再寫進報告，標「已核實／推論」
+- 要 codex 唯讀審碼：照第一條指令跑；仍 1385 就把差異與函式全文內嵌進提示，或 commit 後 bypass＋git status 前後比對
+- 審別的 session 正在改的樹：prompt 要求用 git 讀固定 commit
+- Codex 審完先 grep 它的 stderr 紀錄有沒有 exec_command failed；Codex 的 bug 斷言逐條讀碼核實再寫進報告

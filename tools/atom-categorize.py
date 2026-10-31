@@ -44,9 +44,12 @@ if sys.stdout.encoding != "utf-8":
 if sys.stderr.encoding != "utf-8":
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-CLAUDE_DIR = Path.home() / ".claude"
-if str(CLAUDE_DIR) not in sys.path:
-    sys.path.insert(0, str(CLAUDE_DIR))
+_CODE_ROOT = Path(__file__).resolve().parent.parent   # 程式碼根：lib.* 與兄弟工具從本樹載
+if str(_CODE_ROOT) not in sys.path:
+    sys.path.insert(0, str(_CODE_ROOT))
+from lib.project_root import claude_data_dir  # noqa: E402
+
+CLAUDE_DIR = claude_data_dir()                        # 使用者資料根（WG_CLAUDE_DIR 或 ~/.claude）
 
 from lib.atom_access import access_sidecar_path, move_atom_pair, prune_empty_parents  # noqa: E402
 from lib.atom_classify import score_by_lexicon  # noqa: E402
@@ -63,7 +66,7 @@ from lib.atom_taxonomy import (  # noqa: E402
 )
 
 _SOURCE = "tool:atom-categorize"
-_SET_REALM_FILE = CLAUDE_DIR / "tools" / "atom-set-realm.py"
+_SET_REALM_FILE = _CODE_ROOT / "tools" / "atom-set-realm.py"
 DEFAULT_UNDO_DIR = CLAUDE_DIR / "plans"
 
 
@@ -223,10 +226,8 @@ def build_plan(layout: Layout, atoms_map: Dict[str, str], refs: Dict[str, str]) 
                 if cur_dom.casefold() == dom.casefold():
                     items.append({"action": "noop", "slug": slug, "from": cur_rel, "to": cur_rel,
                                   "target": resolved["canon"]})
-                else:
-                    errors.append(f"{slug}: already local at {cur_dom!r}, target {dom!r} "
-                                  "(re-home with tools/atom-set-realm.py)")
-                continue
+                    continue
+                # local 內換子夾：也走 realm 動作（委派 set_realm，realm 不變、只換夾）
             items.append({"action": "realm", "slug": slug, "from": cur_rel, "domain": dom,
                           "target": resolved["canon"], "sidecar": sidecar})
             continue
@@ -353,6 +354,7 @@ def _write_undo(path: Path, layout: Layout, entries: List[Dict[str, Any]]) -> No
 def apply_plan(layout: Layout, plan: Dict[str, Any], undo_file: Path) -> Dict[str, Any]:
     done: List[Dict[str, Any]] = []
     failures: List[str] = []
+    warnings: List[str] = []  # set_realm 照搬但有話要說（例：ENTRY_BOUND_STAYS_CORE），原樣帶出
     set_realm_mod = None
     for it in plan["items"]:
         if it["action"] == "noop":
@@ -370,6 +372,8 @@ def apply_plan(layout: Layout, plan: Dict[str, Any], undo_file: Path) -> Dict[st
                     raise RuntimeError(f"{it['slug']}: atom-set-realm failed: {res.get('error')}")
                 if res.get("noop"):
                     continue
+                if res.get("warning"):
+                    warnings.append(res["warning"])
                 _audit_log({"audit_id": _gen_audit_id(), "ts": _now(), "op": "categorize_move",
                             "source": _SOURCE, "slug": it["slug"], "from_path": res["from"],
                             "to_path": res["to"], "sidecar_moved": res.get("sidecar_moved"),
@@ -381,7 +385,7 @@ def apply_plan(layout: Layout, plan: Dict[str, Any], undo_file: Path) -> Dict[st
             break  # 半途失敗：停、落 undo（已做的可反向）、回報
     if done:
         _write_undo(undo_file, layout, done)
-    return {"applied": len(done), "failed": failures,
+    return {"applied": len(done), "failed": failures, "warnings": warnings,
             "undo_file": str(undo_file) if done else None,
             "validate_errors": validate_index(layout.memory_dir)}
 

@@ -18,30 +18,36 @@ import os
 import re
 import secrets
 import sys
-from dataclasses import asdict, dataclass, field
+import time
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .atom_spec import (
     SKIP_DIRS, MEMORY_INDEX, VALID_CONFIDENCE, VALID_SCOPES,
-    build_atom_content, slugify, validate_atom_content, render_knowledge_lines,
-    knowledge_sections_bytes, knowledge_budget_error,
+    build_atom_content, slugify, validate_atom_content, render_knowledge_lines, strip_bypass_declaration,
+    knowledge_sections_bytes, knowledge_budget_error, knowledge_budget_warning,
+    knowledge_task_list_error, has_conflict_markers,
 )
 from .atom_locations import (
     CLAUDE_DIR, GLOBAL_MEMORY_DIR, FAILURES_DIR,
     is_failures_routed_title, failures_write_target, local_write_target,
     atom_search_roots, locate_existing_atom, project_subdir_target,
     core_write_target, failures_topic_target, project_category_target,
-    find_separator_variant, classify_realm,
+    find_separator_variant, classify_realm, ENTRY_BOUND_STAYS_CORE, entry_bound_ids,
 )
 from .atom_taxonomy import gate_enabled as _taxonomy_gate_enabled
+from .narrative_date import narrative_date_error
 from .project_root import resolve_project_root
+from .realm_gate import is_core_root
 
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
 AUDIT_LOG = GLOBAL_MEMORY_DIR / "_meta" / "atom_io_audit.jsonl"
+AUDIT_LOCK_WAIT_S = 5   # 稽核帳鎖最多等幾秒，拿不到就告警照寫（_audit_lock）
 
 # 接受的 source（供 audit 反查；未列舉值 → write_raw 回 WriteResult(ok=False, error="invalid source")、不 raise，呼叫端必檢查 .ok）
 VALID_SOURCES = frozenset({
@@ -49,6 +55,7 @@ VALID_SOURCES = frozenset({
     "hook:atom-inject",  # workflow-guardian.py 注入 atom 時走 atom_access
     "hook:episodic",
     "hook:episodic-confirm",  # wg_episodic L367 cross-session 加計
+    "user:confirm",  # 使用者明說確認：atom_access.increment_confirmation（event by=user）
     "hook:user-extract",
     "hook:extract-worker",
     "tool:atom-move",
@@ -60,9 +67,16 @@ VALID_SOURCES = frozenset({
     "tool:changelog-roll",
     "tool:memory-audit",  # memory-audit demote/compact/log_evolution 修補
     "tool:memory-cleanup",  # 一次性根目錄整理（merge-orphan-access）
+    "tool:meeting-transcribe",  # 會議轉錄：決議 → 專案 shared atom（tools/meeting-transcribe.py）
+    "hook:provenance",  # PostToolUse 對剛寫入的 atom 自動補 Source／Quote（hooks/wg_provenance.py）
+    "tool:provenance-backfill",  # 舊 atom 一次性回填 Source／Quote（tools/atom-provenance-backfill.py）
+    "tool:quote-cleanup",  # 刪掉被回填成一兩個字回覆的 Quote 行（tools/quote-cleanup.py）
     "tool:migrate",
+    "tool:overview-map-scaffold",  # 從零掃表：產 <專案>/.claude/overview-map.md 草稿與導讀卡骨架
+    "tool:scorecard",  # 舊稽核帳裡有這個來源值，留著讓舊帳照讀；目前沒有工具用它寫
     "tool:sync-atom-index",
     "tool:sync-memory-index",
+    "tool:atom-io-audit",  # 稽核帳壞行修復（tools/atom-io-audit.py --repair 改寫的那幾行標這個來源）
     "tool:undo",
     "test",  # 測試用，等價測試 fixture 使用
 })
@@ -73,7 +87,10 @@ SENSITIVE_AUDIENCE = frozenset({"architecture", "decision"})
 # edit_metadata 參數欄名 → frontmatter 標籤（參數複數、frontmatter 單數）。
 # 行比對 regex 就地建於 edit_metadata 內（per-label），嚴禁 import tools/
 # （sync-atom-index.py 含 '-' 無法 import，且 lib 反依賴 tools 為架構倒掛）。
-_META_FIELD_LABEL = {"triggers": "Trigger", "related": "Related", "tags": "Tags"}
+_META_FIELD_LABEL = {
+    "triggers": "Trigger", "related": "Related", "tags": "Tags", "aka": "Aka", "entry": "Entry",
+    "provenance": "Source", "quote": "Quote",  # 字串欄（非 list）；provenance 另名避開 audit 的 source 參數
+}
 
 
 # ─── Result type ──────────────────────────────────────────────────────────────
@@ -105,15 +122,142 @@ def _gen_audit_id() -> str:
 
 
 def _audit_log(entry: Dict[str, Any]) -> None:
-    """Append JSONL entry to atom_io_audit.jsonl（best-effort），>10MB 輪替。"""
+    """Append JSONL entry to atom_io_audit.jsonl（best-effort），>10MB 輪替。
+
+    多個 session 的 hook 同時寫這一個檔。Windows 上 Python 的附加模式（含 os.open O_APPEND）是「先跳到檔尾、再寫」兩步，
+    兩支行程撞上時後寫的蓋掉前一行的尾巴，把中文字切成半個（實測 8 行程×500 行：382 行非 UTF-8、掉約三成）。
+    所以整行先編成位元組，在 _audit_lock 底下一次寫完。孤立代理字元（surrogateescape 解出的路徑）用 backslashreplace
+    寫成 \\udcXX：落在 JSON 字串裡正好是合法跳脫，讀回原字元；嚴格編碼會丟 UnicodeEncodeError，穿過 except OSError 炸呼叫端。
+    """
     try:
         AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
-        with open(AUDIT_LOG, "a", encoding="utf-8", newline="\n") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        if AUDIT_LOG.stat().st_size > 10 * 1024 * 1024:
-            _rotate_audit_log()
+        data = (json.dumps(entry, ensure_ascii=False) + "\n").encode("utf-8", errors="backslashreplace")
+        with _audit_lock(AUDIT_LOG):
+            with open(AUDIT_LOG, "ab") as f:
+                f.write(data)
+            if AUDIT_LOG.stat().st_size > 10 * 1024 * 1024:
+                _rotate_audit_log()
     except OSError:
         pass
+
+
+def _lock_byte(fh, *, unlock: bool = False) -> None:
+    """鎖檔第 0 個位元組：Windows msvcrt（同 atom_locations.append_learned_terms），其他平台 fcntl.flock；不等待，拿不到丟 OSError。"""
+    if sys.platform == "win32":
+        import msvcrt
+        fh.seek(0)
+        msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK if unlock else msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN if unlock else fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+@contextmanager
+def _audit_lock(log: Path):
+    """稽核帳的跨行程鎖（旁檔 <log>.lock）：append、輪替、--repair 改寫共用這一把。鎖檔不刪：刪了別人手上的鎖就分成兩把。
+    每 10ms 試一次（msvcrt.LK_LOCK 撞上就睡滿 1 秒，hook 會跟著卡），最多 5 秒；仍拿不到 → stderr 告警後照做
+    （寧可冒一行被蓋——讀取端略過、--repair 修得回——也不讓稽核整筆消失）。"""
+    fh = None
+    try:
+        fh = open(log.with_name(log.name + ".lock"), "ab")
+        deadline = time.monotonic() + AUDIT_LOCK_WAIT_S
+        while True:
+            try:
+                _lock_byte(fh)
+                break
+            except OSError:
+                if time.monotonic() > deadline:
+                    raise
+                time.sleep(0.01)
+    except OSError as e:
+        print(f"[atom_io] 稽核帳鎖拿不到（{e}），不加鎖照做", file=sys.stderr)
+        if fh is not None:
+            fh.close()
+        fh = None
+    try:
+        yield
+    finally:
+        if fh is not None:
+            try:
+                _lock_byte(fh, unlock=True)
+            except OSError:
+                pass
+            fh.close()
+
+
+def read_audit_log(path: Optional[Path] = None) -> Tuple[List[Dict[str, Any]], List[Tuple[int, bytes]]]:
+    """逐行讀稽核帳 → (合法條目, 壞行 [(行號, 原始位元組)])。壞行＝不是合法 UTF-8、或不是 JSON 物件。
+    檔不在回兩個空清單；讀檔本身失敗（OSError）照丟，由呼叫端決定。"""
+    p = path or AUDIT_LOG
+    good: List[Dict[str, Any]] = []
+    bad: List[Tuple[int, bytes]] = []
+    if not p.is_file():
+        return good, bad
+    with open(p, "rb") as fh:
+        for n, raw in enumerate(fh, 1):
+            body = raw.rstrip(b"\r\n")
+            if not body.strip():
+                continue
+            try:
+                d = json.loads(body.decode("utf-8"))
+            except ValueError:   # UnicodeDecodeError 與 JSONDecodeError 都是 ValueError
+                d = None
+            if isinstance(d, dict):
+                good.append(d)
+            else:
+                bad.append((n, body))
+    return good, bad
+
+
+def iter_audit_entries(path: Optional[Path] = None) -> List[Dict[str, Any]]:
+    """讀取端用：只回合法條目；有壞行時 stderr 一行（幾行、前幾個行號、修法），不炸。"""
+    p = path or AUDIT_LOG
+    good, bad = read_audit_log(p)
+    if bad:
+        nums = "、".join(str(n) for n, _ in bad[:5]) + ("…" if len(bad) > 5 else "")
+        print(f"[atom_io] {p.name} 有 {len(bad)} 行不是合法 UTF-8 JSON，已略過（第 {nums} 行）；"
+              f"修法：python tools/atom-io-audit.py --repair", file=sys.stderr)
+    return good
+
+
+def repair_audit_log(path: Optional[Path] = None, *, source: str = "tool:atom-io-audit") -> Dict[str, Any]:
+    """壞行就地改寫成合法 JSON 行（op=audit_line_repaired，raw_hex＝該行去掉行尾換行的原始位元組、text＝能讀的部分），
+    好行原樣不動；改寫前原檔整份（含行尾）複製到旁檔 <log>.pre-repair-<UTC 時刻到微秒>（.gitignore 的 atom_io_audit.jsonl.* 已涵蓋）。
+    在寫入端同一把鎖下做：修的同時別的 session 照常 append，不會被這次改寫蓋掉。沒有壞行不動檔。
+    回 {"bad": 壞行數, "backup": 旁檔路徑或 None}。"""
+    from .atom_index_json import retry_busy
+    p = path or AUDIT_LOG
+    with _audit_lock(p):
+        _good, bad = read_audit_log(p)
+        if not bad:
+            return {"bad": 0, "backup": None}
+        raw = p.read_bytes()
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")   # 到微秒：同一秒再修一次不蓋掉上一份備份
+        backup = p.with_name(f"{p.name}.pre-repair-{stamp}")
+        backup.write_bytes(raw)
+        fixes = dict(bad)
+        pieces = raw.split(b"\n")   # 與 read_audit_log 的行號同一套切法（只認 \n）
+        if pieces and pieces[-1] == b"":
+            pieces.pop()
+        out: List[bytes] = []
+        for n, line in enumerate(pieces, 1):
+            if n not in fixes:
+                out.append(line + b"\n")
+                continue
+            body = fixes[n]
+            out.append((json.dumps({
+                "audit_id": _gen_audit_id(), "ts": datetime.now(timezone.utc).isoformat(), "op": "audit_line_repaired",
+                "source": source, "line": n, "backup": backup.name, "raw_hex": body.hex(),
+                "text": body.decode("utf-8", errors="replace"),
+            }, ensure_ascii=False) + "\n").encode("utf-8"))
+        tmp = p.with_name(f"{p.name}.repair.{os.getpid()}.tmp")
+        try:
+            tmp.write_bytes(b"".join(out))
+            retry_busy(lambda: os.replace(tmp, p))   # 讀稽核帳的工具開著檔時 Windows 會短暫拒絕換檔
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            raise
+    return {"bad": len(bad), "backup": str(backup)}
 
 
 def _rotate_audit_log() -> None:
@@ -143,13 +287,25 @@ def normalize_lf(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
+class ConflictMarkerError(OSError):
+    """要寫出的內容含未解的版控衝突區段。
+
+    繼承 OSError：既有呼叫端的 `except OSError` 會把它當寫入失敗回報，不必逐一改寫。
+    """
+
+
 def write_text_lf(path: Path, content: str) -> None:
     """tmp + rename 落檔，內容一律 LF、UTF-8。
 
     本 repo 全部 LF（.gitattributes eol=lf）。newline="" 關掉平台轉譯，寫出的位元組就是
     content 正規化後的樣子；Windows 預設 newline=None 會把 \\n 翻成 \\r\\n，這裡不允許。
     tmp 後綴帶 PID+TID：併發 session 寫同一檔不互踩（固定 .tmp 會 truncate 競態成半空檔）。
+
+    內容含衝突標記 → 拋 ConflictMarkerError、不落檔：讀進衝突檔再整份寫回的工具，
+    會在標記區段裡改到錯的那一側（且每次重跑再改一次）。解衝突的工具寫出的是已無標記的內容，不受影響。
     """
+    if has_conflict_markers(content):
+        raise ConflictMarkerError(f"refusing to write unresolved conflict markers: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     body = normalize_lf(content)
     import threading as _threading
@@ -177,6 +333,14 @@ def _find_project_root(cwd: Optional[str]) -> Optional[Path]:
     if not cwd:
         return None
     return resolve_project_root(str(Path(cwd).resolve())).path
+
+
+def _is_under(path: Path, root: Path) -> bool:
+    try:
+        p, r = Path(path).resolve(), Path(root).resolve()
+    except OSError:
+        return False
+    return p == r or r in p.parents
 
 
 def _dirs_under(root: Path) -> set:
@@ -269,18 +433,11 @@ def _resolve_target_impl(
 
     if scope == "global" and enforce_cwd_scope and not force_global and project_cwd:
         proj_root = _find_project_root(project_cwd)
-        if proj_root is not None:
-            try:
-                r = proj_root.resolve()
-                home = CLAUDE_DIR.resolve()
-                inside_core = (r == home or home in r.parents)
-            except OSError:
-                inside_core = False
-            if not inside_core:
-                return {"error":
-                        f"scope=global rejected: cwd={project_cwd} is inside project root={proj_root}; "
-                        "use scope=shared/role/personal for project knowledge (omit project_cwd "
-                        "when writing cross-project knowledge from a project)"}
+        if proj_root is not None and not is_core_root(proj_root):
+            return {"error":
+                    f"scope=global rejected: cwd={project_cwd} is inside project root={proj_root}; "
+                    "use scope=shared/role/personal for project knowledge (omit project_cwd "
+                    "when writing cross-project knowledge from a project)"}
 
     if scope == "global":
         # global 的三個物理居所（memory/ + memory/Failures/ + _AIDocs/_atoms/）一律
@@ -327,17 +484,9 @@ def _resolve_target_impl(
     if scope == "personal":
         # 本人跨專案 personal：~/.claude/memory/personal/<user>/。索引在全域 _atom_index.json，
         # path 前綴 memory/personal/<user>/ → 讀取端（filter_visible）只給本人。
-        # 觸發：明給 cross_project，或 cwd 不在任何專案／在 ~/.claude 子樹。
+        # 觸發：明給 cross_project，或 cwd 不在任何專案／在核心根（~/.claude 子樹、程式碼樹、根層 worktree）。
         _root = _find_project_root(project_cwd) if project_cwd else None
-        _under_home = _root is None
-        if _root is not None:
-            try:
-                _r = _root.resolve()
-                _home = CLAUDE_DIR.resolve()
-                _under_home = (_r == _home or _home in _r.parents)
-            except OSError:
-                _under_home = False
-        if cross_project or _under_home:
+        if cross_project or is_core_root(_root):
             pg_dir = GLOBAL_MEMORY_DIR / "personal" / user
             return {
                 "dir": pg_dir, "base": GLOBAL_MEMORY_DIR, "index_dir": GLOBAL_MEMORY_DIR,
@@ -350,15 +499,10 @@ def _resolve_target_impl(
     root = _find_project_root(project_cwd)
     if not root:
         return {"error": f"No project root found for scope={scope} cwd={project_cwd!r}"}
-    # ~/.claude 本身或其子樹（子目錄自帶 .git 也算）沒有 V4 子層；改用 scope=global
-    try:
-        r = root.resolve()
-        home = CLAUDE_DIR.resolve()
-        if r == home or home in r.parents:
-            return {"error": f"scope={scope} rejected: cwd={project_cwd} is under ~/.claude itself; "
-                             "use scope=global for cross-project knowledge"}
-    except OSError:
-        pass
+    # 核心根（~/.claude 本身或其子樹、子目錄自帶 .git 也算；程式碼樹；根層 worktree）沒有 V4 子層；改用 scope=global
+    if is_core_root(root):
+        return {"error": f"scope={scope} rejected: cwd={project_cwd} is under ~/.claude itself (or its worktree); "
+                         "use scope=global for cross-project knowledge"}
 
     base = root / ".claude" / "memory"
     category = None
@@ -447,6 +591,8 @@ def write_index(
     triggers: Iterable[str],
     source: str,
     scope: Optional[str] = None,
+    depends: Optional[List[str]] = None,
+    entry: Optional[List[str]] = None,
 ) -> WriteResult:
     """更新或追加 atom 條目到 _atom_index.json (SoT)，並回寫 _ATOM_INDEX.md mirror。
 
@@ -456,6 +602,10 @@ def write_index(
     scope：明給則用；None → **沿用索引既有條目的 scope**（replace/edit_metadata
     不得重設專案層 scope）；新條目由 path 推導（scope_from_index_path）。trigger 逐項驗長度上限
     （TRIGGER_MAX_LEN）——超長在寫入當下拒絕，不留給後續 validate_index 才爆。
+    depends：卡片 Depends 條目（`path:<檔>` 或自由文字）；None → 沿用索引既有 depends、`[]` → 清空、
+    非空 → 取代；型別不對在寫入當下拒絕（ValueError → ok=False）。
+    entry：切入點代號；None → 跟 Related／Aka 一樣讀剛落檔的 atom 的 `- Entry:` 行（edit_metadata 先寫索引、
+    後寫檔，那時檔還是舊的，所以由它明給）。
     """
     if source not in VALID_SOURCES:
         return WriteResult(ok=False, error=f"invalid source: {source}",
@@ -465,7 +615,7 @@ def write_index(
     triggers_list = list(triggers)
 
     from .atom_index_json import (
-        upsert_atom, load_atom_index_json, TRIGGER_MAX_LEN,
+        upsert_atom, load_atom_index_json, TRIGGER_MAX_LEN, validate_depends,
     )
     too_long = [t for t in triggers_list if len(t) > TRIGGER_MAX_LEN]
     if too_long:
@@ -474,6 +624,11 @@ def write_index(
             error=f"trigger too long (>{TRIGGER_MAX_LEN}): "
                   + ", ".join(repr(t) for t in too_long),
         )
+    if depends is not None:
+        try:
+            validate_depends(depends)
+        except ValueError as e:
+            return WriteResult(ok=False, audit_id=audit_id, error=f"depends invalid: {e}")
     if scope is None:
         try:
             for a in load_atom_index_json(base_dir).get("atoms", []):
@@ -492,12 +647,34 @@ def write_index(
             scope = scope_from_index_path(rel_path, _layer)
         except (ImportError, OSError):
             scope = "global"
+    # 連結欄直接讀剛落檔的 atom：寫入端不必逐一補傳，改 Related 的路徑（edit_metadata）
+    # 也自動跟上。讀不到檔（純索引呼叫）→ None＝沿用既有值。
+    related = aka = None
+    md_path = (base_dir.parent / rel_path) if rel_path else None
+    if md_path is not None and md_path.exists():
+        try:
+            text = md_path.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeDecodeError):
+            text = ""
+        if text:
+            from .atom_spec import find_aka_line, find_entry_line, find_related_line, split_related
+            rm = find_related_line(text)
+            am = find_aka_line(text)
+            related = split_related(rm.group(1)) if rm else []
+            aka = split_related(am.group(1)) if am else []
+            if entry is None:
+                em = find_entry_line(text)
+                entry = split_related(em.group(1)) if em else []
     upsert_atom(
         mem_dir=base_dir,
         name=slug,
         path=rel_path,
         triggers=triggers_list,
         scope=scope,
+        depends=depends,
+        related=related,
+        aka=aka,
+        entry=entry,
     )
     index_path = base_dir / "_atom_index.json"
     _audit_log({
@@ -571,16 +748,21 @@ def write_raw(
     return WriteResult(ok=True, audit_id=audit_id, path=file_path)
 
 
+_ACTION_STUB = "## 行動\n\n- （依知識內容判斷）\n"    # 與 build_atom_content 沒給 actions 時的行動段相同
+
+
 def _build_append_content(existing: str, knowledge: List[str]) -> str:
     """把 knowledge 渲染後插入 ## 行動 之前（block-aware）。
 
     write_atom(mode=append) 與 append_atom_file 共用的唯一拼接實作
     （server.js append 改 spawn CLI 走此處，
     消滅 js 自拼 readFileSync+`\\n` 的 CRLF 混寫面）。
-    caller 須先確認 "## 行動" 存在。
+    卡沒有 ## 行動 段（導讀卡、索引卡、手寫舊卡）→ 先在檔尾補最低要求的行動段當錨點再拼接。
     """
+    if "## 行動" not in existing:
+        existing = existing.rstrip() + "\n\n" + _ACTION_STUB
     action_idx = existing.find("## 行動")
-    rendered = "\n".join(render_knowledge_lines(knowledge))
+    rendered = "\n".join(render_knowledge_lines(strip_bypass_declaration(knowledge)))
     before = existing[:action_idx].rstrip()
     after = existing[action_idx:]
     # 表格/fence 開頭需與既有知識間隔一空行才正確渲染（block-aware append）
@@ -594,12 +776,15 @@ def append_atom_file(
     *,
     source: str,
     op: str = "atom_append",
+    provenance: Optional[str] = None,
+    quote: Optional[str] = None,
 ) -> WriteResult:
     """對「已定位」的 atom .md 追加知識行（path 由 caller 解析，不重跑 scope 路由）。
 
     供 server.js toolAtomWrite(mode=append) spawn 用：js 端已處理 legacy fallback /
     Failures / local-realm 路由得到 file_path，內容拼接與落檔統一走 py（單一實作，
     落檔一律 LF，由 write_text_lf 保證）。對拍 write_atom(mode=append) 拼接行為。
+    provenance／quote：呼叫者明給才改檔頭 `- Source:`／`- Quote:`（_append_header_fields，三態同 replace）。
     不更新 access.json / index（caller 沿既有 spawnAtomAccess / appendToIndex 流程）。
     """
     audit_id = _gen_audit_id()
@@ -611,22 +796,41 @@ def append_atom_file(
         existing = fp.read_text(encoding="utf-8-sig")
     except OSError as e:
         return WriteResult(ok=False, audit_id=audit_id, error=f"read failed: {e}")
-    if "## 行動" not in existing:
+    date_err = narrative_date_error(render_knowledge_lines(knowledge))
+    if date_err:
+        return WriteResult(ok=False, audit_id=audit_id, error=date_err)
+    content = _append_header_fields(_build_append_content(existing, knowledge), provenance, quote)
+    if content is None:
         return WriteResult(ok=False, audit_id=audit_id,
-                           error=f"Atom {fp.name} has no ## 行動 section")
-    content = _build_append_content(existing, knowledge)
+                           error="append: provenance/quote given but the atom has no metadata block to write them into")
     err = validate_atom_content(content)
     if err:
         return WriteResult(ok=False, audit_id=audit_id,
                            error=f"Validation failed after append: {err}")
+    # 形狀硬拒排在大小之前：清單從第一條就註定是清單，不必等它長到超額
+    shape_err = knowledge_task_list_error(content)
+    if shape_err:
+        return WriteResult(ok=False, audit_id=audit_id,
+                           error=f"Shape rejected after append: {shape_err}")
     # 大小預算硬拒（append 是 atom 肥大化的實際路徑：一次一點、累積成山）。
     # 以「拼接後」的 knowledge 區總量計——existing 已超額者任何 append 都會被拒，
     # 逼迫先瘦身（結論留 atom、個案敘事外移文件）再追加。
-    budget_err = knowledge_budget_error(knowledge_sections_bytes(content))
+    from .atom_spec import KNOWLEDGE_BUDGET_BYTES
+    from .hub_card import budget_limit_for   # 導讀卡（標題含導讀或五段 ≥4）用 4096，其餘 KNOWLEDGE_BUDGET_BYTES
+    nbytes = knowledge_sections_bytes(content)
+    budget = budget_limit_for(existing, KNOWLEDGE_BUDGET_BYTES)
+    budget_err = knowledge_budget_error(nbytes, budget)
     if budget_err:
         return WriteResult(ok=False, audit_id=audit_id,
                            error=f"Budget rejected after append: {budget_err}")
-    return write_raw(fp, content, source=source, op=op)
+    res = write_raw(fp, content, source=source, op=op)
+    # 接近上限時提前講，讓呼叫端還有餘裕換形狀，而不是撞牆後只能刪既有內容
+    warn = knowledge_budget_warning(nbytes, budget)
+    if res.ok and warn:
+        extra = dict(res.extra or {})
+        extra["budget_warning"] = warn
+        res = replace(res, extra=extra)
+    return res
 
 
 _META_KV_LINE_RE = re.compile(r"^-\s+[\w-]+:\s*.*$")
@@ -656,9 +860,49 @@ def _insert_meta_line(text: str, line: str) -> Optional[str]:
     return eol.join(lines)
 
 
+def _header_end(text: str) -> int:
+    """檔頭結束位置＝第一個 `## ` 標題行的開頭（沒有就是全文尾）。檔頭欄位只在這之前找：
+    知識段裡的程式碼範例可能有 `- Source:` 這種行，不能被當成欄位改掉、刪掉或讀成值。"""
+    m = re.search(r"^## ", text, re.MULTILINE)
+    return m.start() if m else len(text)
+
+
+def _set_meta_line(text: str, label: str, replacement: str) -> Optional[str]:
+    """檔頭 `- <label>:` 那一行整行換成 replacement（檔頭裡第一個、只吃同行空白：`\\s*` 遇到空值欄位會跨行，
+    把下一行（通常 `## 知識`）一併換掉）；檔頭沒有這行就插到 metadata 區塊末。沒有 metadata 區塊回 None。"""
+    end = _header_end(text)
+    line_re = re.compile(rf"^-[ \t]*{label}:[ \t]*.*$", re.MULTILINE)
+    # 以函式回傳替換字串：值含反斜線（Windows 路徑、Quote 原話）時不得被當成 regex 跳脫
+    head, n = line_re.subn(lambda _m: replacement, text[:end], count=1)
+    return head + text[end:] if n else _insert_meta_line(text, replacement)
+
+
+def _drop_meta_line(text: str, label: str) -> str:
+    """刪掉檔頭第一個 `- <label>:` 行（含換行）；檔頭本來就沒有原樣回（正文不動）。"""
+    end = _header_end(text)
+    head = re.sub(rf"^-[ \t]*{label}:[ \t]*.*(?:\r?\n|\Z)", "", text[:end], count=1, flags=re.MULTILINE)
+    return head + text[end:]
+
+
+def _append_header_fields(content: str, provenance: Optional[str], quote: Optional[str]) -> Optional[str]:
+    """append 帶的 provenance／quote 寫進檔頭，三態同 replace：None＝不動；非空＝換掉該行（沒有就補）；""＝刪掉該行。
+    呼叫者明給了就照寫，不靜默丟掉（以前 append 只收知識行）。沒有 metadata 區塊可補回 None。"""
+    for label, value in (("Source", provenance), ("Quote", quote)):
+        if value is None:
+            continue
+        if not value.strip():
+            content = _drop_meta_line(content, label)
+            continue
+        replaced = _set_meta_line(content, label, f"- {label}: {value.strip()}")
+        if replaced is None:
+            return None
+        content = replaced
+    return content
+
+
 def _scope_from_frontmatter(text: str) -> Optional[str]:
     """frontmatter `- Scope:` → VALID_SCOPES 值；legacy `project` 對映 `shared`；缺/非法 → None。"""
-    m = re.search(r"^-\s*Scope:\s*(\S+)", text, re.MULTILINE)
+    m = re.search(r"^-[ \t]*Scope:[ \t]*(\S+)", text, re.MULTILINE)
     if not m:
         return None
     val = m.group(1).strip().lower()
@@ -675,26 +919,47 @@ def _index_has_entry(base_dir: Path, slug: str) -> bool:
         return False
 
 
+def _existing_triggers(base_dir: Path, slug: str, text: str) -> List[str]:
+    """索引既有條目的 triggers；本檔還沒入索引就取 frontmatter 的 `- Trigger:` 行（沒有就空清單）。"""
+    try:
+        from .atom_index_json import load_atom_index_json
+        for a in load_atom_index_json(base_dir).get("atoms", []):
+            if a.get("name") == slug:
+                return list(a.get("triggers") or [])
+    except (OSError, ValueError, ImportError):
+        pass
+    m = re.search(r"^-[ \t]*Trigger:[ \t]*(.*)$", text, re.MULTILINE)
+    return [t.strip() for t in m.group(1).split(",") if t.strip()] if m else []
+
+
 def edit_metadata(
     file_path: Path,
     *,
     triggers: Optional[List[str]] = None,
     related: Optional[List[str]] = None,
     tags: Optional[List[str]] = None,
+    aka: Optional[List[str]] = None,
+    entry: Optional[List[str]] = None,
+    provenance: Optional[str] = None,
+    quote: Optional[str] = None,
     source: str = "mcp",
 ) -> WriteResult:
-    """atom 元資料外科編輯 — 只替換 frontmatter 的 Trigger/Related/Tags 行。
+    """atom 元資料外科編輯 — 只替換 frontmatter 的 Trigger/Related/Tags/Aka/Entry/Source/Quote 行。
 
     取代直接 Write/Edit atom .md（會被 Guardian guard 擋）與整檔 atom_write replace
     （重建知識區、風險高）。byte-stable：**只改目標那幾行**，其餘行原樣保留。
 
-    SoT 順序（triggers 變更時）：先寫 _atom_index.json（機器唯一源），成功才續寫
+    SoT 順序（triggers 或 entry 變更時）：先寫 _atom_index.json（機器唯一源），成功才續寫
     frontmatter（衍生），避免 frontmatter 領先 index 造成不可復原 drift。部分失敗
     可由 `tools/sync-atom-index.py --fix` 冪等復原，故不建交易層。
 
     Args:
         file_path: atom .md 絕對路徑（global memory 或 _AIDocs/Failures/ 皆可）
-        triggers/related/tags: list[str]，None 表不動該欄位
+        triggers/related/tags/aka/entry: list[str]，None 表不動該欄位
+                （aka＝這顆用過的舊檔名；改名時寫在自己這顆，舊連結靠它續存；
+                entry＝切入點代號，[] 刪掉整行 Entry、索引移除 entry 鍵）
+        provenance/quote: str，渲染為 `- Source:`／`- Quote:` 整行；None 表不動；
+            空字串表清成空（不刪行）。quote 由呼叫端先 lib.provenance.sanitize_quote
         source: audit source（須在 VALID_SOURCES；預設 "mcp"）
     """
     audit_id = _gen_audit_id()
@@ -709,32 +974,36 @@ def edit_metadata(
         return WriteResult(ok=False, audit_id=audit_id, error=f"read failed: {e}")
     had_bom = raw.startswith(b"\xef\xbb\xbf")
     text = raw.decode("utf-8-sig")
+    # 在 index 寫入之前擋：落檔層也會拒，但那時 index 已經改了
+    if has_conflict_markers(text):
+        return WriteResult(ok=False, audit_id=audit_id,
+                           error=f"atom has unresolved conflict markers: {file_path}")
 
     # ── Surgical replace（每個非 None 欄位，只改那一行，count=1）；欄位行不存在則
     #    插到 metadata 區塊（H1 後連續 `- Key: value` 行）末尾——舊模板生的檔常缺
     #    Trigger 行，拒寫會讓它永遠補不齊。沒有 metadata 區塊才回 error。 ──
-    fields = {"triggers": triggers, "related": related, "tags": tags}
+    fields = {"triggers": triggers, "related": related, "tags": tags, "aka": aka, "entry": entry,
+              "provenance": provenance, "quote": quote}
     new_text = text
     for field_name, values in fields.items():
         if values is None:
             continue
         label = _META_FIELD_LABEL[field_name]
-        value_str = ", ".join(values)
-        replacement = f"- {label}: {value_str}"
-        # per-label regex 收斂到「該欄位那一行」（就地定義，不依賴 tools/）
-        line_re = re.compile(rf"^-\s*{label}:\s*.*$", re.MULTILINE)
-        new_text, n = line_re.subn(replacement, new_text, count=1)
-        if n == 0:
-            inserted = _insert_meta_line(new_text, replacement)
-            if inserted is None:
-                return WriteResult(
-                    ok=False, audit_id=audit_id,
-                    error=f"frontmatter field not found and no metadata block to insert into: {label}",
-                )
-            new_text = inserted
+        value_str = values if isinstance(values, str) else ", ".join(values)
+        if field_name == "entry" and not values:
+            # 不綁任何切入點＝這張卡沒有 Entry 行：整行刪掉（含換行），本來就沒有就不插
+            new_text = _drop_meta_line(new_text, label)
+            continue
+        replaced = _set_meta_line(new_text, label, f"- {label}: {value_str}")
+        if replaced is None:
+            return WriteResult(
+                ok=False, audit_id=audit_id,
+                error=f"frontmatter field not found and no metadata block to insert into: {label}",
+            )
+        new_text = replaced
 
-    # ── SoT 先行：triggers 變更時先寫 _atom_index.json ──
-    if triggers is not None:
+    # ── SoT 先行：triggers 或 entry 變更時先寫 _atom_index.json ──
+    if triggers is not None or entry is not None:
         slug = Path(file_path).stem
         fp = Path(file_path).resolve()
         try:
@@ -769,7 +1038,10 @@ def edit_metadata(
         scope_for_index: Optional[str] = None
         if not _index_has_entry(base_dir, slug):
             scope_for_index = _scope_from_frontmatter(text) or ("global" if in_claude else "shared")
-        idx_res = write_index(base_dir, slug, rel_path, triggers, source, scope=scope_for_index)
+        # 只改 entry 時 trigger 照舊：索引既有的優先，本檔還沒入索引就取 frontmatter 的 Trigger 行
+        idx_triggers = triggers if triggers is not None else _existing_triggers(base_dir, slug, text)
+        idx_res = write_index(base_dir, slug, rel_path, idx_triggers, source, scope=scope_for_index,
+                              entry=entry)
         if not idx_res.ok:
             # index 領先失敗 → 不續寫 frontmatter（避免不可復原 drift）
             return idx_res
@@ -794,12 +1066,12 @@ def edit_metadata(
 
 # ─── Supersedes（本顆取代舊顆；被取代者不再注入、檔案保留） ─────────────────
 
-_SUPERSEDES_LINE_RE = re.compile(r"^- Supersedes:\s*(.+)$", re.MULTILINE)
+_SUPERSEDES_LINE_RE = re.compile(r"^- Supersedes:[ \t]*(.+)$", re.MULTILINE)   # 不跨行：空行不把下一行讀成被取代者
 
 
 def read_supersedes(text: str) -> List[str]:
-    """從 atom 檔頭讀 `- Supersedes: a, b` → ["a", "b"]；無行 → []。"""
-    m = _SUPERSEDES_LINE_RE.search(text)
+    """從 atom 檔頭讀 `- Supersedes: a, b` → ["a", "b"]；無行 → []。只看檔頭（_header_end 之前）。"""
+    m = _SUPERSEDES_LINE_RE.search(text[:_header_end(text)])
     if not m:
         return []
     return [t.strip() for t in m.group(1).split(",") if t.strip()]
@@ -914,6 +1186,137 @@ def check_supersedes(
     return None
 
 
+# 規則型 atom（行為契約／工作流範疇，不含 Failures 失敗家族）的知識行是給人與模型讀的契約句，
+# 不准埋日期戳（版本脈絡）與 config 鍵名／程式識別字（技術臭味）；緣由與實作細節歸 _CHANGELOG／TECH。
+_RULE_ATOM_DIR_MARKS = ("/memory/行為契約/", "/memory/工作流/")
+_RULE_DATE_RE = re.compile(r"(?<!\d)20\d\d-\d\d-\d\d(?!\d)")
+_RULE_DOTTED_KEY_RE = re.compile(r"(?<![\w./\\-])[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]+){2,}(?![\w/\\])")
+
+
+def rule_atom_style_violation(file_path: Path, knowledge: Optional[List[str]]) -> Optional[str]:
+    """規則型 atom 的知識行含日期戳或 dotted config 鍵名 → 回錯誤字串；否則 None。
+    規則型＝落點在行為契約／工作流（不含 Failures）的 atom，或任何 feedback-* atom（使用者指正本身就是規則）。
+    日期戳兩者都擋；config 鍵名只擋前者（feedback 可能描述技術踩坑）。只看本次傳入的 knowledge 行；skip_gate 不能繞過。"""
+    p = str(file_path).replace("\\", "/")
+    rule_dir = "/Failures/" not in p and any(m in p for m in _RULE_ATOM_DIR_MARKS)
+    feedback = p.rsplit("/", 1)[-1].startswith("feedback-")
+    if not (rule_dir or feedback):
+        return None
+    for line in knowledge or []:
+        if not isinstance(line, str):
+            continue
+        if _RULE_DATE_RE.search(line):
+            return ("rule-atom style: 規則型／feedback atom 的知識行不得帶日期戳——"
+                    "atom 收的是知識與經驗，不是某個當下；日期只留 metadata，緣由歸 _AIDocs/_CHANGELOG.md；違規行：" + line[:80])
+        m = _RULE_DOTTED_KEY_RE.search(line) if rule_dir else None
+        if m:
+            return ("rule-atom style: 規則型 atom 的知識行不得埋 config 鍵名／程式識別字（"
+                    f"{m.group(0)}）——用白話描述行為，實作細節歸 TECH.md；違規行：" + line[:80])
+    return None
+
+
+def card_body_lines(content: str) -> List[str]:
+    """建好的整張卡從第一個 `## ` 段起的行（知識段＋行動段）；檔頭欄位（含 replace 從舊卡帶回的）不在內。
+    create／replace 的 KNOWLEDGE_LINE_NO_NARRATIVE_DATE 閘只看這段（py write_atom 與 atom_io_cli 共用）。"""
+    lines = content.split("\n")
+    start = next((i for i, ln in enumerate(lines) if ln.startswith("## ")), len(lines))
+    return lines[start:]
+
+
+# ─── replace：檔頭從舊卡帶回（py write_atom 與 MCP js 經 atom_io_cli build 共用這一份）─────────
+# replace 用參數重建整張檔（build_atom_content），build 只會輸出它認得的鍵、標題取 title 參數、Created-at 缺就填今天。
+# 舊格式卡（標題與檔名不同、沒有 Created-at、檔頭有 Confirmations／Last-used／Tags／Type 這類 build 不認得的鍵）
+# 因此被改標題、補當天日期、掉欄位。規則：replace 只換呼叫者給的部分，其餘照舊卡原樣。
+_HEADER_KV_RE = re.compile(r"^- ([A-Za-z][A-Za-z-]*):[ \t]*(.*)$")
+# 呼叫參數 → 檔頭鍵：參數給了（不是 None，空值也算）就以呼叫者為準；沒給才從舊卡帶回
+_PARAM_HEADER_KEY = {
+    "audience": "Audience", "related": "Related", "status": "Status", "provenance": "Source",
+    "quote": "Quote", "depends": "Depends", "supersedes": "Supersedes", "entry": "Entry",
+    "pending_review_by": "Pending-review-by", "merge_strategy": "Merge-strategy",
+}
+
+
+# 這幾個鍵在 write_atom 與 MCP js 已有自己的三態判定（沒給沿用舊行、給空清掉；空的 `- Depends:` 行算清），
+# 進 build 前就定案；帶回不再插手，否則會把判定成清空的行加回去
+_DECIDED_BEFORE_BUILD = frozenset({"Author", "Source", "Quote", "Depends", "Supersedes", "Created-at"})
+
+
+def given_header_keys(params: Dict[str, Any]) -> set:
+    """呼叫者明給（值不是 None）的檔頭鍵名集合。"""
+    return {key for p, key in _PARAM_HEADER_KEY.items() if params.get(p) is not None}
+
+
+def _header_span(lines: List[str]):
+    """(H1 行號, 檔頭結束行號＝第一個 `## ` 行)；沒有 H1 回 (None, None)。"""
+    h1 = next((i for i, ln in enumerate(lines) if ln.startswith("# ")), None)
+    if h1 is None:
+        return None, None
+    end = next((i for i in range(h1 + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    return h1, end
+
+
+def _kv_key(line: str) -> Optional[str]:
+    m = _HEADER_KV_RE.match(line)
+    return m.group(1) if m else None
+
+
+def carry_replace_header(old: str, built: str, given: Iterable[str] = ()) -> str:
+    """replace 落檔前的最後一步：built（build_atom_content 產出）的檔頭改成以舊卡為底。
+    1. 標題：舊卡標題 slug 和 title 參數不同（舊格式：標題是中文名、檔名是英文 slug 這類）→ 用舊卡 H1 原文；
+       相同（新格式）→ 照舊用 title 參數。
+    2. Created-at：舊卡有 → 用舊值；舊卡沒有 → 不輸出（不補當天）。
+    3. 舊卡檔頭有、built 沒有、呼叫者也沒明給（given 不含）的鍵 → 原行（同鍵多行就全部）帶回，放在舊卡裡它前面那個鍵之後。
+       涵蓋 Related／Status／Audience 沒給時，以及 build 不認得的 Confirmations／Last-used／Tags／Type 等舊欄位。
+       Author／Source／Quote／Depends／Supersedes 在進 build 前已由三態判定定案（_DECIDED_BEFORE_BUILD），不帶回。
+    知識段與行動段一律用 built 的（那是 replace 要換的內容）。舊卡沒有 H1 時原樣回 built。"""
+    old_lines, new_lines = old.split("\n"), built.split("\n")
+    oh1, oend = _header_span(old_lines)
+    nh1, nend = _header_span(new_lines)
+    if oh1 is None or nh1 is None:
+        return built
+    given = set(given)
+    old_kv = [(k, ln) for ln in old_lines[oh1 + 1:oend] if (k := _kv_key(ln))]
+    old_by_key = dict(old_kv)
+    head = list(new_lines[nh1 + 1:nend])
+    if "Created-at" in old_by_key:
+        head = [old_by_key["Created-at"] if _kv_key(ln) == "Created-at" else ln for ln in head]
+    else:
+        head = [ln for ln in head if _kv_key(ln) != "Created-at"]
+
+    def last_index(key: str) -> int:
+        return max(i for i, ln in enumerate(head) if _kv_key(ln) == key)
+
+    built_keys = {k for ln in head if (k := _kv_key(ln))}
+    present = set(built_keys)
+    for i, (key, line) in enumerate(old_kv):
+        if key in built_keys or key in given or key in _DECIDED_BEFORE_BUILD:
+            continue
+        anchor = next((k for k, _ in reversed(old_kv[:i]) if k in present), None)
+        if anchor is not None:
+            pos = last_index(anchor) + 1
+        else:
+            pos = next((j for j, ln in enumerate(head) if _kv_key(ln)), len(head))
+        head.insert(pos, line)
+        present.add(key)
+    old_title, new_title = old_lines[oh1][2:].strip(), new_lines[nh1][2:].strip()
+    h1 = old_lines[oh1] if slugify(old_title) != slugify(new_title) else new_lines[nh1]
+    return "\n".join(new_lines[:nh1] + [h1] + head + new_lines[nend:])
+
+
+def gate_bypass_refusal(title: str, knowledge: List[str], actions: Optional[List[str]]) -> Optional[str]:
+    """規則 ATOM_BYPASS_HOWTO_REFUSED（T2.19）：卡片在教怎麼繞 Guardian 的閘 → 拒寫訊息；判式在 hooks/wg_gate_bypass.atom_refusal
+    （MCP 那條路在 tools/memory-write-gate.py 呼叫同一支）。判式載不起來 → stderr 說一聲、照寫（不因依賴缺失擋住所有寫入）。"""
+    hooks = str(Path(__file__).resolve().parents[1] / "hooks")
+    if hooks not in sys.path:
+        sys.path.insert(0, hooks)
+    try:
+        import wg_gate_bypass
+    except Exception as e:  # noqa: BLE001
+        print(f"[atom_io] 繞閘卡片檢查載不起來（這次不判）：{type(e).__name__}: {e}", file=sys.stderr)
+        return None
+    return wg_gate_bypass.atom_refusal(title, knowledge, actions, source="atom_io")
+
+
 def write_atom(
     *,
     title: str,
@@ -945,6 +1348,7 @@ def write_atom(
     supersedes: Optional[List[str]] = None,
     provenance: Optional[str] = None,
     depends: Optional[List[str]] = None,
+    quote: Optional[str] = None,
 ) -> WriteResult:
     """寫入 atom 的唯一入口。對拍 server.js:1065 toolAtomWrite byte-identical。
 
@@ -997,6 +1401,11 @@ def write_atom(
                       + " — shorten the trigger; it would poison every later "
                         "validate_index run (atom_move exit 2).")
 
+    # ── 繞閘做法拒寫（T2.19 ATOM_BYPASS_HOWTO_REFUSED；所有 mode；skip_gate 跳不過）──
+    bypass_err = gate_bypass_refusal(title, knowledge, actions)
+    if bypass_err:
+        return WriteResult(ok=False, audit_id=audit_id, error=bypass_err)
+
     # ── Realm gate：專案專屬內容不得落 global（所有 mode；skip_gate 跳不過）──
     # 裁決在 lib/realm_gate.py 單源；cwd 缺（純程式寫手無 session 脈絡）或 cwd∈~/.claude
     # → 閘不啟動。force_global 為 migration／測試逃生門。
@@ -1018,6 +1427,13 @@ def write_atom(
                                cross_project=cross_project, create_dirs=not dry_run)
     if resolved.get("error"):
         return WriteResult(ok=False, audit_id=audit_id, error=resolved["error"])
+    # 本人跨專案 personal 也住根層（~/.claude/memory/personal/），同受 realm gate
+    if scope == "personal" and not force_global and _is_under(resolved["dir"], GLOBAL_MEMORY_DIR):
+        from .realm_gate import check_global_write
+        gate_err = check_global_write(project_cwd, title=title, triggers=triggers,
+                                      knowledge=knowledge, actions=actions, domain=domain)
+        if gate_err:
+            return WriteResult(ok=False, audit_id=audit_id, error=gate_err)
     mem_dir = resolved["dir"]
     scope_label = resolved["scope_label"]
     routed_to_pending = resolved["routed_to_pending"]
@@ -1074,19 +1490,18 @@ def write_atom(
             knowledge=knowledge, actions=actions, related=related, audience=audience,
             author=author, pending_review_by=pending_by, merge_strategy=merge_strategy,
             today=today, supersedes=supersedes_final,
-            provenance=provenance, depends=depends,
+            provenance=provenance, depends=depends, quote=quote,
         )
     elif mode == "append":
         if not file_path.exists():
             return WriteResult(ok=False, audit_id=audit_id,
                                error=f"Atom not found: {slug}.md (use mode=create first)")
         existing = file_path.read_text(encoding="utf-8-sig")
-        action_idx = existing.find("## 行動")
-        if action_idx < 0:
-            return WriteResult(ok=False, audit_id=audit_id,
-                               error=f"Atom {slug}.md has no ## 行動 section")
         # Last-used 不再寫 .md；append 後由下方 atom_access.write_access_field 刷
-        content = _build_append_content(existing, knowledge)
+        content = _append_header_fields(_build_append_content(existing, knowledge), provenance, quote)
+        if content is None:
+            return WriteResult(ok=False, audit_id=audit_id,
+                               error="append: provenance/quote given but the atom has no metadata block to write them into")
         supersedes_final = read_supersedes(existing)
     elif mode == "replace":
         # Confirmations/ReadHits 在 access.json，replace 不需保留（檔本就分離）
@@ -1097,22 +1512,31 @@ def write_atom(
         prev_supersedes: List[str] = []
         prev_provenance = provenance
         prev_depends = depends
+        prev_quote = quote
+        index_depends = None   # replace：下面依最終檔頭決定（有行→該清單、無行→[] 清索引），索引跟 frontmatter 走
         if file_path.exists():
             old = file_path.read_text(encoding="utf-8-sig")
-            am = re.search(r"^- Author:\s*(.+)$", old, re.MULTILINE)
+            # 檔頭欄位一律只在檔頭找（_header_end 之前）、[ \t]* 不跨行：空欄位行不能把下一行（`## 知識`、別的欄位）吃成值，
+            # 知識段程式碼範例裡的 `- Source:` 這類行也不算
+            old_head = old[:_header_end(old)]
+            am = re.search(r"^- Author:[ \t]*(.+)$", old_head, re.MULTILINE)
             if am:
                 prev_author = am.group(1).strip()
-            cmm = re.search(r"^- Created-at:\s*(.+)$", old, re.MULTILINE)
+            cmm = re.search(r"^- Created-at:[ \t]*(.+)$", old_head, re.MULTILINE)
             if cmm:
                 prev_created = cmm.group(1).strip()
             prev_supersedes = read_supersedes(old)
-            # Source／Depends：呼叫者未給（None）→ 保留舊行；給了（含空）→ 以呼叫者為準
+            # Source／Depends：呼叫者未給（None）→ 保留舊行；給了（含空）→ 以呼叫者為準；舊卡空行＝空字串（build 不輸出）
             if provenance is None:
-                sm = re.search(r"^- Source:\s*(.+)$", old, re.MULTILINE)
+                sm = re.search(r"^- Source:[ \t]*(.*)$", old_head, re.MULTILINE)
                 prev_provenance = sm.group(1).strip() if sm else None
             if depends is None:
-                dm = re.search(r"^- Depends:\s*(.+)$", old, re.MULTILINE)
-                prev_depends = [t.strip() for t in dm.group(1).split(",") if t.strip()] if dm else None
+                # [ \t]* 不跨行：空的 `- Depends:` 行不能把下一行（Trigger／標題）吃成依賴；空行＝[]（清）
+                dm = re.search(r"^- Depends:[ \t]*(.*)$", old_head, re.MULTILINE)
+                prev_depends = [t.strip() for t in re.split(r"[,，]", dm.group(1)) if t.strip()] if dm else None
+            if quote is None:
+                qm = re.search(r"^- Quote:[ \t]*(.*)$", old_head, re.MULTILINE)
+                prev_quote = qm.group(1).strip() if qm else None
         if supersedes is None:
             supersedes_final = prev_supersedes
         else:
@@ -1128,8 +1552,14 @@ def write_atom(
             knowledge=knowledge, actions=actions, related=related, audience=audience,
             author=prev_author, pending_review_by=pending_by, merge_strategy=merge_strategy,
             created_at=prev_created, today=today, supersedes=supersedes_final,
-            provenance=prev_provenance, depends=prev_depends,
+            provenance=prev_provenance, depends=prev_depends, quote=prev_quote,
         )
+        if file_path.exists():
+            content = carry_replace_header(old, content, given_header_keys(dict(
+                audience=audience, related=related, provenance=provenance, quote=quote,
+                depends=depends, supersedes=supersedes, pending_review_by=pending_review_by,
+                merge_strategy=merge_strategy)))
+        index_depends = list(prev_depends) if prev_depends else []
     else:
         return WriteResult(ok=False, audit_id=audit_id,
                            error=f"Unknown mode: {mode}")
@@ -1138,6 +1568,13 @@ def write_atom(
     err = validate_atom_content(content)
     if err:
         return WriteResult(ok=False, audit_id=audit_id, error=f"Validation failed: {err}")
+    err = rule_atom_style_violation(file_path, knowledge)
+    if err:
+        return WriteResult(ok=False, audit_id=audit_id, error=err)
+    # 知識行與行動行不准敘事日期（判式與 tools/atom-date-lint.py 同一份）；只看這次寫進去的行，skip_gate 不能繞
+    err = narrative_date_error(render_knowledge_lines(knowledge) if mode == "append" else card_body_lines(content))
+    if err:
+        return WriteResult(ok=False, audit_id=audit_id, error=err)
 
     # ── Dry-run short-circuit ──
     if dry_run:
@@ -1149,7 +1586,10 @@ def write_atom(
                                   "index_ok": None, "supersedes": supersedes_final})
 
     # ── Write file ──
-    _atomic_write(file_path, content)
+    try:
+        _atomic_write(file_path, content)
+    except ConflictMarkerError as e:
+        return WriteResult(ok=False, audit_id=audit_id, error=str(e))
 
     # ── 同步維護 <atom>.access.json 旁路檔 ──
     # 延遲 import 避免 atom_io ↔ atom_access 環依（atom_access import atom_io 的 audit infra）
@@ -1175,8 +1615,10 @@ def write_atom(
     index_ok: Optional[bool] = None  # append 不動索引 → None
     index_error: Optional[str] = None
     if mode in ("create", "replace"):
+        # depends 透傳：create 給什麼就登什麼（None＝不登）；replace 以最終檔頭為準（無行→[] 清掉索引殘值）
         ir = write_index(resolved["index_dir"], slug, rel_path, triggers, source,
-                         scope=scope_label if mode == "create" else None)
+                         scope=scope_label if mode == "create" else None,
+                         depends=(depends if mode == "create" else index_depends))
         index_ok, index_error = ir.ok, ir.error
 
     # ── Audit log ──
@@ -1213,6 +1655,7 @@ def locate_atom(
     triggers: Optional[List[str]] = None,
     enforce_cwd_scope: bool = False,
     cross_project: bool = False,
+    entry: Optional[List[str]] = None,
 ) -> WriteResult:
     """atom 落點與定位的**唯一裁決者**（唯讀；只 mkdir 落點）。MCP js 端 create/append/
     replace/promote/edit_meta 一律先問這裡，js 不自算任何路徑。
@@ -1225,31 +1668,41 @@ def locate_atom(
       target_dir, category, base_dir, index_dir, index_root, scope_label, slug,
       rel_path（既有檔）／create_rel_path（新檔相對 index_root），
       routed_to_failures / routed_to_pending / routed_to_local, realm, domain,
-      auto_realm（scope=global、realm 未給時由 classify_realm 判 local 的命中詞）。
+      auto_realm（scope=global、realm 未給時由 classify_realm 判 local 的命中詞），
+      realm_hold（同條件下卡帶 entry → ENTRY_BOUND_STAYS_CORE 留 core：{rule, entry, would}；
+      帳由 create_atom 落檔成功後寫，dry-run 與被擋下的建卡不留帳）。
     """
     audit_id = _gen_audit_id()
     if scope == "project":
         scope = "shared"
     slug = slugify(title)
     auto_realm: Optional[List[str]] = None
+    realm_hold: Optional[Dict[str, Any]] = None
+    rc: Dict[str, Any] = {}
     if scope == "global" and realm is None and not is_failures_routed_title(title):
         # 自動 realm（core 全專案注入／local 只在 ~/.claude）：安全預設 core，核心保護硬擋。
         try:
             rc = classify_realm(slug, triggers or [])
-            if rc.get("realm") == "local" and rc.get("domain") and not rc.get("protected"):
-                realm = "local"
-                if not domain:
-                    domain = rc["domain"]
-                auto_realm = list(rc.get("matched") or [])
         except Exception:  # noqa: BLE001 — 分類器故障 → 維持 core
-            pass
+            rc = {}
+    lex_local = bool(rc.get("realm") == "local" and rc.get("domain") and not rc.get("protected"))
+    entry_ids = entry_bound_ids({"entry": entry}) if lex_local else []
+    if entry_ids:  # ENTRY_BOUND_STAYS_CORE：綁 Entry 的判準卡建卡就留 core，不照詞庫落 local
+        realm_hold = {"rule": ENTRY_BOUND_STAYS_CORE, "entry": entry_ids, "would": f"lex:{rc['domain']}"}
+    elif lex_local:
+        realm = "local"
+        if not domain:
+            domain = rc["domain"]
+        auto_realm = list(rc.get("matched") or [])
     resolved = _resolve_target(scope, project_cwd, role, user, audience, force_global,
                                title=title, realm=realm, domain=domain, subdir=subdir,
                                mode=mode, allow_new_category=allow_new_category,
                                enforce_cwd_scope=enforce_cwd_scope,
                                cross_project=cross_project)
     if resolved.get("error"):
-        return WriteResult(ok=False, audit_id=audit_id, error=resolved["error"])
+        hint = (f"（{ENTRY_BOUND_STAYS_CORE}：綁 Entry 的卡不自動分到 local，"
+                f"詞庫本來判 {realm_hold['would']}；請給 core 的 domain）") if realm_hold else ""
+        return WriteResult(ok=False, audit_id=audit_id, error=resolved["error"] + hint)
 
     index_root = resolved["index_root"]
     file_path = resolved["dir"] / f"{slug}.md"
@@ -1267,7 +1720,7 @@ def locate_atom(
         "routed_to_local": bool(resolved.get("routed_to_local")),
         "personal_global": bool(resolved.get("personal_global")),
         "realm": "local" if resolved.get("routed_to_local") else ("global" if scope == "global" else None),
-        "domain": domain, "auto_realm": auto_realm,
+        "domain": domain, "auto_realm": auto_realm, "realm_hold": realm_hold,
     }
     if not file_path.exists():
         found, loc_err = locate_existing_atom(

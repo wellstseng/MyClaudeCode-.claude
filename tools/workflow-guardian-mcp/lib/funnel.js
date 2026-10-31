@@ -2,14 +2,14 @@
 const fs = require("fs");
 const path = require("path");
 const http = require("http");
-const { TOOLS_DIR, CLAUDE_DIR, PYTHON_EXE } = require("./paths");
+const { TOOLS_DIR, CLAUDE_DIR, CODE_DIR, PYTHON_EXE, loadConfig } = require("./paths");
 const { crashLog } = require("./log");
 
 /** Run conflict-detector --mode=write-check.
  *  Returns Promise<{verdict, matches, detector_model, skipped, skip_reason, scope}>.
  *  Fail-open: on script error resolves to verdict=ok+skipped=true (do not block writes
  *  when detector infra is down). Longer timeout than write-gate (LLM is slower). */
-function execConflictDetector(content, scope, projectCwd, subdir) {
+function execConflictDetector(content, scope, projectCwd, subdir, declared, title) {
   return new Promise((resolve) => {
     const scriptPath = path.join(TOOLS_DIR, "memory-conflict-detector.py");
     if (!fs.existsSync(scriptPath)) {
@@ -26,17 +26,29 @@ function execConflictDetector(content, scope, projectCwd, subdir) {
     if (subdir) {
       args.push("--subdir", subdir);
     }
+    // 衝突宣告（規則 CONFLICT_DECLARED_BY_AI）：門檻候選是不是衝突由 AI 判，偵測器核對每個候選都有宣告並留帳
+    if (declared !== undefined) {
+      args.push("--declared", JSON.stringify(declared));
+    }
+    if (title) {
+      args.push("--title", String(title));
+    }
+    // 輸出含 atom 名（中文）：不指定編碼時 Windows 子行程以 cp950 寫出，這裡再以 UTF-8 解讀就成亂碼；
+    // 收齊 Buffer 再一次解碼，避免多位元組字元被 chunk 邊界切開。
     const cp = require("child_process").spawn(PYTHON_EXE, [scriptPath, ...args], {
       windowsHide: true,
+      env: { ...process.env, PYTHONIOENCODING: "utf-8" },
     });
-    let out = "", err = "";
+    const outChunks = [], errChunks = [];
     const timer = setTimeout(() => {
       try { cp.kill(); } catch {}
     }, 60000);  // 60s — vector + 3 LLM calls
-    cp.stdout.on("data", d => { out += d.toString(); });
-    cp.stderr.on("data", d => { err += d.toString(); });
+    cp.stdout.on("data", d => { outChunks.push(d); });
+    cp.stderr.on("data", d => { errChunks.push(d); });
     cp.on("close", () => {
       clearTimeout(timer);
+      const out = Buffer.concat(outChunks).toString("utf-8");
+      const err = Buffer.concat(errChunks).toString("utf-8");
       try {
         const parsed = JSON.parse(out.trim().split("\n").pop());
         resolve(parsed);
@@ -108,7 +120,10 @@ function buildConflictReport({ slug, incomingTitle, incomingContent, matches, de
  *  Payload goes over stdin (script's no-args pipe mode) — no shell, no escaping
  *  surface. Fail-open on any infra error, but crashLog so the degradation is
  *  visible (可觀測性鐵律). */
-function execWriteGate(content, classification, layers) {
+const GATE_OPT_KEYS = ["mode", "existing_path", "actions", "depends", "kind_hint", "skip_gate", "dedupe"];
+
+/** opts：寫入分型（mode/existing_path/actions/depends/kind_hint/skip_gate）；只送有給的鍵，py stdin 讀同名鍵。 */
+function execWriteGate(content, classification, layers, title, opts) {
   return new Promise((resolve) => {
     const scriptPath = path.join(TOOLS_DIR, "memory-write-gate.py");
     if (!fs.existsSync(scriptPath)) {
@@ -152,7 +167,11 @@ function execWriteGate(content, classification, layers) {
     });
     try {
       // layers：去重只比這幾層（global + 當前專案自己的層）；不傳 = 全庫比對
-      cp.stdin.write(JSON.stringify({ content, classification, layers: layers || null }));
+      const payload = { content, classification, layers: layers || null, title: title || "" };
+      for (const k of GATE_OPT_KEYS) {
+        if (opts && opts[k] !== undefined && opts[k] !== null) payload[k] = opts[k];
+      }
+      cp.stdin.write(JSON.stringify(payload));
       cp.stdin.end();
     } catch {} // close handler resolves either way
   });
@@ -171,7 +190,9 @@ async function appendToIndex(memDir, atomName, relPath, triggers) {
  *  (no body — handler just kicks a background incremental build). */
 function triggerVectorReindex() {
   try {
-    const url = "http://127.0.0.1:3849/index/incremental";
+    // 埠與 py 端（memory-write-gate.check_dedup）、http-api 同讀 config：換資料根（WG_CLAUDE_DIR）就打那份設定的服務
+    const port = (loadConfig().vector_search || {}).service_port || 3849;
+    const url = `http://127.0.0.1:${port}/index/incremental`;
     const req = http.request(url, { method: "POST", timeout: 3000 }, (res) => {
       if (res.statusCode < 200 || res.statusCode >= 300) {
         crashLog("vector reindex", `HTTP ${res.statusCode} from POST /index/incremental`);
@@ -228,7 +249,7 @@ function spawnAtomCli(action, payload) {
       cp = require("child_process").spawn(
         PYTHON_EXE, ["-m", "lib.atom_io_cli"],
         {
-          cwd: CLAUDE_DIR,
+          cwd: CODE_DIR,   // -m 從 cwd 載 lib：程式碼根（資料位置由 payload 與 py 端自己決定）
           windowsHide: true,
           env: { ...process.env, PYTHONIOENCODING: "utf-8" },
         }
@@ -274,11 +295,13 @@ function funnelWriteRaw(filePath, content, source, op) {
   });
 }
 
-/** Single-atom upsert via lib.atom_io.write_index → _atom_index.json. */
-function funnelWriteIndex(baseDir, slug, relPath, triggers, source) {
+/** Single-atom upsert via lib.atom_io.write_index → _atom_index.json.
+ *  depends（選填）：陣列才帶（[] 清空、非空取代）；未給＝索引沿用既有 depends（py 端 None）。 */
+function funnelWriteIndex(baseDir, slug, relPath, triggers, source, depends) {
   return spawnAtomCli("write_index", {
     base_dir: baseDir, slug, rel_path: relPath,
     triggers, source,
+    ...(Array.isArray(depends) && { depends }),
   });
 }
 

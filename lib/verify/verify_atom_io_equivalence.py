@@ -1148,3 +1148,261 @@ def test_33_replace_preserves_source_and_depends(isolated_claude):
     assert r.ok, r.error
     text = r.path.read_text(encoding="utf-8")
     assert "Source" not in text and "Depends" not in text
+
+
+# ─── 34. Quote parity（py↔js buildAtomContent：quote 緊接 Source 之後、Confidence 之前） ───
+
+
+def test_33b_depends_passthrough_to_index(isolated_claude):
+    """A3.2：write_atom／write_index 的 depends 透傳索引：create 登、replace 未給沿用檔頭、給 [] 清、型別錯拒（ok=False、索引不動）。"""
+    from lib.atom_index_json import load_atom_index_json
+    mem = isolated_claude["memory"]
+    common = dict(scope="global", confidence="[臨]", triggers=["a", "b", "c"],
+                  knowledge=["k"], source="test", skip_gate=True, today=FIXED_TODAY)
+
+    def _entry():
+        return next(a for a in load_atom_index_json(mem)["atoms"] if a["name"] == "dep-atom")
+
+    r = write_atom(title="Dep Atom", domain="設計通則", mode="create", depends=["path:tools/x.py", "decision:z"], **common)
+    assert r.ok and r.extra["index_ok"] is True, r.error
+    assert _entry()["depends"] == ["path:tools/x.py", "decision:z"]
+    # replace 未給 depends → 檔頭保留 → 索引沿用
+    r = write_atom(title="Dep Atom", mode="replace", knowledge=["k2"], **{k: v for k, v in common.items() if k != "knowledge"})
+    assert r.ok, r.error
+    assert _entry()["depends"] == ["path:tools/x.py", "decision:z"]
+    # replace 給新清單 → 索引取代
+    r = write_atom(title="Dep Atom", mode="replace", depends=["path:tools/y.py"], **common)
+    assert r.ok and _entry()["depends"] == ["path:tools/y.py"]
+    # replace 給 [] → 檔頭清、索引清
+    r = write_atom(title="Dep Atom", mode="replace", depends=[], **common)
+    assert r.ok and "depends" not in _entry() and "Depends" not in r.path.read_text(encoding="utf-8")
+    # write_index 直呼：型別錯 → ok=False、索引不動；None → 不動既有
+    from lib.atom_io import write_index
+    write_index(mem, "dep-atom", _entry()["path"], ["a"], "test", depends=["path:tools/q.py"])
+    bad = write_index(mem, "dep-atom", _entry()["path"], ["a"], "test", depends="path:tools/q.py")  # type: ignore[arg-type]
+    assert not bad.ok and "depends invalid" in (bad.error or "")
+    assert _entry()["depends"] == ["path:tools/q.py"]
+    assert write_index(mem, "dep-atom", _entry()["path"], ["a", "b"], "test").ok and _entry()["depends"] == ["path:tools/q.py"]
+    # 檔頭被手改成空的 `- Depends:` 行（下一行是 Related）→ replace 未給 depends 視為清空，不把 Related 行吃成依賴
+    p = r.path
+    p.write_text(p.read_text(encoding="utf-8").replace("- Created-at:", "- Depends:\n- Related: rr\n- Created-at:"), encoding="utf-8")
+    r = write_atom(title="Dep Atom", mode="replace", **common)
+    assert r.ok and "depends" not in _entry() and "Depends" not in r.path.read_text(encoding="utf-8")
+
+
+def test_34_quote_py_js_byte_parity(tmp_path):
+    """quote → `- Quote:` 位於 Source 之後、Confidence 之前；無 Source 時位於 Author 之後；py↔js byte-identical。"""
+    q = "「上GIT 是 commit 加 push 一體」"
+    py_out = build_atom_content(**_SUP_BASE_PY, author="alice", provenance="session:abcdef12#11223344 2026-10-06", quote=q)
+    js_out = _js_build(tmp_path, _SUP_BASE_JS + ",author:'alice',provenance:'session:abcdef12#11223344 2026-10-06',quote:'" + q + "'", "quote")
+    assert js_out == py_out, f"DRIFT[quote]\nPY:\n{py_out!r}\nJS:\n{js_out!r}"
+    assert f"- Author: alice\n- Source: session:abcdef12#11223344 2026-10-06\n- Quote: {q}\n- Confidence: [臨]\n" in py_out
+    # 無 Source 時 Quote 直接接在 Author 後
+    py2 = build_atom_content(**_SUP_BASE_PY, author="alice", quote=q)
+    js2 = _js_build(tmp_path, _SUP_BASE_JS + ",author:'alice',quote:'" + q + "'", "quote2")
+    assert js2 == py2
+    assert f"- Author: alice\n- Quote: {q}\n- Confidence: [臨]\n" in py2
+    # 未給／空 → 不輸出
+    assert build_atom_content(**_SUP_BASE_PY, quote="") == build_atom_content(**_SUP_BASE_PY)
+    assert "Quote" not in build_atom_content(**_SUP_BASE_PY)
+
+
+def test_35_replace_preserves_quote(isolated_claude):
+    """replace 未給 quote → 保留；給了 → 替換；給空 → 清除；append 不動；edit_metadata 可補 Source／Quote。"""
+    from lib.atom_io import edit_metadata
+    common = dict(scope="global", confidence="[臨]", triggers=["a", "b", "c"],
+                  knowledge=["k"], source="test", skip_gate=True, today=FIXED_TODAY)
+    r = write_atom(title="Quote Atom", domain="設計通則", mode="create", author="alice",
+                   provenance="session:abcdef12 2026-10-06", quote="「原句一」", **common)
+    assert r.ok, r.error
+    text = r.path.read_text(encoding="utf-8")
+    assert "- Source: session:abcdef12 2026-10-06\n- Quote: 「原句一」\n- Confidence" in text
+    r = write_atom(title="Quote Atom", mode="replace", knowledge=["k2"],
+                   **{k: v for k, v in common.items() if k != "knowledge"})
+    assert r.ok, r.error
+    assert "- Quote: 「原句一」\n" in r.path.read_text(encoding="utf-8")
+    r = write_atom(title="Quote Atom", mode="append", **common)
+    assert r.ok, r.error
+    assert "- Quote: 「原句一」\n" in r.path.read_text(encoding="utf-8")
+    r = write_atom(title="Quote Atom", mode="replace", quote="「原句二」", **common)
+    assert r.ok, r.error
+    text = r.path.read_text(encoding="utf-8")
+    assert "- Quote: 「原句二」\n" in text and "原句一" not in text
+    r = write_atom(title="Quote Atom", mode="replace", quote="", **common)
+    assert r.ok, r.error
+    assert "- Quote:" not in r.path.read_text(encoding="utf-8")
+    # edit_metadata 補回（無該行 → 插 metadata 末；有 → 整行替換）
+    res = edit_metadata(r.path, quote="「原句三」", provenance="commit:abc1234 2026-01-01（原對話已逾保留期）", source="test")
+    assert res.ok, res.error
+    text = r.path.read_text(encoding="utf-8")
+    assert "- Quote: 「原句三」\n" in text and "- Source: commit:abc1234 2026-01-01（原對話已逾保留期）\n" in text
+    res = edit_metadata(r.path, quote="「原句四」", source="test")
+    assert res.ok and "- Quote: 「原句四」\n" in r.path.read_text(encoding="utf-8")
+    assert r.path.read_text(encoding="utf-8").count("- Quote:") == 1
+
+
+def test_36_edit_metadata_value_with_backslash(isolated_claude):
+    """Quote／Source 值含反斜線（Windows 路徑）不得被當 regex 跳脫吃掉或炸 bad escape。"""
+    from lib.atom_io import edit_metadata
+    BS = chr(92)
+    common = dict(scope="global", confidence="[臨]", triggers=["a", "b", "c"],
+                  knowledge=["k"], source="test", skip_gate=True, today=FIXED_TODAY)
+    r = write_atom(title="Backslash Atom", domain="設計通則", mode="create", **common)
+    assert r.ok, r.error
+    q = "「路徑在 C:" + BS + "Users" + BS + "x" + BS + "CompanyAtomsMem 而且 " + BS + "P " + BS + "U 要原樣」"
+    src = "C:" + BS + "x" + BS + "transcript.md"
+    res = edit_metadata(r.path, quote=q, provenance=src, source="test")
+    assert res.ok, res.error
+    text = r.path.read_text(encoding="utf-8")
+    assert ("- Quote: " + q + chr(10)) in text and ("- Source: " + src + chr(10)) in text
+    res = edit_metadata(r.path, quote=q.replace("x", "y"), source="test")
+    assert res.ok and ("C:" + BS + "Users" + BS + "y" + BS + "CompanyAtomsMem") in r.path.read_text(encoding="utf-8")
+
+
+# ─── 37. 導讀卡預算 4096：py 落檔端與 write-gate 同卡同判；js 不寫死預算數字 ─────────
+
+
+def test_37_hub_card_budget_4096_py_same_verdict_js_no_hardcode(isolated_claude):
+    import importlib.util as _ilu
+    from lib import atom_io_cli as _cli
+    from lib.hub_card import HUB_CARD_BUDGET
+    _sp = _ilu.spec_from_file_location("mwg_eq", LIB_PARENT / "tools" / "memory-write-gate.py")
+    _m = _ilu.module_from_spec(_sp)
+    _sp.loader.exec_module(_m)
+    _m.check_dedup = lambda *a, **k: None
+    _m.write_audit_log = lambda *a, **k: None
+    cfg = {"knowledge_budget_bytes": 3072, "dedup_score": 0.8}
+    pad = "這段是部位的真相與邊界說明" * 18          # 每段約 700 bytes → 五段約 3.5KB（>3072、<4096）
+    heads = ("做什麼", "權威在哪", "動手前必問", "已知病灶", "最近驗證")
+    hub_lines = [f"**{h}**：{pad}" for h in heads]
+    plain_lines = [f"結論{i}：{pad}" for i in range(5)]
+    hub_content = build_atom_content(
+        title="x部位導讀", scope="global", confidence="[臨]", triggers=["a", "b", "c"],
+        knowledge=hub_lines, actions=["動手前先讀"], created_at=FIXED_TODAY, depends=["path:C:/x/y.py"],
+    )
+    plain_content = build_atom_content(
+        title="x一般卡", scope="global", confidence="[臨]", triggers=["a", "b", "c"],
+        knowledge=plain_lines, actions=["動手前先讀"], created_at=FIXED_TODAY,
+    )
+    assert 3072 < len("\n".join(hub_lines).encode("utf-8")) < HUB_CARD_BUDGET
+    # 落檔端：hub 過（4096）、一般卡擋（3072）且訊息附 kind／route_to
+    assert _cli._budget_check(hub_content) is None
+    plain_err = _cli._budget_check(plain_content)
+    assert plain_err and "超過預算 3072" in plain_err and "kind=plain" in plain_err and "route_to=" in plain_err
+    # 寫入閘：同卡同判
+    g_hub = _m.evaluate("\n".join(hub_lines), title="x部位導讀", config=cfg, depends=["path:C:/x/y.py"], skip_gate=True)
+    g_plain = _m.evaluate("\n".join(plain_lines), title="x一般卡", config=cfg, skip_gate=True)
+    assert g_hub["action"] == "add" and g_hub["kind"] == "hub" and g_hub["budget"]["limit"] == HUB_CARD_BUDGET
+    assert g_plain["action"] == "skip" and g_plain["budget"]["limit"] == 3072
+    # append 預檢：既有 hub 卡在 3072～4096 之間仍可補一行；一般卡同量級被擋
+    hub_file = isolated_claude["memory"] / "hub.md"
+    hub_file.write_text(hub_content, encoding="utf-8", newline="\n")
+    assert _cli._append_budget_check(hub_content, ["補一行"], str(hub_file)) is None
+    err = _cli._append_budget_check(plain_content, ["補一行"], str(hub_file))
+    assert err and "kind=complement" in err and "route_to=" in err and "不截斷" in err
+    # js 端不寫死預算數字：limit／kind 只從 py 回傳欄位 echo
+    js = (LIB_PARENT / "tools" / "workflow-guardian-mcp" / "lib" / "atom-tools.js").read_text(encoding="utf-8")
+    assert "3072" not in js and "4096" not in js
+    assert "b.limit" in js and "g.kind" in js
+
+
+# ─── 38. BLOCK 1：真 hub 卡 knowledge 3.3 KB 實際 append 成功落檔（不只預檢） ─────────
+
+
+def test_38_real_hub_card_3300_bytes_append_succeeds_end_to_end(isolated_claude, monkeypatch, capsys):
+    import io as _io
+    import json as _json
+    from lib import atom_io_cli as _cli
+    from lib.atom_io import append_atom_file
+    from lib.atom_spec import knowledge_sections_bytes
+    pad = "這段是部位的真相與邊界說明" * 17          # 五段約 3.3 KB
+    heads = ("做什麼", "權威在哪", "動手前必問", "已知病灶", "最近驗證")
+    hub_content = build_atom_content(
+        title="x部位導讀", scope="global", confidence="[臨]", triggers=["a", "b", "c"],
+        knowledge=[f"**{h}**：{pad}" for h in heads], actions=["動手前先讀"],
+        created_at=FIXED_TODAY, depends=["path:C:/x/y.py"],
+    )
+    kb = knowledge_sections_bytes(hub_content)
+    assert 3200 < kb < 3500, kb
+    hub_file = isolated_claude["memory"] / "設計通則" / "x部位導讀.md"
+    hub_file.parent.mkdir(parents=True, exist_ok=True)
+    hub_file.write_text(hub_content, encoding="utf-8", newline="\n")
+    # ① 直接呼叫 append_atom_file：4096 上限 → 成功落檔
+    r = append_atom_file(hub_file, ["[臨] 補一條：驗法改用 pytest -q"], source="test")
+    assert r.ok, r.error
+    after = hub_file.read_text(encoding="utf-8")
+    assert "- [臨] 補一條：驗法改用 pytest -q" in after and after.index("補一條") < after.index("## 行動")
+    assert 3072 < knowledge_sections_bytes(after) < 4096
+    # ② 走 CLI action=append（預檢＋append_atom_file 同一條路）再補一行
+    monkeypatch.setattr(sys, "stdin", _io.StringIO(_json.dumps({
+        "action": "append", "file_path": str(hub_file), "knowledge": ["[臨] 再補一條"], "source": "mcp",
+    })))
+    rc = _cli.main()
+    out = _json.loads(capsys.readouterr().out.strip())
+    assert rc == 0 and out["ok"] is True, out
+    assert "- [臨] 再補一條" in hub_file.read_text(encoding="utf-8")
+    # ③ 一般卡同量級：append_atom_file 仍以 3072 拒（hub 判定只看標題／段落）
+    plain_content = build_atom_content(
+        title="x一般卡", scope="global", confidence="[臨]", triggers=["a", "b", "c"],
+        knowledge=[f"結論{i}：{pad}" for i in range(5)], actions=["動手前先讀"], created_at=FIXED_TODAY,
+    )
+    plain_file = isolated_claude["memory"] / "設計通則" / "x一般卡.md"
+    plain_file.write_text(plain_content, encoding="utf-8", newline="\n")
+    rp = append_atom_file(plain_file, ["[臨] 補一條"], source="test")
+    assert not rp.ok and "超過預算 3072" in rp.error
+
+
+# ─── B5. append 對沒有「## 行動」段的卡：補段再拼接（導讀卡／索引卡／手寫舊卡）─────────────
+
+def _strip_action_section(fp):
+    text = fp.read_text(encoding="utf-8")
+    fp.write_text(text[:text.index("## 行動")].rstrip() + "\n", encoding="utf-8", newline="\n")
+    assert "## 行動" not in fp.read_text(encoding="utf-8")
+
+
+def _assert_one_action_after(fp, fact):
+    from lib.atom_spec import validate_atom_content
+    after = fp.read_text(encoding="utf-8")
+    assert after.count("## 行動") == 1 and f"- {fact}" in after and after.index(fact) < after.index("## 行動")
+    assert "- （依知識內容判斷）" in after and validate_atom_content(after) is None
+
+
+def test_b5_append_atom_file_to_card_without_action_section(isolated_claude):
+    """MCP append 走的 append_atom_file：卡沒行動段 → 成功、檔內恰一個「## 行動」、validate 綠（改前回 has no ## 行動 section）。"""
+    from lib.atom_io import append_atom_file
+    write_atom(title="No Action", scope="global", confidence="[臨]", triggers=["a", "b", "c"], knowledge=["舊事實"],
+               domain="設計通則", mode="create", source="test", skip_gate=True, today="2026-05-01")
+    fp = isolated_claude["memory"] / "設計通則" / "no-action.md"
+    _strip_action_section(fp)
+    r = append_atom_file(fp, ["新事實甲"], source="test")
+    assert r.ok, r.error
+    _assert_one_action_after(fp, "新事實甲")
+    r = append_atom_file(fp, ["新事實乙"], source="test")                         # 補過段的卡再 append：照有行動段的路走
+    assert r.ok, r.error
+    _assert_one_action_after(fp, "新事實乙")
+
+
+def test_b5_write_atom_append_to_card_without_action_section(isolated_claude):
+    """write_atom(mode=append) 同一支補段（兩處共用 _build_append_content，不留兩份判定）。"""
+    write_atom(title="No Action Two", scope="global", confidence="[臨]", triggers=["a", "b", "c"], knowledge=["舊事實"],
+               domain="設計通則", mode="create", source="test", skip_gate=True, today="2026-05-01")
+    fp = isolated_claude["memory"] / "設計通則" / "no-action-two.md"
+    _strip_action_section(fp)
+    r = write_atom(title="No Action Two", scope="global", confidence="[臨]", triggers=["a", "b", "c"],
+                   knowledge=["新事實丙"], mode="append", source="test", skip_gate=True, today=FIXED_TODAY)
+    assert r.ok, r.error
+    _assert_one_action_after(fp, "新事實丙")
+
+
+@pytest.mark.parametrize("tag,py_k,js_k", [
+    ("decl_first", ["[臨] 不是教繞閘｜這張卡寫的是禁止規避", "k1"], "['[臨] 不是教繞閘｜這張卡寫的是禁止規避','k1']"),
+    ("decl_later", ["k1", "不是教繞閘｜第二行照留"], "['k1','不是教繞閘｜第二行照留']"),
+])
+def test_38_bypass_declaration_stripped_py_js_byte_parity(tmp_path, tag, py_k, js_k):
+    """繞閘卡片宣告（ATOM_BYPASS_HOWTO_REFUSED）：知識段第一行「不是教繞閘｜…」建卡時剝掉、其他行照留；py↔js byte-identical。"""
+    base = dict(_SUP_BASE_PY, knowledge=py_k)
+    py_out = build_atom_content(**base)
+    js_out = _js_build(tmp_path, _SUP_BASE_JS.replace("knowledge:['k1']", "knowledge:" + js_k), tag)
+    assert js_out == py_out, f"DRIFT[{tag}]\nPY:\n{py_out!r}\nJS:\n{js_out!r}"
+    assert ("禁止規避" not in py_out) if tag == "decl_first" else ("- 不是教繞閘｜第二行照留" in py_out)
+    assert "- k1" in py_out

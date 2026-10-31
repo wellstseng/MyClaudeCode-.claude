@@ -160,6 +160,20 @@ def test_scan_twice_is_idempotent(world, capsys):
     assert _snapshot(world["omem"], world["pmem"]) == before
 
 
+def test_dated_description_card_is_refused_with_rule(world, capsys):
+    """codex 審 date-gate 001 BLOCK 2：工具說明帶敘事日期會整句進知識行；建卡前過同一日期閘，
+    dry-run 與實寫都回「失敗」（exit 1）、該卡不落檔，其餘卡照建。"""
+    _lf(world["proj"] / ".claude" / "tools" / "zzqdated.py",
+        '"""zzqdated.py：測試工具（2026-10-14 實踩）把 C 轉成 D。\n"""\nprint(1)\n')
+    card = world["pmem"] / "shared" / "工具" / "zzqdated.md"
+    for dry in (True, False):
+        assert _scan(world, dry_run=dry) == 1
+        out = capsys.readouterr().out
+        assert "失敗 zzqdated" in out and "KNOWLEDGE_LINE_NO_NARRATIVE_DATE" in out, out
+        assert not card.exists()
+    assert _cards(world)["zzqtool"].is_file(), "其餘卡照建"
+
+
 # ─── ② 人工改過的卡再 scan 不被覆寫 ──────────────────────────────────────────
 
 def test_manual_edit_survives_rescan(world):
@@ -172,6 +186,26 @@ def test_manual_edit_survives_rescan(world):
 
 
 # ─── ③ 進入點消失 → 該卡 deprecated、其餘不變；health-check 標 stale_deps ──────
+
+def test_project_tool_card_depends_is_project_relative(world):
+    """專案層工具卡的 Depends 寫專案相對路徑（卡跨機共享，作者機的絕對路徑別台機器驗不到）。"""
+    assert _scan(world) == 0
+    text = _cards(world)["zzqtool"].read_text(encoding="utf-8")
+    assert "- Depends: path:.claude/tools/zzqtool.py" in text
+
+
+def test_foreign_machine_entry_is_not_deprecated(world, capsys):
+    """進入點是別台機器的絕對路徑（錨點本機沒有）→ 本機驗不到，不退役（舊碼：公司層 24 張他機卡一掃全退役）。"""
+    assert _scan(world) == 0
+    card = _cards(world)["zzqlocal"]
+    foreign = ("C:/zzq-no-such-root-9f3a" if sys.platform == "win32" else "/zzq-no-such-root-9f3a") + "/Users/holylight/srv.js"
+    text = card.read_text(encoding="utf-8")
+    assert "- Depends: path:" in text
+    _lf(card, "\n".join(f"- Depends: path:{foreign}" if l.startswith("- Depends:") else l for l in text.splitlines()) + "\n")
+    capsys.readouterr()
+    assert _scan(world) == 0
+    assert "退役：mcp-zzqlocal" not in capsys.readouterr().out
+    assert _status(card) == "production"
 
 def test_missing_entry_marks_deprecated_only_that_card(world, capsys):
     assert _scan(world) == 0

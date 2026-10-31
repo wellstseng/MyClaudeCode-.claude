@@ -18,17 +18,17 @@ from typing import Any, Dict, List
 
 from wg_core import (
     MEMORY_DIR, EPISODIC_DIR, _atom_debug_error,
-    _estimate_tokens, truncate_to_tokens,
+    _estimate_tokens, truncate_to_tokens, user_typed_text, v6_enabled,
 )
 from wg_atoms import (
-    any_trigger_hit,
+    count_trigger_hits,
     _search_episodic_context, _build_session_context,
     _proactive_classify,
 )
 from handlers._shared import WISDOM_AVAILABLE, classify_situation
 
-# lib funnel（atom_access）：episodic 注入曝光遙測。確保 ~/.claude 在 path（handler 執行時 cwd 不定）。
-_LIB_PARENT = str(Path.home() / ".claude")
+# lib funnel（atom_access）：episodic 注入曝光遙測。確保本樹根在 path（handler 執行時 cwd 不定；用檔案位置不用 Path.home()）。
+_LIB_PARENT = str(Path(__file__).resolve().parents[2])
 if _LIB_PARENT not in sys.path:
     sys.path.insert(0, _LIB_PARENT)
 from lib.atom_access import increment_read_hits  # noqa: E402
@@ -103,6 +103,8 @@ def build_context(
             lines.extend(proactive_lines)
 
     # ─── Wisdom Engine — situation classification ──────────
+    # 只記 approach 給反思統計（wisdom_engine 自知盲點），不注入：分類不看這則訊息、看整個 session 的改檔數與累積關鍵字，
+    # 改檔一多每則訊息都叫人先進 Plan Mode；要不要先規劃由 LLM 依這次的需求判斷。
     if WISDOM_AVAILABLE and classify_situation is not None:
         try:
             mod_paths = [m["path"] for m in state.get("modified_files", [])]
@@ -113,8 +115,6 @@ def build_context(
                 "estimated_files": max(len(mod_paths), 1),
             }
             result = classify_situation(prompt_analysis)
-            if result.get("inject"):
-                lines.append(result["inject"])
             cur = result.get("approach", "direct")
             prev = state.get("wisdom_approach", "direct")
             rank = {"direct": 0, "confirm": 1, "plan": 2}
@@ -126,9 +126,10 @@ def build_context(
     # ─── Research Fan-out Suggestion ───────────────
     # 先於 parallel 判定：research 提示已含並行指示，命中則抑制 parallel 免重複佔位。
     research_hit = False
+    typed = user_typed_text(clean_prompt)          # fan-out／並行建議只看使用者打的字：通知、同伴訊息不觸發
     try:
         from wg_research import detect_research_fanout
-        research_line = detect_research_fanout(clean_prompt, state, config)
+        research_line = detect_research_fanout(typed, state, config)
         if research_line:
             lines.append(research_line)
             research_hit = True
@@ -139,21 +140,30 @@ def build_context(
     if not research_hit:
         try:
             from wg_parallel import detect_parallel_opportunity
-            parallel_line = detect_parallel_opportunity(clean_prompt, state, config)
+            parallel_line = detect_parallel_opportunity(typed, state, config)
             if parallel_line:
                 lines.append(parallel_line)
         except Exception as e:
             _atom_debug_error("ParallelSuggest", e)
 
     # ─── _AIDocs keyword matching ──────────────────
+    # 只在命中明顯（關鍵字命中數 ≥ aidocs.min_prompt_hits，預設 2）才指、最多 aidocs.max_prompt_matches（預設 1）條、
+    # 命中最多的優先；同一份文件一個 session 只指一次（aidocs.v6_once 沒寫＝開，不看寫碼守門總開關）；超過 5 份命中不送照舊判
+    aidocs_cfg = config.get("aidocs", {})
     aidocs_state = state.get("aidocs", {})
     aidocs_kw_map = aidocs_state.get("keywords", {})
-    max_matches = config.get("aidocs", {}).get("max_prompt_matches", 3)
+    max_matches = aidocs_cfg.get("max_prompt_matches", 1)
+    min_hits = aidocs_cfg.get("min_prompt_hits", 2)
+    v6 = v6_enabled(config)
     if aidocs_kw_map and prompt.strip():
-        matched_docs: List[str] = []
-        for fname, keywords in aidocs_kw_map.items():
-            if any_trigger_hit(keywords, prompt_lower):
-                matched_docs.append(fname)
+        scored = [(count_trigger_hits(keywords, prompt_lower), fname) for fname, keywords in aidocs_kw_map.items()]
+        scored = [(n, f) for n, f in scored if n >= min_hits]
+        scored.sort(key=lambda t: -t[0])
+        matched_docs: List[str] = [f for _n, f in scored]
+        if matched_docs and len(matched_docs) <= 5 and aidocs_cfg.get("v6_once", True):
+            pointed = state.setdefault("aidocs_pointed", [])
+            matched_docs = [d for d in matched_docs if d not in pointed]
+            pointed.extend(matched_docs[:max_matches])
         if matched_docs and len(matched_docs) <= 5:
             aidocs_root = aidocs_state.get("project_root", "")
             pointer_lines = ["[Guardian:AIDocs] Relevant project docs:"]
@@ -168,7 +178,10 @@ def build_context(
             lines.extend(pointer_lines)
 
     # ── JIT load internal pipeline reference for memory system dev ──
-    if _is_memory_system_dev(prompt_lower, state.get("session", {}).get("cwd", "")):
+    # 寫碼守門開著時一個 session 只送一次（jit_internal_pipeline.v6_once，沒寫＝開）；判不判記憶系統開發照舊
+    jit_once = v6 and config.get("jit_internal_pipeline", {}).get("v6_once", True)
+    if (_is_memory_system_dev(prompt_lower, state.get("session", {}).get("cwd", ""))
+            and not (jit_once and state.get("jit_pipeline_sent"))):
         ref_path = MEMORY_DIR / "_reference" / "internal-pipeline.md"
         if ref_path.exists():
             try:
@@ -180,6 +193,8 @@ def build_context(
                         f"[JIT:InternalPipeline]\n{truncate_to_tokens(ref_text, jit_budget)}"
                     )
                     budget -= jit_budget
+                    if jit_once:
+                        state["jit_pipeline_sent"] = True
             except (OSError, UnicodeDecodeError):
                 pass
 

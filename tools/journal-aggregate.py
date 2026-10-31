@@ -31,16 +31,21 @@ for stream in (sys.stdout, sys.stderr):
     if hasattr(stream, "reconfigure"):
         stream.reconfigure(encoding="utf-8")
 
-CLAUDE_DIR = Path.home() / ".claude"
+CODE_DIR = Path(__file__).resolve().parents[1]   # 程式碼根：lib.* 從本樹載
+if str(CODE_DIR) not in sys.path:
+    sys.path.insert(0, str(CODE_DIR))
+from lib.project_root import claude_data_dir  # noqa: E402
+
+CLAUDE_DIR = claude_data_dir()   # 使用者資料根（WG_CLAUDE_DIR 或 ~/.claude）；沒設 WG_CLAUDE_DIR 時和 ~/.claude 一字不差
 DEFAULT_JOURNALS_DIR = CLAUDE_DIR / "journals"
 WORKFLOW_DIR = CLAUDE_DIR / "workflow"
 RETENTION_DAYS = 60
 MIRROR_RETENTION_DAYS = 14  # 鏡射目的地（JOURNAL_DIRS[1:]）保留天數
 
 def _load_env_from_settings(name: str) -> str | None:
-    """Fallback：os.environ 沒有時，從 ~/.claude/settings*.json 的 env 區段讀。"""
+    """Fallback：os.environ 沒有時，從資料根 settings*.json 的 env 區段讀。"""
     for fn in ("settings.local.json", "settings.json"):
-        p = Path.home() / ".claude" / fn
+        p = CLAUDE_DIR / fn
         if not p.exists():
             continue
         try:
@@ -96,7 +101,7 @@ _WEEKDAY_NAMES = ["一", "二", "三", "四", "五", "六", "日"]
 # Episodic 知識行中屬於統計類的 pattern（日誌中跳過）
 _STAT_PATTERNS = ("閱讀 ", "閱讀區域", "版控查詢", "覆轍信號", "引用 atoms")
 
-# HTML/XML 標籤 + 註解（避免 catclaw_cli_bridge 訊息標頭未閉合 tag 汙染 markdown 渲染）
+# HTML/XML 標籤 + 註解（避免某 CLI 橋接程式的訊息標頭帶未閉合 tag 汙染 markdown 渲染）
 _HTML_RE = re.compile(r"<!--.*?-->|<[^>]+>", re.DOTALL)
 
 # 「我的增補」heading：重產時整段內容（heading 之後到下一個 heading 之前）保留
@@ -356,7 +361,7 @@ def _project_summary_line(project: str, sessions: list[dict],
 def _llm_summary(proj_data: list, active_days: int | None = None) -> str:
     """呼叫本地 Ollama 產生 2-4 句話速覽。失敗回 ""。"""
     try:
-        sys.path.insert(0, str(Path.home() / ".claude" / "tools"))
+        sys.path.insert(0, str(Path(__file__).resolve().parent))   # ollama_client：本檔所在的 tools/
         from ollama_client import OllamaClient, OllamaBackend  # type: ignore
     except ImportError:
         return ""

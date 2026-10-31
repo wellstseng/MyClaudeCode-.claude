@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 from wg_core import (
-    MEMORY_DIR, MEMORY_INDEX,
+    MEMORY_DIR, MEMORY_INDEX, WORKFLOW_DIR,
     discover_all_project_memory_dirs, _is_under_claude_dir,
     _atom_debug_log, cwd_to_project_slug,
 )
@@ -38,7 +38,7 @@ from wg_atoms import (
 import re
 
 from handlers._shared import _SUPERSEDES_RE
-from wg_atoms import collect_superseded_names
+from wg_atoms import SUPERSEDES_MEMO, collect_superseded_names
 
 # 歷史查詢：使用者「明確要查閱／比較舊做法」→ Supersedes 過濾放行，讓舊卡可被查到。
 # 只有「舊版」兩個字不算（Codex #8 反例：「不要用以前的部署流程」「舊版已被取代，只要現行做法」
@@ -207,8 +207,8 @@ def collect_matched_atoms(
     # 使用者明說要看舊的（歷史查詢）→ 不過濾，讓舊卡可被查到。
     history_mode = _is_history_query(prompt or "")
     superseded: set = set(atom_index.get("superseded") or [])
-    if "superseded" not in atom_index:
-        superseded = collect_superseded_names(all_atoms, content_cache)
+    if "superseded" not in atom_index:   # 開場被取消、state 由這裡重建時：共用開場那份備忘，只讀改過的卡
+        superseded = collect_superseded_names(all_atoms, content_cache, memo_path=WORKFLOW_DIR / SUPERSEDES_MEMO)
         atom_index["superseded"] = sorted(superseded)
     if superseded and not history_mode:
         all_atoms = [e for e in all_atoms if e[0][0] not in superseded]
@@ -257,7 +257,8 @@ def collect_matched_atoms(
             atom_source[name] = "trigger"
             trigger_hits[name] = count_trigger_hits(triggers, prompt_lower)
 
-    intent = classify_intent(prompt)
+    # 意圖前移（A0.1）：UPS 在檢索前已算好存 state["turn_intent"]；直接呼叫本函式（verify）沒有 state 值時自己算
+    intent = state.get("turn_intent") or classify_intent(prompt)
 
     kw_matched_names = {e[0][0] for e in matched_with_dir}
     trigger_hit_count = len(matched_with_dir)  # 純 trigger 命中數（BM25 合併前快照）

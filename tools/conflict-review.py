@@ -21,10 +21,10 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-HOOKS_DIR = Path.home() / ".claude" / "hooks"
-CLAUDE_DIR = Path.home() / ".claude"
+CODE_DIR = Path(__file__).resolve().parent.parent   # 程式碼根（本檔所在的樹）
+HOOKS_DIR = CODE_DIR / "hooks"
 sys.path.insert(0, str(HOOKS_DIR))
-sys.path.insert(0, str(CLAUDE_DIR))
+sys.path.insert(0, str(CODE_DIR))
 from wg_core import find_project_root  # noqa: E402
 from wg_roles import is_management, get_current_user  # noqa: E402
 from lib.atom_io import _category_gate_enabled, write_index  # noqa: E402
@@ -123,6 +123,19 @@ def _target_stem(name: str) -> str:
         if name.endswith(suf):
             return name[: -len(suf)]
     return name
+
+
+def _same_card_note(pdir: Path, stem: str, result: Dict[str, Any]) -> Dict[str, Any]:
+    """同一張卡還有沒處理的衝突報告（<卡>.conflict.md、<卡>.<n>.conflict.md：同名卡未審又衝突時另起的那幾份）→
+    result 加 same_card_reports 與一行 note。只提示、不自動處理。卡名不含「.」（slug 會剝掉），<卡>.<n> 去尾端 .<n> 就是卡名。"""
+    card = re.sub(r"\.\d+$", "", stem)
+    pat = re.compile(re.escape(card) + r"(?:\.(\d+))?\.conflict\.md")
+    left = sorted((p.name for p in pdir.glob(f"{card}*.conflict.md") if pat.fullmatch(p.name)),
+                  key=lambda n: int(pat.fullmatch(n).group(1) or 1))
+    if left:
+        result["same_card_reports"] = left
+        result["note"] = f"還有 {len(left)} 份同卡的待審報告：{'、'.join(left)}（沒有自動處理，逐份看過再 approve／reject）"
+    return result
 
 
 # ─── list action ────────────────────────────────────────────────────────────
@@ -308,7 +321,7 @@ def action_approve(proj_cwd: str, target: str, user: str,
     _sync_project_catalog(mem)
     reindexed = _trigger_reindex()
 
-    return {
+    return _same_card_note(pdir, stem, {
         "ok": True,
         "target": stem,
         "dest": str(dest),
@@ -320,13 +333,13 @@ def action_approve(proj_cwd: str, target: str, user: str,
         "extras_removed": extras_removed,
         "reindex_triggered": reindexed,
         "decided_by": user,
-    }
+    })
 
 
 def _sync_project_catalog(mem: Path) -> None:
     """背景刷新專案 MEMORY.md 的 catalog 區塊（失敗只 stderr，不阻斷 approve）。"""
     import subprocess
-    script = CLAUDE_DIR / "tools" / "sync-memory-index.py"
+    script = CODE_DIR / "tools" / "sync-memory-index.py"
     if not script.exists():
         return
     try:
@@ -373,7 +386,7 @@ def action_reject(proj_cwd: str, target: str, user: str, reason: str) -> Dict[st
     _append_merge_history(mem, "reject", stem, "shared", user,
                           f"files={','.join(removed)} reason={reason or '-'}")
 
-    return {"ok": True, "target": stem, "removed": removed, "reason": reason}
+    return _same_card_note(pdir, stem, {"ok": True, "target": stem, "removed": removed, "reason": reason})
 
 
 # ─── CLI ────────────────────────────────────────────────────────────────────

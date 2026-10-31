@@ -55,7 +55,7 @@
           {
             "type": "command",
             "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
-            "timeout": 5
+            "timeout": 20
           },
           {
             "type": "command",
@@ -98,7 +98,7 @@
         ]
       },
       {
-        "matcher": "Write|Edit|NotebookEdit|Bash|PowerShell|Agent|Task",
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash|PowerShell|Agent|Task|AskUserQuestion|ExitPlanMode|mcp__workflow-guardian__atom_write|mcp__workflow-guardian__atom_edit_meta|mcp__workflow-guardian__atom_retire|mcp__workflow-guardian__atom_move",
         "hooks": [
           {
             "type": "command",
@@ -120,7 +120,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|Read|MultiEdit|NotebookEdit|ExitPlanMode|Bash|Agent|Task|mcp__workflow-guardian__anti_evasion_report|mcp__workflow-guardian__atom_write|mcp__workflow-guardian__atom_retire|mcp__workflow-guardian__knowledge_harvest_report",
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|ExitPlanMode|Bash|PowerShell|Read|Agent|Task|mcp__workflow-guardian__anti_evasion_report|mcp__workflow-guardian__atom_write|mcp__workflow-guardian__atom_retire|mcp__workflow-guardian__knowledge_harvest_report",
         "hooks": [
           {
             "type": "command",
@@ -172,6 +172,18 @@
         ]
       }
     ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "PostToolBatch": [
       {
         "hooks": [
@@ -189,17 +201,28 @@
           {
             "type": "command",
             "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
-            "timeout": 10
+            "timeout": 20
           },
           {
             "type": "command",
             "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/codex_companion.py'),run_name='__main__')\"",
-            "timeout": 150
+            "timeout": 20
           },
           {
             "type": "command",
             "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/lang_guard.py'),run_name='__main__')\"",
             "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
+            "timeout": 20
           }
         ]
       }
@@ -237,5 +260,15 @@
   "skipDangerousModePermissionPrompt": true,
   "skipWorkflowUsageWarning": true,
   "switchModelsOnFlag": true,
-  "agentPushNotifEnabled": true
+  "agentPushNotifEnabled": true,
+  "modelSettings": {
+    "claude-opus-5-5": {
+      "effortLevel": "xhigh"
+    },
+    "claude-fable-5-1": {
+      "effortLevel": "medium"
+    }
+  },
+  "language": "繁體中文",
+  "theme": "light"
 }

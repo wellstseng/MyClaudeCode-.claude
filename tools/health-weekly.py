@@ -27,8 +27,10 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
+import time
 import urllib.request
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -42,8 +44,12 @@ for _name in ("stdout", "stderr"):
     else:
         _s.reconfigure(encoding="utf-8")
 
-CLAUDE_DIR = Path(__file__).resolve().parent.parent
-TOOLS = CLAUDE_DIR / "tools"
+CODE_DIR = Path(__file__).resolve().parent.parent   # 程式碼根（本檔所在的樹）：tools、hooks、子行程 cwd
+if str(CODE_DIR) not in sys.path:
+    sys.path.insert(0, str(CODE_DIR))
+from lib.project_root import claude_data_dir  # noqa: E402
+CLAUDE_DIR = claude_data_dir()   # 使用者資料根（WG_CLAUDE_DIR 或 ~/.claude）：workflow、memory、Logs
+TOOLS = CODE_DIR / "tools"
 WORKFLOW = CLAUDE_DIR / "workflow"
 MEMORY = CLAUDE_DIR / "memory"
 REPORT_DIR = WORKFLOW / "health-reports"
@@ -63,7 +69,7 @@ def _run_json(args: list[str], timeout: int = 300) -> dict | None:
     try:
         r = subprocess.run(
             [PY, *args], capture_output=True, text=True, encoding="utf-8",
-            timeout=timeout, cwd=str(CLAUDE_DIR),
+            timeout=timeout, cwd=str(CODE_DIR),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         return json.loads(r.stdout)
@@ -71,12 +77,61 @@ def _run_json(args: list[str], timeout: int = 300) -> dict | None:
         return None
 
 
+def _load_config() -> dict:
+    try:
+        return json.loads((WORKFLOW / "config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _provenance_anti_rot(now: datetime, days: int) -> tuple[int, int, str]:
+    """回 (補成功數, 候選數, 錯誤訊息)。候選＝Source 為 session:… 且日期距今 ≥days、無 Quote、該 session transcript 仍在。"""
+    import importlib.util
+    import re
+    tool = TOOLS / "atom-provenance-backfill.py"
+    if not tool.exists():
+        return 0, 0, "tools/atom-provenance-backfill.py 不存在"
+    spec = importlib.util.spec_from_file_location("atom_provenance_backfill", tool)
+    mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+    sys.modules["atom_provenance_backfill"] = mod
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    from lib.provenance import find_transcript, parse_source
+    src_re = re.compile(r"^- Source:\s*(\S.*)$", re.M)
+    quote_re = re.compile(r"^- Quote:\s*\S", re.M)
+    cands: list[str] = []
+    for _layer, path in mod.collect_atoms("all"):
+        try:
+            text = path.read_text(encoding="utf-8-sig")
+        except OSError:
+            continue
+        if quote_re.search(text):
+            continue
+        m = src_re.search(text)
+        if not m:
+            continue
+        ps = parse_source(m.group(1).strip())
+        if ps.get("kind") != "session" or not ps.get("date"):
+            continue
+        try:
+            age = (now.date() - datetime.strptime(ps["date"], "%Y-%m-%d").date()).days
+        except ValueError:
+            continue
+        if age < days or not find_transcript(ps["sid8"]):
+            continue
+        cands.append(str(path).replace("\\", "/"))
+    if not cands:
+        return 0, 0, ""
+    rep = mod.backfill(apply=True, only=cands)
+    fixed = sum(1 for r in rep["results"] if r.get("written"))
+    return fixed, len(cands), ""
+
+
 def _run_check(args: list[str], timeout: int = 120) -> tuple[bool, str]:
     """跑 --check 型工具；回 (通過, 摘要輸出)。"""
     try:
         r = subprocess.run(
             [PY, *args], capture_output=True, text=True, encoding="utf-8",
-            timeout=timeout, cwd=str(CLAUDE_DIR),
+            timeout=timeout, cwd=str(CODE_DIR),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         tail = ((r.stdout or "") + (r.stderr or "")).strip().splitlines()
@@ -100,7 +155,7 @@ def _episodic_status(fresh_cut: datetime) -> tuple[datetime | None, dict]:
     from collections import Counter
     dirs = [MEMORY / "episodic"]
     try:
-        hooks_dir = str(CLAUDE_DIR / "hooks")
+        hooks_dir = str(CODE_DIR / "hooks")
         if hooks_dir not in sys.path:
             sys.path.insert(0, hooks_dir)
         from wg_core import discover_all_project_memory_dirs  # noqa: WPS433
@@ -180,11 +235,211 @@ def _recall_miss_counts(days: int) -> dict[str, int]:
     return counts
 
 
+def _hooks_on_path() -> None:
+    hooks_dir = str(CODE_DIR / "hooks")
+    if hooks_dir not in sys.path:
+        sys.path.insert(0, hooks_dir)
+
+
+def _run_selftest(st: dict, cwd: Path) -> dict:
+    """跑一筆 tool_selftests {name, cmd, expected(PASS|FAIL|DONE), sentinel?, runtime_gate, timeout_s}。
+    runtime_gate 非 0 → skipped（環境未就緒屬預期，不算紅）。判定：取 stdout 的**最後一個非空行**當哨兵行
+    （規矩：哨兵是尾行；先 PASS 後 traceback／雜訊就不是尾行），有給 sentinel 名就連名字一起比；
+    stderr 非空視為可疑：expected PASS／DONE 時紅。exit 非零：expected PASS／DONE 一律紅，expected FAIL 可綠。
+    subprocess 的 stdout／stderr 是分開收的（沒有時間順序），所以用「stdout 尾行＋stderr 非空」這個近似。"""
+    _hooks_on_path()
+    from wg_verify_ledger import parse_sentinels  # noqa: WPS433
+    name = str(st.get("name") or st.get("cmd") or "?")
+    expected = str(st.get("expected") or "PASS").upper()
+    timeout = float(st.get("timeout_s") or 60)
+    res = {"name": name, "expected": expected, "got": [], "ok": False, "status": "ran", "ms": 0, "detail": ""}
+    gate = str(st.get("runtime_gate") or "").strip()
+    try:
+        if gate:
+            g = subprocess.run(shlex.split(gate.replace("\\", "/")), capture_output=True, text=True,
+                               timeout=timeout, cwd=str(cwd),
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if g.returncode != 0:
+                res.update(status="skipped", detail=f"runtime_gate exit {g.returncode}")
+                return res
+        t0 = time.monotonic()
+        r = subprocess.run(shlex.split(str(st.get("cmd") or "").replace("\\", "/")), capture_output=True,
+                           text=True, encoding="utf-8", errors="replace", timeout=timeout, cwd=str(cwd),
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        res["ms"] = int((time.monotonic() - t0) * 1000)
+        out_lines = [ln for ln in (r.stdout or "").splitlines() if ln.strip()]
+        last_line = out_lines[-1] if out_lines else ""
+        sent = parse_sentinels(last_line)
+        res["got"] = [f"{s['name']} {s['verdict']}" for s in parse_sentinels((r.stdout or "") + "\n" + (r.stderr or ""))]
+        res["exit_code"] = r.returncode
+        res["last_line"] = last_line[:160]
+        want_name = str(st.get("sentinel") or "").strip()
+        last = sent[-1] if sent else None
+        ok = bool(last) and last["verdict"] == expected and (not want_name or last["name"] == want_name)
+        stderr_text = (r.stderr or "").strip()
+        if expected in ("PASS", "DONE"):
+            if r.returncode != 0:
+                ok = False
+                err_tail = stderr_text.splitlines()[-1][:120] if stderr_text else ""
+                res["detail"] = f"exit {r.returncode}（expected {expected} 不接受非零 exit）{'：' + err_tail if err_tail else ''}"
+            elif stderr_text:
+                ok = False
+                res["detail"] = "stderr 有輸出（可疑）：" + stderr_text.splitlines()[-1][:120]
+        if not ok and not res["detail"]:
+            res["detail"] = (f"尾行「{last_line[:100]}」不是 {expected} 哨兵" if out_lines else "（無輸出）")
+            if stderr_text and not out_lines:
+                res["detail"] = stderr_text.splitlines()[-1][:160]
+        res["ok"] = ok
+    except subprocess.TimeoutExpired:
+        res.update(status="timeout", detail=f"逾時 {timeout}s")
+    except (OSError, ValueError) as e:
+        res.update(status="error", detail=f"{type(e).__name__}: {e}"[:160])
+    return res
+
+
+def _selftests_block(selftests: list, cwd: Path) -> tuple[list[str], list[str], list[dict]]:
+    """H7：登記的工具自測逐筆跑；哨兵不符 expected（含壞依賴沒輸出、壞接線印別的名、壞哨兵小寫）→ 紅。
+    回 (red, info, results)。"""
+    red: list[str] = []
+    info: list[str] = []
+    results: list[dict] = []
+    for st in selftests or []:
+        if not isinstance(st, dict) or not st.get("cmd"):
+            continue
+        r = _run_selftest(st, cwd)
+        results.append(r)
+        if r["status"] == "skipped":
+            info.append(f"selftest {r['name']}：跳過（{r['detail']}）")
+        elif r["ok"]:
+            info.append(f"selftest {r['name']}：{r['expected']} 如預期（{r['ms']} ms）")
+        else:
+            got = "、".join(r["got"]) if r["got"] else "沒有任何哨兵"
+            red.append(f"selftest {r['name']} 預期 {r['expected']}，實得 {got}（{r['status']}；{r['detail']}）"
+                       "；工具自身壞掉或哨兵格式不合 `<NAME>_CHECK PASS|FAIL`")
+    return red, info, results
+
+
+def _depends_block(hc: dict, coverage_min: float) -> tuple[list[str], list[str]]:
+    """H7：Depends 壞滅緣（路徑消失）黃、依賴比卡新黃、覆蓋率 info（低於 depends_coverage_min 黃）。回 (yellow, info)。"""
+    yellow: list[str] = []
+    info: list[str] = []
+    n_stale = len(hc.get("stale_deps") or [])
+    if n_stale:
+        yellow.append(f"stale_deps {n_stale} 筆：Depends 指向的路徑已不存在（atom-health-check.py --deps-check）")
+    n_foreign = len(hc.get("foreign_deps") or [])
+    if n_foreign:
+        info.append(f"他機路徑的 Depends {n_foreign} 筆（作者機的絕對路徑，本機不可驗、不算壞滅緣；atom-health-check.py --deps-check）")
+    mt = hc.get("stale_mtime_deps") or []
+    if mt:
+        names = ", ".join(f"{d.get('atom')}←{Path(str(d.get('dep', ''))).name}" for d in mt[:5])
+        yellow.append(f"依賴比卡新 {len(mt)} 筆（Depends 檔改於卡最近驗證日之後，卡可能過期）：{names}")
+    cov = hc.get("depends_coverage") or {}
+    if cov:
+        ratio = float(cov.get("ratio") or 0.0)
+        info.append(f"Depends 覆蓋率 {cov.get('with_depends', 0)}/{cov.get('total', 0)} = {ratio:.1%}")
+        if ratio < float(coverage_min or 0):
+            yellow.append(f"Depends 覆蓋率 {ratio:.1%} 低於 depends_coverage_min {float(coverage_min):.1%}")
+    return yellow, info
+
+
+# config verify_ledger.sentinel_regex 兩條內建 pytest 規則的現行值（版控庫 workflow/config.json 的那兩筆）。install 只做頂層合併，
+# 使用者保留的舊 config 不會跟著更新；hook 端（wg_verify_ledger._builtin_pytest_rule）只自動補 pytest_summary 旗標，regex 不補：
+# 停在最早版 regex 的機器把「1 passed, 1 error」判成 PASS。這裡只浮訊號，修法在 Install-forAI §3 升級段。
+_CURRENT_PYTEST_REGEX = (r"^(?:=+ )?(?P<verdict>\d+ (?:passed|failed|errors?|skipped|xfailed|xpassed|warnings?|deselected|rerun)"
+                         r"(?:, \d+ [a-z]+)*) in \d")
+_CURRENT_PYTEST_VERDICT_MAP = {
+    "PYTEST": {"failed": "FAIL", "error": "FAIL", "passed": "PASS", "xpassed": "PASS"},
+    "PYTEST_MEASURE": {"failed": "FAIL", "error": "FAIL", "passed": "DONE", "xpassed": "DONE"},
+}
+
+
+def _pytest_regex_block(cfg: dict) -> list[str]:
+    """config 內建 PYTEST／PYTEST_MEASURE 規則（verify_ledger.sentinel_regex）不是現行版 → 黃（WARN）。
+    regex、verdict_map、pytest_summary 三樣任一與現行值不同就報；兩條缺一條也報。自訂名稱的規則不管。
+    verdict_map 的值只比大小寫無關的結論（hook 端 compile_sentinel_rules 一樣 upper()，`pass` 與 `PASS` 執行期同義，不算舊版）。"""
+    vl = cfg.get("verify_ledger") if isinstance(cfg.get("verify_ledger"), dict) else {}
+    rules = vl.get("sentinel_regex") if isinstance(vl.get("sentinel_regex"), list) else []
+    yellow: list[str] = []
+    seen: set[str] = set()
+    for r in rules:
+        if not isinstance(r, dict):
+            continue
+        name = str(r.get("name") or "").strip()
+        want = _CURRENT_PYTEST_VERDICT_MAP.get(name)
+        if not want:
+            continue
+        seen.add(name)
+        vm = r.get("verdict_map") if isinstance(r.get("verdict_map"), dict) else {}
+        wrong = [label for label, bad in (
+            ("regex", r.get("regex") != _CURRENT_PYTEST_REGEX),
+            ("verdict_map", {str(k): str(v).upper() for k, v in vm.items()} != want),
+            ("pytest_summary", r.get("pytest_summary") is not True),
+        ) if bad]
+        if wrong:
+            yellow.append(f"config 內建 {name} regex 非現行版（{'、'.join(wrong)} 與版控庫 workflow/config.json 不同；"
+                          f"舊版把「1 passed, 1 error」判成 {want['passed']}）→ 手動對齊 verify_ledger.sentinel_regex（Install-forAI §3 升級段）")
+    for name in _CURRENT_PYTEST_VERDICT_MAP:
+        if name not in seen:
+            yellow.append(f"config 內建 {name} 規則缺失（verify_ledger.sentinel_regex 沒有這條）→ 補成版控庫 workflow/config.json 的現行值")
+    return yellow
+
+
+def _reconcile_overflow_block(days: int) -> list[str]:
+    """對帳閘預算用完放行（guard-reconcile_overflow.jsonl）近 N 天有事件 → 紅（放行要可見）。"""
+    p = CLAUDE_DIR / "Logs" / "guard-reconcile_overflow.jsonl"
+    cut = datetime.now().astimezone() - timedelta(days=days)
+    n = 0
+    try:
+        for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                at = datetime.fromisoformat(str(json.loads(line).get("at", "")))
+            except (ValueError, TypeError, json.JSONDecodeError):
+                continue
+            if at.tzinfo is None:
+                at = at.astimezone()
+            if at >= cut:
+                n += 1
+    except OSError:
+        return []
+    return [f"對帳閘預算用完放行 {n} 次（近 {days} 天；Logs/guard-reconcile_overflow.jsonl）；收尾宣稱連續對不上收據"] if n else []
+
+
+def _user_release_block(days: int) -> list[str]:
+    """閘擋滿後使用者放行（Logs/guard-*.jsonl 的 event=user_release）近 N 天有事件 → 紅（放行要可見，按閘分計）。"""
+    cut = datetime.now().astimezone() - timedelta(days=days)
+    per: dict[str, int] = {}
+    for p in sorted((CLAUDE_DIR / "Logs").glob("guard-*.jsonl")):
+        try:
+            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            if '"user_release"' not in line:
+                continue
+            try:
+                rec = json.loads(line)
+                at = datetime.fromisoformat(str(rec.get("at", "")))
+            except (ValueError, TypeError, json.JSONDecodeError):
+                continue
+            if rec.get("event") != "user_release":
+                continue
+            if at.tzinfo is None:
+                at = at.astimezone()
+            if at >= cut:
+                gate = p.stem[len("guard-"):]
+                per[gate] = per.get(gate, 0) + 1
+    if not per:
+        return []
+    detail = "、".join(f"{g} {n} 次" for g, n in sorted(per.items()))
+    return [f"閘擋滿後由使用者放行（近 {days} 天；{detail}；Logs/guard-<閘>.jsonl event=user_release）；閘連續擋滿仍未解"]
+
+
 def collect() -> dict:
     now = datetime.now()
     red: list[str] = []      # 需處理
     yellow: list[str] = []   # 需留意
     info: list[str] = []     # 純資訊
+    selftests: list[dict] = []
 
     # 1. memory-audit
     ma = _run_json([str(TOOLS / "memory-audit.py"), "--json", "--global-only"])
@@ -207,6 +462,20 @@ def collect() -> dict:
             n = len(hc.get(k) or [])
             if n:
                 yellow.append(f"{k} {n} 筆")
+        # 2b. Depends：壞滅緣（路徑消失）、依賴比卡新、覆蓋率
+        dy, di = _depends_block(hc, float(_load_config().get("depends_coverage_min", 0) or 0))
+        yellow.extend(dy)
+        info.extend(di)
+
+    # 2c. 工具自測（config tool_selftests[]）：壞依賴／壞接線／壞哨兵都要在一週內浮出
+    sr, si, selftests = _selftests_block(_load_config().get("tool_selftests") or [], CODE_DIR)
+    red.extend(sr)
+    info.extend(si)
+    # 2d. 對帳閘預算用完放行（舊 overflow 紀錄）＋擋滿後使用者放行
+    red.extend(_reconcile_overflow_block(FRESH_DAYS))
+    red.extend(_user_release_block(FRESH_DAYS))
+    # 2d'. config 內建 PYTEST／PYTEST_MEASURE regex 停在舊版（只更新 hooks、沒對 config 的機器）
+    yellow.extend(_pytest_regex_block(_load_config()))
 
     # 3/4. 索引一致性
     for name, args in (
@@ -308,8 +577,20 @@ def collect() -> dict:
     else:
         red.append(f"episodic 有 generated 事件但找不到近期產物——寫檔或路徑異常；{ep_summary}")
 
+    # 7. 來源防腐：Source 指到 session、transcript 還在、距今 ≥ anti_rot_days、尚無 Quote → 搶在 transcript 清掉前補原句
+    try:
+        prov_cfg = (_load_config().get("provenance") or {})
+        if prov_cfg.get("enabled", True):
+            n_fixed, n_cand, err = _provenance_anti_rot(now, int(prov_cfg.get("anti_rot_days", 25)))
+            if err:
+                yellow.append(f"來源防腐執行失敗：{err[:200]}")
+            elif n_cand:
+                info.append(f"來源防腐：{n_cand} 顆快到期的 session 來源補原句，成功 {n_fixed}")
+    except Exception as e:
+        yellow.append(f"來源防腐例外：{type(e).__name__}: {e}")
+
     return {"at": now.isoformat(timespec="seconds"), "red": red,
-            "yellow": yellow, "info": info,
+            "yellow": yellow, "info": info, "selftests": selftests,
             "last_session": last_session.isoformat(timespec="seconds") if last_session else None}
 
 
@@ -326,8 +607,7 @@ def write_report(result: dict) -> Path:
         if not items:
             lines.append("- ✓ 無")
         lines.append("")
-    with open(path, "w", encoding="utf-8", newline="\n") as _f:
-        _f.write("\n".join(lines))
+    path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
     # 輪替：保留最近 KEEP_REPORTS 份
     reports = sorted(REPORT_DIR.glob("health-*.md"))
     for old in reports[:-KEEP_REPORTS]:
@@ -338,12 +618,12 @@ def write_report(result: dict) -> Path:
 def main() -> int:
     result = collect()
     report = write_report(result)
-    with open(LAST_RUN, "w", encoding="utf-8", newline="\n") as _f:
-        _f.write(json.dumps({
+    LAST_RUN.write_text(json.dumps({
         "at": result["at"], "red": len(result["red"]),
         "yellow": len(result["yellow"]),
+        "selftests_failed": sum(1 for s in result.get("selftests") or [] if s.get("status") != "skipped" and not s.get("ok")),
         "report": str(report),
-    }, ensure_ascii=False))
+    }, ensure_ascii=False), encoding="utf-8", newline="\n")
     if "--json" in sys.argv:
         print(json.dumps(result, ensure_ascii=False, indent=1))
     else:
@@ -354,8 +634,8 @@ def main() -> int:
 
 # REGISTER（一次性，已由安裝流程執行；重灌時照抄）：
 #   schtasks /Create /TN "Claude-Memory-WeeklyHealth" /SC WEEKLY /D MON /ST 09:00
-#     /TR "C:/Python312/pythonw.exe
-#          C:/Users/wellstseng/.claude/tools/health-weekly.py"
+#     /TR "%USERPROFILE%/AppData/Local/Python/bin/pythonw.exe
+#          %USERPROFILE%/.claude/tools/health-weekly.py"
 # 錯過排程（關機）→ 下次開機由 Task Scheduler 設定補跑；SessionStart 死人開關兜底。
 if __name__ == "__main__":
     sys.exit(main())

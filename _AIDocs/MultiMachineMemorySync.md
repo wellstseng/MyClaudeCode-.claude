@@ -8,7 +8,7 @@
 | 名詞 | 白話 |
 |---|---|
 | 索引三檔 | `MEMORY.md`（範疇計數表）、`_ATOM_INDEX.md`（表列 mirror）、`_atom_index.json`（機器源）。一列一 atom 的集合，不是文章 |
-| 根層衍生索引檔 | 只有 `~/.claude` 有：各層 `_INDEX.md`（`memory/<範疇>/**`、`_AIDocs/_atoms/**`；`\| Atom \| 說明 \|` 列表＋可選 `\| 子層 \| atom 數 \|` 計數表）與 `memory/_local_catalog.md`（`\| 範疇根 \| atom 數 \|` 計數表），都由 `sync-memory-index --write` 產生。兩人同範疇各加一顆就在同區塊各多一列——同一驅動以「表格文件」語意合（列表以第 0 欄為鍵聯集、計數表 o＋t−b、骨架文字逐行三方），根層 `.gitattributes` 綁定 |
+| 根層衍生索引檔 | 只有 `~/.claude` 有：各層 `_INDEX.md`（`memory/<範疇>/**`、`_AIDocs/_atoms/**`；`\| Atom \| 說明 \|` 列表＋可選 `\| 子層 \| atom 數 \|` 計數表）與 `memory/_local_catalog.md`（`\| 範疇根 \| atom 數 \|` 計數表），還有語言視圖 `memory/_by_language/_INDEX.md`（`\| 語言 \| atom 數 \|` 計數表＋每個語言一張表，表頭第一欄是語言名所以各表不撞鍵），都由 `sync-memory-index --write` 產生。兩人同範疇各加一顆就在同區塊各多一列——同一驅動以「表格文件」語意合（列表以第 0 欄為鍵聯集、計數表 o＋t−b、骨架文字逐行三方），根層 `.gitattributes` 綁定 |
 | merge driver（驅動） | git 合併某類檔案時改叫的外部程式。註冊名 `atomindex`，在 git 的 **global config**（機器級），靠 `.gitattributes`／全域 attributes 的 `merge=atomindex` 綁到檔案 |
 | stage | git index 在衝突時對同一路徑保留的三份版本：`:1` base（共同祖先）、`:2` HEAD 側、`:3` 對方側。`git ls-files -u` 列出仍未合併的 stage；**衝突是否解除看 index 有無 unmerged stage，不看工作樹有無 `<<<<<<<`** |
 | ours／theirs | git 術語：ours＝`:2`＝目前 HEAD；theirs＝`:3`。rebase 時方向反直覺，見「stage 方向矩陣」 |
@@ -32,6 +32,18 @@
 | 3. resolve 備案 | 同一支 `merge-atom-index.py --resolve` | git 已停在衝突（驅動沒裝、或衝突發生在裝好之前）。**自動觸發**：PreToolUse 段含 `git rebase --continue|merge --continue|cherry-pick --continue|commit|stash pop|stash apply` 且 `git ls-files -u` 有索引三檔 → `--resolve --cwd <repo> --quiet` → `[Guardian:IndexConflict] 已自動合併並 add 索引檔：…`／`已 stage 你解好的版本：…`／`⚠ <error 或 remaining> → 手動 python ~/.claude/tools/merge-atom-index.py --resolve`。SessionStart `_index_conflict_advisory`：repo 卡在 rebase/merge/cherry-pick 且三檔未合併 → 一行提示。**SVN**（沒有驅動可裝，只有這條備案）：段含 `svn commit|ci|resolve|resolved`（`--accept mine-full/theirs-full/base/…` 明確選邊除外）→ 純檔案系統往上找 `.svn`（不是 svn WC → 零子行程）→ 只對 memory dir 候選跑 `svn status --xml`，有 conflicted 索引三檔 → 同一支 `--resolve --cwd <cwd> --quiet`（拿 `.mine`／`.r舊`／`.r新` 跑同一套驅動、寫回、`svn resolve --accept working`）→ `[Guardian:IndexConflict] 已自動合併並 標記 resolved 索引檔：…`。`svn update` 不觸發；SessionStart 對 svn WC 看 memory dir 有無 `<檔>.mine`（零子行程） | `hooks/verify/verify_merge_driver_gate.py`（拆段分類、真 git 題、svn 拆段／觸發詞／非 svn WC 零子行程／svnadmin 本地倉 e2e／預算、`auto_*:false` 不動作、子行程卡死仍 fail-open 且總耗時 ≤2.5s）；`verify_merge_atom_index.py` e2e：無驅動 rebase 卡住 → `--resolve` → `GIT_EDITOR=true git rebase --continue` 成功；svn：兩個 wc 各加 atom → `svn up --accept postpone` 三檔 C → `--resolve` → `svn ci` 成功、另一 wc update 拿到合併結果 |
 
 `is_installed(repo_cwd)` 四項全成立才算已裝：driver command 存在；command 引號內的直譯器與腳本路徑都存在；attributes 檔含 marker 行；目標 repo 對三檔 `git check-attr merge` 回 `atomindex`。任一不成立即重裝（`install()` 先寫 attributes 再寫 config，原子替換、保留既有內容；`pythonw.exe` 換成同目錄 `python.exe`）。
+
+## 專案層第 0 層：衍生檔不進版控（`lib/vcs_ignore.py`）
+
+三層防線都是「進了版控之後怎麼合」；專案記憶庫（`{proj}/.claude/memory`）的 `_atom_index.json`／`_ATOM_INDEX.md` 根本不必進去——每筆全來自 atom 檔頭，SessionStart 缺檔即從 .md 重建（`_ATOM_INDEX.md` 缺檔亦重生）。`_staging`／`episodic`／`vector-db` 是本機暫存，同樣排除。
+
+| 動作 | 何時 | 做什麼 | 怎麼驗 |
+|---|---|---|---|
+| 設 ignore | SessionStart 偵測到專案記憶庫；索引首次落檔（`atom_index_json.save_atom_index_json`） | svn 工作副本：`svn propset svn:ignore`，併入既有值不覆蓋（屬性是本機修改，隨下次 commit 走）；git：`{mem}/.gitignore` 只補缺的行。記憶庫目錄還沒 `svn add` → 跳過、下次再試；無 VCS 零子行程 | `svn propget svn:ignore {mem}`；`git check-ignore -q {mem}/_atom_index.json` |
+| 已版控告警 | 同上，每個記憶庫每種 VCS 一次（marker `workflow/vcs-ignore.json`） | `svn status --depth empty --xml`／`git ls-files` 看五項是否仍在版控 → `[Guardian:VcsIgnore] ⚠` 附確切 `svn rm --keep-local --force "<檔>"`（排程加入未提交者 `svn revert`）／`git rm -r --cached "<檔>"`、隊友端「local edit, incoming delete」→ `svn resolve --accept working` 說明、舊版手動 `--rebuild` 救法。**絕不自動執行** | `python -m lib.vcs_ignore {mem}`（唯讀報告）；`hooks/verify/verify_vcs_ignore_derived.py`（含 svnadmin 真工作副本） |
+| IndexConflict 措辭 | SessionStart 看到 `.mine`、PreToolUse 自動解完 | 衍生索引衝突先指「正解是退出版控」＋同一套指令，自動合併列為暫時處置；只有 `MEMORY.md` 衝突維持原句 | 同上測試 §9 |
+
+根層 `~/.claude/memory` 不在範圍：根層 repo 仍版控索引三檔、靠合併驅動（上表三層）。相容：atom 格式、索引 schema、`MEMORY.md` 不動；2026-09-23 前的舊版沒有缺檔重建，救法就是告警裡那句 `sync-atom-index.py --rebuild --memory-dir <mem>`。
 
 ## config
 
@@ -180,6 +192,7 @@ svn（`svn_update_targets`，取代舊 out-of-date 重試）：先把 validated 
 - **SVN 只掃 memory dir 候選**（walk-up `.claude/memory`、WC 根的 `memory/`、登記專案）：記憶樹放在候選之外的位置不會被看到（手動 `--resolve --cwd <該 memory dir>` 可解）。
 - **SVN 沒有 stage 可重建原始衝突輸出**：工作檔仍含 `<<<<<<<` 就視為未動過並覆蓋——人解到一半又留著標記的版本會被驅動結果蓋掉（git 分支會辨識、svn 不會）。解到一半請先把標記清乾淨再下 `svn commit`。
 - **SVN tree／property conflict** 不處理（只認 `<conflict type="text">`）。
+- **`svn:ignore`／`.gitignore` 對已版控檔無效**：第 0 層只告警、不自動 `svn rm`／`git rm`；退出版控是人的動作，告警每個記憶庫只出一次（marker），之後靠 IndexConflict 訊息提醒。
 - **TortoiseSVN 留下的衝突檔命名未實測**（CLI 為 `.mine/.rN`）；實作路徑取自 `svn info --xml`，不依賴檔名，理論上同樣可解。
 - **`svn:eol-style` 只設在已版控檔上**：剛寫入、尚未 `svn add` 的 atom 在下一次記憶寫入時補上（樹內轉 LF 不受此限）。
 - 專案樹 LF 自動化只在**專案模式 `--write` 走到**時發生：第一次啟用本版後要有一次 atom 寫入（或手動 `--auto`）才會落 `.gitattributes`／屬性。
@@ -195,7 +208,7 @@ svn（`svn_update_targets`，取代舊 out-of-date 重試）：先把 validated 
 - **為何全 repo LF 而非只釘三檔**：混合行尾的來源是寫檔工具的平台預設，只釘三檔擋不住下一個被寫成 CRLF 的檔；統一規則後 `--check` 一條命令就能巡完。
 - **為何專案樹 LF 掛在 atom 寫入漏斗尾端而不是 pull 前或 SessionStart**：pull 前製造未提交變更會讓 `git pull --rebase` 拒絕（unstaged changes）；SessionStart 每次都付成本且與「合併時才需要」無關；掛在寫入後，第一次動整棵樹、之後為零，改動跟著本來就要提交的記憶批次走，使用者零動作。
 - **為何 SVN 用 `svn info --xml` 取三份輸入而不猜 `.rN` 檔名**：版號不需解析、TortoiseSVN 或未來 svn 版本改命名也不受影響；一次呼叫可帶多個 target，仍在 hook 預算內（實測 memory dir 的 status 0.2s＋info 0.2s＋resolve 0.1s）。
-- **為何 SVN 只掃 memory dir 候選**：`svn status` 對整個工作副本是 O(檔數)，本機 d:\MyDev 要 5.6 秒、c:\Projects\Tools 2.9 秒，直接爆掉 2.5 秒預算；索引三檔只會在記憶樹裡。
+- **為何 SVN 只掃 memory dir 候選**：`svn status` 對整個工作副本是 O(檔數)，本機某個 svn 工作副本要 5.6 秒、另一個（某專案的 Tools 目錄）2.9 秒，直接爆掉 2.5 秒預算；索引三檔只會在記憶樹裡。
 
 ## 驗證方法
 

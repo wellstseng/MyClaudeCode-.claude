@@ -19,9 +19,9 @@ from pathlib import Path
 HOOKS_DIR = Path(__file__).resolve().parent.parent  # hooks/verify/ → hooks/
 sys.path.insert(0, str(HOOKS_DIR))
 
-from wg_core import check_cross_realm_write, check_cross_realm_mcp_cmd  # noqa: E402
+from wg_core import CLAUDE_DIR, check_cross_realm_write, check_cross_realm_mcp_cmd  # noqa: E402
 
-HOME_CLAUDE = Path.home() / ".claude"
+HOME_CLAUDE = CLAUDE_DIR   # 核心根＝資料根（一般安裝就是 ~/.claude；測試隔離下是暫存根）
 PROJ = "C:/FakeProj/game-x" if sys.platform == "win32" else "/tmp/fakeproj/game-x"
 CFG_ON = {"guard": {"cross_realm_write": {"enabled": True, "allowlist": []}}}
 
@@ -32,7 +32,7 @@ def _w(path) -> dict:
 
 def test_project_session_write_tools_denied():
     msg = check_cross_realm_write(
-        "Write", _w(HOME_CLAUDE / "tools" / "sgi-introspect-ui.cs"), PROJ, CFG_ON)
+        "Write", _w(HOME_CLAUDE / "tools" / "gamea-introspect-ui.cs"), PROJ, CFG_ON)
     assert msg and "CrossRealmWriteBlock" in msg
 
 
@@ -79,9 +79,9 @@ def test_disabled_config_allows():
 
 def test_allowlist_substring_allows():
     cfg = {"guard": {"cross_realm_write": {
-        "enabled": True, "allowlist": ["tools/sgi-"]}}}
+        "enabled": True, "allowlist": ["tools/gamea-"]}}}
     assert check_cross_realm_write(
-        "Write", _w(HOME_CLAUDE / "tools" / "sgi-x.cs"), PROJ, cfg) is None
+        "Write", _w(HOME_CLAUDE / "tools" / "gamea-x.cs"), PROJ, cfg) is None
     # allowlist 未命中者仍擋
     assert check_cross_realm_write(
         "Write", _w(HOME_CLAUDE / "tools" / "other.cs"), PROJ, cfg) is not None

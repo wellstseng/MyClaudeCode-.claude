@@ -152,6 +152,24 @@ def test_restore_from_distant_upserts_index(tmp_path):
     assert entries["baz"]["triggers"] == ["alpha", "beta", "gamma"]
 
 
+def test_restore_refuses_card_with_narrative_date(tmp_path):
+    """codex 審 date-gate 001 BLOCK 3：_distant 不受 lint 掃，恢復會把帶敘事日期的舊卡重新放進索引；
+    恢復前過同一日期閘（KNOWLEDGE_LINE_NO_NARRATIVE_DATE），拒絕時不搬檔、不動索引、指路 --fix。"""
+    mem = tmp_path / "memory"
+    distant = mem / "_distant" / "2026_01"
+    distant.mkdir(parents=True)
+    src = distant / "dated.md"
+    text = ATOM_BODY.format(name="dated").replace("- 內容一則", "- 實踩（2026-10-14）：內容一則")
+    src.write_text(text, encoding="utf-8")
+    ok, msg = MA.restore_from_distant(src)
+    assert not ok
+    assert "KNOWLEDGE_LINE_NO_NARRATIVE_DATE" in msg and "實踩（2026-10-14）" in msg, msg
+    assert "atom-date-lint.py --fix --path" in msg, msg
+    assert src.read_text(encoding="utf-8") == text and not (mem / "dated.md").exists()
+    from lib.atom_index_json import load_atom_index_json
+    assert not any(a["name"] == "dated" for a in load_atom_index_json(mem)["atoms"])
+
+
 # ─── 4. parse_memory_index：範疇聚合表不產 entry ──────────────────────────────
 
 
@@ -351,3 +369,25 @@ def test_enforce_recent_atom_is_not_a_candidate(tmp_path, monkeypatch, capsys):
     out = _enforce(mem, monkeypatch, dry_run=False, capsys=capsys)
     assert "No archive candidates" in out, out
     assert md.exists()
+
+
+def test_restore_from_local_subfolder_distant_goes_to_global_index(tmp_path, monkeypatch):
+    """_AIDocs/_atoms/<範疇>/<子夾>/_distant 拉回的卡要登進全域 memory/_atom_index.json，
+    不能在子夾裡生一份假索引（2026-10-29 復活 30 張總控台卡時實遇）。"""
+    root = tmp_path / "claude"
+    mem = root / "memory"
+    mem.mkdir(parents=True)
+    monkeypatch.setattr(MA, "CLAUDE_DIR", root)
+    monkeypatch.setattr(MA, "GLOBAL_MEMORY_DIR", mem)
+    sub = root / "_AIDocs" / "_atoms" / "MemDev" / "子夾"
+    distant = sub / "_distant" / "2026_10"
+    distant.mkdir(parents=True)
+    src = distant / "qux.md"
+    src.write_text(ATOM_BODY.format(name="qux"), encoding="utf-8")
+    ok, msg = MA.restore_from_distant(src)
+    assert ok, msg
+    assert (sub / "qux.md").exists()
+    assert not (sub / "_atom_index.json").exists() and not (sub / "_ATOM_INDEX.md").exists()
+    from lib.atom_index_json import load_atom_index_json
+    entries = {a["name"]: a for a in load_atom_index_json(mem)["atoms"]}
+    assert entries["qux"]["path"] == "_AIDocs/_atoms/MemDev/子夾/qux.md"

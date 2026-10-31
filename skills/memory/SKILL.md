@@ -34,8 +34,8 @@ description: 原子記憶系統綜合工具 — health/review/score 三主力 + 
    ```bash
    python ~/.claude/tools/classify-project-scope.py plan
    ```
-   輸出 JSON：`personal[]`（每顆 personal 存量：slug／owner／第一句／`suggest` shared|personal／理由）、`index`（scope 錯標、懸空、trigger 漂移數）、`shared_flat`、`classified`。
-2. **問使用者（唯一要人判的一步）**：把 `personal[]` 做成表（編號｜第一句摘要｜建議去向），用 AskUserQuestion 問「照建議／有例外列編號」。去向四選一：`shared`（專案規則，Author 記提出者）／`personal`（留本人×專案）／`cross_project`（本人跨專案，搬到 `~/.claude/memory/personal/<user>/`）／`reject`（一次性任務，移 `_rejected/`）。先用兩三句白話說明這次改動：personal 只給本人、專案規則要進 shared 別人才看得到、他專案的記憶不再注入。
+   輸出 JSON：`personal[]`（每顆 personal 存量：slug／owner／第一句／`suggest` shared|personal|review／理由／`hits` 命中的線索詞；review＝只命中「此專案／必須／上傳」這類線索詞，疑似專案專屬，去向由使用者判）、`index`（scope 錯標、懸空、trigger 漂移數）、`shared_flat`、`classified`。
+2. **問使用者（唯一要人判的一步）**：把 `personal[]` 做成表（編號｜第一句摘要｜建議去向），用 AskUserQuestion 問「照建議 (Recommended)／有例外列編號」。去向四選一：`shared`（專案規則，Author 記提出者）／`personal`（留本人×專案）／`cross_project`（本人跨專案，搬到 `~/.claude/memory/personal/<user>/`）／`reject`（一次性任務，移 `_rejected/`）。先用兩三句白話說明這次改動：personal 只給本人、專案規則要進 shared 別人才看得到、他專案的記憶不再注入。
 3. **apply（腳本）**：把決定寫成 `{slug: 去向}` JSON 檔（放 scratchpad），
    ```bash
    python ~/.claude/tools/classify-project-scope.py apply --decisions <file> --dry-run   # 先看
@@ -106,7 +106,7 @@ description: 原子記憶系統綜合工具 — health/review/score 三主力 + 
 
    **可選快路徑**（僅當 dashboard :3848 已開且確認跑新碼）：`POST http://127.0.0.1:3848/api/heal-all` 一次背景批修全部 broken_refs（走 server `healRunner` 併發、回 202 `{started,count,pending}`）。⚠️ live :3848 可能是**孤兒舊碼**（`/api/heal-all` 路由非新增、舊碼不會 404 而是靜默跑舊行為）→ 用前先確認新碼上線（見 atom [[guardian-dashboard-孤兒佔埠與新碼重啟]]）；不確定就用上面 CLI。
 
-   L1 反向連結**不在此處理** — SessionEnd `atom-health-check --fix-refs` 已全庫機械補齊，此處只治 L2 死連結，別重覆跑。
+   單向連結**不必補** — 反向由索引在注入時反轉（`wg_atoms.load_link_graph`），不寫進被連的那顆檔；此處只治 L2 死連結。
 
 ### peek → 自動萃取檢視（僅歷史殘留）
 

@@ -12,9 +12,11 @@
 
 | 子層 | atom 數 | 深入 |
 |------|---------|------|
-| CC與原子記憶契約 | 3 | `memory/Failures/CC與原子記憶契約/_INDEX.md` |
-| 工作流 | 7 | `memory/Failures/工作流/_INDEX.md` |
-| 思考與決策 | 6 | `memory/Failures/思考與決策/_INDEX.md` |
-| 版控 | 1 | `memory/Failures/版控/feedback-上git是commit加push一體-沒口令前不先commit-讓使用者能先看diff.md` |
-| 行為契約 | 11 | `memory/Failures/行為契約/_INDEX.md` |
-| 驗證與實證 | 5 | `memory/Failures/驗證與實證/_INDEX.md` |
+| CC與原子記憶契約 | 4 | `memory/Failures/CC與原子記憶契約/_INDEX.md` |
+| 工作流 | 13 | `memory/Failures/工作流/_INDEX.md` |
+| 思考與決策 | 18 | `memory/Failures/思考與決策/_INDEX.md` |
+| 文字與格式 | 5 | `memory/Failures/文字與格式/_INDEX.md` |
+| 版控 | 2 | `memory/Failures/版控/_INDEX.md` |
+| 行為契約 | 23 | `memory/Failures/行為契約/_INDEX.md` |
+| 設計通則 | 4 | `memory/Failures/設計通則/_INDEX.md` |
+| 驗證與實證 | 13 | `memory/Failures/驗證與實證/_INDEX.md` |

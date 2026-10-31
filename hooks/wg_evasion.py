@@ -16,10 +16,14 @@ import json
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Pattern, Tuple
+from wg_lazy_re import lazy_re  # 模組層樣式第一次用到才編譯（HOOK_IMPORT_ON_USE）
+
+from wg_core import MEMORY_DIR, user_typed_prompts
 
 
-_TEST_CMD_RE = re.compile(
+_TEST_CMD_RE = lazy_re(
     r"(?:^|\s)(?:pytest|python\s+-m\s+pytest|npm\s+(?:run\s+)?test|jest|node\s+--check|tsc|go\s+test|cargo\s+test)(?:\s|$)"
+    r"|run_verify\.py"
 )
 
 _FAILURE_PATTERNS = [
@@ -31,12 +35,15 @@ _FAILURE_PATTERNS = [
     re.compile(r"Tests:\s+[1-9]\d*\s+failed"),
     re.compile(r"^---\s+FAIL:", re.MULTILINE),
     re.compile(r"test result:\s+FAILED"),
+    re.compile(r"^[A-Z][A-Z0-9_]*_CHECK FAIL\b", re.MULTILINE),   # 哨兵規矩：<NAME>_CHECK FAIL 就是失敗
+    # pytest 摘要行的 error（fixture／collection 出錯）：`1 error in 0.1s`、`1 passed, 2 errors in 0.5s`；0 errors 不算
+    re.compile(r"\b[1-9]\d*\s+errors?\b[^\n]*\bin\s+\d+(?:\.\d+)?s\b"),
 ]
 
 
 # ─── phrase loader (single source = memory/_meta/forbidden-phrases.json) ──
 
-_PHRASES_JSON = Path.home() / ".claude" / "memory" / "_meta" / "forbidden-phrases.json"
+_PHRASES_JSON = MEMORY_DIR / "_meta" / "forbidden-phrases.json"
 
 
 _FALLBACK_EVASION_PATTERNS = [
@@ -55,9 +62,11 @@ _FALLBACK_DEFERRAL_PATTERNS = [
     r"非我(?:造成|所改|之過|引起)", r"獨立議題", r"另案(?:處理)?", r"遺留(?:議題|項目|事項)",
     r"next\s+session",
 ]
-_FALLBACK_DEFERRAL_USER_OK_PATTERNS = [
-    r"(?:下|新|另開|另一個)\s*(?:個|一個)?\s*session\s*(?:再|才|做|處理|弄)",
-    r"留(?:到|給)\s*(?:下|新|之後)",
+_FALLBACK_CONTEXT_EXEMPT_PATTERNS = [
+    r"下\s*(?:個|一個|一)?\s*session",
+    r"(?:新|另開|另一個|後續|之後的?)\s*session",
+    r"(?:下次|下回|下一次|之後)\s*再",
+    r"next\s+session",
 ]
 _FALLBACK_DISMISS_PATTERNS = [
     r"先這樣", r"留著", r"不用管", r"不要管", r"跳過", r"先跳過",
@@ -77,7 +86,7 @@ _FALLBACK_SCAN_REPORT_PATTERNS = [
     r"需另開\s*session", r"列入\s*handoff",
 ]
 _FALLBACK_COMPLETION_PATTERNS = [
-    r"完成", r"已解決", r"全部做完", r"總結", r"收尾",
+    r"完成", r"已解決", r"全部做完", r"做完了(?!嗎)", r"總結", r"收尾",
     r"done", r"finished", r"all\s+set", r"wrapped\s+up",
     r"大功告成", r"搞定",
 ]
@@ -87,26 +96,85 @@ _FALLBACK_COMPLETION_EXCLUDE = [
     r"(?:完成|做完|解決|收尾|搞定|完工|結案)[^，。！？\n]{0,6}(?:尚未|還沒|還未|未完|沒完|未滿足|沒做完|未達|待補|待修)",
     r"待(?:補|修|辦|處理|確認|完善)",
 ]
+# 收尾對帳（wg_verify_ledger）用的三類宣稱：說「修好」要對 PASS、說「量了」要對 DONE、說「試過」要對執行工具。
+# 詞表單一來源 forbidden-phrases.json 的 fixed_claim／measured_claim／tried_claim（各帶 exclude_patterns）；缺段退回這裡。
+_FALLBACK_FIXED_CLAIM = [
+    r"修好", r"已修復", r"修復(?:完成|了|好)", r"修正(?:完成|了|好)", r"已修正", r"修掉了", r"補好了", r"\bfixed\b",
+]
+# 否定／疑問只取消同一子句（wg_verify_ledger._claims 以子句為單位）；英文否定與問號也算
+_CLAIM_EXCLUDE_COMMON = [
+    r"\bnot\b", r"\bisn't\b", r"\bhasn't\b", r"\bwasn't\b", r"\bnever\b", r"\bunfixed\b",
+    r"[?？]\s*$", r"嗎",
+]
+def _conditional_excludes(verbs: str) -> List[str]:
+    """規則 CLAIM_CONDITIONAL_NOT_CLAIM：講以後的條件句不是宣稱——如果／一旦／等到…<動詞>、緊貼的「等<動詞>」、
+    <動詞>之後／以後…再／一起／才／就／會／要（子句後段有了／過就不算條件：「修好之後重跑了」照算宣稱）。
+    正本在 forbidden-phrases.json，這裡是缺段時的備用。"""
+    return [rf"(?:(?:如果|假如|要是|一旦|等到|若(?!干))[^，。！？\n]{{0,12}}|等){verbs}",
+            rf"{verbs}[^，。！？\n]{{0,3}}(?:之後|以後)(?![^，。！？\n]*[了過])[^，。！？\n]{{0,10}}(?:再|一起|才|就|會|要)"]
 
 
-def _load_phrases() -> Dict[str, List[str]]:
-    """Read forbidden-phrases.json → {evasion, dismiss, scan_report, completion} pattern lists.
+_FALLBACK_FIXED_EXCLUDE = [
+    *_conditional_excludes("(?:修好|修復|修正|修掉|補好)"),
+    r"(?:還沒|還未|尚未|沒有?|未|無法|不能|不會|不算|不是|沒能)[^，。！？\n]{0,6}(?:修好|修復|修正|修掉|補好)",
+    r"(?:修好|修復|修正)[^，。！？\n]{0,4}(?:之前|前|嗎|沒|了沒)",
+    r"(?:要|該|怎麼|如何|待|請|先|再|去)\s*(?:修好|修復|修正)",
+    *_CLAIM_EXCLUDE_COMMON,
+]
+_FALLBACK_MEASURED_CLAIM = [
+    r"量了", r"量過", r"量測(?:完|過|了|完成)", r"已量", r"量尺(?:跑|量)(?:過|了)", r"實測(?:了|過|結果|數據)",
+    r"\bmeasured\b", r"\bbenchmark(?:ed)?\b",
+]
+_FALLBACK_MEASURED_EXCLUDE = [
+    *_conditional_excludes("(?:量|實測)"),
+    r"(?:還沒|還未|尚未|沒有?|未|無法|不能|沒能)[^，。！？\n]{0,6}(?:量|測)",
+    r"(?:要|該|再|先|請|去|會)\s*(?:量|實測)",
+    *_CLAIM_EXCLUDE_COMMON,
+]
+_FALLBACK_TRIED_CLAIM = [
+    r"【試過】", r"試過", r"試了", r"試跑(?:了|過)?", r"跑(?:了|過)", r"執行(?:了|過)", r"實跑(?:了|過)",
+    r"\btried\b", r"\bran\s+(?:it|the|them)\b",
+]
+_FALLBACK_TRIED_EXCLUDE = [
+    *_conditional_excludes("(?:試|跑|執行)"),
+    r"(?:還沒|還未|尚未|沒有?|未|不曾|無法|不能|沒能)[^，。！？\n]{0,4}(?:試|跑|執行)",
+    r"(?:試|跑|執行)[^，。！？\n]{0,3}(?:之前|前|看看|嗎|了沒)",
+    r"(?:要|該|再|先|會|請|建議|去)\s*(?:試|跑|執行)",
+    *_CLAIM_EXCLUDE_COMMON,
+]
+_CLAIM_KINDS = (
+    ("fixed", "fixed_claim", _FALLBACK_FIXED_CLAIM, _FALLBACK_FIXED_EXCLUDE),
+    ("measured", "measured_claim", _FALLBACK_MEASURED_CLAIM, _FALLBACK_MEASURED_EXCLUDE),
+    ("tried", "tried_claim", _FALLBACK_TRIED_CLAIM, _FALLBACK_TRIED_EXCLUDE),
+)
+
+
+def _load_phrases(path: Optional[Path] = None) -> Dict[str, List[str]]:
+    """Read forbidden-phrases.json → {evasion, dismiss, scan_report, completion, fixed, measured, tried…} pattern lists.
 
     Any read/parse error → empty dict (caller falls back to hardcoded constants).
     """
     try:
-        data = json.loads(_PHRASES_JSON.read_text(encoding="utf-8"))
+        data = json.loads((path or _PHRASES_JSON).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
+    return _extract_phrases(data)
+
+
+def _extract_phrases(data: Dict[str, Any]) -> Dict[str, Any]:
     evasion: List[str] = []
     deferral: List[str] = []
+    cats: List[Dict[str, Any]] = []          # 每類 {id, label, exception, patterns}：exception 文字給不做行的提示用（規則 NOT_DOING_DECLARED）
     for cat in data.get("categories", []) or []:
-        for p in cat.get("patterns", []) or []:
-            if p:
-                evasion.append(p)
-                if cat.get("id") == "deferral-attribution":
-                    deferral.append(p)
-    deferral_user_ok = list(data.get("deferral_user_ok", {}).get("patterns", []) or [])
+        pats = [p for p in (cat.get("patterns", []) or []) if p]
+        if not pats:
+            continue
+        evasion += pats
+        if cat.get("id") == "deferral-attribution":
+            deferral += pats
+        cats.append({"id": str(cat.get("id") or ""), "label": str(cat.get("label") or ""),
+                     "exception": str(cat.get("exception") or ""), "patterns": pats})
+    context_exempt = list(data.get("context_exempt_deferral", {}).get("patterns", []) or [])
     dismiss = list(data.get("dismiss_keywords", {}).get("patterns", []) or [])
     scan_report = list(data.get("scan_report_markers", {}).get("patterns", []) or [])
     completion_claim = data.get("completion_claim", {}) or {}
@@ -114,15 +182,23 @@ def _load_phrases() -> Dict[str, List[str]]:
     completion_exclude = list(
         (completion_claim.get("exclude_patterns", {}) or {}).get("patterns", []) or []
     )
-    return {
+    out = {
         "evasion": evasion or _FALLBACK_EVASION_PATTERNS,
         "dismiss": dismiss or _FALLBACK_DISMISS_PATTERNS,
         "scan_report": scan_report or _FALLBACK_SCAN_REPORT_PATTERNS,
         "completion": completion or _FALLBACK_COMPLETION_PATTERNS,
         "completion_exclude": completion_exclude or _FALLBACK_COMPLETION_EXCLUDE,
         "deferral": deferral or _FALLBACK_DEFERRAL_PATTERNS,
-        "deferral_user_ok": deferral_user_ok or _FALLBACK_DEFERRAL_USER_OK_PATTERNS,
+        "context_exempt": context_exempt or _FALLBACK_CONTEXT_EXEMPT_PATTERNS,
+        "categories": cats,
     }
+    for kind, section, fb_pos, fb_neg in _CLAIM_KINDS:
+        sec = data.get(section) or {}
+        pos = list(sec.get("patterns", []) or []) if isinstance(sec, dict) else []
+        neg = list(((sec.get("exclude_patterns") or {}) if isinstance(sec, dict) else {}).get("patterns", []) or [])
+        out[kind] = pos or fb_pos
+        out[f"{kind}_exclude"] = neg or fb_neg
+    return out
 
 
 def _compile_union(patterns: List[str], flags: int = 0) -> Pattern:
@@ -150,9 +226,43 @@ _COMPLETION_EXCLUDE_RE = _compile_union(
 _DEFERRAL_RE = _compile_union(
     _phrases.get("deferral") or _FALLBACK_DEFERRAL_PATTERNS, re.IGNORECASE
 )
-_DEFERRAL_USER_OK_RE = _compile_union(
-    _phrases.get("deferral_user_ok") or _FALLBACK_DEFERRAL_USER_OK_PATTERNS, re.IGNORECASE
+_CONTEXT_EXEMPT_RE = _compile_union(
+    _phrases.get("context_exempt") or _FALLBACK_CONTEXT_EXEMPT_PATTERNS, re.IGNORECASE
 )
+# 每類退避語各自的 regex（找命中詞屬哪一類，拿它的 exception 文字給不做行提示）；json 讀不到 → 空清單，提示用通用字句
+_EVASION_CATS: List[Tuple[Dict[str, Any], Pattern]] = [
+    (c, _compile_union(c["patterns"])) for c in (_phrases.get("categories") or [])
+]
+
+
+def evasion_category(phrase: str) -> Dict[str, str]:
+    """命中的退避詞屬 forbidden-phrases.json 哪一類：{id, label, exception}；判不出回空欄。"""
+    for cat, rx in _EVASION_CATS:
+        if phrase and rx.search(phrase):
+            return {"id": cat["id"], "label": cat["label"], "exception": cat["exception"]}
+    return {"id": "", "label": "", "exception": ""}
+
+
+def is_context_exempt_phrase(phrase: str) -> bool:
+    """命中的退避詞是不是可以靠 context 豁免的延後語（延後到下個／新 session、之後／下次再；規則 EVASION_CONTEXT_EXEMPT）。"""
+    return bool(phrase) and bool(_CONTEXT_EXEMPT_RE.search(phrase))
+
+
+def _claim_regexes(ph: Dict[str, List[str]]) -> Dict[str, Pattern]:
+    out: Dict[str, Pattern] = {}
+    for kind, _section, fb_pos, fb_neg in _CLAIM_KINDS:
+        out[kind] = _compile_union(ph.get(kind) or fb_pos, re.IGNORECASE)
+        out[f"{kind}_exclude"] = _compile_union(ph.get(f"{kind}_exclude") or fb_neg, re.IGNORECASE)
+    return out
+
+
+def compile_claim_phrases(path: Optional[Path] = None) -> Dict[str, Pattern]:
+    """fixed／measured／tried 三類宣稱 regex（含 exclude）。path 給 fixture 詞表檔；None 用模組載入的詞表。"""
+    return _claim_regexes(_load_phrases(path) if path else _phrases)
+
+
+# wg_verify_ledger.claims_fixed／claims_measured／claims_tried 的預設詞表
+CLAIM_RES: Dict[str, Pattern] = _claim_regexes(_phrases)
 
 
 def is_test_command(cmd: str) -> bool:
@@ -164,35 +274,57 @@ def tail_lines(s: str, n: int) -> str:
     return "\n".join(lines[-n:])
 
 
+_FAILED_NODE_LINE_RE = lazy_re(r"^(?:FAILED|ERROR)\s+\S+")
+FAILED_LINES_CAP = 200          # 與 wg_release_rules.RED_CASES_CAP 同值（那邊 import 這個模組，不能反向引用）；超過就標清單不完整
+INCOMPLETE_NOTE = "(清單不完整：FAILED／ERROR 行超過 {cap} 支，只記前 {cap} 支；結算行的數字對不上就不拿這份清單清帳)"
+
+
+def failure_summary(combined: str, tail: int = 20) -> str:
+    """紅測摘要：所有 FAILED／ERROR 節點行（去重保序，上限 FAILED_LINES_CAP）＋最後 tail 行（含結算行）。舊寫法只取尾 20 行：
+    20 支 FAILED＋結算行＝21 行，第一支被切掉、永遠不在帳上 → 綠了清不乾淨、逼人重跑整個範圍（2026-10-27 實踩）。
+    超過上限時尾端加一行清單不完整的註記（red_case_facts 看結算數字對不上也會判不完整）。"""
+    lines = [l for l in (combined or "").splitlines() if l.strip()]
+    nodes = list(dict.fromkeys(l for l in lines if _FAILED_NODE_LINE_RE.match(l)))
+    over = len(nodes) > FAILED_LINES_CAP
+    tail_part = [l for l in lines[-tail:] if not (over and _FAILED_NODE_LINE_RE.match(l))]   # 超限：尾段的節點行也不收，上限才是上限
+    kept = dict.fromkeys([*nodes[:FAILED_LINES_CAP], *tail_part])
+    return "\n".join([*kept, *([INCOMPLETE_NOTE.format(cap=FAILED_LINES_CAP)] if over else [])])
+
+
 def detect_test_failure(
     stdout: str, stderr: str, interrupted: bool
 ) -> Optional[str]:
-    """Return last-20-lines summary if failure detected, else None."""
+    """失敗就回摘要（failure_summary：全部 FAILED／ERROR 節點行＋尾 20 行），沒失敗回 None。"""
     combined = (stdout or "") + "\n" + (stderr or "")
     if interrupted:
-        return tail_lines(combined, 20) or "(interrupted, no output)"
+        return failure_summary(combined) or "(interrupted, no output)"
     for pat in _FAILURE_PATTERNS:
         if pat.search(combined):
-            return tail_lines(combined, 20)
+            return failure_summary(combined)
     return None
 
 
+_COMPLETION_SENTENCE_SPLIT_RE = lazy_re(r"[。！？!?\n]")
+# 同 forbidden-phrases.json completion_claim 排除詞裡講「這則之後工作還在繼續」的三條（仍在等、等待…回報、尚未開始）：
+# 是整則的狀態，有一處整則就不算宣告完成；其餘排除詞（否定緊鄰完成詞、待補、中途、進行中）只取消它自己那一句
+_COMPLETION_PENDING_RE = lazy_re(r"(?:仍在|還在|正在)\s*等|等待[^，。！？\n]{0,12}(?:回報|結果|回來|回覆)|(?:尚未|還沒|還未)\s*開始")
+
+
 def claims_completion(text: str) -> bool:
-    """終結宣告偵測。命中完成詞後，若鄰近有進行式/否定修飾
-    （還沒/尚未/未…完成、完成…尚未 等）→ 非真正終結，排除。
-    偏 false-negative（少判完成→少誤阻）符合契約鬆綁方向。
-    """
+    """終結宣告偵測（規則 COMPLETION_CLAIM_PER_SENTENCE）：最後 2000 字裡有「這則之後工作還在繼續」的話（仍在等、等待…回報、
+    尚未開始）→ 整則不算；否則逐句看，有一句有完成詞、而那一句本身沒有排除詞（還沒／尚未…完成、完成…尚未、待補、中途、進行中）
+    就算。這幾個排除詞只取消它自己那一句：描述過程的「中途被擋了兩次」不讓另一句「三件都做完了」跟著不算。句界＝句號、驚嘆號、
+    問號、換行；逗號、分號不切（「A1 完成，中途還卡著兩件」是同一句）。偏 false-negative。"""
     if not text:
         return False
     tail = text[-2000:]
-    if not _COMPLETION_CLAIM_RE.search(tail):
+    if _COMPLETION_PENDING_RE.search(tail):
         return False
-    if _COMPLETION_EXCLUDE_RE.search(tail):
-        return False
-    return True
+    return any(_COMPLETION_CLAIM_RE.search(s) and not _COMPLETION_EXCLUDE_RE.search(s)
+               for s in _COMPLETION_SENTENCE_SPLIT_RE.split(tail))
 
 
-_QUOTED_SPAN_RE = re.compile(r"「[^「」]{0,200}」|『[^『』]{0,200}』|`[^`\n]{0,200}`")
+_QUOTED_SPAN_RE = lazy_re(r"「[^「」]{0,200}」|『[^『』]{0,200}』|`[^`\n]{0,200}`")
 
 
 def strip_quoted_spans(text: str) -> str:
@@ -206,52 +338,95 @@ def strip_quoted_spans(text: str) -> str:
     return _QUOTED_SPAN_RE.sub(lambda m: " " * len(m.group(0)), text)
 
 
-def detect_evasion(text: str, recent_user_prompts: List[str]) -> Optional[Dict[str, str]]:
-    """Return {phrase, context_excerpt} or None.
+def _audit_once(audit: Optional[List[Dict[str, Any]]], phrase: str, v: Any) -> None:
+    """同一條不做行解掉幾個退避詞只留一筆（抽查帳以事項為單位，不以詞為單位）。"""
+    if audit is None:
+        return
+    line = v.evidence[0] if v.evidence else ""
+    if any(a.get("line") == line and a.get("rule") == v.rule for a in audit):
+        return
+    audit.append({"phrase": phrase, "rule": v.rule, "why": v.why, "line": line})
 
-    Escape hatch: 若近 3 則 user prompt 有明確豁免關鍵字 → 不標記。
+
+def _line_at(text: str, idx: int) -> str:
+    """idx 所在的那一行（不做行的對應以行為單位：事項與理由常被句號切開）。"""
+    s = text.rfind("\n", 0, idx) + 1
+    e = text.find("\n", idx)
+    return text[s: e if e >= 0 else len(text)]
+
+
+def detect_evasion(text: str, recent_user_prompts: List[str],
+                   audit: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:
+    """Return {phrase, context_excerpt, category, hint} or None.
+
+    LLM 介入的入口（規則 NOT_DOING_DECLARED）：命中的那一行若對到一條有理由的「不做｜<哪一件>：<理由>」，
+    或「追蹤｜…」、帶使用者引用的不做行 → 這一處不標（audit 給了就記一筆），繼續看別處；全部都對到 → None。
     引號內轉述不算（strip_quoted_spans）；excerpt 取自原文（等長替換索引不位移）。
     """
     if not text:
         return None
-    m = _EVASION_RE.search(strip_quoted_spans(text))
-    if not m:
-        return None
-    for p in (recent_user_prompts or [])[-3:]:
-        if _DISMISS_RE.search(p or ""):
-            return None
-    phrase = m.group(0)
-    idx = m.start()
-    excerpt = text[max(0, idx - 80): idx + len(phrase) + 80]
-    return {"phrase": phrase, "context_excerpt": excerpt}
+    from wg_release_rules import is_claim_line, not_doing_hint, not_doing_verdict, parse_not_doing
+    decls = parse_not_doing(text)
+    prompts = user_typed_prompts(recent_user_prompts)[-3:]
+    for m in _EVASION_RE.finditer(strip_quoted_spans(text)):
+        phrase, idx = m.group(0), m.start()
+        line = _line_at(text, idx)
+        if is_claim_line(line):          # 宣稱行是對閘的回答（「非本回合宣稱」），不是退避句
+            continue
+        cat = evasion_category(phrase)
+        v = not_doing_verdict(line, decls, prompts, cat["exception"])
+        if not v.owed:
+            _audit_once(audit, phrase, v)
+            continue
+        excerpt = text[max(0, idx - 80): idx + len(phrase) + 80]
+        return {"phrase": phrase, "context_excerpt": excerpt, "category": cat["id"], "hint": not_doing_hint(cat["exception"])}
+    return None
 
 
-_SENTENCE_SPLIT_RE = re.compile(r"[。！？\n；;]")
-_OBJECT_STRIP_RE = re.compile(r"[\s，,、：:（）()「」『』`*\-—–~～?？!！.。]")
+_SENTENCE_SPLIT_RE = lazy_re(r"[。！？\n；;]")
+_OBJECT_STRIP_RE = lazy_re(r"[\s，,、：:（）()「」『』`*\-—–~～?？!！.。]")
+
+
+_MD_FENCE_RE = lazy_re(r"```.*?(?:```|\Z)", re.DOTALL)
+_MD_TABLE_ROW_RE = lazy_re(r"^[ \t]*\|.*$", re.MULTILINE)
+
+
+def strip_markdown_blocks(text: str) -> str:
+    """去掉 ``` 程式區塊與 markdown 表格列（| 開頭）。只給 detect_deferral 用：回覆裡列詞表、貼程式碼
+    時「之後再」「下個 session」是被列舉的字串，不是收尾的退縮句。detect_evasion 不套（引用豁免已否決）。"""
+    if not text or ("```" not in text and "|" not in text):
+        return text
+    return _MD_TABLE_ROW_RE.sub("", _MD_FENCE_RE.sub("", text))
 
 
 def detect_deferral(
     text: str,
     recent_user_prompts: List[str],
     min_object_chars: int = 6,
+    audit: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[Dict[str, str]]:
     """退縮歸屬偵測：收尾文字把「帶受詞、可做的事」推給下個 session／歸為獨立議題／
     歸咎非我。回 {phrase, sentence} 或 None。
 
     受詞判定＝命中句去掉退縮語與標點後仍 ≥ min_object_chars 字（純「下個 session。」
-    這種無受詞的句子不算）。逃生門：近 3 則 user prompt 含命令式延後語
-    （deferral_user_ok）或一般豁免語（dismiss_keywords）→ 使用者明示延後，不標。
+    這種無受詞的句子不算）。LLM 介入的入口（規則 NOT_DOING_DECLARED）：命中句所在的那一行
+    對到一條有理由的不做行或「追蹤｜…」行 → 這一句不算（audit 給了就記一筆），看下一句。
+    ``` 程式區塊與 markdown 表格列先剔掉（strip_markdown_blocks）：列舉的字串不是退縮句。
     詞表單一來源 forbidden-phrases.json categories[id=deferral-attribution]。
     """
     if not text:
         return None
-    for p in (recent_user_prompts or [])[-3:]:
-        if _DEFERRAL_USER_OK_RE.search(p or "") or _DISMISS_RE.search(p or ""):
-            return None
-    for orig_sent in _SENTENCE_SPLIT_RE.split(text):
-        sent = strip_quoted_spans(orig_sent)  # 引號內轉述不觸發（同 detect_evasion）
-        m = _DEFERRAL_RE.search(sent)
-        if m:
+    from wg_release_rules import is_claim_line, not_doing_verdict, parse_not_doing
+    decls = parse_not_doing(text)
+    prompts = user_typed_prompts(recent_user_prompts)[-3:]
+    for line in strip_markdown_blocks(text).split("\n"):
+        if is_claim_line(line):          # 宣稱行是對閘的回答（「非本回合宣稱」），不是退縮句
+            continue
+        for orig_sent in _SENTENCE_SPLIT_RE.split(line):
+            sent = strip_quoted_spans(orig_sent)  # 引號內轉述不觸發（同 detect_evasion）
+            m = _DEFERRAL_RE.search(sent)
+            if not m:
+                continue
             rest = sent
             for _ in range(4):  # 同句多個退縮語（「留給下」+「個 session」）全部剝掉再數受詞
                 nxt = _DEFERRAL_RE.sub("", rest)
@@ -259,8 +434,13 @@ def detect_deferral(
                     break
                 rest = nxt
             residual = _OBJECT_STRIP_RE.sub("", rest)
-            if len(residual) >= max(int(min_object_chars), 1):
-                return {"phrase": m.group(0), "sentence": orig_sent.strip()[:200]}
+            if len(residual) < max(int(min_object_chars), 1):
+                continue
+            v = not_doing_verdict(line, decls, prompts)
+            if not v.owed:
+                _audit_once(audit, m.group(0), v)
+                continue
+            return {"phrase": m.group(0), "sentence": orig_sent.strip()[:200]}
     return None
 
 
@@ -273,14 +453,16 @@ def deferral_gate_reason(
     committed_this_turn: bool,
     context_ratio: float,
     config: Dict[str, Any],
+    audit: Optional[List[Dict[str, Any]]] = None,
+    claimed: Optional[bool] = None,
 ) -> Optional[str]:
-    """DeferralGate 純決策（無副作用）：回 block 文字或 None。
+    """DeferralGate 純決策（無副作用）：回 block 文字或 None。claimed＝呼叫端判好的「本回合宣告完成」（Stop 看整回合，
+    補件那則不重說也算）；沒給就看 last_text。
 
     全部成立才擋：config.deferral_gate.enabled（預設 True）／本 turn 尚未擋過
-    （gated_turn != turn_seq）／detect_deferral 命中／主任務已完工（claims_completion
-    或本 turn 已 commit）／context 用量 ≤ max_context_ratio（預設 0.75；0.0＝無法量測，
-    視為充裕仍擋——新 session 本就小）。「處理後是否飄移主任務」無法程式化，交模型在
-    (b) 一句話說明。
+    （gated_turn != turn_seq）／detect_deferral 命中（對到有理由的不做行或使用者引用的不算，記進 audit）／
+    主任務已完工（claims_completion 或本 turn 已 commit）／context 用量 ≤ max_context_ratio（預設 0.75；0.0＝無法量測，
+    視為充裕仍擋——新 session 本就小）。「處理後是否飄移主任務」無法程式化，交模型在不做行寫理由。
     """
     cfg = (config or {}).get("deferral_gate", {}) or {}
     if not cfg.get("enabled", True):
@@ -288,25 +470,22 @@ def deferral_gate_reason(
     if turn_seq and gated_turn == turn_seq:
         return None
     det = detect_deferral(
-        last_text, recent_user_prompts, int(cfg.get("min_object_chars", 6))
+        last_text, recent_user_prompts, int(cfg.get("min_object_chars", 6)), audit=audit
     )
     if not det:
         return None
-    if not (claims_completion(last_text) or committed_this_turn):
+    if not ((claims_completion(last_text) if claimed is None else claimed) or committed_this_turn):
         return None
     max_ratio = float(cfg.get("max_context_ratio", 0.75))
     if context_ratio > max_ratio:
         return None
     pct = f"~{int(context_ratio * 100)}%" if context_ratio > 0 else "無法量測（視為充裕）"
+    from wg_release_rules import CLOSING_ASK
     return (
         "[Guardian:DeferralGate] 主任務已完工、context 用量 "
         f"{pct}（≤{int(max_ratio * 100)}%），收尾卻把可做的事推開：\n"
         f"  「{det['sentence']}」（退縮語：{det['phrase']}）\n"
-        "違反 IDENTITY 反退避契約「退縮歸屬」。三選一，不得籠統帶過：\n"
-        "  (a) 現在做掉（可逆、屬原請求自然延伸的維護／修補／小問題／自己的過失）再收尾\n"
-        "  (b) 一句話說明本 session 真的不能做的理由——不可逆／需使用者拍板業務取捨／"
-        "會飄移主任務認知——並在收尾明寫\n"
-        "  (c) 使用者已明示延後——引用其原話"
+        f"{CLOSING_ASK}。這句只是在描述、沒推任何事：寫一行「不是退避｜<命中的詞>：因為 <理由>」（留帳抽查）。"
     )
 
 
@@ -348,13 +527,30 @@ def is_core_file(path: str) -> bool:
     return False
 
 
+CLOSING_CHECK_ITEM = "收尾檢核"
+
+
+def closing_check_waiver(text: str, recent_user_prompts: List[str]) -> Optional[Dict[str, str]]:
+    """近 3 則使用者原話有 dismiss 詞（先這樣／跳過）→ 收尾檢核整件放行，回 {item, quote＝那則原話, line}；沒有回 None。
+    text 留著與呼叫端同簽名。"""
+    said = next((p for p in reversed(user_typed_prompts(recent_user_prompts)[-3:]) if _DISMISS_RE.search(p or "")), None)
+    return {"item": CLOSING_CHECK_ITEM, "quote": said[:120], "line": ""} if said is not None else None
+
+
+def dismissed_recently(recent_user_prompts: List[str]) -> bool:
+    """近 3 則使用者原話有 dismiss 詞：只決定擋訊息附不附豁免寫法，不放行。"""
+    return any(_DISMISS_RE.search(p or "") for p in user_typed_prompts(recent_user_prompts)[-3:])
+
+
 def _completion_gate_applies(
     text: str,
     modified_files: List[Dict[str, Any]],
     recent_user_prompts: List[str],
     min_files: int,
+    claimed: Optional[bool] = None,
 ) -> bool:
-    """收尾閘共用前置：宣告完成 +（動 core 檔 或 動 ≥min_files 檔）+ 無豁免關鍵字。
+    """收尾閘共用前置：宣告完成 +（動 core 檔 或 動 ≥min_files 檔）+ 無豁免關鍵字。claimed＝呼叫端判好的「本回合宣告完成」，
+    沒給就看 text。
 
     True＝已達「該交代收尾」門檻（尚未判定用何種方式滿足）。滿足方式（prose 標記
     vs anti_evasion_report emit）由各 caller 疊上。純單檔/文件小改不達門檻。
@@ -362,21 +558,21 @@ def _completion_gate_applies(
     達門檻條件（全部成立）：
       1. text 含完成宣告詞（claims_completion）
       2. modified_files 觸及 core 檔，或 unique 檔數 ≥ min_files
-      3. 近 3 則 user prompt 無豁免關鍵字
+      3. 近 3 則使用者原話沒有「先這樣／跳過」（closing_check_waiver）
     """
-    if not text or not modified_files:
+    return completion_threshold_met(text, modified_files, min_files, claimed) \
+        and closing_check_waiver(text, recent_user_prompts) is None
+
+
+def completion_threshold_met(text: str, modified_files: List[Dict[str, Any]], min_files: int,
+                             claimed: Optional[bool] = None) -> bool:
+    """_completion_gate_applies 的條件 1、2（宣告完成＋動 core 檔或多檔），不看豁免；Stop 用它判豁免那一筆要不要留帳。"""
+    if not modified_files or not (claims_completion(text or "") if claimed is None else claimed):
         return False
-    if not claims_completion(text):
-        return False
-    for p in (recent_user_prompts or [])[-3:]:
-        if _DISMISS_RE.search(p or ""):
-            return False
     unique_paths = {(m or {}).get("path", "") for m in modified_files}
     unique_paths.discard("")
     touched_core = any(is_core_file(p) for p in unique_paths)
-    if not touched_core and len(unique_paths) < max(int(min_files), 1):
-        return False
-    return True
+    return touched_core or len(unique_paths) >= max(int(min_files), 1)
 
 
 def detect_missing_scan_report(
@@ -401,14 +597,15 @@ def detect_missing_aec_emission(
     recent_user_prompts: List[str],
     min_files: int = 2,
     emitted_this_turn: bool = False,
+    claimed: Optional[bool] = None,
 ) -> bool:
     """鏡像 detect_missing_scan_report，唯滿足方式從 prose 標記換成「本回合是否 emit 過
     anti_evasion_report」（emitted_this_turn 由 caller 以 turn_seq+session_id 雙鍵判定）。
 
     回 True＝達門檻卻未 emit（block、逼補結構化收尾檢核）。門檻與豁免（core/min_files、
-    dismiss 逃生門）與 scan_report 版共用 _completion_gate_applies，不重演。
+    引用使用者原話的「不做｜收尾檢核」）與 scan_report 版共用 _completion_gate_applies，不重演。claimed 見 _completion_gate_applies。
     """
-    if not _completion_gate_applies(text, modified_files, recent_user_prompts, min_files):
+    if not _completion_gate_applies(text, modified_files, recent_user_prompts, min_files, claimed):
         return False
     return not emitted_this_turn
 
@@ -461,17 +658,17 @@ def crosscheck_aec_severity(
 
 
 # ─── AEC (d)/(h) pending 判定：把「記憶寫入」推到之後 ────────────────────────
-# MIRROR: tools/workflow-guardian-mcp/lib/anti-evasion.js AEC_PENDING_RE / AEC_DONE_RE /
-# AEC_H_ATOM_RE / aecPendingItems — keep in sync（parity test 在 verify_aec_emission_gate）。
-_AEC_PENDING_RE = re.compile(
+# 只有 Python 這一份：post_tool_use 落 report["d_pending"]、用 additionalContext 回告模型，Stop 的 AEC-Pending 閘讀它，
+# HUD 讀報告檔標紅；Node 的回條不再自己判。
+_AEC_PENDING_RE = lazy_re(
     r"(?:尚未|還沒|還未|沒有|未)\s*(?:寫|記|落|建|補)"
     r"|待\s*(?:寫|補|記|落|建)"
     r"|(?:稍後|之後|回頭|等會|等一下|晚點|下輪|下回|下個\s*session|下一動)\s*(?:再)?\s*(?:寫|補|記|落|建)"
     r"|見下一動|TODO|pending",
     re.IGNORECASE,
 )
-_AEC_DONE_RE = re.compile(r"已\s*(?:寫|append|更新|replace|併|補|落|記|建)|不寫|不記|不落", re.IGNORECASE)
-_AEC_H_ATOM_RE = re.compile(r"(?:寫|補|建|落|記)[^，,；;。]{0,12}?(?:atom|記憶|知識)|atom_write", re.IGNORECASE)
+_AEC_DONE_RE = lazy_re(r"已\s*(?:寫|append|更新|replace|併|補|落|記|建)|不寫|不記|不落", re.IGNORECASE)
+_AEC_H_ATOM_RE = lazy_re(r"(?:寫|補|建|落|記)[^，,；;。]{0,12}?(?:atom|記憶|知識)|atom_write", re.IGNORECASE)
 
 
 def _aec_verdict(line: str) -> str:
@@ -531,11 +728,12 @@ def read_transcript_tail(
 
 
 def get_last_assistant_text(
-    transcript_path: Optional[Path], *, text: Optional[str] = None
+    transcript_path: Optional[Path], *, text: Optional[str] = None, min_chars: int = 31
 ) -> str:
     """Read JSONL transcript, return last assistant text block (or empty).
 
     text 給定時（read_transcript_tail 共用尾段）直接掃該字串、不再開檔。
+    min_chars：短於它的 text 區塊跳過（預設 31＝退避偵測只看有份量的段落）；寫碼查核要真正的最後一句，傳 1。
     """
     if text is None:
         if not transcript_path:
@@ -558,33 +756,118 @@ def get_last_assistant_text(
         for block in content:
             if isinstance(block, dict) and block.get("type") == "text":
                 t = block.get("text", "")
-                if t and len(t) > 30:
+                if t and len(t) >= min_chars:
                     last = t
     return last
 
 
-def _is_real_user_prompt(content: Any) -> bool:
-    """判斷一則 user 訊息是「真實 prompt」還是「tool_result 延續」。
+STOP_HOOK_FEEDBACK_PREFIX = "Stop hook feedback:"   # Claude Code 注入 Stop hook 擋訊息時那筆 user 紀錄的開頭
 
-    含 tool_result block → 視為延續（非新 turn 起點）；str 或含 text block → 真實 prompt。
+
+def _is_stop_hook_feedback(rec: Dict[str, Any]) -> bool:
+    """Claude Code 把 Stop hook 擋訊息寫成的 user 紀錄：isMeta 且內容以 STOP_HOOK_FEEDBACK_PREFIX 開頭（兩個都要：
+    使用者自己貼一段這樣開頭的錯誤訊息，isMeta 不是 true，照算新回合）。"""
+    c = (rec.get("message") or {}).get("content")
+    text = c if isinstance(c, str) else "\n".join(str(b.get("text") or "") for b in c or [] if isinstance(b, dict))
+    return rec.get("isMeta") is True and text.lstrip().startswith(STOP_HOOK_FEEDBACK_PREFIX)
+
+
+def is_turn_start(rec: Dict[str, Any]) -> bool:
+    """transcript 的一筆紀錄是不是回合起點：type=user、內容是真實 prompt（_is_real_user_prompt），且不是 Stop hook 擋訊息
+    （被別的閘擋一次，本回合早段的回覆、寫的預告不能因此被切掉）。"""
+    return (rec.get("type") == "user" and not _is_stop_hook_feedback(rec)
+            and _is_real_user_prompt((rec.get("message") or {}).get("content")))
+
+
+def _is_real_user_prompt(content: Any) -> bool:
+    """判斷一則 user 訊息是「真實 prompt」（回合起點）還是延續。
+
+    含 tool_result block → 延續；整則都是 harness 文字（同伴訊息、背景通知、系統注入）→ 也是延續
+    （退避預告的切點只認使用者打字，否則同伴訊息一進來，早段寫的預告就被切掉）；
+    其餘 str 或含 text block → 真實 prompt。transcript 整筆紀錄判回合起點用 is_turn_start（多排除 Stop hook 擋訊息）。
     """
+    texts: List[str] = []
     if isinstance(content, str):
-        return bool(content.strip())
-    if isinstance(content, list):
-        has_text = False
+        texts.append(content)
+    elif isinstance(content, list):
         for b in content:
             if isinstance(b, dict):
                 if b.get("type") == "tool_result":
                     return False
                 if b.get("type") == "text":
-                    has_text = True
+                    texts.append(str(b.get("text") or ""))
             elif isinstance(b, str):
-                has_text = True
-        return has_text
-    return False
+                texts.append(b)
+    else:
+        return False
+    joined = "\n".join(texts)
+    if not joined.strip():
+        return False
+    try:
+        from harness_text import user_typed_text
+    except ImportError:
+        return True
+    return bool(user_typed_text(joined))
 
 
-# 派工工具的 prompt 欄會夾帶 [WG:SubagentMemory] 注入的 atom 原文；拿它比對 atom
+def _blocks(o: Dict[str, Any]) -> List[Dict[str, Any]]:
+    msg = o.get("message") if isinstance(o.get("message"), dict) else {}
+    content = msg.get("content")
+    return [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+
+
+def _turn_records(transcript_text: str) -> List[Dict[str, Any]]:
+    """本回合的 transcript 紀錄（規則 TURN_SINCE_USER_PROMPT：最後一則使用者打字之後；尾段切掉起點就整段算）。"""
+    recs: List[Dict[str, Any]] = []
+    for raw in str(transcript_text or "").splitlines():
+        try:
+            o = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(o, dict):
+            recs.append(o)
+    begin = 0
+    for i, o in enumerate(recs):
+        if is_turn_start(o):
+            begin = i + 1
+    return recs[begin:]
+
+
+# 明說沒完成（「還沒做完」「完成…尚未」）：同 forbidden-phrases.json completion_claim 排除詞的前兩條。
+# 「進行中」「等待結果」這類只在最後一則才算數（前面的回覆常是在講別人的檔或某一步，不是在講這次交付）
+_COMPLETION_NEG_RE = lazy_re(r"(?:還沒|還未|尚未|尚待|未|沒有?)[^，。！？\n]{0,8}(?:完成|做完|解決|收尾|搞定|完工|結案)"
+                             r"|(?:完成|做完|解決|收尾|搞定|完工|結案)[^，。！？\n]{0,6}"
+                             r"(?:尚未|還沒|還未|未完|沒完|未滿足|沒做完|未達|待補|待修)")
+
+
+def turn_completion_text(transcript_text: str) -> str:
+    """本回合宣告完成的那一則文字；沒宣告回空字串。最後一則有完成詞或狀態詞（排除詞：還沒、進行中、等待…）→ 照它（claims_completion）；
+    完全沒提 → 往前看：說過完成、之後沒有明說沒完成，就是最後說完成的那一則。別的閘擋下後的補件回覆常只補那道閘要的行、不再重說完成，
+    只看最後一則會被補件那則蓋掉（例：說「做完了」→ ReadingPath 擋 → 補件只寫拐彎判斷 → 後面的收尾閘一次都沒擋）。
+    往前看的每一則跟最後一則同一套判法：這則宣告完成（claims_completion，逐句看）就記它；沒宣告、又明說沒完成才清掉
+    （規則 COMPLETION_CLAIM_PER_SENTENCE：「我還沒動git：完成的三件…。全部做完了」是宣告完成，開頭那句的否定不清掉它）。"""
+    texts = turn_texts(transcript_text)
+    if not texts:
+        return ""
+    last = texts[-1][-2000:]
+    if _COMPLETION_CLAIM_RE.search(last) or _COMPLETION_EXCLUDE_RE.search(last):
+        return texts[-1] if claims_completion(texts[-1]) else ""
+    claimed = ""
+    for t in texts[:-1]:
+        if claims_completion(t):
+            claimed = t
+        elif _COMPLETION_NEG_RE.search(t[-2000:]):
+            claimed = ""
+    return claimed
+
+
+def turn_texts(transcript_text: str) -> List[str]:
+    """本回合每一則 assistant 文字，依出現順序。"""
+    return [str(b.get("text") or "") for o in _turn_records(transcript_text) if o.get("type") == "assistant"
+            for b in _blocks(o) if b.get("type") == "text"]
+
+
+# 子代理工具（Agent／Task）的 prompt 欄會夾帶 [WG:SubagentMemory] 注入的 atom 原文；拿它比對 atom
 # 等於 atom 自己命中自己。與 wg_rescue 同一排除規則。
 _DELEGATION_TOOLS = frozenset({"Agent", "Task"})
 _DELEGATION_SKIP_KEYS = frozenset({"prompt"})
@@ -640,7 +923,7 @@ def get_current_turn_text(
     for i, obj in enumerate(records):
         if obj.get("type") != "user":
             continue
-        if _is_real_user_prompt(obj.get("message", {}).get("content")):
+        if is_turn_start(obj):
             last_user_idx = i
 
     parts: List[str] = []
@@ -675,7 +958,8 @@ def get_current_turn_visible_text(
     transcript_path: Optional[Path], *, max_chars: int = 12000,
     text: Optional[str] = None,
 ) -> Tuple[str, Dict[str, Any]]:
-    """擷取「本 turn」使用者可見文字 + turn 診斷 probe（PAN 預告閘門用）。
+    """擷取「本 turn」使用者可見文字 + turn 診斷 probe（handlers/stop.py 收尾閘用：拐彎／截錄否決看可見文字，
+    說修好的閘看 probe 的 turn_tool_names）。
 
     與 get_current_turn_text 的差異：只收 assistant 的 type=="text" block——
     tool_use input 完全跳過（防 tool_input 字串冒充預告；thinking 白名單制
@@ -717,7 +1001,7 @@ def get_current_turn_visible_text(
                 continue
             if obj.get("isSidechain") is True:
                 continue
-            if _is_real_user_prompt(obj.get("message", {}).get("content")):
+            if is_turn_start(obj):
                 last_user_idx = i
 
         probe["boundary_lost"] = last_user_idx == -1
@@ -768,6 +1052,7 @@ def get_current_turn_visible_text(
         probe["text_blocks"] = text_blocks
         probe["tooluse_blocks"] = tooluse_blocks
         probe["turn_tool_names"] = tool_names[-8:]
+        probe["turn_tool_names_all"] = tool_names      # 對帳閘「試過」判定用全量，不吃尾 8 截斷
         joined = "\n".join(parts)
         if len(joined) > max_chars:
             half = max_chars // 2
@@ -781,12 +1066,13 @@ def get_current_turn_visible_text(
 # 4-套自評整合的一部分：5 維度加權評分，附 reflection_metrics.json 寫入。
 
 import math
+import os
 from datetime import datetime, timezone
 
 from wg_core import (
     MEMORY_DIR, WORKFLOW_DIR, EPISODIC_DIR,
     discover_all_project_memory_dirs, get_project_memory_dir, resolve_staging_dir,
-    _now_iso, _atom_debug_log, is_rut_whitelisted,
+    _now_iso, _atom_debug_log, is_rut_whitelisted, v6_enabled,
 )
 
 REFLECTION_METRICS_PATH = MEMORY_DIR / "wisdom" / "reflection_metrics.json"
@@ -858,8 +1144,7 @@ def _write_reflection_metrics_atomic(data: Dict[str, Any]) -> bool:
     try:
         REFLECTION_METRICS_PATH.parent.mkdir(parents=True, exist_ok=True)
         tmp = REFLECTION_METRICS_PATH.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8", newline="\n") as _f:
-            _f.write(json.dumps(data, ensure_ascii=False, indent=2))
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
         tmp.replace(REFLECTION_METRICS_PATH)
         return True
     except OSError:
@@ -1003,8 +1288,10 @@ def flush_outcome_stats(
         entries.append(entry)
         entries = entries[-50:]  # 滾動保留最近 50 session
         tmp = OUTCOME_STATS_PATH.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8", newline="\n") as _f:
-            _f.write("\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n")
+        tmp.write_text(
+            "\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n",
+            encoding="utf-8",
+        newline="\n")
         tmp.replace(OUTCOME_STATS_PATH)
 
         if _unknown_streak(entries, threshold, window):
@@ -1047,6 +1334,36 @@ def _collect_iteration_metrics(state: Dict[str, Any]) -> Dict[str, Any]:
     return metrics
 
 
+def _session_episodic_pool(state: Dict[str, Any]) -> Optional[Path]:
+    """本 session 自己的 episodic 池，與寫入端 wg_core.resolve_episodic_dir 同一目錄。
+
+    專案 session → {專案}/.claude/memory/episodic；~/.claude session → memory/episodic。
+    cwd 沒有專案記憶 → None：寫入端雖落 memory/episodic，但那裡是根層的歷史，
+    拿來提示等於把根層的覆轍／振盪塞給不相干的目錄。
+    """
+    mem = get_project_memory_dir(state.get("session", {}).get("cwd", ""))
+    return mem / "episodic" if mem else None
+
+
+def _recent_pool_episodics(
+    state: Dict[str, Any], window: int
+) -> List[Tuple[Path, str]]:
+    """本 session 池內最近 window 份 episodic（mtime 新→舊）的 (路徑, 原文)。"""
+    pool = _session_episodic_pool(state)
+    if pool is None or not pool.exists():
+        return []
+    files = sorted(
+        pool.glob("episodic-*.md"), key=lambda f: f.stat().st_mtime, reverse=True
+    )
+    out = []
+    for f in files[:window]:
+        try:
+            out.append((f, f.read_text(encoding="utf-8")))
+        except (OSError, UnicodeDecodeError):
+            continue
+    return out
+
+
 def _detect_oscillation(
     state: Dict[str, Any], config: Dict[str, Any]
 ) -> List[Dict[str, Any]]:
@@ -1054,39 +1371,17 @@ def _detect_oscillation(
     oscillation_window = config.get("self_iteration", {}).get("oscillation_window", 3)
     oscillation_threshold = config.get("self_iteration", {}).get("oscillation_threshold", 2)
 
-    episodic_dirs = set()
-    global_ep = MEMORY_DIR / "episodic"
-    if global_ep.exists():
-        episodic_dirs.add(global_ep)
-    cwd = state.get("session", {}).get("cwd", "")
-    proj_mem = get_project_memory_dir(cwd)
-    if proj_mem:
-        proj_ep = proj_mem / "episodic"
-        if proj_ep.exists():
-            episodic_dirs.add(proj_ep)
-
-    recent_files = []
-    for ep_dir in episodic_dirs:
-        for f in ep_dir.glob("episodic-*.md"):
-            recent_files.append((f.stat().st_mtime, f))
-    recent_files.sort(key=lambda x: -x[0])
-    recent_files = recent_files[:oscillation_window]
-
     atom_sessions = {}
-    for _, ep_path in recent_files:
-        try:
-            text = ep_path.read_text(encoding="utf-8")
-            date_match = re.search(r"Created:\s*(\d{4}-\d{2}-\d{2})", text)
-            ep_date = date_match.group(1) if date_match else ep_path.stem[:15]
-            for line in text.split("\n"):
-                if "修改 atoms:" in line:
-                    atoms_part = line.split("修改 atoms:")[-1].strip()
-                    for a in atoms_part.split(","):
-                        a = a.strip()
-                        if a:
-                            atom_sessions.setdefault(a, []).append(ep_date)
-        except (OSError, UnicodeDecodeError):
-            continue
+    for ep_path, text in _recent_pool_episodics(state, oscillation_window):
+        date_match = re.search(r"Created:\s*(\d{4}-\d{2}-\d{2})", text)
+        ep_date = date_match.group(1) if date_match else ep_path.stem[:15]
+        for line in text.split("\n"):
+            if "修改 atoms:" in line:
+                atoms_part = line.split("修改 atoms:")[-1].strip()
+                for a in atoms_part.split(","):
+                    a = a.strip()
+                    if a:
+                        atom_sessions.setdefault(a, []).append(ep_date)
 
     current_modified = state.get("iteration_metrics", {}).get("atoms_modified", [])
     today_str = datetime.now().strftime("%Y-%m-%d")
@@ -1107,47 +1402,86 @@ def _detect_oscillation(
     return oscillations
 
 
-def _save_oscillation_state(oscillations: List[Dict[str, Any]]) -> None:
+def _osc_pool_key(state: Dict[str, Any]) -> Optional[str]:
+    """振盪狀態檔裡的池鍵；不分大小寫（同一專案的 cwd 會有 c:\\ 與 C:\\ 兩種寫法）。"""
+    pool = _session_episodic_pool(state)
+    return os.path.normcase(os.path.normpath(str(pool))) if pool else None
+
+
+def _read_osc_pools(osc_path: Path) -> Dict[str, Any]:
+    """{池鍵: {detected_at, oscillations}}；舊格式（無 pools）不知道來源池，當作沒有。"""
+    try:
+        data = json.loads(osc_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+    pools = data.get("pools") if isinstance(data, dict) else None
+    return pools if isinstance(pools, dict) else {}
+
+
+def _save_oscillation_state(
+    oscillations: List[Dict[str, Any]], state: Dict[str, Any]
+) -> None:
+    """只改本 session 池那一格：別的專案的振盪狀態不被這個 session 收尾覆寫或刪掉。"""
+    key = _osc_pool_key(state)
+    if key is None:
+        return
     osc_path = WORKFLOW_DIR / "oscillation_state.json"
+    pools = _read_osc_pools(osc_path)
     if oscillations:
-        data = {
+        pools[key] = {
             "detected_at": datetime.now().isoformat(),
             "oscillations": [
                 {"atom": o["atom"], "count": o["count"], "sessions": o["sessions"]}
                 for o in oscillations
             ],
         }
-        tmp = osc_path.with_suffix(".tmp")
-        try:
-            with open(tmp, "w", encoding="utf-8", newline="\n") as _f:
-                _f.write(json.dumps(data, ensure_ascii=False, indent=2))
-            tmp.replace(osc_path)
-        except OSError:
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
-    elif osc_path.exists():
-        osc_path.unlink()
-
-
-def _load_oscillation_warnings() -> Optional[str]:
-    osc_path = WORKFLOW_DIR / "oscillation_state.json"
-    if not osc_path.exists():
-        return None
+    else:
+        pools.pop(key, None)
+    if not pools:
+        if osc_path.exists():
+            osc_path.unlink()
+        return
+    tmp = osc_path.with_name(f"{osc_path.name}.{os.getpid()}.tmp")
     try:
-        with open(osc_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        oscillations = data.get("oscillations", [])
-        if not oscillations:
-            return None
-        atoms = ", ".join(o["atom"] for o in oscillations)
-        return (
-            f"[Guardian:Oscillation] 以下 atoms 近期被反覆修改：{atoms}。"
-            f"行動：1) 暫停修改 2) Read 該 atom 確認前次意圖 3) 收集更多證據再評估"
-        )
-    except (json.JSONDecodeError, OSError):
+        tmp.write_text(json.dumps({"pools": pools}, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
+        tmp.replace(osc_path)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+
+def _notice_new_items(
+    state: Dict[str, Any], config: Optional[Dict[str, Any]], switch: str, sent_key: str, items: List[str]
+) -> List[str]:
+    """開場提示的清單同一項一個 session 只列一次：寫碼守門開著、self_iteration.<switch> 沒寫＝開時，拿掉 state[sent_key]
+    已列過的項、把這次要列的記進去（中段又開場時只列新出現的）；寫碼守門關原樣回傳、不記（每次開場都列全部，含 resume／compact）。"""
+    cfg = config or {}
+    if not (v6_enabled(cfg) and cfg.get("self_iteration", {}).get(switch, True)):
+        return list(items)
+    sent = state.get(sent_key) or []
+    new = [x for x in items if x not in sent]
+    if new:
+        state[sent_key] = [*sent, *new]
+    return new
+
+
+def _load_oscillation_warnings(state: Dict[str, Any], config: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    key = _osc_pool_key(state)
+    if key is None:
         return None
+    entry = _read_osc_pools(WORKFLOW_DIR / "oscillation_state.json").get(key) or {}
+    oscillations = entry.get("oscillations", [])
+    names = _notice_new_items(state, config, "oscillation_v6_once", "oscillation_notice_sent",
+                              [o["atom"] for o in oscillations])
+    if not names:
+        return None
+    atoms = ", ".join(names)
+    return (
+        f"[Guardian:Oscillation] 以下 atoms 近期被反覆修改：{atoms}。"
+        f"行動：1) 暫停修改 2) Read 該 atom 確認前次意圖 3) 收集更多證據再評估"
+    )
 
 
 def _calculate_maturity_phase(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -1185,30 +1519,8 @@ def _detect_rut_patterns(
     """Scan recent episodic atoms for repeated 覆轍信號."""
     window = config.get("self_iteration", {}).get("oscillation_window", 3)
 
-    episodic_dirs = set()
-    global_ep = MEMORY_DIR / "episodic"
-    if global_ep.exists():
-        episodic_dirs.add(global_ep)
-    cwd = state.get("session", {}).get("cwd", "")
-    proj_mem = get_project_memory_dir(cwd)
-    if proj_mem:
-        proj_ep = proj_mem / "episodic"
-        if proj_ep.exists():
-            episodic_dirs.add(proj_ep)
-
-    recent_files = []
-    for ep_dir in episodic_dirs:
-        for f in ep_dir.glob("episodic-*.md"):
-            recent_files.append((f.stat().st_mtime, f))
-    recent_files.sort(key=lambda x: -x[0])
-    recent_files = recent_files[:window]
-
     signal_sessions: Dict[str, int] = {}
-    for _, ep_path in recent_files:
-        try:
-            text = ep_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
+    for _, text in _recent_pool_episodics(state, window):
         for line in text.split("\n"):
             if "覆轍信號:" not in line:
                 continue
@@ -1228,7 +1540,8 @@ def _detect_rut_patterns(
                     continue
                 signal_sessions[sig] = signal_sessions.get(sig, 0) + 1
 
-    repeated = [s for s, c in signal_sessions.items() if c >= 2]
+    repeated = _notice_new_items(state, config, "rut_v6_once", "rut_notice_sent",
+                                 [s for s, c in signal_sessions.items() if c >= 2])
     if not repeated:
         return None
 

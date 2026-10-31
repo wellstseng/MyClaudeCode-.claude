@@ -91,6 +91,7 @@ def test_scannable_live_py_in_claude():
         _p("_AIDocs", "DevHistory", "v5-overhaul.md"),  # 歸檔正位
         _p("_AIDocs", "_CHANGELOG.md"),                  # 版本正位
         _p("TECH.md"),                                   # 最新版本宣告正位
+        _p("TECH", "guards.md"),                         # TECH 細節檔同正位
         _p("_AIDocs", "Architecture.md"),
         _p("_AIDocs", "SPEC_ATOM_V5.md"),
         _p("hooks", "verify", "verify_x.py"),            # 測試 fixture
@@ -105,7 +106,7 @@ def test_not_scannable_whitelisted_or_nontext(path):
 
 
 def test_not_scannable_outside_claude():
-    assert VG.is_scannable_path("C:/Projects/game/enemy_wave.py") is False
+    assert VG.is_scannable_path("C:/Work/game/enemy_wave.py") is False
     assert VG.is_scannable_path("/home/user/proj/src/main.py") is False
 
 

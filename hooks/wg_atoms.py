@@ -9,7 +9,6 @@ wg_atoms.py — Atom 索引解析 / Trigger / Intent / Vector search / Activatio
 """
 
 import json
-import logging
 import math
 import os
 import re
@@ -17,13 +16,14 @@ import sys
 import time
 from collections import Counter
 from functools import lru_cache
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from wg_core import (
-    CLAUDE_DIR, MEMORY_DIR, EPISODIC_DIR, WORKFLOW_DIR,
+    CLAUDE_DIR, CODE_DIR, MEMORY_DIR, EPISODIC_DIR, WORKFLOW_DIR,
     MEMORY_INDEX, ATOM_INDEX, REALM_AUTOMOVE_MARKER,
+    DEFAULTS as CORE_DEFAULTS,  # config 缺鍵時的預設（load_config 整段補上的那份）：讀取端同鍵預設只認這一份
     CONTEXT_BUDGET_DEFAULT, TURN_BUDGET_LIMIT,
     compute_token_budget,  # re-export：budget 單一來源在 wg_core，舊 caller 仍從本模組 import
     _estimate_tokens,  # CJK-aware 估算器（單一口徑，中文 ~1.5 tok/字）
@@ -36,7 +36,7 @@ from wg_core import (
 )
 
 # prefer _atom_index.json (machine source of truth)
-sys.path.insert(0, str(CLAUDE_DIR / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))   # 程式碼用本檔位置，CLAUDE_DIR 只定位資料
 try:
     from atom_index_json import (load_atom_index_json, to_atom_entries, ATOM_INDEX_JSON,
                                  delete_atom as index_delete_atom)
@@ -60,7 +60,7 @@ try:
     from atom_locations import (
         classify_realm, is_local_realm_path,
         enumerate_local_paths, load_learned_lexicon, append_learned_terms,
-        LOCAL_REALM_DEFAULT_DOMAIN,
+        LOCAL_REALM_DEFAULT_DOMAIN, ENTRY_BOUND_STAYS_CORE, entry_bound_ids,
     )
 except ImportError:
     classify_realm = None
@@ -69,6 +69,8 @@ except ImportError:
     load_learned_lexicon = None
     append_learned_terms = None
     LOCAL_REALM_DEFAULT_DOMAIN = "Else"
+    ENTRY_BOUND_STAYS_CORE = "ENTRY_BOUND_STAYS_CORE"
+    entry_bound_ids = None
 
 
 # ─── Memory Index Parsing ────────────────────────────────────────────────────
@@ -300,6 +302,60 @@ def visible_vector_layers(
 # ─── Atom Matching & Activation ──────────────────────────────────────────────
 
 
+# 冒號後只吃同行空白：Related 為空值時 \s* 會跨行，把下一行標題當成連結名
+_RELATED_RE = re.compile(r"^- Related:[ \t]*(.+)", re.MULTILINE)
+
+_LINK_GRAPH_CACHE: Dict[Tuple[str, ...], Tuple[Dict[str, List[str]], Dict[str, str], set]] = {}
+
+
+def load_link_graph(
+    memory_dirs: List[Path],
+) -> Tuple[Dict[str, List[str]], Dict[str, str], set]:
+    """讀索引的正向連結，在記憶體反轉成雙向鄰接表。
+
+    回傳 (adj, alias, covered)：
+      adj[name]    與它相連的名字（自己寫的正向 ＋ 別人連進來的反向），去重保序
+      alias[舊名]  現名——來自 atom 的 `- Aka:` 行，改名後舊連結靠它續存
+      covered      索引答得出連結的 atom 名；其餘退回讀檔解析（舊索引沒有 related 欄）
+
+    反向連結只存在記憶體裡。落檔的話，新增一顆連到 hub 的 atom 就得去改 hub 那個檔，
+    而那是別人的檔——多人共用同一個版控庫時必衝突。
+    """
+    memory_dirs = list(dict.fromkeys(memory_dirs))   # 呼叫端按池內每顆 atom 各給一次：去重，否則同一份索引解析幾百次
+    key = tuple(sorted(str(d) for d in memory_dirs))
+    hit = _LINK_GRAPH_CACHE.get(key)
+    if hit is not None:
+        return hit
+
+    adj: Dict[str, List[str]] = {}
+    alias: Dict[str, str] = {}
+    covered: set = set()
+    if load_atom_index_json is not None:
+        datas = [load_atom_index_json(d) for d in memory_dirs if (d / ATOM_INDEX_JSON).exists()]
+        names = {a.get("name") for d in datas for a in d.get("atoms", [])}
+        for data in datas:
+            for a in data.get("atoms", []):
+                for old_name in a.get("aka", []) or []:
+                    if old_name and old_name not in names:
+                        alias.setdefault(old_name, a.get("name", ""))
+        for data in datas:
+            atoms = data.get("atoms", [])
+            if not any("related" in a for a in atoms):
+                continue  # 這份索引還沒同步過連結欄 → 整份走讀檔 fallback
+            for a in atoms:
+                name = a.get("name", "")
+                covered.add(name)
+                for target in a.get("related", []) or []:
+                    target = alias.get(target, target)
+                    if not target or target == name:
+                        continue
+                    adj.setdefault(name, []).append(target)
+                    adj.setdefault(target, []).append(name)  # 反向：只在記憶體
+    graph = ({k: list(dict.fromkeys(v)) for k, v in adj.items()}, alias, covered)
+    _LINK_GRAPH_CACHE[key] = graph
+    return graph
+
+
 def spread_related(
     matched_names: set,
     all_atoms: List[Tuple[AtomEntry, Path]],
@@ -307,8 +363,15 @@ def spread_related(
     max_depth: int = 1,
     content_cache: Optional[Dict[str, Optional[str]]] = None,
 ) -> List[Tuple[AtomEntry, Path]]:
-    """沿 Related 邊擴散，回傳尚未匹配的相關 atoms (depth-limited BFS)."""
-    _RELATED_RE = re.compile(r"^- Related:\s*(.+)", re.MULTILINE)
+    """沿連結擴散，回傳尚未匹配的相關 atoms (depth-limited BFS)。
+
+    邊以索引為準（正向 ＋ 記憶體反轉的反向）；索引沒收錄的 atom 才讀檔解析 `- Related:`。
+    """
+    adj, alias, covered = load_link_graph([bd / "memory" for _, bd in all_atoms])
+    by_name: Dict[str, Tuple[AtomEntry, Path]] = {}
+    for entry_tuple in all_atoms:
+        by_name.setdefault(entry_tuple[0][0], entry_tuple)
+
     visited = set(matched_names) | set(already_injected)
     wave = list(matched_names)
     result: List[Tuple[AtomEntry, Path]] = []
@@ -316,25 +379,38 @@ def spread_related(
     for _depth in range(max_depth):
         next_wave: List[str] = []
         for name in wave:
-            atom_path = _find_atom_path(name, all_atoms)
-            if not atom_path or not atom_path.exists():
-                continue
-            text = read_atom_text(atom_path, content_cache)
-            if text is None:
-                continue
-            rm = _RELATED_RE.search(text)
-            if not rm:
-                continue
-            for rn in (r.strip() for r in rm.group(1).split(",") if r.strip()):
-                if rn not in visited:
-                    visited.add(rn)
-                    for entry_tuple in all_atoms:
-                        if entry_tuple[0][0] == rn:
-                            result.append(entry_tuple)
-                            next_wave.append(rn)
-                            break
+            neighbours = list(adj.get(name, ()))
+            if name not in covered:
+                neighbours += _related_from_file(name, all_atoms, content_cache)
+            for rn in neighbours:
+                rn = alias.get(rn, rn)
+                if rn in visited:
+                    continue
+                visited.add(rn)
+                entry_tuple = by_name.get(rn)
+                if entry_tuple is not None:
+                    result.append(entry_tuple)
+                    next_wave.append(rn)
         wave = next_wave
     return result
+
+
+def _related_from_file(
+    name: str,
+    all_atoms: List[Tuple[AtomEntry, Path]],
+    content_cache: Optional[Dict[str, Optional[str]]],
+) -> List[str]:
+    """索引還沒收錄連結時的後路：直接讀該 atom 的 `- Related:` 行。"""
+    atom_path = _find_atom_path(name, all_atoms)
+    if not atom_path or not atom_path.exists():
+        return []
+    text = read_atom_text(atom_path, content_cache)
+    if text is None:
+        return []
+    rm = _RELATED_RE.search(text)
+    if not rm:
+        return []
+    return [r.strip() for r in rm.group(1).split(",") if r.strip()]
 
 
 # ─── Supersedes：全路徑有效性 ────────────────────────────────────────────────
@@ -344,32 +420,58 @@ def spread_related(
 # 所有取候選的路都從去掉舊卡的池取。歷史查詢（使用者明說要看舊的）例外。
 
 _SUPERSEDES_LINE_RE = re.compile(r"^- Supersedes:\s*(.+)", re.MULTILINE)
+SUPERSEDES_MEMO = "_supersedes-memo.json"   # WORKFLOW_DIR 下，本機衍生快取：{atom 絕對路徑: [mtime_ns, size, [被取代名]]}
+_SUPERSEDES_MEMO_CAP = 5000                  # 刪掉的卡不逐筆清；超過就只留這次池裡的
+
+
+def _load_supersedes_memo(path: Path) -> Dict[str, list]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def collect_superseded_names(
     all_atoms: List[Tuple[AtomEntry, Path]],
     content_cache: Optional[Dict[str, str]] = None,
+    memo_path: Optional[Path] = None,
 ) -> set:
     """掃池內每顆 atom 的 `- Supersedes:` 行，回被取代者名字集合（鏈式：A→B、B→C 都在集合）。
-    只讀；讀過的內文進 content_cache 供後段續用。fail-open（讀不到的略過）。"""
+    只讀；讀過的內文進 content_cache 供後段續用。fail-open（讀不到的略過、下次再讀）。
+    給 memo_path：卡的（mtime_ns, size）跟上次一樣就用上次的名單、不開檔，只讀新卡與改過的卡，結果寫回——
+    開場逐張開幾百張卡佔 SessionStart 一半時間，機器一忙開檔最先被拖慢。"""
+    memo = _load_supersedes_memo(memo_path) if memo_path else {}
+    fresh: Dict[str, list] = {}
     out: set = set()
     for (name, rel_path, _t), base_dir in all_atoms:
         atom_path = (base_dir / rel_path) if rel_path else (base_dir / "memory" / f"{name}.md")
         try:
-            if not atom_path.exists():
-                continue
-            text = read_atom_text(atom_path, content_cache)
+            st = atom_path.stat()
         except (OSError, ValueError):
             continue
-        if not text:
-            continue
-        m = _SUPERSEDES_LINE_RE.search(text)
-        if not m:
-            continue
-        for old in m.group(1).split(","):
-            old = old.strip()
-            if old and old != name:
-                out.add(old)
+        key, sig = str(atom_path), [st.st_mtime_ns, st.st_size]
+        hit = memo.get(key)
+        if isinstance(hit, list) and len(hit) == 3 and hit[:2] == sig and isinstance(hit[2], list):
+            olds = [str(o) for o in hit[2]]
+        else:
+            text = read_atom_text(atom_path, content_cache)
+            if text is None:
+                continue
+            m = _SUPERSEDES_LINE_RE.search(text)
+            olds = [o.strip() for o in m.group(1).split(",") if o.strip() and o.strip() != name] if m else []
+        fresh[key] = sig + [olds]
+        out.update(olds)
+    if memo_path and any(memo.get(k) != v for k, v in fresh.items()):
+        merged = {**memo, **fresh}
+        if len(merged) > _SUPERSEDES_MEMO_CAP:
+            merged = fresh
+        tmp = memo_path.with_name(f"{memo_path.name}.{os.getpid()}.tmp")
+        try:
+            tmp.write_text(json.dumps(merged, ensure_ascii=False), encoding="utf-8", newline="\n")
+            os.replace(tmp, memo_path)
+        except OSError as e:
+            _atom_debug_error("supersedes_memo:write", e)
     return out
 
 
@@ -398,7 +500,7 @@ def superseded_names_cached(memory_dir: Path) -> set:
         if hit and hit[0] == sig:
             return hit[1]
         pool = [((n, p, list(t)), memory_dir.parent) for n, p, t in entries]
-        names = collect_superseded_names(pool)
+        names = collect_superseded_names(pool, memo_path=WORKFLOW_DIR / SUPERSEDES_MEMO)
         _SUPERSEDED_CACHE[key] = (sig, names)
         return names
     except Exception:
@@ -411,7 +513,7 @@ def superseded_names_cached(memory_dir: Path) -> set:
 def _collect_v4_role_atoms(
     project_mem_dir: Optional[Path], user: str, roles: List[str],
 ) -> List[AtomEntry]:
-    """列出使用者可見的 V4 sub-layer atoms（SPEC §8.1）：shared/ 全部、roles/<持有> 、personal/<本人>。"""
+    """列出使用者可見的 V4 sub-layer atoms（SPEC §8.1）：shared/ 與 failures/ 全部、roles/<持有> 、personal/<本人>。"""
     if not project_mem_dir or not project_mem_dir.is_dir():
         return []
     from handlers._shared import _V4_TRIGGER_LINE_RE
@@ -423,6 +525,11 @@ def _collect_v4_role_atoms(
     shared = project_mem_dir / "shared"
     if shared.is_dir():
         scan_targets.append(shared)
+    # failures/ 與 shared/ 同級、同樣人人可見（失敗家族 atom）。漏掃它，那些 atom 就只剩
+    # 索引一條路；而 v4 layout 下索引讀來的那份會被整份丟棄 ＝ 它們永遠不會被注入。
+    failures = project_mem_dir / "failures"
+    if failures.is_dir():
+        scan_targets.append(failures)
     roles_root = project_mem_dir / "roles"
     for r in roles:
         rd = roles_root / r
@@ -547,7 +654,7 @@ def build_candidate_pool(
     if org_mem_dir:
         pool.extend(((n, p, t), org_mem_dir.parent) for n, p, t in org_atoms)
     try:
-        superseded = sorted(collect_superseded_names(pool))
+        superseded = sorted(collect_superseded_names(pool, memo_path=WORKFLOW_DIR / SUPERSEDES_MEMO))
     except Exception as e:
         _atom_debug_error("candidate_pool:superseded", e)
         superseded = []
@@ -587,8 +694,8 @@ def _decay_exponent(access: Dict[str, Any], config: Optional[Dict[str, Any]]) ->
     if gamma <= 0:
         return _DECAY_D_MAX
     try:
-        from lib.atom_access import usefulness_stats
-        st = usefulness_stats(access, z=float(u.get("wilson_z", 1.28)))
+        from lib.atom_access import usefulness_stats, WILSON_Z_DEFAULT
+        st = usefulness_stats(access, z=float(u.get("wilson_z", WILSON_Z_DEFAULT)))
         if st.get("n", 0) <= 0:
             return _DECAY_D_MAX
         return min(_DECAY_D_MAX, max(_DECAY_D_MIN, _DECAY_D_MAX - gamma * st["lower_bound"]))
@@ -654,12 +761,12 @@ def compute_injection_rank(
     except Exception:
         pass
     try:
-        from lib.atom_access import usefulness_stats
+        from lib.atom_access import usefulness_stats, WILSON_Z_DEFAULT
         acc = load_access_cached(atom_dir / f"{atom_name}.md", access_cache)
         read_hits = int(acc.get("read_hits") or 0)
         if read_hits <= 0:
             return activation
-        st = usefulness_stats(acc, z=float(u.get("wilson_z", 1.96)))
+        st = usefulness_stats(acc, z=float(u.get("wilson_z", WILSON_Z_DEFAULT)))
         if st.get("n", 0) < int(u.get("min_n", 3)):
             return activation  # 樣本不足不罰（保守，防壓新 atom）
         penalty = weight * math.log10(read_hits + 1) * (1.0 - st.get("lower_bound", 0.0))
@@ -864,6 +971,8 @@ _FRONTMATTER_KEEP_RE = re.compile(
     re.MULTILINE,
 )
 
+_HTML_COMMENT_RE = re.compile(r"^[ \t]*<!--.*?-->[ \t]*\n?", re.MULTILINE | re.DOTALL)
+
 _KNOWLEDGE_CAP_TOKENS_DEFAULT = 200
 
 
@@ -877,7 +986,8 @@ def _extract_named_section(
     m = pattern.search(content)
     if not m:
         return None
-    body = m.group(1).rstrip()
+    # HTML 註解（`<!-- src: sid#uuid -->` 來源指標等）是給 atom-source 讀的，不進注入（省 token）
+    body = _HTML_COMMENT_RE.sub("", m.group(1)).rstrip()
     full = f"## {section_title}\n{body}"
 
     if max_tokens is None:
@@ -1099,8 +1209,19 @@ def pointer_path(
     return rel_path or f"{name}.md"
 
 
+_NAME_ECHO_STRIP_RE = re.compile(r"[\W_]+")
+
+
+def title_echoes_name(title: str, name: str) -> bool:
+    """規則 POINTER_NO_NAME_ECHO：一行指標的標題／摘要只是卡名再寫一次（卡名就是標題轉成的檔名）。
+    去掉標點、空白、底線、大小寫，與截斷留下的 …，剩下的是卡名的開頭（含整個相同）→ True；空字串 → False。"""
+    t = _NAME_ECHO_STRIP_RE.sub("", (title or "").rstrip("…")).lower()
+    return bool(t) and _NAME_ECHO_STRIP_RE.sub("", name or "").lower().startswith(t)
+
+
 def format_cold_inject_line(
     name: str, raw_content: str, rel_path: str, atom_path: Optional[Path] = None,
+    drop_name_echo: bool = False,
 ) -> str:
     summary = ""
     impression = _extract_named_section(raw_content, "印象")
@@ -1129,6 +1250,8 @@ def format_cold_inject_line(
 
     display_path = pointer_path(atom_path, rel_path, name)
     status = atom_status_suffix(raw_content)
+    if drop_name_echo and title_echoes_name(summary, name):
+        return f"[Atom:{name}] (cold){status} (full: Read {display_path})"
     return f"[Atom:{name}] (cold) {summary}{status} (full: Read {display_path})"
 
 
@@ -1405,15 +1528,28 @@ def detect_atom_use(
 # ─── 判用 v2：行動證據優先、路徑噪音剔除、否定線索 ──────────────────────────────
 # 標註集（tools/memory-eval/usage_labels.jsonl，57 筆）實測 v1 詞彙重疊：precision 0.18、
 # 12 組門檻全在 0.17–0.22，rejected／cited 在所有設定下 9/9 判 used——門檻是死路。
-# FP 主因：路標／cold 行的路徑片段（users/holylight/claude/tools…）幾乎每輪工具參數都有；
+# FP 主因：路標／cold 行的路徑片段（users/<帳號>/claude/tools…）幾乎每輪工具參數都有；
 # 全文 atom 則是泛雙字。否定與引用靠共享 token 必中，要獨立規則。
 
-_ATTR_PATH_NOISE = frozenset({
-    "users", "holylight", "claude", "tools", "aidocs", "memory", "hooks", "workflow", "atoms",
-    "memdev", "scratchpad", "appdata", "local", "temp", "python", "utf8", "verify", "handlers",
-    "logs", "json", "jsonl", "config", "state", "session", "prompt", "atom", "read", "write",
-    "edit", "bash", "file", "path", "line", "lines", "test", "tests", "user", "claude.md",
-}) | {Path.home().name.lower()}  # 本機帳號名也是路徑段
+def _attr_path_noise() -> frozenset:
+    """路徑噪音詞。家目錄那一段是當前使用者的帳號，隨機器而異 → 取用時才問，
+    不寫死在版控程式裡（寫死等於只對作者那台機器有效）。"""
+    base = {
+        "users", "claude", "tools", "aidocs", "memory", "hooks", "workflow", "atoms",
+        "memdev", "scratchpad", "appdata", "local", "temp", "python", "utf8", "verify",
+        "handlers", "logs", "json", "jsonl", "config", "state", "session", "prompt",
+        "atom", "read", "write", "edit", "bash", "file", "path", "line", "lines",
+        "test", "tests", "user", "claude.md",
+    }
+    try:
+        from wg_roles import get_current_user
+        base.add(get_current_user().lower())
+    except Exception:  # noqa: BLE001
+        pass
+    return frozenset(base)
+
+
+_ATTR_PATH_NOISE = _attr_path_noise()
 # 否定要「綁定到這顆 atom」才算拒用，不是附近有否定詞就算（Codex #8 反例：「遵照 X 完成部署，不要用舊指令」
 # 不是拒用 X）。兩種句型：前綴型「不要用／忽略 ＋ ≤15 字 ＋ 錨點」、述語型「錨點 ＋ ≤20 字 ＋ 已過時／被取代／不適用」。
 _ATTR_NEG_PREFIX = r"(?:不要用|不用|別用|不採用|不套用|不照|不依|不需要|不能用|忽略|跳過|don'?t use|do not use|skip (?:it|this|that))"
@@ -1832,7 +1968,7 @@ def _truncate_context_by_activation(
 SECTION_INJECT_THRESHOLD = 200
 
 _SECTION_HEADER_RE = re.compile(r"^(#{2,3})\s+(.+)", re.MULTILINE)
-_RELATED_LINE_RE = re.compile(r"^- Related:\s*.+", re.MULTILINE)
+_RELATED_LINE_RE = re.compile(r"^- Related:[ \t]*.+", re.MULTILINE)
 
 
 def _extract_sections(
@@ -2008,13 +2144,21 @@ def extract_aidocs_keywords(entries: List[AiDocsEntry]) -> Dict[str, List[str]]:
 
 # ─── Intent Classifier (was wg_intent.classify_intent) ──────────────────────
 
+# 十個 intent 鍵固定（介面凍結；wg_overview.INTENT_KEYS 對拍）：debug 最前，平手取先鍵（max 取插入序第一個）
 INTENT_PATTERNS = {
     "debug": ["crash", "error", "bug", "失敗", "壞", "exception", "為什麼",
-              "why", "問題", "traceback", "報錯", "修復", "fix"],
+              "why", "問題", "traceback", "報錯", "修復", "fix", "不掉血", "沒反應", "閃退"],
+    "feature": ["新增", "加功能", "新功能", "加一個", "feature", "實作", "implement",
+                "支援", "加上", "擴充", "新加", "多一個"],
+    "refactor": ["重構", "refactor", "整理", "抽出", "拆開", "搬到", "改寫法", "去重",
+                 "簡化", "cleanup", "rename", "改名", "合併成"],
+    "perf": ["效能", "太慢", "很慢", "卡頓", "優化", "perf", "performance", "latency",
+             "記憶體", "memory leak", "吃 cpu", "耗時", "加速", "快一點", "fps"],
+    "new_project": ["立案", "新專案", "從零", "起專案", "開新專案", "new project",
+                    "scaffold", "bootstrap", "初始化專案", "建專案", "新開一個專案"],
     "build": ["build", "deploy", "建置", "部署", "安裝", "install", "啟動",
               "setup", "config", "設定", "配置", "環境"],
-    "design": ["設計", "架構", "design", "architecture", "重構", "refactor",
-               "新增", "planning", "實作", "implement", "方案"],
+    "design": ["設計", "架構", "design", "architecture", "planning", "方案"],
     "recall": ["之前", "上次", "記得", "決策", "決定", "為什麼選",
                "remember", "previous", "history"],
     "handoff": ["下 session", "下次繼續", "交接", "續接", "下一個 session",
@@ -2092,17 +2236,18 @@ def _update_topic_tracker(
 # ─── Vector Observation Log + Semantic Search (was wg_intent) ───────────────
 
 _VECTOR_OBS_LOG = CLAUDE_DIR / "Logs" / "vector-observation.log"
-_vector_obs_logger: Optional[logging.Logger] = None
+_vector_obs_logger: Optional[Any] = None    # logging.Logger；logging 約 30 ms，用到才載（HOOK_IMPORT_ON_USE）
 _vector_obs_logger_failed: bool = False
 
 
-def _get_vector_obs_logger() -> Optional[logging.Logger]:
+def _get_vector_obs_logger() -> Optional[Any]:
     global _vector_obs_logger, _vector_obs_logger_failed
     if _vector_obs_logger is not None:
         return _vector_obs_logger
     if _vector_obs_logger_failed:
         return None
     try:
+        import logging
         import logging.handlers
 
         _VECTOR_OBS_LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -2184,10 +2329,9 @@ def _ensure_vector_ready(
         )
         if stale and spawn:
             marker.parent.mkdir(parents=True, exist_ok=True)
-            with open(marker, "w", encoding="utf-8", newline="\n") as _f:
-                _f.write(str(time.time()))
+            marker.write_text(str(time.time()), encoding="utf-8", newline="\n")
             import subprocess
-            starter = CLAUDE_DIR / "tools" / "memory-vector-service" / "starter.py"
+            starter = CODE_DIR / "tools" / "memory-vector-service" / "starter.py"
             kw: Dict[str, Any] = {
                 "stdin": subprocess.DEVNULL,
                 "stdout": subprocess.DEVNULL,
@@ -2235,9 +2379,10 @@ def _search_episodic_context(
         return []
 
     port = vs_config.get("service_port", 3849)
-    top_k = sc_config.get("max_episodic", 3)
-    min_score = sc_config.get("min_score", 0.35)
-    timeout_s = sc_config.get("search_timeout_ms", 8000) / 1000.0
+    sc_default = CORE_DEFAULTS["session_context"]
+    top_k = sc_config.get("max_episodic", sc_default["max_episodic"])
+    min_score = sc_config.get("min_score", sc_default["min_score"])
+    timeout_s = sc_config.get("search_timeout_ms", sc_default["search_timeout_ms"]) / 1000.0
 
     try:
         params = urllib.parse.urlencode({
@@ -2269,7 +2414,7 @@ def _build_session_context(episodic_results: List[Dict[str, Any]]) -> List[str]:
     context_lines = ["[Session:Context] Related past sessions:"]
     char_budget = 600
 
-    for ep in episodic_results:
+    for ep in episodic_results[:2]:          # 最多 2 筆、每筆摘要截 80 字：過去 session 只給線索，要細節再 Read
         name = ep.get("atom_name", "")
         created = ep.get("created", ep.get("last_used", ""))
         summary = ep.get("summary", "")
@@ -2278,7 +2423,7 @@ def _build_session_context(episodic_results: List[Dict[str, Any]]) -> List[str]:
         if name.startswith("episodic-") and len(name) > 18:
             slug = name[18:]
 
-        line = f"- [{created}] {slug}: {summary[:120]}"
+        line = f"- [{created}] {slug}: {summary[:80]}"
         if len(line) > char_budget:
             break
         context_lines.append(line)
@@ -2316,6 +2461,9 @@ def _proactive_classify(
 ) -> List[str]:
     pro_config = config.get("proactive", {})
     lines: List[str] = []
+    if state.get("proactive_sent"):          # 建卡建議一個 session 最多 1 次（判斷照跑在第一次）
+        return lines
+    state["proactive_sent"] = True
 
     recurring = _detect_cross_session_patterns(episodic_results, prompt)
     pattern_threshold = pro_config.get("pattern_threshold", 2)
@@ -2471,7 +2619,7 @@ def _load_tool_module(filename: str, mod_name: str):
     """以 spec_from_file_location 載 tools/ 下單檔模組（self-sufficient sys.path）。失敗→None。"""
     try:
         import importlib.util
-        p = CLAUDE_DIR / "tools" / filename
+        p = CODE_DIR / "tools" / filename
         spec = importlib.util.spec_from_file_location(mod_name, p)
         if spec is None or spec.loader is None:
             return None
@@ -2551,7 +2699,7 @@ def _trigger_sync_memory_index(memory_dir: Optional[Path] = None) -> Optional[st
     呼叫者決定怎麼浮出，不靜默。
     """
     import subprocess
-    cmd = [sys.executable, str(CLAUDE_DIR / "tools" / "sync-memory-index.py"), "--write"]
+    cmd = [sys.executable, str(CODE_DIR / "tools" / "sync-memory-index.py"), "--write"]
     if memory_dir is not None:
         cmd += ["--memory-dir", str(memory_dir)]
     # Windows: 不帶 CREATE_NO_WINDOW 會讓子行程另開可見 console 視窗
@@ -2697,8 +2845,8 @@ def apply_selective_forget(archive_candidates, config, *, atoms_dir=None,
             lines = ["# Selective-Forget 候選（stale + 低用 + 非核心保護）", ""]
             lines += [f"- {c.get('atom')} (score={c.get('score')}, "
                       f"last_used={c.get('last_used')})" for c in cands]
-            with open(staging_dir / "forget-candidates.md", "w", encoding="utf-8", newline="\n") as _f:
-                _f.write("\n".join(lines) + "\n")
+            (staging_dir / "forget-candidates.md").write_text(
+                "\n".join(lines) + "\n", encoding="utf-8", newline="\n")
         except OSError as e:
             _atom_debug_error("forget:write_candidates", e)
     cand_names = [c.get("atom") for c in cands]
@@ -2769,7 +2917,7 @@ def _scan_doc_refs(moved: List[Dict[str, Any]]) -> Dict[str, List[str]]:
     """搬移後掃**人面向說明文件**是否仍含舊 path/檔名引用（移檔非建檔特有；user 補充）。
 
     回 {slug: [需同步的 rel 文件...]}。只掃 _AIDocs/（排除 atom 物理區：舊址 Failures/ 與 _atoms/，
-    那裡的 slug 引用是 atom-atom Related、搬 path 不斷）＋根層 README/TECH。advisory only。
+    那裡的 slug 引用是 atom-atom Related、搬 path 不斷）＋根層 README/TECH 與 TECH/ 細節檔。advisory only。
     """
     docs: List[Path] = []
     aidocs = CLAUDE_DIR / "_AIDocs"
@@ -2783,6 +2931,7 @@ def _scan_doc_refs(moved: List[Dict[str, Any]]) -> Dict[str, List[str]]:
         p = CLAUDE_DIR / fn
         if p.exists():
             docs.append(p)
+    docs.extend(sorted((CLAUDE_DIR / "TECH").glob("*.md")))
     cache = {}
     for p in docs:
         try:
@@ -2809,11 +2958,13 @@ def _sweep_realm_auto_migrate(config: Dict[str, Any]) -> List[Dict[str, Any]]:
     ② 詞庫 miss 的「unknown core」（非 protected）→ 喚 LLM（計畫 Fail-safe 表）：
       error（基礎設施失敗）→ defer 留原地（**防 Ollama 離線把全部掃進 Else**）；
       core → 留；local≥門檻 → 搬 canon domain + 學詞；unsure/低信心 → Else。
-    安全網：核心保護硬擋（protected）永不喚 LLM、永不搬；set_realm 原子搬（含 .access.json）/
+    安全網：核心保護硬擋（protected）永不喚 LLM、永不搬；ENTRY_BOUND_STAYS_CORE（綁 Entry 的卡）
+      本來要搬或要喚 LLM 時改成不搬、不喚，留帳 atom_io_audit.jsonl op=realm_hold；set_realm 原子搬（含 .access.json）/
       可 undo（--to-core）；max_per_session 限額；搬移寫 marker（含 via + doc-ref）不靜默。
     回 list of {slug, domain, from, to, via}（空 = 無搬移）。
     """
-    if classify_realm is None or is_local_realm_path is None or load_atom_index_json is None:
+    if (classify_realm is None or is_local_realm_path is None or load_atom_index_json is None
+            or entry_bound_ids is None):
         return []
     realm_cfg = config.get("realm", {})
     if not realm_cfg.get("auto_migrate", True):
@@ -2833,6 +2984,7 @@ def _sweep_realm_auto_migrate(config: Dict[str, Any]) -> List[Dict[str, Any]]:
         mod = _load_tool_module("atom-set-realm.py", "atom_set_realm")
         if mod is None:
             return []
+        from lib.atom_io import _audit_log, _gen_audit_id  # atom-set-realm 載入時已把程式碼根放進 sys.path
         llm_mod = _load_tool_module("realm_llm_classify.py", "realm_llm_classify") if llm_enabled else None
         existing_paths = list(enumerate_local_paths(MEMORY_DIR)) if enumerate_local_paths else []
 
@@ -2847,14 +2999,27 @@ def _sweep_realm_auto_migrate(config: Dict[str, Any]) -> List[Dict[str, Any]]:
             if _is_unconfirmed_autocapture(a):
                 continue  # P2: 未確認 auto-capture 碎片 → defer（不搬、不喚 LLM 學詞，斷詞庫污染源）
             rc = classify_realm(name, a.get("triggers", []), extra_lexicon=learned or None)
+            if rc.get("protected"):
+                continue  # 核心保護硬擋：永不喚 LLM、永不搬
+            lex_local = rc.get("realm") == "local"
+            if not lex_local and (llm_mod is None or llm_calls >= max_llm):
+                continue  # LLM 未啟用 / 額度用罄 → 留 core（defer）
+            entry_ids = entry_bound_ids(a, CLAUDE_DIR / path)
+            if entry_ids:  # ENTRY_BOUND_STAYS_CORE：本來要搬或要喚 LLM，改成不搬、不喚，留帳
+                _audit_log({
+                    "audit_id": _gen_audit_id(),
+                    "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),  # 同 realm_move 帳用 UTC
+                    "op": "realm_hold", "source": "hook:realm-sweep", "rule": ENTRY_BOUND_STAYS_CORE,
+                    "slug": name, "entry": entry_ids, "path": path,
+                    "would": f"lex:{rc.get('domain')}" if lex_local else "LLM",
+                })
+                continue
 
             target_dom: Optional[str] = None
             via: Optional[str] = None
-            if rc.get("realm") == "local":
+            if lex_local:
                 target_dom, via = rc.get("domain"), "lex"
-            elif rc.get("protected"):
-                continue  # 核心保護硬擋：永不喚 LLM、永不搬
-            elif llm_mod is not None and llm_calls < max_llm:
+            else:
                 llm_calls += 1
                 lr = llm_mod.llm_classify_realm(
                     name, a.get("triggers", []), _read_atom_excerpt(path), existing_paths, config)
@@ -2869,8 +3034,6 @@ def _sweep_realm_auto_migrate(config: Dict[str, Any]) -> List[Dict[str, Any]]:
                         existing_paths = sorted(set(existing_paths) | {target_dom})
                 else:  # unsure / 低信心 local → catch-all
                     target_dom, via = default_dom, "Else"
-            else:
-                continue  # LLM 未啟用 / 額度用罄 → 留 core（defer）
 
             if not target_dom:
                 continue
@@ -2910,8 +3073,8 @@ def _sweep_realm_auto_migrate(config: Dict[str, Any]) -> List[Dict[str, Any]]:
             if doc_refs:  # 附在首筆，SessionStart 統一呈現
                 payload[0] = {**payload[0], "doc_refs": doc_refs}
             existing.extend(payload)
-            with open(REALM_AUTOMOVE_MARKER, "w", encoding="utf-8", newline="\n") as _f:
-                _f.write(json.dumps(existing, ensure_ascii=False))
+            REALM_AUTOMOVE_MARKER.write_text(
+                json.dumps(existing, ensure_ascii=False), encoding="utf-8", newline="\n")
         except OSError as e:
             _atom_debug_error("realm:automove_marker", e)
         _trigger_sync_memory_index()
@@ -2970,14 +3133,12 @@ def _self_iterate_atoms(
 
     效用驅動：
       - 慢衰減：每顆 atom α←1+λ(α−1); β←1+λ(β−1)（λ≈0.97），把效用證據往 prior 拉。
-      - 晉升閘改由「真實 Confirmations 主軌 + 效用 Wilson 下界」驅動；
-        ReadHits 降為純曝光計數，不再單獨觸發晉升。
+      - 晉升只看效用 Wilson 下界；Confirmations 與 ReadHits 都不參與晉升。
       - Wilson 下界 ≤ demote_lb 且 n≥min_n → 列降級候選（不自動降，留裁決）。
     """
     si_config = config.get("self_iteration", {})
     u_config = config.get("usefulness", {}) or {}
     decay_half_life = si_config.get("decay_half_life_days", 30)
-    promote_conf_threshold = si_config.get("promote_confirmations_threshold", 4)
     archive_threshold = si_config.get("archive_score_threshold", 0.3)
     # 效用旋鈕（py↔js 鏡像：server.js）
     decay_lambda = float(u_config.get("decay_lambda", 0.97))
@@ -2986,7 +3147,11 @@ def _self_iterate_atoms(
     min_n = int(u_config.get("min_n", 3))
     # demote 側門檻較嚴（n≥5）：67-75% 成功率的 atom 不因小樣本波動列降級候選
     demote_min_n = int(u_config.get("demote_min_n", 5))
-    wilson_z = float(u_config.get("wilson_z", 1.28))
+    try:
+        from lib.atom_access import WILSON_Z_DEFAULT
+        wilson_z: Optional[float] = float(u_config.get("wilson_z", WILSON_Z_DEFAULT))
+    except ImportError:
+        wilson_z = None   # lib 載不到：下面每顆的效用統計也會停用（usefulness_stats=None），用不到 z
 
     results = {"promoted": [], "archive_candidates": [],
                "demote_candidates": [], "scanned": 0}
@@ -3047,22 +3212,20 @@ def _self_iterate_atoms(
                 "confirmations": confirmations,
             })
 
-        # 晉升 = 真實 Confirmations 主軌 OR 效用 Wilson 下界（升≥promote_lb 且 n≥min_n）。
-        # ReadHits 降為純曝光，不再參與晉升。
+        # 晉升只看效用 Wilson 下界（升≥promote_lb 且 n≥min_n）；Confirmations、ReadHits 都不參與。
         # py↔js 鏡像：server.js toolAtomPromote usefulness gate。
         util_eligible = bool(
             usefulness_promote_eligible
             and usefulness_promote_eligible(
                 acc, promote_lb=promote_lb, min_n=min_n, z=wilson_z)
         )
-        promote_method = "confirmations" if confirmations >= promote_conf_threshold else "usefulness"
+        promote_method = "usefulness"
         # INV-PROMOTION-GATE-ON-SCAN-FACE：未確認 auto-capture 碎片不得自動晉升（與 realm sweep
         # 路徑 _sweep_realm_auto_migrate:1768 同源規則：碎片是未經人確認的 [臨] 萃取，confirmations
         # 達標也不算數，待人工確認/晉升後才算）。斷『佔位符碎片被當穩定 atom 自動晉升』漏洞——
         # 該過濾原僅在 realm sweep，晉升掃描面缺，故碎片曾被算晉升。手動 atom_promote（js）為
         # 人工確認路徑、不受此限。
-        if (confirmations >= promote_conf_threshold or util_eligible) \
-                and not _autocapture_unconfirmed_from_text(text):
+        if util_eligible and not _autocapture_unconfirmed_from_text(text):
             lines = text.split("\n")
             promoted_in_file = []
             changed = False
@@ -3090,8 +3253,7 @@ def _self_iterate_atoms(
 
                 tmp = md_file.with_suffix(".tmp")
                 try:
-                    with open(tmp, "w", encoding="utf-8", newline="\n") as _f:
-                        _f.write("\n".join(lines))
+                    tmp.write_text("\n".join(lines), encoding="utf-8", newline="\n")
                     tmp.replace(md_file)
                 except OSError:
                     try:
@@ -3164,8 +3326,7 @@ def _self_iterate_atoms(
                     f"α={c['alpha']}, β={c['beta']}, n={c['n']}"
                 )
         report = staging / "archive-candidates.md"
-        with open(report, "w", encoding="utf-8", newline="\n") as _f:
-            _f.write("\n".join(out_lines))
+        report.write_text("\n".join(out_lines), encoding="utf-8", newline="\n")
         results["reports"].append(str(report))
 
         # Phase D — selective forgetting（預設 dry-run：只寫候選；enabled+!dry_run 才隔離 _distant/）

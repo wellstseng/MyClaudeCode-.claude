@@ -9,7 +9,7 @@ wg_roles.py — 身份、職能、裁決資格（多機共享、零宣告）
      只看 `- Role: a, b` 一行（tools/init-roles.py --me 寫入；留空檔或刪檔即回到 AD）。
   2. AD 群組：whoami /groups（Windows 且有 USERDOMAIN 才跑，每個行程只 spawn 一次），群組名格式
      <網域>\\<專案代碼>_<序號>_<職能名>，依 config roles.ad_group_map 以「職能名子字串」對映
-     （先比長鍵）；專案 MEMORY.md 有 `> Project-Code: PJA146` 只取該專案的群組，沒宣告取聯集。
+     （先比長鍵）；專案 MEMORY.md 有 `> Project-Code: PRJ001` 只取該專案的群組，沒宣告取聯集。
   3. 都沒有 → []：只看 shared／org／global，不預設 programmer（「不知道」不能被當成「是程式」擴大可見範圍）。
 
 裁決資格＝config review.deciders（AD 帳號清單）；空＝人人可裁決。config 讀壞 → True 並 stderr。
@@ -28,7 +28,7 @@ from typing import Any, Dict, List, Optional
 
 import wg_core
 
-_DEFAULT_USER = "unknown"
+_DEFAULT_USER = "unknown"   # env 與 OS 都問不出身分時的中性值，不是任何人的帳號
 _ROLE_LINE_RE = re.compile(r"^-\s*Role\s*:\s*(.*)$", re.IGNORECASE)
 _PROJECT_CODE_RE = re.compile(r"^>\s*Project-Code:\s*(\S+)", re.MULTILINE)
 
@@ -41,7 +41,12 @@ def _warn(msg: str) -> None:
 
 
 def get_current_user() -> str:
-    """env CLAUDE_USER → OS 登入帳號（AD 帳號去網域）→ "unknown"。"""
+    """env CLAUDE_USER → OS 登入帳號（AD 帳號去網域）→ _DEFAULT_USER。
+
+    personal/<user>/ 目錄名＝各機器 OS 帳號（bootstrap 慣例）。共用此核心的同事機器若拿到
+    寫死的帳號，會把別人的 personal 當成自己的（可見性倒置、PersonalSync 指錯目錄），
+    故此處不留任何人的帳號字面量；兩層都問不出身分才回中性的 _DEFAULT_USER。
+    """
     u = os.environ.get("CLAUDE_USER")
     if u:
         return u

@@ -34,8 +34,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-CLAUDE_DIR = Path.home() / ".claude"
 TOOL_DIR = Path(__file__).resolve().parent
+CODE_DIR = TOOL_DIR.parents[1]   # 程式碼根：lib.* 從本樹載
+if str(CODE_DIR) not in sys.path:
+    sys.path.insert(0, str(CODE_DIR))
+from lib.project_root import claude_data_dir  # noqa: E402
+
+CLAUDE_DIR = claude_data_dir()   # 使用者資料根（WG_CLAUDE_DIR 或 ~/.claude），和 hooks 同一支算法
 
 # ─── 預設組態 ─────────────────────────────────────────────────────────────────
 DEFAULTS: Dict[str, Any] = {
@@ -58,7 +63,7 @@ DEFAULTS: Dict[str, Any] = {
 }
 
 # ─── 與 hook 對齊的 staging 解析（單一來源：wg_core.resolve_staging_dir）──────────
-sys.path.insert(0, str(CLAUDE_DIR / "hooks"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "hooks"))   # 程式碼：本檔所在樹的 hooks/
 try:
     from wg_core import resolve_staging_dir as _resolve_staging  # type: ignore
 except Exception:  # pragma: no cover - fallback 僅在 hook 缺失時走

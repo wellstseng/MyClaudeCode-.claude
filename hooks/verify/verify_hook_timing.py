@@ -1,0 +1,644 @@
+"""verify_hook_timing.py：hook 分段計時與超時降級（wg_hook_timing）、Stop／PostToolUse 降級後只記不問、
+SessionStart／UserPromptSubmit 降級送出已備好的（追蹤提示在前）、PreToolUse 只打點不改判定、背景鬧鐘代送、
+dispatcher 落帳、量尺 tools/hook-timing.py、開場與提問少讀檔（取代名單備忘、連結圖去重）。
+
+怎麼跑：set WG_CLAUDE_DIR=<worktree> && python -X utf8 -m pytest -q hooks/verify/verify_hook_timing.py
+"""
+from __future__ import annotations
+
+import importlib.util
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
+HOOKS_DIR = Path(__file__).resolve().parents[1]
+ROOT = HOOKS_DIR.parent
+sys.path.insert(0, str(HOOKS_DIR))
+sys.path.insert(0, str(ROOT / "lib"))
+
+import wg_atoms  # noqa: E402
+import wg_hook_timing as ht  # noqa: E402
+from handlers import post_tool_use as pt  # noqa: E402
+from handlers import pre_tool_use as ptu  # noqa: E402
+from handlers import stop as st  # noqa: E402
+from handlers import user_prompt_submit as ups  # noqa: E402
+from wg_core import DEFAULTS  # noqa: E402
+
+_CFG = {"hook_timing": DEFAULTS["hook_timing"]}
+
+
+@pytest.fixture()
+def ledger(monkeypatch):
+    rows = []
+    monkeypatch.setattr(ht, "append_guard_log", lambda guard, rec: rows.append((guard, dict(rec))))
+    monkeypatch.setattr(ht, "_CUR", None)
+    return rows
+
+
+def test_lap_degrades_once_past_ratio_with_ledger_and_stderr(ledger, capsys):
+    """上限 10 秒、80%：7 秒打點不降級；過 8 秒那一點降級（留一筆 degraded＋stderr 一行），之後每點都回 True、不再重複留帳；
+    finish 補「其餘」寫一筆 run，之後沒起表 lap 回 False。"""
+    timer = ht.HookTimer("Stop", "sid", 10.0, "settings.json", 0.8, time.time() - 7.0)
+    ht._CUR = timer
+    assert ht.lap("甲") is False and ledger == []
+    timer.t0 -= 1.5
+    assert ht.lap("乙") is True
+    assert [(g, r["kind"], r["degraded_at"]) for g, r in ledger] == [("hook_timing", "degraded", "乙")]
+    err = capsys.readouterr().err
+    assert "hook 超時降級" in err and "跑完「乙」" in err and "後面的段落這次不跑" in err
+    assert ht.lap("丙") is True and len(ledger) == 1
+    ht.finish()
+    run = ledger[-1][1]
+    assert run["kind"] == "run" and run["degraded_at"] == "乙" and [s[0] for s in run["segments"]] == ["甲", "乙", "丙", "其餘"]
+    assert ht.lap("丁") is False and len(ledger) == 2
+
+
+def test_start_reads_guardian_timeout_from_settings_else_config(ledger, monkeypatch, tmp_path):
+    """上限取 settings.json 裡掛 workflow-guardian.py 那支（同事件其他 hook 的 timeout 不算）；沒掛退 config；沒列的事件、關掉都不計時。"""
+    monkeypatch.setattr(ht, "CLAUDE_DIR", tmp_path)
+    guardian = "pythonw.exe -c \"...'.claude/hooks/workflow-guardian.py'...\""
+    (tmp_path / "settings.json").write_text(json.dumps({"hooks": {"Stop": [{"hooks": [
+        {"type": "command", "command": "pythonw.exe codex_companion.py", "timeout": 150},
+        {"type": "command", "command": guardian, "timeout": 20}]}]}}), encoding="utf-8")
+    t = ht.start("Stop", {"session_id": "s1"}, _CFG)
+    assert (t.limit_s, t.limit_src, t.session_id, t.segments[0][0]) == (20.0, "settings.json", "s1", "啟動")
+    ht.finish()                                                                # 收表：背景鬧鐘不留到案例外
+    t = ht.start("PostToolUse", {}, _CFG)
+    assert (t.limit_s, t.limit_src) == (5.0, "config")
+    ht.finish()
+    assert ht.start("PreCompact", {}, _CFG) is None and ht._CUR is None
+    assert ht.start("Stop", {}, {"hook_timing": {**_CFG["hook_timing"], "enabled": False}}) is None
+
+
+def test_settings_limit_reads_code_root_and_matches_tool(monkeypatch, tmp_path):
+    """資料根（WG_CLAUDE_DIR）沒有 settings.json → 讀程式碼根那份（B-2 的帳 limit_src 全是 config 就是這樣來的）；
+    PreToolUse 各組 matcher 對工具名（fullmatch），同事件別支 hook 的 timeout 不算，沒有組對得上 → None（退 config）。"""
+    data, code = tmp_path / "data", tmp_path / "code"
+    data.mkdir()
+    code.mkdir()
+    monkeypatch.setattr(ht, "CLAUDE_DIR", data)
+    monkeypatch.setattr(ht, "CODE_DIR", code)
+    g = "x/.claude/hooks/workflow-guardian.py"
+    (code / "settings.json").write_text(json.dumps({"hooks": {
+        "SessionStart": [{"hooks": [{"command": "user-init.sh", "timeout": 12}, {"command": g, "timeout": 20}]}],
+        "PreToolUse": [{"matcher": "Bash", "hooks": [{"command": "plan_bash_guard.py", "timeout": 9}]},
+                       {"matcher": "Write|Edit|Bash", "hooks": [{"command": g, "timeout": 5}]},
+                       {"matcher": "Read", "hooks": [{"command": g, "timeout": 3}]}]}}), encoding="utf-8")
+    assert ht.settings_limit("SessionStart") == 20.0
+    assert (ht.settings_limit("PreToolUse", "Bash"), ht.settings_limit("PreToolUse", "Read")) == (5.0, 3.0)
+    assert ht.settings_limit("PreToolUse", "Grep") is None and ht.settings_limit("PreToolUse", "MultiEdit") is None
+
+
+def test_entry_events_timed_with_config_fallback_and_run_record(ledger, monkeypatch, tmp_path):
+    """開場、提問、工具呼叫前三個事件都起表（settings 讀不到時上限 20／8／5 秒），每次 finish 各寫一筆 run
+    （PreToolUse 要在寫碼回合，看寫碼回合標記檔；這裡先建好）。"""
+    monkeypatch.setattr(ht, "WORKFLOW_DIR", tmp_path)
+    ht.mark_coding("s", True)
+    monkeypatch.setattr(ht, "settings_limit", lambda *a: None)
+    monkeypatch.setattr(ht, "_process_started", time.time)                    # 假起點：剛起的行程（pytest 本身早跑了好幾秒）
+    for event, limit in (("SessionStart", 20.0), ("UserPromptSubmit", 8.0), ("PreToolUse", 5.0)):
+        t = ht.start(event, {"session_id": "s", "tool_name": "Bash"}, _CFG)
+        assert (t.event, t.limit_s, t.limit_src, t.segments[0][0]) == (event, limit, "config", "啟動")
+        ht.finish()
+    assert [(r["kind"], r["event"]) for _, r in ledger] == [
+        ("run", "SessionStart"), ("run", "UserPromptSubmit"), ("run", "PreToolUse")]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="行程建立時間只在 Windows 用 GetProcessTimes 取")
+def test_process_start_is_real_creation_time():
+    """起點是行程建立時間，不是呼叫當下：pytest 這個行程早就跑了一陣子（拿不到會退回現在，差距是 0）。"""
+    assert time.time() - ht._process_started() > 0.05
+
+
+# ─── Stop：降級後放行、不擋，state 照寫 ────────────────────────────────
+
+@pytest.fixture()
+def stop_driven(monkeypatch):
+    wrote = []
+    monkeypatch.setattr(st, "_find_session_transcript", lambda *a, **k: None)
+    monkeypatch.setattr(st, "token_warn_payload", lambda *a, **k: "")
+    monkeypatch.setattr(st, "detect_evasion", lambda *a, **k: None)
+    monkeypatch.setattr(st, "write_state", lambda sid, s: wrote.append(sid))
+    monkeypatch.setattr(st, "append_guard_log", lambda *a, **k: None)
+    monkeypatch.setattr(st, "_attribute_usefulness", lambda *a, **k: None)
+    monkeypatch.setattr(st, "_detect_uncommitted_files", lambda mf: [])
+    monkeypatch.setattr(st, "_maybe_spawn_user_extract_worker", lambda *a, **k: None)
+    monkeypatch.setattr(st, "estimate_context_usage", lambda *a, **k: 0.3)
+    monkeypatch.setattr(st, "get_last_assistant_text", lambda *a, **k: "改好了。")
+
+    def drive(capsys, degrade_at=None):
+        laps = []
+
+        def fake_lap(seg):
+            laps.append(seg)
+            return degrade_at is not None and degrade_at in laps
+        monkeypatch.setattr(st, "_hook_lap", fake_lap)
+        state = {"phase": "working", "modified_files": [], "recent_user_prompts": [], "stop_blocked_count": 0, "turn_seq": 7,
+                 "failing_tests": [{"session_id": "sid", "cmd": "python -m pytest tests", "summary": "1 failed", "turn_seq": 7}]}
+        monkeypatch.setattr(st, "_ensure_state", lambda *a, **k: state)
+        wrote.clear()
+        with pytest.raises(SystemExit):
+            st.handle_stop({"session_id": "sid", "cwd": "", "last_assistant_message": "全部完成，測試都過了。"}, {})
+        return capsys.readouterr().out, laps, list(wrote)
+
+    return drive
+
+
+def test_stop_degraded_before_testfail_gate_releases_without_block(stop_driven, capsys):
+    out, laps, _ = stop_driven(capsys)
+    assert "[Guardian:TestFailGate]" in out                                   # 前置：同一份 state 不降級會被紅測閘擋
+    assert laps[:3] == ["讀 transcript", "殘檔帳本", "最該修記帳"]
+    out, laps, wrote = stop_driven(capsys, degrade_at="token 預警與閱讀路徑")
+    assert "TestFailGate" not in out and '"decision"' not in out             # 降級：後面的閘不跑、不擋
+    assert laps[-1] == "token 預警與閱讀路徑" and wrote and wrote[-1] == "sid"    # 停在降級那一點，state 寫回
+
+
+# ─── PostToolUse：降級後提示類段落不跑，記帳與寫 state 照做 ─────────────────
+
+@pytest.fixture()
+def ptu_driven(monkeypatch, tmp_path):
+    state = {"turn_seq": 3, "session": {"cwd": r"c:\proj"}}
+    wrote, companion = [], []
+    monkeypatch.setattr(pt, "_ensure_state", lambda *a, **k: state)
+    monkeypatch.setattr(pt, "write_state", lambda sid, s: wrote.append(sid))
+    monkeypatch.setattr(pt, "WORKFLOW_DIR", tmp_path)
+    monkeypatch.setattr(pt, "append_guard_log", lambda *a, **k: None)
+    monkeypatch.setattr(pt, "_check_output_quality", lambda *a, **k: None)
+    monkeypatch.setattr(pt, "_run_companion_hooks", lambda *a, **k: companion.append(1) or ([], ["同伴提示"]))
+
+    def run(capsys, degrade_at=None, tool="Edit"):
+        laps = []
+
+        def fake_lap(seg):
+            laps.append(seg)
+            return degrade_at is not None and degrade_at in laps
+        monkeypatch.setattr(pt, "_hook_lap", fake_lap)
+        companion.clear()
+        wrote.clear()
+        inp = {"session_id": "sid", "tool_name": tool, "tool_input": {"file_path": r"c:\proj\src\a.py"},
+               "tool_response": {}, "cwd": r"c:\proj"}
+        with pytest.raises(SystemExit):
+            pt.handle_post_tool_use(inp, {"docdrift": {"enabled": False}})
+        return capsys.readouterr().out, laps, list(wrote), len(companion)
+
+    return state, run
+
+
+def test_post_tool_use_degraded_skips_prompts_keeps_ledger(ptu_driven, capsys):
+    state, run = ptu_driven
+    out, laps, wrote, called = run(capsys)
+    assert called == 1 and "同伴提示" in out                                  # 前置：不降級時同伴檢查有跑、提示有送
+    assert laps == ["讀 state", "工具記帳", "讀檔帳", "綜觀與召回", "寫 state", "跨 session 碰撞", "同伴檢查"]
+    state.pop("modified_files", None)
+    out, laps, wrote, called = run(capsys, degrade_at="工具記帳")
+    assert called == 0 and "同伴提示" not in out                              # 降級：提示類不跑
+    assert any(m["path"].endswith("a.py") for m in state["modified_files"]) and wrote == ["sid"]   # 記帳與寫 state 照做
+    out, laps, wrote, called = run(capsys, degrade_at="跨 session 碰撞")
+    assert called == 0 and "同伴提示" not in out                              # 碰撞檢查跑完才過線：同伴檢查照樣不跑
+
+
+def test_post_tool_use_degraded_after_read_ledger_skips_depends(ptu_driven, capsys, monkeypatch):
+    """讀檔帳那段跑完才過線：depends 召回不跑（codex 第三輪：讀檔帳後沒重新判時）。前置：不降級時 Read 會跑 depends。"""
+    import wg_depends
+    import wg_overview
+    calls = []
+    monkeypatch.setattr(wg_overview, "record_reads", lambda *a, **k: None)
+    monkeypatch.setattr(wg_depends, "on_read_depends", lambda *a, **k: calls.append(1) or None)
+    _, run = ptu_driven
+    run(capsys, tool="Read")
+    assert calls == [1]
+    calls.clear()
+    _, laps, _, _ = run(capsys, degrade_at="讀檔帳", tool="Read")
+    assert calls == [] and "讀檔帳" in laps
+
+
+def test_settings_limit_picks_the_group_whose_matcher_fits_the_tool(monkeypatch, tmp_path):
+    """同一事件兩組 matcher 不同上限：照這次的工具名整串比對（Read 20、Bash 5）；沒給工具名取第一組；寫壞的 matcher 當對不上。"""
+    monkeypatch.setattr(ht, "CLAUDE_DIR", tmp_path)
+    g = "x/.claude/hooks/workflow-guardian.py"
+    (tmp_path / "settings.json").write_text(json.dumps({"hooks": {"PostToolUse": [
+        {"matcher": "Read", "hooks": [{"command": g, "timeout": 20}]},
+        {"matcher": "(", "hooks": [{"command": g, "timeout": 99}]},
+        {"matcher": "Bash|PowerShell", "hooks": [{"command": g, "timeout": 5}]}]}}), encoding="utf-8")
+    assert ht.settings_limit("PostToolUse", "Bash") == 5.0 and ht.settings_limit("PostToolUse", "Read") == 20.0
+    assert ht.settings_limit("PostToolUse", "BashX") is None and ht.settings_limit("PostToolUse") == 20.0
+
+
+def test_run_record_says_which_segment_it_ended_after(ledger):
+    """閘擋下就返回、打不到下一點：run 記 ended_after＝最後打到的段名，那道閘的耗時在「其餘」。"""
+    ht._CUR = ht.HookTimer("Stop", "s", 10.0, "config", 0.8, time.time())
+    ht.lap("讀 transcript")
+    ht.lap("紅測閘")
+    ht.finish()
+    run = ledger[-1][1]
+    assert run["kind"] == "run" and run["ended_after"] == "紅測閘" and run["segments"][-1][0] == "其餘"
+
+
+# ─── 背景鬧鐘：單一段落跑過頭、打不到點也留得下訊號 ──────────────────────────
+
+def test_alarm_writes_overrun_when_a_segment_runs_past_95_percent(ledger, monkeypatch, capsys):
+    """上限 1 秒、起點 0.9 秒前：0.05 秒後鬧鐘響，沒有任何打點也留一筆 overrun（卡在「啟動」之後）＋stderr。"""
+    monkeypatch.setattr(ht, "settings_limit", lambda *a: None)
+    monkeypatch.setattr(ht, "_process_started", lambda: time.time() - 0.9)
+    cfg = {"hook_timing": {"enabled": True, "degrade_ratio": 0.8, "fallback_limit_s": {"Stop": 1}}}
+    timer = ht.start("Stop", {"session_id": "s"}, cfg)
+    timer.alarm.join(2)
+    rows = [r for _, r in ledger if r["kind"] == "overrun"]
+    assert len(rows) == 1 and rows[0]["stuck_after"] == "啟動" and "hook 快被取消" in capsys.readouterr().err
+    ht.finish()
+
+
+def test_alarm_cancelled_when_hook_finishes_in_time(ledger, monkeypatch):
+    monkeypatch.setattr(ht, "settings_limit", lambda *a: None)
+    monkeypatch.setattr(ht, "_process_started", lambda: time.time())
+    cfg = {"hook_timing": {"enabled": True, "degrade_ratio": 0.8, "fallback_limit_s": {"Stop": 0.3}}}
+    timer = ht.start("Stop", {}, cfg)
+    ht.finish()
+    time.sleep(0.5)                                                            # 鬧鐘原本 0.285 秒後響
+    assert not timer.alarm.is_alive() and [r["kind"] for _, r in ledger] == ["run"]
+
+
+# ─── 逾時被取消前：鬧鐘留 overrun 帳、代送已備好的輸出（假時鐘：起點撥到 95% 前，直接叫鬧鐘）────────
+
+@pytest.fixture()
+def exits(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ht, "_EXIT", calls.append)
+    return calls
+
+
+def _overdue(event, limit, segments):
+    timer = ht.HookTimer(event, "sid", limit, "settings.json", 0.8, time.time() - limit * 0.96)
+    timer.segments = [list(s) for s in segments]
+    ht._CUR = timer
+    return timer
+
+
+@pytest.mark.parametrize("event,limit,stuck", [("SessionStart", 20.0, "候選池"), ("UserPromptSubmit", 8.0, "檢索")])
+def test_overrun_sends_fallback_and_exits_before_cancel(ledger, exits, capsys, event, limit, stuck):
+    """登記過代送、正常輸出還沒送：留一筆 overrun（卡在哪段、各段耗時、fallback=True），stdout 送出代送內容並結束行程——
+    Claude Code 取消 hook 時不保證採用已印的輸出，要搶在取消前收掉。"""
+    timer = _overdue(event, limit, [["啟動", 300], [stuck, int(limit * 900)]])
+    ht.set_fallback(lambda: json.dumps({"hookSpecificOutput": {"additionalContext": "追蹤提示：未結 1 件"}}, ensure_ascii=False))
+    timer.overrun()
+    rows = [r for _, r in ledger if r["kind"] == "overrun"]
+    assert len(rows) == 1 and (rows[0]["event"], rows[0]["stuck_after"], rows[0]["fallback"]) == (event, stuck, True)
+    assert [s[0] for s in rows[0]["segments"]] == ["啟動", stuck]
+    runs = [r for _, r in ledger if r["kind"] == "run"]                       # 代送結束也留一筆 run，量尺算得到這次
+    assert len(runs) == 1 and runs[0]["ended_by"] == "fallback" and runs[0]["segments"][-1][0] == "代送"
+    assert runs[0]["ended_after"] == stuck                                      # 與 finish 的 run 同欄：卡在哪段之後
+    out = capsys.readouterr()
+    assert out.out.count("追蹤提示：未結 1 件") == 1 and exits == [0] and "已代送已備好的輸出" in out.err
+
+
+def test_overrun_fallback_write_failure_records_not_sent(ledger, exits, monkeypatch, capsys):
+    """stdout 寫不出去：帳上 fallback=False、不補 run、不結束（不能把沒送出的記成送出）。"""
+    class Broken:
+        def write(self, s):
+            raise OSError("pipe closed")
+
+        def flush(self):
+            pass
+    timer = _overdue("SessionStart", 20.0, [["啟動", 300]])
+    ht.set_fallback(lambda: "代送內容")
+    monkeypatch.setattr(sys, "stdout", Broken())
+    timer.overrun()
+    assert [(r["kind"], r["fallback"]) for _, r in ledger] == [("overrun", False)] and exits == []
+    assert "代送輸出失敗" in capsys.readouterr().err
+
+
+def test_overrun_after_normal_output_only_records(ledger, exits, capsys):
+    """正常輸出已占位（claim_output）：鬧鐘只留帳，不再代送第二份、不結束行程。"""
+    timer = _overdue("SessionStart", 20.0, [["啟動", 300], ["git 快照", 19000]])
+    ht.set_fallback(lambda: "代送內容")
+    ht.claim_output()
+    timer.overrun()
+    assert [(r["kind"], r["fallback"]) for _, r in ledger] == [("overrun", False)]
+    assert exits == [] and "代送內容" not in capsys.readouterr().out
+
+
+def test_overrun_fallback_that_cannot_build_does_not_exit(ledger, exits, capsys):
+    """代送內容組不出來：只留帳（fallback=False）＋stderr，不結束——主執行緒還有最後那 5% 可能自己送完。"""
+    timer = _overdue("UserPromptSubmit", 8.0, [["啟動", 300]])
+    ht.set_fallback(lambda: 1 / 0)
+    timer.overrun()
+    assert [(r["kind"], r["fallback"]) for _, r in ledger] == [("overrun", False)]
+    err = capsys.readouterr().err
+    assert exits == [] and "代送輸出失敗" in err and "hook 快被取消" in err
+    assert timer.emitted is False                                              # 主執行緒還能自己送
+
+
+def test_alarm_really_sends_and_exits_before_limit(tmp_path):
+    """真起一支行程、真的卡住（一段睡 30 秒）：上限 1 秒，鬧鐘 0.95 秒響、代送一份並結束——不等卡住那段跑完；
+    stdout 恰好一份、rc 0，帳上 overrun（fallback=True）＋run（ended_by=fallback）。"""
+    logs = tmp_path / "logs"
+    payload = json.dumps({"additionalContext": "追蹤提示：代送"}, ensure_ascii=False)
+    code = "\n".join([
+        "import json, sys, time",
+        f"sys.path.insert(0, {str(HOOKS_DIR)!r})",
+        "import wg_hook_timing as ht",
+        "ht._process_started = time.time",
+        "ht.settings_limit = lambda *a: None",
+        "cfg = {'hook_timing': {'enabled': True, 'degrade_ratio': 0.8, 'fallback_limit_s': {'SessionStart': 1}}}",
+        "ht.start('SessionStart', {'session_id': 'real-exit'}, cfg)",
+        f"ht.set_fallback(lambda: {payload!r})",
+        "ht.lap('追蹤提示')",
+        "time.sleep(30)",
+        "print('不該走到這裡')",
+    ])
+    env = {**os.environ, "WG_CLAUDE_DIR": str(tmp_path / "root"), "WG_TEST_LOGS_DIR": str(logs)}
+    t0 = time.monotonic()
+    p = subprocess.run([sys.executable, "-X", "utf8", "-c", code], capture_output=True, env=env, timeout=60)
+    elapsed = time.monotonic() - t0
+    assert p.returncode == 0 and p.stdout.decode("utf-8").splitlines() == [payload], p.stderr.decode("utf-8", "replace")[-400:]
+    assert elapsed < 10                                                        # 沒等卡住的那 30 秒
+    recs = [json.loads(x) for x in (logs / "guard-hook_timing.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [(r["kind"], r.get("fallback"), r.get("ended_by")) for r in recs] == [("overrun", True, None), ("run", None, "fallback")]
+    assert recs[0]["stuck_after"] == "追蹤提示"
+
+
+def test_pre_tool_use_overrun_records_stuck_gate_without_fallback(ledger, exits, capsys):
+    """PreToolUse 不登記代送：逾時被取消本來就放行，鬧鐘只留帳（卡在哪一閘之後），不提早結束。"""
+    timer = _overdue("PreToolUse", 5.0, [["啟動", 300], ["寫入閘", 10]])
+    timer.overrun()
+    rows = [r for _, r in ledger]
+    assert [(r["kind"], r["event"], r["stuck_after"], r["fallback"]) for r in rows] == [("overrun", "PreToolUse", "寫入閘", False)]
+    assert exits == [] and capsys.readouterr().out == ""
+
+
+# ─── UserPromptSubmit：降級後脈絡、檢索注入不跑；前置閘、寫 state 照做 ─────────
+
+@pytest.fixture()
+def ups_driven(monkeypatch, tmp_path):
+    import wg_friction
+    import wg_release_rules
+    calls, wrote = [], []
+    state = {"turn_seq": 4, "session": {"cwd": str(tmp_path)}, "injected_atoms": []}
+    monkeypatch.setattr(ups, "_ensure_state", lambda *a, **k: state)
+    monkeypatch.setattr(ups, "WORKFLOW_DIR", tmp_path)
+    monkeypatch.setattr(ups, "write_state", lambda sid, s: wrote.append(s["turn_seq"]))
+    monkeypatch.setattr(ups, "run_pre_gates", lambda *a: (calls.append("前置閘"), a[-1].append("閘的提示")))
+    monkeypatch.setattr(ups, "build_context", lambda *a, **k: calls.append("脈絡"))
+    monkeypatch.setattr(ups, "collect_matched_atoms",
+                        lambda *a, **k: calls.append("檢索") or ([], {}, [], [], {}, set(), "general", {}))
+    monkeypatch.setattr(ups, "assemble_injection", lambda *a, **k: calls.append("注入組裝") or ([], {}))
+    monkeypatch.setattr(wg_friction, "record_correction", lambda *a, **k: [])
+    monkeypatch.setattr(wg_release_rules, "fix_escalation_text", lambda s: "")
+    monkeypatch.setattr(ups, "_maybe_spawn_failure_extraction", lambda *a, **k: None)
+    monkeypatch.setattr(ups, "_update_topic_tracker", lambda *a, **k: None)
+    monkeypatch.setattr(ups, "reconcile_injection_after_trim", lambda *a, **k: [])
+    monkeypatch.setattr(ups, "_truncate_context_by_activation", lambda lines, *a, **k: lines)
+
+    def run(capsys, degrade_at=None):
+        calls.clear()
+        wrote.clear()
+        state["turn_seq"] = 4
+        timer = ht.HookTimer("UserPromptSubmit", "sid", 8.0, "settings.json", 0.8, time.time())
+        monkeypatch.setattr(ht, "_CUR", timer)
+
+        def fake_lap(seg):
+            timer.segments.append([seg, 0])
+            if seg == degrade_at:
+                timer.degraded_at = seg
+            return bool(timer.degraded_at)
+        monkeypatch.setattr(ups, "_hook_lap", fake_lap)
+        with pytest.raises(SystemExit):
+            # 寫碼意圖（debug）：「先立樹」一行才會送（CODING_TURN_ONLY）
+            ups.handle_user_prompt_submit({"session_id": "sid", "prompt": "幫我修好登入的 bug", "cwd": str(tmp_path)}, {})
+        return capsys.readouterr().out, list(calls), list(wrote), [s[0] for s in timer.segments], timer.emitted
+
+    return run
+
+
+def test_ups_degraded_skips_retrieval_keeps_gates_and_state(ups_driven, capsys):
+    out, calls, wrote, segs, emitted = ups_driven(capsys)
+    assert calls == ["前置閘", "脈絡", "檢索", "注入組裝"] and wrote == [5]   # 前置：不降級全段都跑
+    assert "HookTiming" not in out and emitted is True
+    out, calls, wrote, segs, emitted = ups_driven(capsys, degrade_at="前置閘")
+    assert calls == ["前置閘"] and wrote == [5]                                   # 降級：脈絡／檢索注入不跑，寫 state 照做
+    assert segs == ["前置閘", "收尾提示"] and emitted is True
+    ctx = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+    assert "閘的提示" in ctx
+    assert "[Guardian:HookTiming] 這次 UserPromptSubmit hook 超時降級（跑完「前置閘」" in ctx.splitlines()[-1]
+    out, calls, wrote, segs, emitted = ups_driven(capsys, degrade_at="脈絡")
+    assert calls == ["前置閘", "脈絡"] and wrote == [5]
+    out, calls, wrote, segs, emitted = ups_driven(capsys, degrade_at="檢索")         # 檢索跑完才過線：注入組裝不跑
+    assert calls == ["前置閘", "脈絡", "檢索"] and wrote == [5] and "注入組裝" not in segs
+
+
+# ─── PreToolUse：只打點，降級不改判定 ────────────────────────────────────
+
+def _ptu_twice(monkeypatch, capsys, inp):
+    """同一個工具呼叫跑兩次：lap 一路回 False、一路回 True（已降級）；回兩次的 (stdout, 退出碼, 打點)。"""
+    runs = []
+    monkeypatch.setattr(ptu._rr, "gate_mode", lambda rule, v6: ptu._rr.BLOCK)   # 拿擋下那條比兩次輸出：送法固定成擋
+    for degraded in (False, True):
+        seen, code = [], None
+        monkeypatch.setattr(ptu, "_hook_lap", lambda seg, d=degraded, s=seen: s.append(seg) or d)
+        try:
+            ptu.handle_pre_tool_use(inp, {})
+        except SystemExit as e:
+            code = e.code
+        runs.append((capsys.readouterr().out, code, seen))
+    return runs
+
+
+def test_pre_tool_use_laps_do_not_change_decision(monkeypatch, capsys, tmp_path):
+    """放行與擋下各一例，lap 回 True（已降級）與回 False 的輸出、退出碼、打點順序都一模一樣——逾時被取消本來就放行，
+    提早放行只會少查，所以 PreToolUse 的降級只記帳、不改判定。"""
+    f = tmp_path / "a.txt"
+    f.write_text("x", encoding="utf-8")
+    allow = _ptu_twice(monkeypatch, capsys, {"session_id": "sid-ptu-timing", "tool_name": "Read",
+                                              "tool_input": {"file_path": str(f)}, "cwd": str(tmp_path)})
+    assert allow[0][2] == ["前置提示", "跨 session 衝突", "寫入閘", "舊測試閘"] and '"deny"' not in allow[0][0]   # 前置：放行、四點都走到
+    assert allow[0] == allow[1]
+    ask = {"questions": [{"question": "要用哪個做法？", "header": "做法", "multiSelect": False,
+                          "options": [{"label": "A", "description": "甲"}, {"label": "B", "description": "乙"}]}]}
+    deny = _ptu_twice(monkeypatch, capsys, {"session_id": "sid-ptu-timing", "tool_name": "AskUserQuestion", "cwd": str(ROOT),
+                                             "tool_input": ask})
+    assert all('"deny"' in r[0] for r in deny) and deny[0][1:] == deny[1][1:]  # 沒附推薦的提問被擋：降級也照擋
+    assert [json.loads(r[0])["hookSpecificOutput"]["permissionDecisionReason"].splitlines()[0] for r in deny] ==         [json.loads(deny[0][0])["hookSpecificOutput"]["permissionDecisionReason"].splitlines()[0]] * 2
+
+
+# ─── SessionStart：真的起一支開場 hook，追蹤提示排在前段、降級也送得出 ───────────────────
+
+def _session_start(tmp_path, timeout):
+    """臨時資料根＋專案＋一筆未結追蹤項，起一支開場 hook（settings.json 上限 timeout 秒）；回 (rc, additionalContext, 計時帳)。"""
+    from wg_harvest import tracking_slug
+    root, proj, logs = tmp_path / "root", tmp_path / "proj", tmp_path / "logs"
+    (root / "workflow" / "tracking").mkdir(parents=True)
+    proj.mkdir()
+    (root / "settings.json").write_text(json.dumps({"hooks": {"SessionStart": [{"hooks": [
+        {"type": "command", "command": "x/.claude/hooks/workflow-guardian.py", "timeout": timeout}]}]}}), encoding="utf-8")
+    (root / "workflow" / "config.json").write_text(json.dumps({   # 不起背景 worker、不碰共用埠上的向量服務
+        "vcs_sync": {"enabled": False}, "vector_search": {"auto_start_service": False},
+        "provenance": {"enabled": False}}), encoding="utf-8")
+    (root / "workflow" / "tracking" / f"{tracking_slug(str(proj))}.jsonl").write_text(json.dumps(
+        {"id": "t-open", "at": "2026-10-21T10:00:00+08:00", "text": "開場追蹤測試項", "status": "open"},
+        ensure_ascii=False) + "\n", encoding="utf-8")
+    env = {**os.environ, "WG_CLAUDE_DIR": str(root), "WG_TEST_LOGS_DIR": str(logs)}
+    env.pop("CLAUDE_COMPANION_JUDGE", None)
+    inp = {"hook_event_name": "SessionStart", "session_id": "sid-ss-timing", "cwd": str(proj), "source": "startup"}
+    p = subprocess.run([sys.executable, str(HOOKS_DIR / "workflow-guardian.py")], input=json.dumps(inp).encode("utf-8"),
+                       capture_output=True, env=env, cwd=str(proj), timeout=120)
+    out = p.stdout.decode("utf-8", "replace").strip().splitlines()
+    assert len(out) == 1, out                                                  # 降級出口、鬧鐘代送、正常結尾只會送一份
+    ctx = json.loads(out[0])["hookSpecificOutput"]["additionalContext"]
+    recs = [json.loads(x) for x in (logs / "guard-hook_timing.jsonl").read_text(encoding="utf-8").splitlines()]
+    return p.returncode, ctx, recs
+
+
+def test_session_start_tracking_comes_first_and_run_is_timed(tmp_path):
+    rc, ctx, recs = _session_start(tmp_path, 20)
+    lines = ctx.splitlines()
+    assert rc == 0 and lines[0] == "[Workflow Guardian] Active." and lines[1].startswith("Global:")
+    assert lines[2].startswith("[Guardian:Tracking] 本專案未結追蹤項 1 筆") and "開場追蹤測試項" in lines[3]   # 緊接表頭
+    assert [(r["kind"], r["event"], r["limit_s"], r["limit_src"]) for r in recs] == [("run", "SessionStart", 20.0, "settings.json")]
+    names = [s[0] for s in recs[0]["segments"]]
+    assert names[:5] == ["啟動", "載入 handler", "前置", "追蹤提示", "索引與職能"] and names[-1] == "其餘"
+    assert names.index("候選池") < names.index("健檢") < names.index("git 快照")
+
+
+def test_session_start_over_limit_still_delivers_tracking_and_leaves_overrun(tmp_path):
+    """上限 0.05 秒（行程一起來就過）：鬧鐘立刻響留 overrun；不論是 80% 降級送出、還是鬧鐘代送，追蹤提示都在輸出裡，
+    且輸出帶一行 HookTiming 說明；行程照常結束（rc 0）。"""
+    rc, ctx, recs = _session_start(tmp_path, 0.05)
+    assert rc == 0 and "[Guardian:Tracking] 本專案未結追蹤項 1 筆" in ctx and "開場追蹤測試項" in ctx
+    assert "[Guardian:HookTiming]" in ctx and "Global:" not in ctx.split("[Guardian:Tracking]")[1]
+    kinds = [(r["kind"], r["event"]) for r in recs]
+    assert ("overrun", "SessionStart") in kinds
+    sent_by_alarm = any(r["kind"] == "overrun" and r["fallback"] for r in recs)
+    degraded_run = [r for r in recs if r["kind"] == "run" and r["degraded_at"]]
+    assert sent_by_alarm or degraded_run                                         # 兩條路之一送出，帳上看得到是哪一條
+    if degraded_run:
+        assert "git 快照" not in [s[0] for s in degraded_run[0]["segments"]]     # 降級後面的段落沒跑
+
+
+# ─── dispatcher：真的起一支 hook 行程，計時帳落一筆 ─────────────────────────
+
+def test_dispatcher_writes_one_timing_record_per_hook(tmp_path):
+    root, logs = tmp_path / "root", tmp_path / "logs"
+    root.mkdir()
+    (root / "settings.json").write_text(json.dumps({"hooks": {"PostToolUse": [{"matcher": "Bash", "hooks": [
+        {"type": "command", "command": "x/.claude/hooks/workflow-guardian.py", "timeout": 7}]}]}}), encoding="utf-8")
+    env = {**os.environ, "WG_CLAUDE_DIR": str(root), "WG_TEST_LOGS_DIR": str(logs)}
+    env.pop("CLAUDE_COMPANION_JUDGE", None)
+    # 寫碼回合（本回合改過程式檔）才寫計時帳（CODING_TURN_ONLY；非寫碼回合不寫的案在 verify_gate_trim）
+    (root / "workflow").mkdir()
+    (root / "workflow" / "state-sid-timing.json").write_text(json.dumps(
+        {"session": {"id": "sid-timing"}, "turn_seq": 0,
+         "modified_files": [{"path": str(tmp_path / "a.py"), "last_turn_seq": 0}]}), encoding="utf-8")
+    # 唯讀 Bash 走完整路徑（Read 的 PostToolUse 走快路徑只落 read-log、不計時，規則 READ_FAST_PATH）
+    inp = {"hook_event_name": "PostToolUse", "session_id": "sid-timing", "tool_name": "Bash",
+           "tool_input": {"command": f'cat "{tmp_path / "x.txt"}"'}, "tool_response": {"stdout": "", "stderr": "", "exit_code": 0},
+           "cwd": str(tmp_path)}
+    p = subprocess.run([sys.executable, str(HOOKS_DIR / "workflow-guardian.py")], input=json.dumps(inp).encode("utf-8"),
+                       capture_output=True, env=env, cwd=str(tmp_path), timeout=120)
+    assert p.returncode == 0, p.stderr.decode("utf-8", "replace")[-500:]
+    recs = [json.loads(line) for line in (logs / "guard-hook_timing.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(recs) == 1 and recs[0]["kind"] == "run" and recs[0]["event"] == "PostToolUse"
+    assert (recs[0]["limit_s"], recs[0]["limit_src"], recs[0]["session_id"]) == (7.0, "settings.json", "sid-timing")
+    names = [s[0] for s in recs[0]["segments"]]
+    assert names[:3] == ["啟動", "載入 handler", "讀 state"] and names[-1] == "其餘"
+
+
+# ─── 量尺 tools/hook-timing.py ───────────────────────────────────────
+
+def _tool():
+    spec = importlib.util.spec_from_file_location("hook_timing_tool", ROOT / "tools" / "hook-timing.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+TAIL = re.compile(r"^HOOK_TIMING DONE events=\d+ runs=\d+ degraded=\d+ overrun=\d+$")
+
+
+def test_meter_medians_degraded_and_tail(tmp_path, capsys):
+    now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    rows = [{"at": now, "kind": "run", "event": "Stop", "total_ms": t, "limit_s": 10.0, "limit_src": "settings.json",
+             "degraded_at": "", "segments": [["啟動", 500], ["寫碼查核", c], ["其餘", 0]]}
+            for t, c in ((3000, 2000), (9000, 6000), (5000, 4000))]
+    rows.append({"at": now, "kind": "degraded", "event": "Stop", "degraded_at": "寫碼查核", "segments": []})
+    rows.append({"at": now, "kind": "overrun", "event": "Stop", "stuck_after": "殘檔帳本", "segments": []})
+    rows.append({"at": "2000-01-01T00:00:00+00:00", "kind": "run", "event": "Stop", "total_ms": 99999, "segments": []})   # 太舊
+    (tmp_path / "guard-hook_timing.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n壞行\n", encoding="utf-8")
+    tool = _tool()
+    assert tool.main(["--logs", str(tmp_path), "--json"]) == 0
+    out = capsys.readouterr()
+    lines = out.out.strip().splitlines()
+    assert TAIL.match(lines[-1]) and lines[-1] == "HOOK_TIMING DONE events=1 runs=3 degraded=1 overrun=1"
+    res = json.loads("\n".join(lines[:-1]))
+    stop = res["events"][0]
+    assert (stop["runs"], stop["degraded"], stop["total_median_ms"], stop["total_max_ms"]) == (3, 1, 5000, 9000)
+    assert [(g["name"], g["median_ms"]) for g in stop["segments"]] == [("啟動", 500), ("寫碼查核", 4000), ("其餘", 0)]
+    assert stop["degraded_at"] == {"寫碼查核": 1} and stop["stuck_after"] == {"殘檔帳本": 1} and "讀不懂" in out.err
+
+
+def test_meter_without_ledger_says_so(tmp_path, capsys):
+    """看不到帳是獨立狀態：印「沒有計時帳」，不印成 0ms。"""
+    assert _tool().main(["--logs", str(tmp_path)]) == 0
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert "沒有計時帳" in lines[0] and "ms" not in lines[0] and lines[-1] == "HOOK_TIMING DONE events=0 runs=0 degraded=0 overrun=0"
+
+
+# ─── 大頭：開場與提問少讀檔（取代名單備忘、連結圖按目錄去重）─────────────────────
+
+def _two_atoms(tmp_path):
+    mem = tmp_path / "memory"
+    mem.mkdir()
+    (mem / "new-way.md").write_text("# new-way\n\n- Supersedes: old-way\n", encoding="utf-8")
+    (mem / "plain.md").write_text("# plain\n", encoding="utf-8")
+    return mem, [(("new-way", "memory/new-way.md", []), tmp_path), (("plain", "memory/plain.md", []), tmp_path)]
+
+
+def test_supersedes_memo_reads_only_changed_atoms(monkeypatch, tmp_path):
+    """第一次逐張讀並寫備忘；卡沒變（mtime、大小）第二次一張都不開；改了哪張只重讀那張；結果與不給備忘時相同。"""
+    mem, pool = _two_atoms(tmp_path)
+    memo, read = tmp_path / "memo.json", []
+    real = wg_atoms.read_atom_text
+    monkeypatch.setattr(wg_atoms, "read_atom_text", lambda p, c=None: read.append(p.name) or real(p, c))
+    assert wg_atoms.collect_superseded_names(pool, memo_path=memo) == {"old-way"}
+    assert sorted(read) == ["new-way.md", "plain.md"] and memo.exists()
+    read.clear()
+    assert wg_atoms.collect_superseded_names(pool, memo_path=memo) == {"old-way"} and read == []
+    (mem / "plain.md").write_text("# plain\n\n- Supersedes: legacy-a, plain, legacy-b\n", encoding="utf-8")
+    assert wg_atoms.collect_superseded_names(pool, memo_path=memo) == {"old-way", "legacy-a", "legacy-b"}   # 自己不算
+    assert read == ["plain.md"]
+    assert wg_atoms.collect_superseded_names(pool) == {"old-way", "legacy-a", "legacy-b"}
+
+
+def test_supersedes_memo_retries_unreadable_and_keeps_other_pools(monkeypatch, tmp_path):
+    """讀不到的卡不進備忘（下次再讀）；別的池（別的專案）留在備忘裡的條目不被這次的池洗掉。"""
+    mem, pool = _two_atoms(tmp_path)
+    memo = tmp_path / "memo.json"
+    other = str(tmp_path / "elsewhere" / "x.md")
+    memo.write_text(json.dumps({other: [1, 2, ["gone"]]}), encoding="utf-8")
+    real = wg_atoms.read_atom_text
+    monkeypatch.setattr(wg_atoms, "read_atom_text", lambda p, c=None: None if p.name == "new-way.md" else real(p, c))
+    assert wg_atoms.collect_superseded_names(pool, memo_path=memo) == set()
+    saved = json.loads(memo.read_text(encoding="utf-8"))
+    assert other in saved and str(mem / "plain.md") in saved and str(mem / "new-way.md") not in saved
+    monkeypatch.setattr(wg_atoms, "read_atom_text", real)
+    assert wg_atoms.collect_superseded_names(pool, memo_path=memo) == {"old-way"}
+
+
+def test_link_graph_parses_each_index_once(monkeypatch, tmp_path):
+    """spread_related 按池內每顆 atom 各傳一次 memory 目錄：入口去重後同一份索引只解析一次，連結結果不變。"""
+    mem = tmp_path / "memory"
+    mem.mkdir()
+    (mem / "_atom_index.json").write_text(json.dumps({"version": 1, "atoms": [
+        {"name": "a", "path": "memory/a.md", "triggers": [], "related": ["b"]},
+        {"name": "b", "path": "memory/b.md", "triggers": [], "related": []}]}), encoding="utf-8")
+    calls = []
+    real = wg_atoms.load_atom_index_json
+    monkeypatch.setattr(wg_atoms, "load_atom_index_json", lambda d, **k: calls.append(d) or real(d, **k))
+    monkeypatch.setattr(wg_atoms, "_LINK_GRAPH_CACHE", {})
+    adj, alias, covered = wg_atoms.load_link_graph([mem] * 300)
+    assert len(calls) == 1 and adj == {"a": ["b"], "b": ["a"]} and covered == {"a", "b"} and alias == {}

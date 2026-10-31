@@ -18,17 +18,19 @@ turn_injected 歸因記錄、atom-debug summary、budget 截斷輸出。
 
 import json
 import re
+import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
-from handlers import aec_ledger
+from typing import Any, Dict, List
 
 from wg_core import (
     _ensure_state, _estimate_tokens, _now_iso, write_state,
     output_json, output_nothing,
-    _atom_debug_log, WORKFLOW_DIR,
+    _atom_debug_log, _atom_debug_error, WORKFLOW_DIR, v6_enabled, coding_turn,
+    DEFAULTS as CORE_DEFAULTS,  # config 缺鍵時的預設只認 wg_core 那一份
 )
+from harness_text import IDE_TAG_NAMES, strip_harness_blocks, user_typed_text  # lib/（wg_core 已把它放進 sys.path）
 from wg_atoms import (
+    classify_intent,
     compute_token_budget,
     _truncate_context_by_activation,
     _update_topic_tracker,
@@ -38,128 +40,19 @@ from handlers.ups_gates import run_pre_gates
 from handlers.ups_context import build_context
 from handlers.ups_search import collect_matched_atoms
 from handlers.ups_inject import assemble_injection, reconcile_injection_after_trim
+import wg_hook_timing as _hook_timing
+from wg_hook_timing import degraded as _hook_degraded, lap as _hook_lap
 
 
-def _write_decision_file(p: Path, data: Dict[str, Any]) -> None:
-    """決策檔回寫（atomic tmp→replace）。fail-open。"""
-    try:
-        tmp = p.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8", newline="\n") as _f:
-            _f.write(json.dumps(data, ensure_ascii=False, indent=2))
-        tmp.replace(p)
-    except Exception:
-        pass
+def _ups_output(lines: List[str]) -> str:
+    return json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": "\n".join(lines)}},
+                      ensure_ascii=False)
 
 
-def _decision_item_path(item: str) -> Optional[Path]:
-    """把 (d) 決策項字串保守解析為可 exists() 檢查的路徑；非路徑樣貌回 None。
-
-    只認含路徑分隔符的單行短字串（prose 敘述 / 裸檔名無從定位 → None＝不後驗）；
-    相對路徑以 ~/.claude 為基準（HUD (d) 項慣為 repo 相對路徑）。"""
-    s = (item or "").strip().strip("`\"'")
-    if not s or len(s) > 400 or "\n" in s:
-        return None
-    if "/" not in s and "\\" not in s:
-        return None
-    p = Path(s).expanduser()
-    if not p.is_absolute():
-        p = Path.home() / ".claude" / s
-    return p
-
-
-def _drain_aec_decisions(session_id: str, lines: List[str]) -> None:
-    """HUD (d) 保留/刪除決策 drain（注入端）+ 刪除決策後驗。
-
-    decision 檔由 Node（anti-evasion.js apiAecDecisionPost）落於 workflow/aec-decision/
-    <sid>-t<turn>-<idx>.json（Node 寫 / 本處 Python 讀 = 對稱 one-writer）。glob 本 session
-    未注入的決策 → 聚合成一段 additionalContext → 標 injected（atomic），供模型下回合 deferred
-    執行（刪除 / 略過保留）。fail-open：讀不到 / 壞檔 skip，不阻斷 UPS。
-
-    後驗（exists() 實查，不信宣告）：上輪已注入的 delete 項，本輪檢查檔案是否真的
-    消失——仍在 → 重注入一次（reinjected 標記）；重注入後仍在 → 浮告警後結案
-    （verified 標記，不無限 nag）；已消失/無從解析路徑 → 靜默結案。"""
-    if not session_id:
-        return
-    ddir = WORKFLOW_DIR / "aec-decision"
-    try:
-        # 舊式 <sid>-t<turn>-<idx>.json 與新式 <sid>-p<pathhash>.json（HUD 殘檔面板）都撈
-        paths = sorted(ddir.glob(f"{session_id}-*.json"))
-    except Exception:
-        return
-    loaded: List[tuple] = []
-    for p in paths:
-        try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            continue   # 壞檔 / 過渡檔 → skip
-        if data.get("session_id") != session_id:
-            continue   # 檔名前綴已 scope，再校驗 session_id 欄位
-        loaded.append((p, data))
-
-    # ── Phase 1：刪除決策後驗（只看已 injected 且未 verified 的 delete 項）──
-    reinject: List[str] = []
-    warn: List[str] = []
-    for p, data in loaded:
-        if (
-            not data.get("injected")
-            or data.get("action") != "delete"
-            or data.get("verified")
-        ):
-            continue
-        item = str(data.get("item", ""))
-        # 新式決策檔（HUD 殘檔面板）帶結構化 path → 直接後驗；舊式只有 prose item → 保守解析。
-        target = Path(str(data["path"])) if data.get("path") else _decision_item_path(item)
-        if target is None or not target.exists():
-            data["verified"] = True     # 已刪 / 無從檢查 → 結案
-        elif not data.get("reinjected"):
-            data["reinjected"] = True   # 仍在 → 重注入一次
-            reinject.append(item)
-        else:
-            data["verified"] = True     # 重注入過仍在 → 告警後結案
-            warn.append(item)
-        _write_decision_file(p, data)
-    if reinject or warn:
-        blk = ["[Guardian:AEC-Decision] 刪除決策後驗（exists() 實查）："]
-        blk += [f"  🔁 上輪已注入刪除但檔案仍存在，請本回合執行刪除：{it}" for it in reinject]
-        blk += [f"  ⚠ 重注入後仍未刪除，請說明原因或請使用者手動處理：{it}" for it in warn]
-        lines.append("\n".join(blk))
-
-    # ── Phase 2：新決策注入（未 injected 者）──
-    deletes: List[str] = []
-    keeps: List[str] = []
-    refused: List[str] = []   # 受保護路徑的刪除決策：不注入刪除指令（帳本拒收前的舊帳／任何漏網）
-    consumed: List[tuple] = []
-    for p, data in loaded:
-        if data.get("injected"):
-            continue
-        item = str(data.get("item", "")).strip() or f"(idx {data.get('idx')})"
-        action = data.get("action")
-        if action == "delete":
-            why = aec_ledger.protected_reason(str(data.get("path", "") or ""))
-            if why:
-                refused.append(f"{item}（{why}）")
-                data["verified"] = True   # 直接結案，不進後驗 nag
-            else:
-                deletes.append(item)
-        elif action == "keep":
-            keeps.append(item)
-        else:
-            continue
-        consumed.append((p, data))
-    if not consumed:
-        return
-    block = ["[Guardian:AEC-Decision] 使用者於 HUD 對 (d) 暫存清單做了處置："]
-    block += [f"  🗑 刪除：{it}" for it in deletes]
-    block += [f"  📌 保留：{it}" for it in keeps]
-    block += [f"  ⛔ 拒絕刪除（受保護路徑，正式產出不經 HUD 刪）：{it}" for it in refused]
-    if deletes or keeps:
-        block.append("請據此執行——刪除項確認路徑後移除、保留項略過；為 deferred，本回合執行。")
-    if refused:
-        block.append("拒絕項請一句話告知使用者：該檔屬正式產出，要移除請使用者自行處理。")
-    lines.append("\n".join(block))
-    for p, data in consumed:   # 標 injected（atomic tmp→replace），防下回合重注入
-        data["injected"] = True
-        _write_decision_file(p, data)
+def _fallback_output(lines: List[str]) -> str:
+    """背景鬧鐘代送（到上限 95% 還沒送出）：當下已備好的注入＋一行說明；state 這次沒寫回、哨兵留著（下一則會告警）。"""
+    return _ups_output([*lines, "[Guardian:HookTiming] 這則 UserPromptSubmit 快到上限被取消，先送出已備好的部分，"
+                                "記憶檢索與注入可能缺；各段耗時記在 Logs/guard-hook_timing.jsonl。"])
 
 
 # ─── UPS 被 kill 哨兵：偵測上輪注入被 harness timeout 砍掉 ────────────────────
@@ -191,11 +84,13 @@ def _ups_sentinel_check_and_arm(
                 "（疑 harness timeout / hook 例外）——該輪記憶注入可能缺失。"
             )
         p.parent.mkdir(parents=True, exist_ok=True)
-        with open(p, "w", encoding="utf-8", newline="\n") as _f:
-            _f.write(json.dumps({
+        p.write_text(
+            json.dumps({
                 "turn_seq": int(state.get("turn_seq", 0)) + 1,
                 "at": _now_iso(),
-            }, ensure_ascii=False))
+            }, ensure_ascii=False),
+            encoding="utf-8",
+        newline="\n")
     except Exception:
         pass
 
@@ -211,6 +106,17 @@ def _ups_sentinel_clear(session_id: str) -> None:
         pass
 
 
+def evasion_ask(ev: Dict[str, Any]) -> str:
+    """上輪退避旗標（Stop detect_evasion 記的 phrase／context_excerpt／hint）→ 舉證要求：明說先處理這件再做新請求，
+    判準直接寫出來、不點卡名（點了也送不到）。"""
+    return (f"[Guardian:Evasion] 你上輪用了退避語『{ev.get('phrase', '')}』，可能把一件事往後推了：\n"
+            f"  context: …{ev.get('context_excerpt', '')[:200]}…\n"
+            "先處理這件，再做使用者這回合的新請求（只回新請求、不理這段，不算處理）：\n"
+            "  (a) 寫出補它的實際成本（要改的檔、行數）；成本小（幾行、一支測試）就這一回合先做掉\n"
+            "  (b) 真的不做、或那句只是在描述沒推事 → 照下面寫一行（使用者換了話題不等於放行）：\n"
+            f"  {ev.get('hint') or ''}")
+
+
 def handle_user_prompt_submit(
     input_data: Dict[str, Any], config: Dict[str, Any]
 ) -> None:
@@ -220,8 +126,18 @@ def handle_user_prompt_submit(
         output_nothing()
         return
 
+    # 規則 PROMPT_REOPENS_DONE：收尾或 SessionEnd 設的 done 只說上一回合收得乾淨；新的一則話開工 → 改回 working，
+    # 收尾的同步提醒與底部一般提醒才看得到這一回合的改動。SessionEnd 一起留的 ended_at 也拿掉（續接中的 session 不算已結束，
+    # 面板清理不會當成結束一分鐘就刪）。syncing（同步進行中）、merged（轉址）不動。當場寫回：後面檢索、注入逾時被砍也不留舊的 done
+    if state.get("phase") == "done":
+        state["phase"] = "working"
+        state.pop("ended_at", None)
+        write_state(session_id, state)
+
     prompt = input_data.get("prompt", "")
-    clean_prompt = re.sub(r'<ide_\w+>.*?</ide_\w+>', '', prompt, flags=re.DOTALL).strip()
+    # 只剔最外層是 IDE 的區塊（其餘內容留給檢索與注入）；巢狀與交錯照樣看所有 harness 標籤判斷，
+    # 所以權威判斷再對它取 user_typed_text，和直接對原文取的結果相同
+    clean_prompt = strip_harness_blocks(prompt, only=IDE_TAG_NAMES).strip()
     prompt_lower = clean_prompt.lower()
     lines: List[str] = []
 
@@ -246,69 +162,89 @@ def handle_user_prompt_submit(
             "DEFAULTS 運行——請修復 JSON（詳 Logs/atom-debug）。"
         )
 
+    # 分段計時（wg_hook_timing）：累計過上限 80% → 降級，脈絡、檢索與注入組裝這次不跑；
+    # 前置閘、收尾記帳與寫 state 照做。到 95% 還沒送出 → 背景鬧鐘代送已備好的 lines。
+    _hook_timing.set_fallback(lambda: _fallback_output(lines))
+
+    v6 = v6_enabled(config)     # 關＝只送 9e476fd0 就有的注入與提示
+
+    # 寫碼守門開：版控口令判「這批 push 完了沒」要掃 transcript（ups_gates.order_spent）：記下路徑，口令閘與下一則訊息用
+    if v6 and input_data.get("transcript_path"):
+        state["order_transcript"] = str(input_data["transcript_path"])
+
     # ─── Detect 段：前置閘（evasion 追蹤 / user decision gate / long_die / atom-write guard）
     run_pre_gates(
         session_id, state, config, clean_prompt, prompt_lower, lines
     )
+    _hook_lap("前置閘")
 
     # ─── Context build 段：session context / wisdom / parallel / AIDocs / JIT
     # budget_total 是整包 additionalContext 的上限；build_context 回傳的是扣掉它自己塞進
     # lines 的保留量後的餘額（只供它內部的 JIT 判斷）。最終裁切量的是整包 lines，所以要用
     # 總額——以前拿餘額當上限，episodic/JIT 等於被扣兩次。
     budget_total = compute_token_budget(prompt)
-    build_context(
-        session_id, state, config, prompt, clean_prompt, prompt_lower,
-        budget_total, lines,
-    )
+    if not _hook_degraded():
+        build_context(
+            session_id, state, config, prompt, clean_prompt, prompt_lower,
+            budget_total, lines,
+        )
+        _hook_lap("脈絡")
+
+    # 意圖前移（A0.1）：注入前就知道這回合要做什麼；十鍵見 wg_atoms.INTENT_PATTERNS。
+    # 意圖是「使用者要做什麼」的權威判斷，只吃使用者本人打的字（user_typed_text：剔掉同伴訊息、背景通知等 harness 區塊）；
+    # 整則沒有使用者的字 → 沿用上一則判的意圖（同伴信、通知正文裡的「重構」不改意圖；G7 等值閘據此擋）
+    typed = user_typed_text(prompt)
+    turn_intent = classify_intent(typed) if typed else (state.get("turn_intent") or "general")
+    state["turn_intent"] = turn_intent
+    if not (v6 and coding_turn(state, config)):    # 規則 CODING_TURN_ONLY：不是寫碼回合寫碼守門不送（記憶注入照舊）
+        _hook_timing.quiet()                       # 不寫計時帳；新的使用者回合起點：拿掉寫碼回合標記
+        _hook_timing.mark_coding(session_id, False)
 
     # ─── Search pipeline 段：候選收集（trigger/BM25/vector）+ supersedes + ACT-R 排序
-    already_injected = state.get("injected_atoms", [])
-    (
-        matched_with_dir, atom_source, all_atoms,
-        sem_atoms, section_hints, alias_injected_projects, intent,
-        caches,
-    ) = collect_matched_atoms(
-        session_id, state, config, prompt, prompt_lower, lines
-    )
-
     # ─── Injection assemble 段：hot/cold + budget + related spread + 效用晉升提示
-    newly_injected, atom_source_dirs = assemble_injection(
-        session_id, state, config,
-        matched_with_dir, all_atoms, already_injected,
-        atom_source, section_hints, lines,
-        caches=caches, prompt=clean_prompt,
-    )
+    # 已降級：這則不檢索、不注入（intent 同 collect_matched_atoms 的取法：本則已判的 turn_intent）
+    already_injected = state.get("injected_atoms", [])
+    matched_with_dir: list = []
+    newly_injected: List[str] = []
+    atom_source_dirs: Dict[str, Path] = {}
+    intent = turn_intent
+    if not _hook_degraded():
+        (
+            matched_with_dir, atom_source, all_atoms,
+            sem_atoms, section_hints, alias_injected_projects, intent,
+            caches,
+        ) = collect_matched_atoms(
+            session_id, state, config, prompt, prompt_lower, lines
+        )
+        if not _hook_lap("檢索"):
+            newly_injected, atom_source_dirs = assemble_injection(
+                session_id, state, config,
+                matched_with_dir, all_atoms, already_injected,
+                atom_source, section_hints, lines,
+                caches=caches, prompt=clean_prompt,
+            )
+            _hook_lap("注入組裝")
 
     # Fix Escalation Protocol
-    retry_count = state.get("wisdom_retry_count", 0)
-    fix_esc_warned = state.get("fix_escalation_warned", False)
-    if retry_count >= 2 and not fix_esc_warned:
+    # 規則 RETRY_COUNTS_RERUN_CYCLES：輪數到門檻才提示，訊息帶每輪的重跑指令與紅案
+    from wg_release_rules import fix_escalation_text
+    fix_esc = fix_escalation_text(state)
+    if fix_esc and not state.get("fix_escalation_warned", False):
         state["fix_escalation_warned"] = True
         state["fix_escalation_triggered"] = True
-        lines.append(
-            f"[Guardian:FixEscalation] 偵測到重複修正 "
-            f"(retry={retry_count})。"
-            "依據「精確修正升級」規則，必須暫停直接修復，"
-            "執行 /fix-escalation 精確修正會議。"
-        )
+        lines.append(fix_esc)
 
-    # Evasion 上輪命中 → 注入舉證要求
+    # Evasion 上輪命中 → 注入舉證要求，放在這則注入最前面（排在其他注入後面時模型只做新請求、不理舉證）
     ev = state.get("evasion_flag")
     if ev:
-        lines.append(
-            f"[Guardian:Evasion] 你上輪用了退避語『{ev.get('phrase', '')}』。\n"
-            f"  context: …{ev.get('context_excerpt', '')[:200]}…\n"
-            "feedback-rigor-standards 規則：1-3 行能修就當場修。請說明：\n"
-            "  (a) 實際修補成本（列出要改的檔/行數）\n"
-            "  (b) 若仍選擇不修，為何這不是 feedback atom 所禁的退避說法？"
-        )
+        lines.insert(0, evasion_ask(ev))
         state["evasion_flag"] = None
 
     # Handoff Protocol
     if intent == "handoff":
         lines.append(
             "[Guardian:Handoff] 偵測到 handoff 意圖。"
-            "下 session 的 Claude 不會看到本次對話脈絡。"
+            "接手的 session 裡的 Claude 不會看到本次對話脈絡。"
             "請執行 /handoff 走 6 區塊強制模板，不要徒手寫 prompt。"
         )
 
@@ -318,40 +254,37 @@ def handle_user_prompt_submit(
     )
 
     # 使用者糾正訊號：跨 turn 計數（wg_friction），達門檻由 Stop 的 Deep Post-Mortem 消費
+    correction_hits: List[str] = []
     try:
-        from wg_friction import record_correction
-        record_correction(state, session_id, clean_prompt, config)
+        from wg_friction import correction_question, record_correction
+        correction_hits = record_correction(state, session_id, clean_prompt, config)
+        if correction_hits and v6:   # 詞表只是提示：問 AI「是不是糾正」（規則 CORRECTION_WORDS_ARE_HINTS）
+            lines.append(correction_question(correction_hits))
     except Exception as e:
         _atom_debug_error("ups:friction", e)
-
+        print(f"[Guardian:Correction] 糾正詞待判或問句失敗（這次沒問）：{type(e).__name__}: {e}", file=sys.stderr)
     # Topic tracking
     _update_topic_tracker(state, prompt, intent, newly_injected)
-
-    # AEC HUD 決策 drain：HUD (d) 保留/刪除鈕落的決策 → 注入 → 模型本回合 deferred 執行
-    _drain_aec_decisions(session_id, lines)
 
     # Sync reminders
     mod_count = len(state.get("modified_files", []))
     kq_count = len(state.get("knowledge_queue", []))
-    sync_kw = config.get("sync_keywords", [])
+    sync_kw = config.get("sync_keywords", CORE_DEFAULTS["sync_keywords"])
     prompt_has_sync = any(kw in prompt for kw in sync_kw)
 
+    # 同步數字只留 stderr 一行、不進 chat：記憶卡由 vcs-sync 背景自動上，程式檔的版控交代在收尾檢核 (g)；
+    # statusline（tools/statusline.py）常駐顯示改檔／佇列數（零 token）。
     if prompt_has_sync and (mod_count > 0 or kq_count > 0):
-        lines.append(f"[Guardian] Sync context: {mod_count} files modified, {kq_count} knowledge items pending.")
-        if mod_count > 0:
-            files = list({m["path"] for m in state["modified_files"]})
-            lines.append(f"Files: {', '.join(f.rsplit('/', 1)[-1] for f in files[:10])}")
-        if kq_count > 0:
-            for q in state["knowledge_queue"]:
-                lines.append(f"  - {q.get('classification', '[臨]')} {q['content'][:60]}")
-    # 週期性「N files modified」提醒不進 chat——statusline（tools/statusline.py）
-    # 常駐顯示改檔/佇列數（零 token）；模型端 enforcement 由 Stop SyncReminder 閘兜底。
+        print(f"[Guardian] Sync context: {mod_count} files modified, {kq_count} knowledge items pending.", file=sys.stderr)
 
     # ─── 最終裁切 → 以「實際送出」結算注入記帳 ───
     # 所有 lines 生產者都在上面；這裡裁切一次，之後不再動 lines。
+    _hook_lap("收尾提示")
     if lines:
         lines = _truncate_context_by_activation(lines, budget_total, atom_source_dirs, config)
     delivered = reconcile_injection_after_trim(session_id, state, config, lines)
+    if _hook_degraded():
+        lines.append(_hook_timing.degrade_note())             # 裁切之後才加：這一行不能被預算裁掉
 
     # per-turn 注入記錄（每 turn 覆寫）：只存「本 turn 實際送出」的 atom + 檔路徑，
     # 供 Stop 做注入→使用→結果 (α,β) 歸因。被最終裁切丟掉的不算注入。
@@ -403,6 +336,7 @@ def handle_user_prompt_submit(
     # 走到這裡＝本輪 UPS 完整跑完 → 拆哨兵（timeout 砍掉時到不了這行，哨兵殘留）
     _ups_sentinel_clear(session_id)
 
+    _hook_timing.claim_output()
     if lines:
         output_json({
             "hookSpecificOutput": {

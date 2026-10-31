@@ -49,8 +49,12 @@ HOOK_PATH_RE = re.compile(r"\.claude/((?:hooks|tools)/[^\s\"'`;|&()<>]+)")
 # 緊接在 .claude/ 之前、代表「家目錄」的寫法（小寫比對）；家目錄的實際路徑另由 system_path 補上
 HOME_SPELLINGS = ("$home/", "${home}/", "~/", "%userprofile%/", "$userprofile/", "home()/'", 'home()/"')
 NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0  # CREATE_NO_WINDOW
-# 子程序一律看到同一個家目錄：Windows 上 Python 看 USERPROFILE、bash 看 HOME
-ENV = {**os.environ, "HOME": str(HOME), "USERPROFILE": str(HOME), "PYTHONIOENCODING": "utf-8"}
+# 子程序一律看到同一個家目錄：Windows 上 Python 看 USERPROFILE、bash 看 HOME。
+# 資料根（WG_CLAUDE_DIR）與 Claude Code 設定目錄（CLAUDE_CONFIG_DIR）也釘在安裝目標：目標樹的工具
+# 吃這兩個變數（記憶走資料根、fix-hook-python 的 settings.json 走設定目錄），環境另指別處時
+# 不能讓它們去讀寫別處的設定與記憶；一般安裝三者本來就是同一處。
+ENV = {**os.environ, "HOME": str(HOME), "USERPROFILE": str(HOME), "WG_CLAUDE_DIR": str(TARGET),
+       "CLAUDE_CONFIG_DIR": str(TARGET), "PYTHONIOENCODING": "utf-8"}
 
 
 class InstallError(Exception):
@@ -687,8 +691,37 @@ def cmd_upgrade() -> int:
     except InstallError as e:
         print(f"\n升級已完成，但 hook 直譯器校正失敗：{e}", file=sys.stderr)
         return 1
+    v6_hint()
     print("升級完成。請重開 Claude Code。")
     return 0
+
+
+V6_HINT = ("寫碼守門（寫程式時的定位提示與三道照擋）目前是關的；要開請在 workflow/config.local.json 加 "
+           "{\"coding_guard\": {\"enabled\": true}} 後 Reload Window，或設環境變數 WG_CODING_GUARD=1")
+
+
+def v6_hint() -> None:
+    """上游 workflow/config.json 的 coding_guard.enabled 出廠是 false；本機沒在 config.local.json（或 WG_CODING_GUARD=1）打開就提醒一行。
+    開沒開照 hook 的同一套規則算（hooks/wg_core.v6_enabled）：環境變數 WG_CODING_GUARD（沒設看舊名 WG_V6）先；
+    再 config.json 疊 config.local.json（lib/config_local.merge_local），coding_guard.enabled 或舊鍵 v6.enabled 是 true 就算開。"""
+    env = next((os.environ.get(n, "").strip() for n in ("WG_CODING_GUARD", "WG_V6")
+                if os.environ.get(n, "").strip() in ("0", "1")), None)
+    if env == "1":
+        return
+    workflow = TARGET / "workflow"
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("config_local_for_install", TARGET / "lib" / "config_local.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        config = json.loads((workflow / "config.json").read_text(encoding="utf-8"))
+        config = mod.merge_local(config, workflow / "config.local.json", "install")
+    except Exception as e:  # 查不到就說查不到，不裝沒事
+        print(f"寫碼守門開沒開查不出來（{e}），照 hooks/wg_core.v6_enabled 的規則自行確認。")
+        return
+    on = any(isinstance(config.get(k), dict) and config[k].get("enabled") is True for k in ("coding_guard", "v6"))
+    if not on:
+        print(V6_HINT)
 
 
 # ─── --verify ───────────────────────────────────────────────────────────────
@@ -772,6 +805,31 @@ def verify_merge_driver() -> Tuple[str, str]:
     return "PASS", "已安裝"
 
 
+def verify_overview_map() -> Tuple[str, str]:
+    """根層部位表 ~/.claude/.claude/overview-map.md 三態：表在且 parse_map 讀得出列＝PASS；表在但讀不出＝FAIL；表不在＝DEGRADED。
+    只讀檔；解析器取已安裝的 ~/.claude/lib/overview_hub.py（hook 實際用的那份），沒有才退本 clone 的；不實跑 hook。
+    TARGET 固定 Path.home()/.claude、不看 WG_CLAUDE_DIR：這是「已安裝版本」的驗證，worktree 的表由 verify 自己建假家測。"""
+    path = TARGET / ".claude" / "overview-map.md"
+    if not path.is_file():
+        return "DEGRADED", (f"根層部位表不存在（{path}），量尺閘與讀檔帳認不出根層的部位 → "
+                            "python ~/.claude/tools/overview-map-scaffold.py --cwd ~/.claude --write（預覽先不帶 --write）")
+    try:
+        import importlib.util
+        hub_py = next(p for p in (TARGET / "lib" / "overview_hub.py", SOURCE / "lib" / "overview_hub.py") if p.is_file())
+        spec = importlib.util.spec_from_file_location("overview_hub_for_verify", hub_py)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        rows = mod.parse_map(path.read_text(encoding="utf-8"))
+    except Exception as e:  # 解析器自己炸也算表壞：要修表或修解析器，不能當沒事
+        return "FAIL", f"根層部位表讀不出來（{e}）→ 對照 lib/overview_hub.py parse_map 的表格式修 {path}"
+    if not rows:
+        return "FAIL", f"根層部位表沒有任何可解析的列（每列至少一格含反引號路徑前綴）→ 修 {path}"
+    missing = [r["part"] for r in rows if not r["prefixes"] or not r["part"]]
+    if missing:
+        return "FAIL", f"根層部位表有 {len(missing)} 列缺前綴或部位名 → 修 {path}"
+    return "PASS", f"{len(rows)} 個部位（{path}）"
+
+
 def org_root() -> Optional[str]:
     """公司層接上的根目錄；未接上 → None。"""
     try:
@@ -798,6 +856,7 @@ VERIFY_ITEMS = [
     ("記憶檢索", verify_search),
     ("MCP 註冊", verify_mcp),
     ("索引合併驅動", verify_merge_driver),
+    ("根層部位表", verify_overview_map),
 ]
 
 

@@ -48,6 +48,8 @@ def driven(monkeypatch):
     monkeypatch.setattr(st, "_detect_uncommitted_files", lambda mf: [])
     monkeypatch.setattr(st, "_maybe_spawn_user_extract_worker", lambda *a, **k: None)
 
+    monkeypatch.setattr(st, "coding_turn", lambda *a, **k: True)   # 測閘本身：當成寫碼回合（CODING_TURN_ONLY 的案在 verify_gate_trim）
+
     def drive(modified_files, capsys, **extra):
         state = {
             "phase": "working",
@@ -165,3 +167,11 @@ def test_ptu_non_commit_no_flag(monkeypatch):
     """非 commit 指令（git status）→ 不設旗標。"""
     state = _drive_ptu(monkeypatch, "git status")
     assert "last_commit_turn_seq" not in state
+
+
+@pytest.fixture(autouse=True)
+def _block_mode(monkeypatch):
+    """規則 GATE_MODE_TABLE：送法只讀 wg_release_rules.RULE_MODE。這個檔的案例驗的是判定與擋訊息內容，把送法釘成 block 讓它們照驗；
+    v6 預設的提醒送法（Stop 只留帳、提醒掛改檔那則工具結果）由 verify_gate_mode_stop.py 驗。"""
+    import wg_release_rules as _rr
+    monkeypatch.setattr(_rr, "mode_of", lambda rule: _rr.BLOCK)

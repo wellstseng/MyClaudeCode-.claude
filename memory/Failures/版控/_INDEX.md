@@ -1,0 +1,10 @@
+# memory/Failures/版控 — 範疇索引
+
+> 階層範疇索引（自動生成，`_` 前綴非 atom）。機制見 [[realm-範疇分區機制-v5]]。
+
+## 本層 atom
+
+| Atom | 說明 |
+|------|------|
+| feedback-上git是commit加push一體-沒口令前不先commit-讓使用者能先看diff | feedback-上git是commit加push一體-沒口令前不先commit-讓使用者能先看diff |
+| feedback-共用工作樹push前先看待推範圍-git-push推的是整段待推歷史-含別人等口令的commit就只推自己的或先問 | feedback-共用工作樹push前先看待推範圍-git-push推的是整段待推歷史-含別人等口令的commit就只推自己的或先問 |
