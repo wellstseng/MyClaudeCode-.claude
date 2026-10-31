@@ -9,7 +9,7 @@
 | [記憶管線演進/](記憶管線演進/_INDEX.md) | atom 寫入／分類／注入／預算機制每次改版的為什麼與數字（含 2026-08 分類階層化、注入變弱調查） | 9 |
 | [檢視與審查/](檢視與審查/_INDEX.md) | 三方比對評估（2026-08）、同伴 MR 審查（2026-10） | 2 |
 | [工作流與協調/](工作流與協調/_INDEX.md) | 多 agent 協作協議、跨 session 衝突預警、session 管理、PAN 預告閘門終局判讀 | 4 |
-| [設定與遷移/](設定與遷移/_INDEX.md) | settings.json 權限總覽（2026-04）、版本遷移表、CatClaw 遷移紀錄（2026-10） | 3 |
+| [設定與遷移/](設定與遷移/_INDEX.md) | settings.json 權限總覽（2026-04）、版本遷移表、CatClaw 遷移紀錄（2026-10）、upstream v6.0 整併踩坑（2026-11） | 4 |
 | [v4-archive/](v4-archive/README.md) | V4 設計文件（三層 scope、衝突偵測、V4.1 開發歷程）＋ V4.1 hook 模組退役前最後一版 19 檔證物 | 3 md + 19 py |
 | [v5-overhaul-2026-05/](v5-overhaul-2026-05/README.md) | V5 升版完整紀錄（起因、4-Wave、全面汰舊、GA 驗收）＋ 封存的 tests／tools／scripts | 2 md + 封存程式 |
 | [全面檢視-2026-09-21/](全面檢視-2026-09-21/plan-and-decisions.md) | 2026-09-21 對照 CC 生態的全面檢視：共同簡報、Claude／Codex 審查摘要與全文、遙測統計、拍板 | 15 md + 腳本與輸出 |

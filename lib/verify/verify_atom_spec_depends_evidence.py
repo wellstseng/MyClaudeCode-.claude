@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import sys
+import pytest
 from pathlib import Path
 
 LIB_PARENT = Path(__file__).resolve().parent.parent.parent  # lib/verify/ → ~/.claude/
@@ -43,6 +44,7 @@ def test_classify_local_missing_under_existing_anchor_is_missing(tmp_path):
     assert level == "missing"
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_classify_other_home_claude_rebased_to_local_data_root(tmp_path):
     """別人 `<家目錄>/.claude/<rel>`：換成本機資料根再查——在就 ok、不在才 missing（作者機的 .claude 對應本機的 .claude）。"""
     (tmp_path / "tools").mkdir()

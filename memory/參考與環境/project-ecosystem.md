@@ -22,7 +22,7 @@
   - [固] TSLG Develop（Client）是從 TCSM 搬過來並做拆除工程；_AIDocs 內容與 TCSM 一致，但實際程式碼已有落差（部分內容已砍掉），閱讀時需與原始碼交叉驗證
   - [固] TSLG Server 是從 SGI Server 搬過來的，底層核心同為 Orbit
   - [固] TSLG Server 策略：保留 SGI Server 的底與業務邏輯，參考 Titan 進行大幅度業務與架構重構（非打掉重練）
-  - [固] TSLG Server 基建升級已完成（2026-04-08）：.NET 8 + CoreModule 3.0.1 + sgi 跨 repo link 全拔除
+  - [固] TSLG Server 基建升級已完成：.NET 8 + CoreModule 3.0.1 + sgi 跨 repo link 全拔除
   - [固] TSLG Server SVN：`svn://uj-svn.uj.com.tw/PJA146_TSLG/programmer_server/Develop/Server`
   - [固] TSLG Server 知識庫進度文件：`C:\Projects\TSLG\_AIDocs\orbit-merge-progress.md`
 - [固] TCSM（軌跡）：🟢 營運・維護期
@@ -31,14 +31,14 @@
   - Server 核心：Titan（`C:\Projects\Titan`）
 - [固] Orbit（SGI Server Core + TSG 框架）：SGI 後端 Server 核心，並擴展為 Titan-style .NET 框架
   - 路徑：`C:\Projects\Orbit`
-  - _AIDocs：有（`C:\Projects\Orbit\_AIDocs\`）— 10 支文件含 Architecture / DB / Net / Data / Config / Peripheral / CommonUtilities / **TsgFamily / Gate**（2026-04-15 新增）
-  - .claude/memory：有（`C:\Projects\Orbit\.claude\memory\`）— 含架構、DB、網路、周邊模組、**orbit-tsg**（2026-04-15 新增）
+  - _AIDocs：有（`C:\Projects\Orbit\_AIDocs\`）— 10 支文件含 Architecture / DB / Net / Data / Config / Peripheral / CommonUtilities / **TsgFamily / Gate**（新增）
+  - .claude/memory：有（`C:\Projects\Orbit\.claude\memory\`）— 含架構、DB、網路、周邊模組、**orbit-tsg**（新增）
   - 定位：SGI server 的核心框架 + TSLG Server 的出發點 + Titan-inspired TSG 家族（分散式遊戲伺服器 .NET 地基）
   - [固] TSLG 分支：`tslg_1.0`（CoreModule 3.0.2，已整合 NetMQ 4.0.1.13 + Tsg 家族 + GateApp）
   - [固] `Directory.Build.targets` 定義 `USE_NODE_CONNECT` + `_UJ_MODIFY` — 影響所有 CoreModule 編譯
-  - [固] **TSG 家族位置**：`CoreModule/Tsg/{Codec,Net,Stack,Gate,Proto}/`（2026-04-15 整併，原 TsgNet/Titan/Rpc-submodule/Protobuf-submodule 全統一）
-  - [固] **submodule 全脫鉤**（2026-04-15）：Rpc + Protobuf submodule 刪除，`.gitmodules` 清空，source 併入 CoreModule
-  - [固] **GateApp v0 完成**（2026-04-15，commits `746ebff` + `2401737`）：`C:\Projects\Orbit\GateApp\`，TSLG Client 可連 port 21100 完成 LOGIN round-trip
+  - [固] **TSG 家族位置**：`CoreModule/Tsg/{Codec,Net,Stack,Gate,Proto}/`（整併，原 TsgNet/Titan/Rpc-submodule/Protobuf-submodule 全統一）
+  - [固] **submodule 全脫鉤**：Rpc + Protobuf submodule 刪除，`.gitmodules` 清空，source 併入 CoreModule
+  - [固] **GateApp v0 完成**（commits `746ebff` + `2401737`）：`C:\Projects\Orbit\GateApp\`，TSLG Client 可連 port 21100 完成 LOGIN round-trip
   - [固] 驗證：protobuf-net (titan.Client proto2) 與 Google.Protobuf (Tsg.TsgClient proto3) wire 100% 相容
   - [固] Orbit GateApp 取代 TSLG/Develop/Server/GateApp（後者是 POC，已不是主線）
   - [固] `dotnet build ServerApp.sln -c Release` = 0 errors（2026-04-15）

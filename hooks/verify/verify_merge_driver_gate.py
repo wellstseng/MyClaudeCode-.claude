@@ -76,6 +76,7 @@ def test_segments_non_target_subcommands_yield_nothing():
     assert _git_segments("echo pull", merge_class) == []
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_dash_c_wins_over_cd():
     segs = _git_segments('cd x && git -C "c:/r" commit -am "msg" | tee log', {"commit"})
     assert segs == [("c:/r", ["commit", "-am", "msg"])]

@@ -31,7 +31,7 @@ _spec.loader.exec_module(WG)
 CFG = {"enabled": True, "dedup_score": 0.80, "knowledge_budget_bytes": 3072}
 # 品質過線的新內容（tech_terms＋concrete_value＋actionable），讓「往下判」的結果是 add 而不是品質 skip
 CONTENT = "[臨] hook 的 PreToolUse 在 Edit payload 生成後才觸發 → 寫前提醒要放 PostToolUse，路徑 ~/.claude/hooks/x.py"
-REAL_CARD = (ROOT / "_AIDocs" / "_atoms" / "MemDev"
+REAL_CARD = (ROOT / "_AIDocs" / "_atoms" / "MemDev" / "hook與MCP執行期"
              / "mcp的node端程式改了要開新session才載到-同機其他session的mcp程序仍跑舊碼-python端每次spawn立即生效.md")
 
 

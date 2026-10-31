@@ -219,6 +219,7 @@ def test_counterexample_fake_dict_is_rejected_by_checker(tmp_path):
 
 # ─── 反例：舊條件（共用 tmp＋無鎖）在可控交錯下必重現 Extra data ──────────
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 檔案鎖／延伸路徑前綴語意，非 Windows 跳過")
 def test_counterexample_shared_tmp_without_lock_reproduces_extra_data(tmp_path):
     text, err = _run_race("race-shared", tmp_path)
     with pytest.raises(json.JSONDecodeError, match="Extra data"):

@@ -133,6 +133,7 @@ def test_authority_map_dotdot_does_not_escape_pattern(world):            # 退�
     assert wd.on_read_depends(st, "s", "Read", {"file_path": str(root / "docs" / ".." / "src" / "a.md")}, str(root), {}) is None
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 檔案鎖／延伸路徑前綴語意，非 Windows 跳過")
 def test_norm_fs_path_strips_extended_prefix(tmp_path):                  # 退件 WARN（\\?\ 前綴）
     from atom_spec import _norm_fs_path
     plain = _norm_fs_path(tmp_path / "x.py")

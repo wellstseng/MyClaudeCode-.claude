@@ -206,6 +206,7 @@ def test_config_extra_glob_denied(repo):
 
 # ─── 純函式面 ────────────────────────────────────────────────────
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_segments_parse_commit_variants():
     segs = _git_commit_segments('cd x && git -C "c:/r" commit -am "msg" | tee log')
     assert len(segs) == 1

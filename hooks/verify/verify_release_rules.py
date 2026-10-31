@@ -195,6 +195,7 @@ def test_044_claim_is_modifier_unit():
 
 # ─── EXCLUDED_REGION ────────────────────────────────────────────────────
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_044_excluded_region():
     """EXCLUDED_REGION：在專案根底下、部位表判 knowledge 才排除；類別 code、沒有部位表（None）、拿不到根、不在根下、
     `..` 繞出根都不排除（部位類別的判法本身在 verify_overview_hub／verify_stop_reconcile 的 know 段）。"""
@@ -587,6 +588,7 @@ def test_045_runtime_data_no_overview_still_requires(path):
 
 # ─── B9／B14 暫存目錄 ─────────────────────────────────────────────────────────
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_045_temp_repo_commit_exempt_and_temp_copy_not_project():
     roots = rr.temp_roots({"TEMP": r"C:\Users\me\AppData\Local\Temp", "TMP": ""}, tempdir=r"C:\Users\me\AppData\Local\Temp")
     assert roots[0] == "c:/users/me/appdata/local/temp" and "/tmp" in roots
@@ -602,6 +604,7 @@ def test_045_temp_repo_commit_exempt_and_temp_copy_not_project():
     assert rr.temp_copy_verdict(r"C:\Users\me\.claude-wt\t\tools\x.py", roots).owed is True
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_003_session_scratch_not_code_only_two_shapes():
     """SESSION_SCRATCH_NOT_CODE：設定目錄下 jobs/<id>/tmp/ 與 Temp/claude/…/scratchpad/ 才算暫存區；repo 裡同名的目錄、
     jobs/<id> 底下不在 tmp 的、設定目錄本身的程式照算。"""
@@ -1039,6 +1042,7 @@ def test_045_move_code_dir_needs_scan_and_sample_detect_git_forms_and_agent(tmp_
     assert moved("git -C sub mv old new", agent_id="a1") == [("old", "new", "a1")]
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_045_move_code_dir_needs_scan_and_sample_root_arg_and_sample_binding():
     """codex BLOCK 4：掃描用 --root 指專案根時，--old 照 --root 解；BLOCK 5：抽樣要用 --for 點名涵蓋哪個新目錄，
     只抽 a 不能替 b 清帳。"""
@@ -1101,6 +1105,7 @@ def test_045_move_code_dir_needs_scan_and_sample_subagent_receipts_pair_with_its
     assert stop._move_inputs(state, vl2.agent_receipt_key("s", "a2"))[0] == []           # 別的子代理不背這筆
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_045_move_code_dir_needs_scan_and_sample_cd_before_tool():
     """BLOCK 2：先 cd 再跑工具，--old／--root 照那一段的有效 cwd 解。"""
     move = {**_MOVE, "old": "C:/p/sub/lib/pkg", "new": "C:/p/sub/src/pkg"}
@@ -1208,6 +1213,7 @@ def test_045_green_narrowed_keeps_uncovered_red_command_variants(green, keeps):
     (f'Set-Location C:\\p; python.exe "{_MV_TOOL}" scan --old lib\\pkg --new src\\pkg',
      f'Set-Location C:\\p; python.exe "{_MV_TOOL}" sample --for src\\pkg --run "pytest"', "PowerShell"),
 ], ids=["py-X-utf8", "relative-tool", "abs-paths", "ps-exe", "ps-setloc"])
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_045_move_code_dir_needs_scan_and_sample_command_variants(scan_cmd, sample_cmd, tool):
     """(v) 的收據判定對各種一般寫法都判對：兩張收據配上搬移就放行。"""
     cwd = "C:/p/tools" if "Set-Location" in scan_cmd else "C:/p"
@@ -1665,6 +1671,7 @@ def test_evasion_context_exempt_boundary():
 
 # ─── T2.16 動資料檔 ───
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_t216_user_data_file_needs_declaration():
     """USER_DATA_FILE_NEEDS_DECLARATION：四件事實全成立又沒宣告才擋；宣告路徑檔名完整比對；原話點名要整個檔名。完整案例在 verify_data_file_ask.py。"""
     t = "C:\\w1\\qb-report\\config\\settings.json"

@@ -9,7 +9,7 @@
 
 ## 知識
 
-- [臨] fork 三角工作流：pull 追 upstream（團隊 repo）、push 走 origin（自己 fork）；`git config remote.pushDefault origin` 讓裸 push 不誤打 upstream（2026-07-06 已設）
+- [臨] fork 三角工作流：pull 追 upstream（團隊 repo）、push 走 origin（自己 fork）；`git config remote.pushDefault origin` 讓裸 push 不誤打 upstream（已設）
 - [臨] merge upstream 定向衝突解：memory/ 個人記憶檔一律 `checkout --ours`（是資料分歧非真衝突）；settings.json 取 ours 後必須 diff 兩邊 hooks 結構補「功能接線 delta」（event/matcher/新 hook），只補 lang_guard 這種顯性新檔不夠——PostCompact/PostToolBatch/matcher 升級這種隱性 delta 會漏，靠 run_verify 的 settings 斷言測試抓
 - [臨] upstream（Windows 開發）合入 Mac 的三類適配：(1) settings 接線用 python3 不抄 pythonw 絕對路徑 (2) Path.write_text(newline=) 是 3.10+ API、macOS 系統 Python 3.9.6 會 TypeError，改 open(..., newline=) (3) 測資寫死 r'C:\...' 在 POSIX 是相對路徑，resolve 後落回 rootdir 之下造成誤判，需 platform-aware
 - [臨] merge 前必打 tag（backup-pre-upstream-merge-YYYYMMDD）；merge 後 `python3 run_verify.py` 當煙測主力（1 秒級），失敗逆向分流：settings 斷言=接線缺口、TypeError=版本差異、路徑斷言=可移植性
@@ -18,6 +18,7 @@
 - [臨] tools/verify/verify_install.py 會 clone 本 repo 的已提交 HEAD 當安裝來源：合併未 commit 時它讀到舊樹而假紅（缺新檔、缺新設定鍵），要先本地 commit 再跑 run_verify 才看得到真結果
 - [臨] upstream 的 Python 底線是 3.10（install.py --verify 會報 FAIL）；系統 Python 3.9 的機器每次升級都要重做 write_text(newline=) 改寫（用 AST 掃 Expr 陳述句批次改成 with open），且 verify_install 有三個測試在 3.9／非 Windows／settings 無 statusLine 下固定紅
 - [臨] 使用者說「幫我把 git 上傳」不算版控口令，commit 閘會擋；要他明說「上GIT」
+- [臨] 合 v6.0 線新踩 9 坑（merge driver 直譯器指 3.9、ours 後 trigger drift、子夾搬移懸空、`git add -A` 掃進 state-*.lock、CommitOrder 擋 heredoc、config.local 淺合併、3.12 dataclass 收集錯、本 session MCP 舊碼 `v6Enabled`、VerifyBatch 閘）與各自解法：`_AIDocs/DevHistory/設定與遷移/upstream-merge-v6-mac-2026-11.md`。
 
 ## 行動
 

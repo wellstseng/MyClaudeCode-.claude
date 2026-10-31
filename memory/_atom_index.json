@@ -1771,9 +1771,7 @@
         "上傳GIT",
         "上SVN",
         "直上版控",
-        "記憶相關不用問",
-        "commit",
-        "push"
+        "記憶相關不用問"
       ],
       "scope": "global",
       "related": [

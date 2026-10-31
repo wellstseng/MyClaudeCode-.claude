@@ -153,6 +153,7 @@ def test_unrelated_pass_from_sibling_session_blocks(driven, capsys):
     assert "ReconcileGate" in out and "(a)" in out
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_unrelated_pass_in_same_session_does_not_count(driven, capsys):
     """BLOCK 3：同回合有 PASS 但驗的是別的東西（cmd 沒提到改的檔、不是 verify 路徑、不是量尺）→ 不能背書。"""
     out, _, _ = driven("閘修好了，完成。", capsys, modified_files=[_mf(_CODE, 5)],
@@ -173,6 +174,7 @@ def test_stale_turn_pass_blocks(driven, capsys):
 _T_LATER = "2026-10-12T10:10:00+08:00"       # 晚於 _T2（PASS 那一刻）的改檔時間
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_a_old_turn_pass_counts_when_no_code_edit_since(driven, capsys):
     """① 上回合（turn 3）改 x.py、補案例、跑綠；本回合（turn 5）一行程式都沒改、說修好 → (a) 認那筆 PASS，不擋
     （跑名 2026-10-28-008 實踩的誤擋：舊碼只認本回合的收據，逼它重跑同一組測試）。"""
@@ -182,6 +184,7 @@ def test_a_old_turn_pass_counts_when_no_code_edit_since(driven, capsys):
     assert _A_HIT not in out, out
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_a_old_turn_pass_then_code_edited_again_blocks_and_names_file(driven, capsys):
     """② 上回合跑綠之後又改了程式、說修好 → 擋，訊息點名改了哪個檔、要重跑（不再說「舊回合的 PASS」）。
     三種「之後又改」都算：本回合自己改 x.py、子代理改 x.py（agent_modified_files）、判不出目標的寫入（unknown_writes）。"""
@@ -199,6 +202,7 @@ def test_a_old_turn_pass_then_code_edited_again_blocks_and_names_file(driven, ca
     assert _A_HIT in out and "之後又改了 判不出目標的寫入，要重跑" in out, out
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_a_this_turn_pass_after_edit_still_passes(driven, capsys):
     """③ 本回合改 x.py、補案例、跑綠、說修好 → 照舊放行。"""
     mods = [_mf(_CODE, 5, last_at=_T1, last_seq=1), _mf(_CASE, 5, last_at=_T1, last_seq=2)]
@@ -249,6 +253,7 @@ def test_turn_word_and_own_mark_sentences_still_claim(driven, capsys, text):
     assert "ReconcileGate" in out and "(a)" in out
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_unrelated_test_file_cannot_vouch(driven, capsys):
     """003-2：改 a.py，PASS 來自 tests/test_b.py 或 check_beta.py → 不算；tests/test_a.py 或 pytest -q 算。"""
     a = r"c:\proj\src\a.py"
@@ -354,6 +359,7 @@ _W_CMD = "python -m pytest tests/test_widget.py"
 _WC = r"c:\demo\tests\test_widget.py"          # 同回合也改了驗證 case（件三：(d) 只認 case，正例都要帶）
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_pass_before_last_edit_in_same_turn_blocks(driven, capsys):
     """反例：PASS（seq 3）→ 改 widget.py（seq 5）→ 宣告修好 → 擋，(a) 與 (d) 都指出改完沒重跑。"""
     out, _, _ = driven("閘修好了，完成。", capsys, modified_files=[_mf(_W, 5, last_seq=5)],
@@ -361,6 +367,7 @@ def test_pass_before_last_edit_in_same_turn_blocks(driven, capsys):
     assert "ReconcileGate" in out and "(a)" in out and "(d)" in out and "widget.py 最後一次修改之前" in out
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_pass_after_last_edit_in_same_turn_passes(driven, capsys):
     """正例：改（seq 3）→ PASS（seq 5）→ 放行。"""
     out, _, _ = driven("閘修好了，完成。", capsys, modified_files=[_mf(_W, 5, last_seq=3), _mf(_WC, 5, last_seq=4)],
@@ -368,6 +375,7 @@ def test_pass_after_last_edit_in_same_turn_passes(driven, capsys):
     assert "ReconcileGate" not in out
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_same_second_edit_and_pass_compares_seq(driven, capsys):
     at = "2026-10-12T10:00:00+08:00"
     out, _, _ = driven("閘修好了，完成。", capsys, modified_files=[_mf(_W, 5, last_at=at, last_seq=5)],
@@ -379,6 +387,7 @@ def test_same_second_edit_and_pass_compares_seq(driven, capsys):
     assert "ReconcileGate" not in out
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_whole_verification_must_be_after_every_claimed_file(driven, capsys):
     """同一張收據對上多個檔：每個它聲稱對上的檔都要在它之前改完；有一個在它之後改 → 不算。
     （022 規則 4：整體驗證只涵蓋執行根之下，收據要在 c:\\demo 跑才涵蓋 c:\\demo 的改檔。）"""
@@ -394,6 +403,7 @@ def test_whole_verification_must_be_after_every_claimed_file(driven, capsys):
     assert "ReconcileGate" not in out
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_legacy_edit_record_without_at_or_seq_keeps_old_behavior(driven, capsys):
     """修改紀錄沒有 at／seq（升級前）→ 不比先後，照舊放行。"""
     out, _, _ = driven("閘修好了，完成。", capsys, modified_files=[_mf(_W, 5), _mf(_WC, 5)],
@@ -904,6 +914,7 @@ def test_subagent_read_only_not_gated(sub_stop, capsys):
     assert "Guardian" not in out                                                            # 只讀檔（自己沒改檔）→ 不擋
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_subagent_uses_own_receipts_and_case(sub_stop, capsys):
     key = vl.agent_receipt_key(_SID, "ag1")
     st_ = _sub_state(agent_modified_files={"ag1": [_mf(_CODE, 5), _mf(_CASE, 5)]},
@@ -1060,6 +1071,7 @@ def test_006_7_code_and_report_split_when_exhausted(driven, capsys):
     assert "【收尾放行確認】" in head and "(d)" in head and "(e)" not in head and "(e)" in rest
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_006_9_case_must_be_code_file(driven, capsys):
     w = r"c:\proj\src\widget.py"
     out, _, _ = driven("全部完成了。", capsys, modified_files=[_mf(w, 5), _mf(r"c:\proj\tests\README.md", 5)])
@@ -1068,6 +1080,7 @@ def test_006_9_case_must_be_code_file(driven, capsys):
     assert "ReconcileGate" not in out
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_windows_batch_files_count_as_code(driven, capsys):
     """原設計者 10-20 定：Windows 批次檔（.bat／.cmd）算程式——改了要補測試，和 .ps1、.sh 同樣判。反例：同目錄的文件不算。"""
     exts = vl.reconcile_cfg({})["code_exts"]
@@ -1077,6 +1090,7 @@ def test_windows_batch_files_count_as_code(driven, capsys):
     assert "ReconcileGate" in out and "改了程式碼（build.bat）" in out, out          # 改批次檔沒補案例照欠
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_006_10_case_debt_carries_over_turns(driven, capsys):
     w = _mf(r"c:\proj\src\widget.py", 5, last_at="2026-10-12T10:00:00+08:00", last_seq=3)
     out, _, _ = driven("全部完成了。", capsys, turn_seq=6, modified_files=[w])
@@ -1100,6 +1114,7 @@ def _pend_state(claims):
     return {_SID: {"reconcile": {"turn": 5, "at": "x", "reason": "r", "claims": list(claims)}}}
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_009_1_rephrase_keeps_case_debt_and_pending(driven, capsys):
     """4.1 重現：有改碼、沒補案例、已有 pending，回「變更內容如上。」→ 擋（含 AskUserQuestion 提示）且 pending 留著；
     補了案例後同一句 → 不擋、pending 清。"""
@@ -1147,6 +1162,7 @@ def test_013_1_original_claim_survives_repeated_rephrase(driven, capsys):
     assert "ReconcileGate" not in out and "reconcile" not in state["pending_release"][_SID]
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_009_1_subagent_and_judge_judge_case_debt_regardless_of_wording(sub_stop, capsys, monkeypatch):
     out, _ = sub_stop(capsys, _sub_state(agent_modified_files={"ag1": [_mf(_CODE, 5)]}), last="變更內容如上。")
     assert "沒有人能回答放行詢問" in out and "改了程式碼（x.py）" in out
@@ -1254,6 +1270,7 @@ def test_009_4_background_self_receipt_satisfies_fixed_claim(driven, capsys, mon
     assert "(a) CLAIM_FIXED_NEEDS_PASS：說「修好」" in out                                                         # 自寫收據在改檔之前開始 → 擋
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_009_5_deleted_case_does_not_clear_debt(driven, capsys, monkeypatch, tmp_path):
     """4.5：改 src/a.py 後刪 tests/test_a.py（PostToolUse 對刪除也記一筆）→ 擋；改 src/a.py 後新增 tests/test_a.py → 不擋。
     案例路徑用虛構的 c:\\proj（pytest 的 tmp 目錄名含 test，會被 `**/*test*` 當成案例），存在與否交給真的 case_exists 查 tmp 真檔。"""
@@ -1274,6 +1291,7 @@ def test_009_5_deleted_case_does_not_clear_debt(driven, capsys, monkeypatch, tmp
 _LATEST = r"C:\latest\proj"
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_011_project_under_test_named_dir_judges_relative_path(driven, capsys, monkeypatch):
     """根在 C:\\latest\\proj（虛構路徑走樣式判定；存在與否由 fixture 視為存在）：改 src/a.py → 不是案例、(d) 擋；
     再改 tests/test_a.py → 是案例、(d) 不擋。舊碼比絕對路徑，`**/*test*` 吃到 latest，src/a.py 也算案例 → 不擋。"""
@@ -1437,6 +1455,7 @@ def test_017_warn_pending_b_c_ask_for_evidence_not_rewording(driven, capsys):
     ("pytest -q -k x", False), ("pytest --collect-only -q", False), ("pytest -q tests", False),
     ("python -X utf8 run_verify.py --json", False), ("pytest -q -o testpaths=src", False),
 ])
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_017b_9_only_unnarrowed_runs_are_whole_verification(driven, capsys, cmd, related):
     """017b 規則 9：說「修好」時，整體驗證只認不帶參數的 run_verify.py 與不縮範圍的 pytest；選案、只收集、指定目錄都不算。"""
     mods = [_mf(_WIDGET, 5, last_at=_T1, last_seq=3), _mf(r"c:\proj\tests\test_widget.py", 5, last_at=_T1, last_seq=4)]
@@ -1570,6 +1589,7 @@ def test_022_codex_pre_drop_anchors_keeps_classes_and_escapes():
     ("PYTHONOPTIMIZE=1 python -m pytest -q", "Bash"),                            # 等於 -O
     ('$env:pytest_addopts="-k test_x"; python -m pytest -q', "PowerShell"),      # PowerShell 不分大小寫
 ])
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_022_codex_pre_env_injected_options_are_not_whole_runs(cmd, tool):
     """022 規則 4：PYTEST_ADDOPTS／PYTHONOPTIMIZE 從環境替程式加選項，等於命令列多帶了選項：不算整體驗證，
     也對不上沒指定它的量尺 `python -m pytest -q`。配對正例：其他環境指定照算。"""
@@ -1662,6 +1682,7 @@ def test_024_1_scope_env_block_message_names_variable_and_fix():
     ("PYTEST_ADDOPTS='' python -m pytest -q tests/test_widget.py", "Bash", True),          # 清空照算
     ('$PYTEST_ADDOPTS="工作備註"; python -m pytest -q tests/test_widget.py', "PowerShell", True),   # PowerShell 普通變數
 ])
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_026_general_evidence_checks_scope_env_at_every_program_step(driven, capsys, cmd, tool, related):
     """026：規則 1 的環境檢查也接到一般證據（_clean／claimed_paths）：每一段跑程式的指令啟動時，有效環境帶非空縮限設定就不採認，
     擋訊息講變數名與改法；清空與 PowerShell 普通變數照常採認。"""
@@ -1824,6 +1845,7 @@ def test_035_1_inherited_env_also_gates_ruler_receipts():
     assert _ruler_reason(r2, "PYTEST_ADDOPTS='--tb=short' python -m pytest -q") is None
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_035_1_receipt_without_env_is_not_evidence(driven, capsys):
     """035 ①（照 025 規則 2）：升級前沒記 env 欄的收據看不出範圍有沒有被縮小，(a) 與部位量尺都不採認，訊息說是沒記啟動環境、
     請重跑；配對：同一筆加上 env={} 就認。"""
@@ -2264,6 +2286,7 @@ def test_git_failure_is_reported_not_silent(clean_repo, capsys):
     assert str(repo) in err and "照算改了" in err and "TimeoutExpired" in err
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_undecidable_keeps_debt(driven, capsys, clean_repo, tmp_path):
     """不在 git 工作區、修改紀錄沒有回合、git 逾時或失敗 → 判不出原樣，照算改了（不放寬）。"""
     import subprocess
@@ -3197,6 +3220,7 @@ def test_launcher_with_other_code_is_still_code(driven, capsys, chain, monkeypat
     assert "_run_once.py" in out, out
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_042_2c_excluded_region_is_anchored_at_known_root(tmp_path):
     """排除區只認相對專案根、錨在根的路徑：拿不到根、檔不在根底下、根所在目錄的名字、根底下別處同名目錄都不排除（照算程式）。"""
     cfg = vl.RECONCILE_DEFAULTS
@@ -3265,6 +3289,7 @@ def test_042_0e_snapshot_exemption_checks_every_git_root_of_the_project(tmp_path
     assert vl.committed_settled_paths(*args, root_of=lambda q: str(proj)) == [str(code)]
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_042_0c_snapshot_exemption_outside_git_is_refused(capsys):
     """快照豁免查不了暫存區（不在 git 工作區）→ 不成立、stderr 說一聲：和「改過又原樣還原」同一個 fail-closed，不只比內容就放。"""
     p = r"c:\proj\hooks\x.py"                                         # 虛構路徑：不存在、不在任何 git 工作區（內容雜湊兩邊都是 None）
@@ -3445,6 +3470,7 @@ def _user_then_peers(monkeypatch, peers=2, **extra):
     return state
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_044_4_pass_receipt_before_peer_messages_still_counts(driven, capsys, monkeypatch):
     """044 第 4 項（規則 TURN_SINCE_USER_PROMPT；track-e8 待命回合實踩）：turn 5 改 x.py、補案例、跑出對得上的 PASS → 兩則同伴訊息
     （turn 7）→ 說修好：本回合收據從使用者打字那回合算起，(a) 不擋。舊碼只認 turn_seq==7，PASS 變成舊回合、擋。配對：沒有 PASS → 照擋，
@@ -3776,6 +3802,7 @@ def test_044_6_failing_test_earlier_in_user_turn_is_turn_failure(monkeypatch):
     assert st._detect_turn_outcome(state, "全部完成了。", _SID) is False
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_044_6_subagent_pass_spanning_user_turns_counts(sub_stop, capsys):
     """SubagentStop（規則 TURN_SINCE_USER_PROMPT 的子代理起點）：背景子代理 turn 5 開跑、改檔並跑出 PASS → 使用者 turn 7 又打字 →
     子代理 turn 8 收尾說修好：本回合從子代理自己最早一筆紀錄算起，(a) 不擋。舊碼只認 turn_seq==8，擋到底（子代理不能放行）。"""
@@ -3888,6 +3915,7 @@ def _repo_with_code_and_case(base: Path):
     return repo, code, case
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_004_committed_equal_paths_git_calls_fixed_per_root(tmp_path):
     """004 件 8：對帳閘查「內容回到已提交版本／只差註解」每個根固定 3 支 git（cat-file --batch-check、hash-object、
     cat-file --batch），不隨改檔數與 ref 數長（舊碼：show-ref＋每個 ref 一支 ls-tree＋每個 .py 一支 git show）；判定照舊。"""
@@ -4078,6 +4106,7 @@ def test_045_b2_budget_shared_and_exhausted_message_lists_all(driven, capsys):
     assert "【收尾放行確認】" in out and "(a) CLAIM_FIXED_NEEDS_PASS" in head and "(d) CASE_COVERS_CHANGE" in head
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_045_vcs_root_unreadable_still_owes(driven, capsys, monkeypatch):
     """規則 VCS_ROOT_UNREADABLE（⑧）：找版控根時 OSError → 讀不到不是不在版控，已不存在的改檔照欠；舊碰把兩者都當 None 就不欠。"""
     monkeypatch.setattr(vl, "code_exists", lambda p: False, raising=False)
@@ -4240,6 +4269,7 @@ def test_trim_unlisted_letters_do_not_block(driven, capsys):
         assert "ReconcileGate" not in out, out
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_trim_kept_letters_still_block(driven, capsys):
     """留著的兩件照擋：說修好卻沒有任何 PASS (a)；改了程式之後沒有案例 (d)。"""
     out, _, _ = driven("閘修好了，完成。", capsys, config=_TRIM)

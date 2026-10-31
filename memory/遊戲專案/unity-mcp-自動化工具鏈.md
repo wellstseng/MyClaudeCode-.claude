@@ -12,7 +12,7 @@
 - [固] Unity MCP server: CoplayDev/unity-mcp (8.6k stars)，Unity Editor plugin + HTTP server
 - [固] 安裝方式：manifest.json 加 "com.coplaydev.unity-mcp": "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main"
 - [固] Claude Code MCP 設定：~/.claude.json → "unity-mcp": { "type": "http", "url": "http://localhost:8080/mcp" }（全域）
-- [固] **`type` 欄位必填**（2026-04-23 踩過）：漏 `"type": "http"` 則 Claude Code 不知 transport，server 靜默不載入；完整 SOP 見 _AIDocs/Tools/unity-mcp-setup.md
+- [固] **`type` 欄位必填**（踩過）：漏 `"type": "http"` 則 Claude Code 不知 transport，server 靜默不載入；完整 SOP 見 _AIDocs/Tools/unity-mcp-setup.md
 - [固] 健康檢查：`curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/mcp` → 回 `406` 即 server 活著（協定不對但 port 通）
 - [固] 前提：Unity Editor 必須開著且載入專案，plugin 才會跑 HTTP server
 - [固] 關鍵 tool: refresh_unity — 呼叫 AssetDatabase.Refresh() 觸發 script 重新編譯

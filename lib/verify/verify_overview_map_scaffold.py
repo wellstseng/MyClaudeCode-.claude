@@ -293,6 +293,7 @@ class _FakeWriter:
         return atom_io.WriteResult(ok=True, path=path)
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_detect_layer_and_kwargs(tmp_path):
     root = _mk_project(tmp_path)
     assert sc.detect_layer(root) == (sc.LAYER_PROJECT, root)

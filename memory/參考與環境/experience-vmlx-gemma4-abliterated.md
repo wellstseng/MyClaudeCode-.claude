@@ -4,12 +4,11 @@
 - Confidence: [臨]
 - Type: experience
 - Trigger: vmlx, gemma4, gemma 4, abliterated, dealignai, 破解版模型, 去審查模型, JANG, 本地 LLM, mac 跑大模型, ollama, gguf, windows, rdchat, RTX 3090, douyamv, 31B JANG
-- Created: 2026-05-22
 - Related: toolchain-ollama, toolchain
 
 ## 緣由
 
-- 2026-05-22 使用者貼 Patreon 文章 `https://www.patreon.com/posts/154988822`，要求裝 Gemma 4 破解版
+- 使用者貼 Patreon 文章 `https://www.patreon.com/posts/154988822`，要求裝 Gemma 4 破解版
 - 來源模型：`dealignai/Gemma-4-31B-JANG_4M-CRACK`（HuggingFace 公開，Abliteration 技術：矩陣正交化拔掉 refusal vector）
 - 引擎：vMLX（**不能用 Ollama，作者明確說 Ollama/標準 mlx_lm 不支援 Gemma 4**）
 
@@ -47,7 +46,7 @@ curl http://localhost:8080/v1/chat/completions -H "Content-Type: application/jso
 ## Windows + Ollama gguf 路線（2026-05-23 實機驗證）
 
 - [觀] **背景**：Mac vmlx 路線因 32GB RAM 邊緣值放棄；Windows 改走 Ollama + 社群 gguf 量化版
-- [觀] **唯一已實機驗證能跑的來源**：`juilpark/gemma-4-31B-it-uncensored-heretic:q4_k_m`（**Wells 2026-05-23 親測 Windows + Ollama 0.24.0 可用**）
+- [觀] **唯一已實機驗證能跑的來源**：`juilpark/gemma-4-31B-it-uncensored-heretic:q4_k_m`（**Wells 親測 Windows + Ollama 0.24.0 可用**）
 
 ### 安裝指令（已驗證）
 

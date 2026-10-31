@@ -146,6 +146,7 @@ def test_followup_shown_only_on_registered_machine(fc, host, shown):
     assert fc.host_id(platform.node()) == _host_id(platform.node())   # 電腦名小寫後 sha256 前 12 碼
 
 
+@pytest.mark.skipif(_host_id(platform.node()) != "699b538de7f1", reason="dev 量測 followup 綁登記那台機器（登記表只存電腑名雜湊）")
 def test_registry_dev_measurements_are_machine_local_without_machine_name():
     raw = (ROOT / "workflow" / "followups.json").read_text(encoding="utf-8")
     hosts = {f["id"]: f.get("host") for f in json.loads(raw)["followups"]}

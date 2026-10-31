@@ -25,6 +25,7 @@ if str(TOOLS_DIR) not in sys.path:
 def _load(name: str, filename: str):
     spec = importlib.util.spec_from_file_location(name, TOOLS_DIR / filename)
     mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod   # Python 3.12 的 dataclass 裝飾器會回 sys.modules 找模組，沒登記就 AttributeError
     spec.loader.exec_module(mod)
     return mod
 

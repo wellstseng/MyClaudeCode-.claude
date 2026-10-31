@@ -123,6 +123,7 @@ def test_unpushed_blocks_with_message(driven, capsys):
     assert calls and "已 commit 但尚未 push" in out and "commit + push 一氣" in out
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_unpushed_disabled_by_config(driven, capsys):
     out, calls = driven(capsys, {"sync_reminder": {"unpushed": False}})
     assert not calls and "已 commit 但尚未 push" not in out

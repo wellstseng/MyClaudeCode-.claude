@@ -8,7 +8,7 @@
 
 ## 知識
 
-- [臨] Wells 裁定（2026-08-18，Coord 案）：若某成員（屬性／方法／參數）開放只是為了讓 UnitTest 抓得到，不得開 public——走繞道，保持 runtime 對外 API 乾淨。
+- [臨] Wells 裁定（Coord 案）：若某成員（屬性／方法／參數）開放只是為了讓 UnitTest 抓得到，不得開 public——走繞道，保持 runtime 對外 API 乾淨。
 - [臨] tslg-servercore 的標準繞道：成員改 internal，CoreModule.csproj 已有 InternalsVisibleTo（ServerAppXUnitTest／LuaModuleXUnitTest／Titan.Gate.XUnitTest），測試專案直接抓 internal 成員，不需反射。
 - [臨] 實例：Coord.IsJoined／Wants／Dialed、CoordServer.MemberCount／PairCount／MembersOf／WantsOf、TitanApp.Coord／CoordRoster 全改 internal（e8088c0）；這類成員註解標「internal：只給測試／監控抓」。
 

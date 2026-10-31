@@ -16,12 +16,12 @@
 - [固] 風險論述關鍵句（簡報用）：C#↔Lua ffi 邊界是「結構上唯一沒有編譯期保護的地方」——C# delegate* cast 有編譯期檢查、Lua 端 typedef 字串只在執行期對齊，錯了不報錯直接靜默踩記憶體 → 測試是取代編譯器的唯一防線；驗證火力集中此處是結構推導，不是經驗猜測
 - [固] 記憶體鐵則兩條：慢 I/O（Mongo 類）不同步過橋（卡 tick），走非同步 op：發起 call 立刻返回 + 每 tick poll 收割；C#→Lua 動態 buffer 一律借用協定（Lua 拿到立刻 ffi.string 複製、指標不外流，包進 wrapper 讓業務碼摸不到），禁「C# 配、Lua 放」——行程內無中立配置器，跨 CRT free = heap corruption
 - [固] 團隊簡報敘事順序：方向（參考 Titan、去其歷史包袱）→ 原理（UnmanagedCallersOnly 指標注入 + ffi.cast，delegate 概念）→ 選型理由（LuaJIT 效能 + 市面方案缺口）→ 風險收斂（窄介面 + 邊界測試 + 借用協定）
-- [觀] Lua 端 protobuf 選型定案（2026-07-21，tslg 66e2fdc 落地）：lua-protobuf 0.5.3（單檔 pb.c＋protoc.lua 純 Lua 執行期解析 .proto），非 titan 同款 pbc——pbc 需預編 proto.pb 管線且停止演進；兩者 API 幾乎同形，唯一縫收在 scripts/lib/pb.lua 門面（titan lib/pb 對位），換引擎只動這一片。分工鐵則：Lua 只序列化 payload（pb bytes），Packet 信封（opcode/佇列/refcount/socket）鎖宿主，殼 (netId,buf,len) WriteRaw 不透明轉發（titan goo_rpc_*_send 同構）。加 message SOP：放 .proto ＋ wrapper register 一行，零重編
+- [觀] Lua 端 protobuf 選型定案（tslg 66e2fdc 落地）：lua-protobuf 0.5.3（單檔 pb.c＋protoc.lua 純 Lua 執行期解析 .proto），非 titan 同款 pbc——pbc 需預編 proto.pb 管線且停止演進；兩者 API 幾乎同形，唯一縫收在 scripts/lib/pb.lua 門面（titan lib/pb 對位），換引擎只動這一片。分工鐵則：Lua 只序列化 payload（pb bytes），Packet 信封（opcode/佇列/refcount/socket）鎖宿主，殼 (netId,buf,len) WriteRaw 不透明轉發（titan goo_rpc_*_send 同構）。加 message SOP：放 .proto ＋ wrapper register 一行，零重編
 - [固] lua-protobuf 64-bit 鐵則：LuaJIT(5.1) 路徑下純數字字串會被 lua_tonumber 先轉 double（u64 max 直接報 number has no integer representation）——64-bit 欄位進出一律 '#'+十進位字串（'#123'/'#-123' 走精確逐位解析；decode 配 pb.option int64_as_string 回同形）
 
 ## 行動
 
 - Orbit 導入時直接以 TSLG servercore 拆除後版本為範本：CoreModule/Lua/{TitanGoo.cs,LuaHost.cs} + scripts/core/goo.lua（94e2776）
-- LuaBridge_Cookbook.md 仍是 shim 架構描述（重寫待辦）——重寫前以 _CHANGELOG 2026-07-21 條目為現況正典
+- LuaBridge_Cookbook.md 仍是 shim 架構描述（重寫待辦）——重寫前以 _CHANGELOG 條目為現況正典
 - 被細問「固定幾個 API」時：核心熱路徑收斂至個位數槽位，慢 I/O 走 op 佇列——比模糊的「幾個」更有說服力
 - 方向拍板（郁方確認/立項）後將 [臨] 升 [固] 並補記決策日期於 _AIDocs/DevHistory

@@ -17,7 +17,7 @@
 - [臨] **偵測與對比手法**：`d=open(p,'rb').read()` → `d.count(b'\r\n')` / `d.count(b'\n')-d.count(b'\r\n')` / `d.startswith(b'\xef\xbb\xbf')`。與版控基準對比：`git show <rev>:<path>` 或 `svn cat -r BASE <path>` 同法統計。⚠ **SVN 新增檔（A 狀態）`svn cat -r BASE` 回空，會被誤判成「行尾被改」——排除它再下結論**。
 - [臨] **修法**：`open(p,'rb')` 讀 → `d.replace(b'\r\n', b'\n')`（或反向）、`if d.startswith(b'\xef\xbb\xbf'): d = d[3:]` → `open(p,'wb').write(d)`。修完以 `git diff --stat <出事前的 rev>` 驗證差異是否收斂到真實改動行數。
 - [臨] **批次改多檔後要逐檔比行尾**，別只檢查自己記得的那幾個——一次 Python 批次改動可能同時污染十幾個檔，漏檢的會在上版時整檔爆 diff。
-- [臨] **讀取端同樣會翻**：`io.open(p, encoding='utf-8')` 預設 newline=None 在**讀取時**就吃掉 CR，寫回加 `newline=''` 也救不回（它只管寫入端）→ CRLF 檔静默全變 LF。heredoc 臨時改檔也要讀寫雙端 binary。2026-08-20 ServerLauncher 上 SVN 前抗截（Consts.cs 498 行假 diff、真實改動 2 行）。
+- [臨] **讀取端同樣會翻**：`io.open(p, encoding='utf-8')` 預設 newline=None 在**讀取時**就吃掉 CR，寫回加 `newline=''` 也救不回（它只管寫入端）→ CRLF 檔静默全變 LF。heredoc 臨時改檔也要讀寫雙端 binary。 ServerLauncher 上 SVN 前抗截（Consts.cs 498 行假 diff、真實改動 2 行）。
 - [臨] 驗行尾只信位元組計數：`grep -c $'\r'` 在 git-bash 曾給出與 hexdump 矛盾的結果；`svn cat` 漏了 `-r BASE` 抓的是伺服器 HEAD，混合版本工作副本會比錯對象。
 
 ## 行動
@@ -26,6 +26,6 @@
 - code review 見「1 行邏輯改動卻整檔 diff」→ 先疑 EOL flip：`git diff --ignore-cr-at-eol` 看真實差異、`git show --stat` 看真實行數
 - commit 前用 `git show --stat` 掃行數異常，phantom EOL diff 不進版控
 
-- [臨] 反向變體（CRLF→LF）：`io.open(p).read()` 預設 text mode 做 universal newline 轉換（\r\n → \n 進記憶體），再以 `newline=''` 寫回時寫出 LF——整檔行尾靜默被改。git diff 因正規化顯示無差異但工作樹位元組已變（症狀：`LF will be replaced by CRLF` warning）。2026-08-10 Proj-JARVIS ST.0 對 WPF csproj 做 controlled mutation 還原時踩到；解法：讀寫兩端都 `newline=''`，或用 Edit tool；內容與 HEAD 無差異時 `git checkout -- <file>` 最乾淨還原位元組。
+- [臨] 反向變體（CRLF→LF）：`io.open(p).read()` 預設 text mode 做 universal newline 轉換（\r\n → \n 進記憶體），再以 `newline=''` 寫回時寫出 LF——整檔行尾靜默被改。git diff 因正規化顯示無差異但工作樹位元組已變（症狀：`LF will be replaced by CRLF` warning）。 Proj-JARVIS ST.0 對 WPF csproj 做 controlled mutation 還原時踩到；解法：讀寫兩端都 `newline=''`，或用 Edit tool；內容與 HEAD 無差異時 `git checkout -- <file>` 最乾淨還原位元組。
 - [臨] ~/.claude 全 repo 釘 LF；寫檔一律 newline="\n"／write_text_lf；守衛 verify_lf_writes.py。
 

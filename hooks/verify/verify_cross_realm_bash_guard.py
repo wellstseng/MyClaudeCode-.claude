@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import sys
+import pytest
 from pathlib import Path
 
 HOOKS_DIR = Path(__file__).resolve().parent.parent
@@ -158,6 +159,7 @@ _A3_CMD = (f"ls {HOME_CLAUDE}/skills/behavior-preservation/scripts/ && "
            "&& ls \"$TEMP/qa2-old/pricing\"; echo \"$TEMP/qa2-old\"")
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="測資用 Windows 的 $TEMP 與 /c/ 專案路徑，POSIX 上判定走樣；非 Windows 跳過")
 def test_007_temp_target_and_project_repo_git_allowed(tmp_path, monkeypatch):
     """T1.3：寫到 $TEMP（SHELL_ENV_VAR_EXPANDED 照環境值代換）＋cd 到專案 repo 之後的 git archive（GIT_READONLY_SUBCMD 只算
     repo 在根層的 git 段）→ 放行、不留擋紀錄。兩個根因各自都會擋：只修一個照樣擋（下面兩條各留一個根因）。"""

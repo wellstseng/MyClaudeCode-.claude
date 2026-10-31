@@ -44,6 +44,7 @@ from lib.atom_locations import LEGACY_FAILURES_DIR     # noqa: E402  舊址 _AID
 # atom-health-check.py 檔名含連字號、無法直接 import → importlib 載入，重用其偵測/解析函式
 _spec = importlib.util.spec_from_file_location("atom_health_check", TOOLS / "atom-health-check.py")
 ahc = importlib.util.module_from_spec(_spec)
+sys.modules["atom_health_check"] = ahc   # Python 3.12 的 dataclass 裝飾器會回 sys.modules 找模組，沒登記就 AttributeError
 _spec.loader.exec_module(ahc)
 
 

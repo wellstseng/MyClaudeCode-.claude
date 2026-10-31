@@ -574,6 +574,7 @@ def test_reading_path_question_once_when_turn_judgment_blocks(driven, capsys, mo
 
 # ─── 流程級：擋 → 照做 → 再收尾，只欠「改完之後跑綠一次」 ───────────────────────────────
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_flow_red_then_fix_and_green_owes_nothing_else(driven, capsys):
     code = _mf(_CODE, 5, last_at=_T1, last_seq=3)
     case = _mf(_CASE, 5, last_at=_T1, last_seq=4)

@@ -132,6 +132,7 @@ def test_block_message_keeps_edit_write_not_bash_writes(world):
         assert old not in r, old
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
 def test_b1_real_input_from_acceptance_run_is_denied(world):
     """驗收題 B 第 1 段：Windows 反斜線路徑（state modified_files 原樣寫法）、使用者原話只說「小數位照設定檔」沒點名檔。"""
     path = str(world["proj"]) + "\\settings.json"

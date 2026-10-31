@@ -82,7 +82,7 @@
 | feedback-completion-gates | memory/Failures/驗證與實證/feedback-completion-gates.md | 完成宣告, 收尾, pytest, run_verify, verify, smoke test, 研究先行, trial-and-error, 清理, 先清後建, 基線, 測試上傳, 上 SVN, known regression, xfail, 衍生暫存, 暫存檔, 清暫存, 收尾檢核 | global |  |
 | feedback-tooling-reliability | memory/Failures/CC與原子記憶契約/feedback-tooling-reliability.md | codex, codex companion, codex CLI, gpt-5, bg subprocess, DEVNULL, ready flag, subprocess Popen, MCP, 安裝 MCP, 安裝 skill, silent failure, probe burst, 規則唯一來源 | global |  |
 | feedback-rigor-standards | memory/Failures/思考與決策/feedback-rigor-standards.md | 縝密, 漏掉, 沒看到, max thinking, high thinking, 外包思考, 規範, rigor, 前例, precedent, 既有 drift | global |  |
-| preferences | memory/工作流/節奏與收尾/preferences.md | 偏好, 風格, 習慣, 語言, 回應, 執P, 執驗上P, 上GIT, Obsidian, 上傳GIT, 上SVN, 直上版控, 記憶相關不用問, commit, push | global |  |
+| preferences | memory/工作流/節奏與收尾/preferences.md | 偏好, 風格, 習慣, 語言, 回應, 執P, 執驗上P, 上GIT, Obsidian, 上傳GIT, 上SVN, 直上版控, 記憶相關不用問 | global |  |
 | toolchain | memory/文字與格式/toolchain.md | 工具鏈, 環境設定, MCPControl, MCP新增, npm全域, 螢幕截圖, Excel MCP, LanceDB, MSYS2, cp950, PowerShell截圖, 向量服務 | global |  |
 | workflow-rules | memory/工作流/節奏與收尾/workflow-rules.md | 工作流程, 大型任務, 分階段, SOP, 任務拆分, 上版, GIT, Phase | global |  |
 | feedback-atom-write-initial-confidence | memory/Failures/CC與原子記憶契約/feedback-atom-write-initial-confidence.md | atom_write, 初次寫, 信心度, [固], [臨], [觀], confidence, knowledge 行, 隨手寫 [固] | global |  |
