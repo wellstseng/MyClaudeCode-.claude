@@ -15111,6 +15111,26 @@
         "macOS 查 log"
       ],
       "scope": "global"
+    },
+    {
+      "name": "macos外接硬碟複製卡住先看usb-link-speed-掉到12mbps是hub供電不足降成usb1",
+      "path": "memory/OS-macOS/macos外接硬碟複製卡住先看usb-link-speed-掉到12mbps是hub供電不足降成usb1.md",
+      "triggers": [
+        "外接碟",
+        "複製卡住",
+        "複製很慢",
+        "Link Speed",
+        "12 Mb/s",
+        "SPUSBHostDataType",
+        "USB hub",
+        "供電不足",
+        "My Passport",
+        "行程卡 U 狀態"
+      ],
+      "scope": "global",
+      "related": [
+        "macos-zsh下log指令被內建蓋掉-查系統日誌要寫usr-bin-log"
+      ]
     }
   ]
 }
