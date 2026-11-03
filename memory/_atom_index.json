@@ -15097,6 +15097,20 @@
         "feedback-memory-system-doc-sync",
         "realm-範疇分區機制-v5"
       ]
+    },
+    {
+      "name": "macos-zsh下log指令被內建蓋掉-查系統日誌要寫usr-bin-log",
+      "path": "memory/OS-macOS/macos-zsh下log指令被內建蓋掉-查系統日誌要寫usr-bin-log.md",
+      "triggers": [
+        "log show",
+        "/usr/bin/log",
+        "zsh log builtin",
+        "系統日誌",
+        "unified log",
+        "too many arguments",
+        "macOS 查 log"
+      ],
+      "scope": "global"
     }
   ]
 }

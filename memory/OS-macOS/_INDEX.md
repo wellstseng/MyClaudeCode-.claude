@@ -7,4 +7,5 @@
 | Atom | 說明 |
 |------|------|
 | mac-缺-python-用-wrapper-指向-python3 | Mac 缺 python 用 wrapper 指向 python3 |
+| macos-zsh下log指令被內建蓋掉-查系統日誌要寫usr-bin-log | macOS-zsh下log指令被內建蓋掉-查系統日誌要寫usr-bin-log |
 | 雲端同步資料夾內不放sqlite-googledb是drive鏡像會間歇disk-io-error | 雲端同步資料夾內不放SQLite-GoogleDB是Drive鏡像會間歇disk-IO-error |

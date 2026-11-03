@@ -776,3 +776,4 @@
 | claude-code的rules檔可用paths前置欄位只在碰到符合的檔時才載入-讀改或cat單檔才觸發-沒寫paths就每場常駐 | memory/CC與原子記憶契約/claude-code的rules檔可用paths前置欄位只在碰到符合的檔時才載入-讀改或cat單檔才觸發-沒寫paths就每場常駐.md | rules 檔, paths:, 條件載入, 常駐 token, 必載檔瘦身, path-scoped rule, CLAUDE.md import | global |  |
 | feedback-開發期驗證要下在刀口上不是能免則免-決定品質的次數不減-要快就拆工並行 | memory/Failures/驗證與實證/feedback-開發期驗證要下在刀口上不是能免則免-決定品質的次數不減-要快就拆工並行.md | 驗證刀口, 刀口, 能免則免, 量測次數, 減少次數, 拆工, 開發期驗證 | global |  |
 | decisions-architecture | _AIDocs/_atoms/MemDev/架構決策與規則檔/decisions-architecture.md | 架構, hooks, pipeline, guardian, SessionStart, hot cache, extract-worker, vector service, 架構決策, hooks 架構, dispatcher | global |  |
+| macos-zsh下log指令被內建蓋掉-查系統日誌要寫usr-bin-log | memory/OS-macOS/macos-zsh下log指令被內建蓋掉-查系統日誌要寫usr-bin-log.md | log show, /usr/bin/log, zsh log builtin, 系統日誌, unified log, too many arguments, macOS 查 log | global |  |
