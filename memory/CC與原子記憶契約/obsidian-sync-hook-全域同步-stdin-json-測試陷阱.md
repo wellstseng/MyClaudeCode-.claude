@@ -8,6 +8,7 @@
 - Confirmations: 0
 - Created-at: 2026-05-22
 - Related: toolchain, workflow-icld
+- Source: commit:22f0867 2026-05-22（原對話已逾保留期）
 
 ## 知識
 

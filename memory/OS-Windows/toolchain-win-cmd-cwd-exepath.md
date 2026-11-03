@@ -5,6 +5,7 @@
 - Confidence: [臨]
 - Trigger: NoDefaultCurrentDirectory, not recognized as an internal, cmd 找不到 bat, msvcbuild, bare name 執行
 - Created-at: 2026-06-12
+- Source: commit:9aee4f6 2026-06-12（原對話已逾保留期）
 
 - Related: vscode-csdevkit-鎖目錄擋-git-mv-逐子項繞過
 

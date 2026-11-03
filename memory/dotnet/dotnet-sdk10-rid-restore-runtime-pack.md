@@ -5,6 +5,7 @@
 - Confidence: [臨]
 - Trigger: offline build, nuget-offline, RID restore, runtime pack, NU1101, SelfContained, dotnet publish -r, fetch-nuget, 離線建置
 - Created-at: 2026-07-02
+- Source: commit:9aee4f6 2026-07-02（原對話已逾保留期）
 
 - Related: dotnet-major-版本與-vs-版本硬綁定-sln檔頭決定開哪版
 

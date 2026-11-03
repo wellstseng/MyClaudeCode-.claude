@@ -5,6 +5,7 @@
 - Confidence: [臨]
 - Trigger: 檢查回報, code review 回報, 審查報告, 檢查報告格式, review report
 - Created-at: 2026-08-05
+- Source: commit:0fed7ff 2026-08-05（原對話已逾保留期）
 
 ## 知識
 

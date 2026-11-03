@@ -6,6 +6,7 @@
 - Last-used: 2026-04-14
 - Confirmations: 20
 - Related: preferences
+- Source: commit:90c678d 2026-03-20（原對話已逾保留期）
 
 ## 知識
 

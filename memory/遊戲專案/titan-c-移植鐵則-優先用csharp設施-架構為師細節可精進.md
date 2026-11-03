@@ -6,6 +6,7 @@
 - Trigger: titan 移植, TitanC, C 移植, goo_log, log.c, 移植鐵則, C# 設施, port, 照抄, 簡化
 - Created-at: 2026-08-14
 - Related: titan-c-port-是-titan-行為的現成權威來源勿從零重寫, orbit-hotfix-lua-direction, titan-dotnet-split
+- Source: commit:ccc8f1d 2026-08-14（原對話已逾保留期）
 
 ## 知識
 

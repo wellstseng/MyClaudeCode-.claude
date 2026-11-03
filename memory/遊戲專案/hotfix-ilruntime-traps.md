@@ -3,6 +3,7 @@
 - Confidence: [固]
 - Trigger: ILRuntime, hotfix #if, UNITY_EDITOR, DefineConstants, isEditor, 預處理指令, hotfix旗標, BRM_ILR_Hotfix
 - Related: preferences, toolchain
+- Source: commit:5887d1a 2026-04-21（原對話已逾保留期）
 
 ## 知識
 

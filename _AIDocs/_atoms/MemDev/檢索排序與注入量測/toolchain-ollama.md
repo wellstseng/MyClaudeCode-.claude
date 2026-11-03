@@ -6,6 +6,7 @@
 - Type: procedural
 - Tags: ollama, dual-backend, extraction
 - Related: toolchain, decisions-architecture, decisions, experience-vmlx-gemma4-abliterated, ollama-gemma4-e4b-音訊輸入走images欄位-單次可吃5分鐘-會議轉錄實測
+- Source: commit:20c5632 2026-03-10（原對話已逾保留期）
 
 ## 知識
 

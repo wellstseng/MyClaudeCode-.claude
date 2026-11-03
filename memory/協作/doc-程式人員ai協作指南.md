@@ -6,6 +6,7 @@
 - Trigger: AI協作指南, AI 協作, 協作文件, WorkNote, 團隊指南, AI 最佳實踐, 新人 AI 教育
 - Created-at: 2026-06-10
 - Related: workflow-icld, cognitive-patterns, toolchain-svn-powershell-中文log編碼
+- Source: commit:9aee4f6 2026-06-10（原對話已逾保留期）
 
 ## 知識
 

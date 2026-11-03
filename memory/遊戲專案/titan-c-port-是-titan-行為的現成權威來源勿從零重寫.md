@@ -6,6 +6,7 @@
 - Trigger: titan 移植, C# port, goo_log, log.lua, LogSchema, GooLogBridge, titan C 原始碼, 41 符號, Titan.Log, Titan.Lua
 - Created-at: 2026-08-13
 - Related: titan-lua-socket-rpc機制-兩版同構, titan-dotnet-split, titan-c-移植鐵則-優先用csharp設施-架構為師細節可精進
+- Source: commit:ccc8f1d 2026-08-13（原對話已逾保留期）
 
 ## 知識
 

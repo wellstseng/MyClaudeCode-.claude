@@ -6,6 +6,7 @@
 - Trigger: Orbit, 熱修, 熱更, hotfix, Lua導入, LuaJIT, 郁方, 團隊簡報, shim-less, titangoo, 指標注入
 - Created-at: 2026-07-13
 - Related: lua-bridge, project-ecosystem, decisions-architecture, titan-lua-socket-rpc機制-兩版同構, titan-c-移植鐵則-優先用csharp設施-架構為師細節可精進, luajit-ffi-函式指標型別三種等價寫法-ctype相等比較不可靠
+- Source: commit:0fed7ff 2026-07-13（原對話已逾保留期）
 
 ## 知識
 

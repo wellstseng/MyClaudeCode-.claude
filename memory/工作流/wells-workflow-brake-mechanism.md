@@ -8,6 +8,7 @@
 - Confirmations: 0
 - Created-at: 2026-05-22
 - Related: feedback-fix-escalation, failures, decisions, feedback-已驗證的重複操作直接做完勿反覆確認, feedback-提議機制時要標示成熟度-風險分析不等於現在就建
+- Source: commit:22f0867 2026-05-22（原對話已逾保留期）
 
 ## 知識
 

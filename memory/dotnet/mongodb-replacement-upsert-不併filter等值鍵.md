@@ -5,6 +5,7 @@
 - Confidence: [臨]
 - Trigger: mongodb, upsert, ReplaceOne, replacement, filter, nUpserted, 查無, UpdateOne, $set, mongo 寫入消失
 - Created-at: 2026-08-28
+- Source: commit:ccc8f1d 2026-08-28（原對話已逾保留期）
 
 ## 知識
 

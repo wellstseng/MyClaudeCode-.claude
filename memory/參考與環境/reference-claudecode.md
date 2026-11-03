@@ -5,6 +5,7 @@
 - Trigger: Claude Code, claudecode, claude code 架構, context 管理, token 控制, session 處理, 安全邊界
 - Last-used: 2026-04-11
 - Confirmations: 60
+- Source: commit:838ccf3 2026-04-02（原對話已逾保留期）
 
 ## 知識
 

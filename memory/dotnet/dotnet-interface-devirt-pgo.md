@@ -6,6 +6,7 @@
 - Trigger: guarded devirtualization, devirt, Dynamic PGO, TieredPGO, 介面派發, interface dispatch, callvirt, monomorphic, AggressiveInlining, sealed, JitDisasm, OSR, MethodTable guard, 收包 dispatch, INodePacketHandler
 - Created-at: 2026-07-23
 - Related: dotnet-inline-cant-cross-delegate, titan-lua-socket-rpc機制-兩版同構
+- Source: commit:0fed7ff 2026-07-23（原對話已逾保留期）
 
 ## 知識
 

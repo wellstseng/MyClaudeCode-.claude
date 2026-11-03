@@ -8,6 +8,7 @@
 - Confirmations: 11
 - Created-at: 2026-04-30
 - Related: workflow-svn
+- Source: commit:22f0867 2026-04-30（原對話已逾保留期）
 
 ## 知識
 

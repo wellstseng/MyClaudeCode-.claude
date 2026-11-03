@@ -6,6 +6,7 @@
 - Trigger: FormClosing, ApplicationExit, fire-and-forget, StopAsync, process 殘留, 關閉不殺, WinForms 關閉, await 續體, Kill, ServerLauncher
 - Created-at: 2026-08-20
 - Related: dotnet-inline-cant-cross-delegate, failures, wells-design-principles-明碼優先-職責分離-防呆擋非法
+- Source: commit:ccc8f1d 2026-08-20（原對話已逾保留期）
 
 ## 知識
 

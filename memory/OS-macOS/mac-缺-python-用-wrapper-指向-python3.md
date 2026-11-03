@@ -6,6 +6,7 @@
 - Trigger: python, python3, spawn python ENOENT, atom_write, funnel, vector service, xcode-select, AtomFunnelBlock, command not found python
 - Created-at: 2026-06-22
 - Related: toolchain, upstream-merge-mac-適配工作流
+- Source: commit:b15c112 2026-06-22（原對話已逾保留期）
 
 ## 知識
 

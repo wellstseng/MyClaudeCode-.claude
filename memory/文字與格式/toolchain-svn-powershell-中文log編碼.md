@@ -5,6 +5,7 @@
 - Confidence: [固]
 - Trigger: svn, svn commit, 中文log, 中文訊息, commit message, 亂碼, -m, -F, git-bash, MSYS, revprop, 中文檔名, 上傳SVN, PowerShell svn
 - Created-at: 2026-06-10
+- Source: commit:9aee4f6 2026-06-10（原對話已逾保留期）
 
 - Related: doc-程式人員ai協作指南, toolchain-batch-cmd-crlf-encoding, toolchain-ps51-getcontent-utf8-file-corruption, workflow-svn
 

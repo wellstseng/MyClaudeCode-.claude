@@ -6,6 +6,7 @@
 - Trigger: GetEntryAssembly, 反射掃描, 模組註冊, DataModule, assembly 拆分, 殼專案, GetModule null, Orbit CoreModule, tslg-servercore, 靜默失敗, HandlerHelper
 - Created-at: 2026-07-28
 - Related: project-ecosystem, arch-rules, wells-design-principles-明碼優先-職責分離-防呆擋非法
+- Source: commit:0fed7ff 2026-07-28（原對話已逾保留期）
 
 ## 知識
 

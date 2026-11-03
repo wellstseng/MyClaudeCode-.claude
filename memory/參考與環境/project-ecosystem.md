@@ -6,6 +6,7 @@
 - Last-used: 2026-04-14
 - Confirmations: 39
 - Related: redmine-config, team-roster, hot-topics, unity-mcp-自動化工具鏈, orbit-hotfix-lua-direction, coremodule-entry-assembly-拓撲前提地雷-orbit-tslg同dna
+- Source: commit:0195068 2026-03-25（原對話已逾保留期）
 
 ## 知識
 

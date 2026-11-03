@@ -5,6 +5,7 @@
 - Type: experience
 - Trigger: vmlx, gemma4, gemma 4, abliterated, dealignai, 破解版模型, 去審查模型, JANG, 本地 LLM, mac 跑大模型, ollama, gguf, windows, rdchat, RTX 3090, douyamv, 31B JANG
 - Related: toolchain-ollama, toolchain
+- Source: commit:cc40394 2026-05-28（原對話已逾保留期）
 
 ## 緣由
 

@@ -6,6 +6,7 @@
 - Trigger: batch, bat, cmd, 批次檔, 閃退, 亂碼, CRLF, LF, 換行, Write工具, adb push, chcp, BOM, 編碼
 - Created-at: 2026-06-04
 - Related: toolchain, feedback-tooling-reliability, cognitive-patterns, toolchain-svn-powershell-中文log編碼, vendor-fork-hybridclr-traps, toolchain-ps51-getcontent-utf8-file-corruption
+- Source: commit:645708c 2026-06-04（原對話已逾保留期）
 
 ## 知識
 

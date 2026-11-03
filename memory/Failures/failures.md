@@ -8,6 +8,7 @@
 - Type: procedural
 - Tags: failure, pitfall, debug, quality-feedback
 - Related: decisions, toolchain, fix-escalation, wells-workflow-brake-mechanism, winforms-關閉階段-async-續體不執行-formclosing-殺process必須同步
+- Source: commit:20c5632 2026-03-10（原對話已逾保留期）
 
 ## 知識
 

@@ -6,6 +6,7 @@
 - Trigger: anti_evasion_report, 收尾檢核, 退避語, AEC, cross-check, real-evasion
 - Created-at: 2026-07-12
 - Related: escalation-hook-在-edit-count-proxy-上-false-fire-的辨識無真實失敗迴圈時不盲從不編造
+- Source: commit:0fed7ff 2026-07-12（原對話已逾保留期）
 
 ## 知識
 

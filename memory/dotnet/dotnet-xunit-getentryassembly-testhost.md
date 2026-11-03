@@ -6,6 +6,7 @@
 - Trigger: GetEntryAssembly, testhost, xUnit, 反射掃描, entry assembly, 模組註冊測試, assembly scan, 自動註冊
 - Created-at: 2026-07-03
 - Related: dotnet-string-gethashcode-per-process-randomized
+- Source: commit:9aee4f6 2026-07-03（原對話已逾保留期）
 
 ## 知識
 

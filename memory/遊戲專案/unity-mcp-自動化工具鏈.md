@@ -6,6 +6,7 @@
 - Last-used: 2026-04-23
 - Confirmations: 2
 - Related: toolchain, project-ecosystem, unity-mcp-setup (_AIDocs/Tools)
+- Source: commit:5887d1a 2026-04-21（原對話已逾保留期）
 
 ## 知識
 

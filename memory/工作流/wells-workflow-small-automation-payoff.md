@@ -8,6 +8,7 @@
 - Confirmations: 0
 - Created-at: 2026-05-22
 - Related: pitfalls-provider, decisions-architecture
+- Source: commit:cc40394 2026-05-22（原對話已逾保留期）
 
 ## 知識
 

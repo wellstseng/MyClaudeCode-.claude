@@ -5,6 +5,7 @@
 - Trigger: AI自主開發, AI自主, Sprint自主, 協作實驗, harness agent, subagent協作, PM角色, AI當開發, 啟動協作實驗, 協作模式
 - Last-used: 2026-04-11
 - Confirmations: 31
+- Source: commit:d33dff5 2026-04-02（原對話已逾保留期）
 
 ## 知識
 

@@ -5,6 +5,7 @@
 - Confidence: [臨]
 - Trigger: GetHashCode, hash 路由, hash 釘定, FNV, consistent hashing, 後端路由
 - Created-at: 2026-07-02
+- Source: commit:9aee4f6 2026-07-02（原對話已逾保留期）
 
 - Related: dotnet-xunit-getentryassembly-testhost
 

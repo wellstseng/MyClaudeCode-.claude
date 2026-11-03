@@ -5,6 +5,7 @@
 - Confidence: [臨]
 - Trigger: catclaw, project-agent, channel 綁定, boundProject, cron subagent, atom scope, 掛載
 - Created-at: 2026-07-02
+- Source: commit:b15c112 2026-07-02（原對話已逾保留期）
 
 - Related: catclaw-遷移到-claude-code-的落點與踩坑
 

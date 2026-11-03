@@ -5,6 +5,8 @@
 - Confidence: [臨]
 - Trigger: GoogleDB, Google Drive, 雲端同步, sqlite, disk I/O error, OperationalError, download-archive, gallery-dl, 輸出資料夾
 - Created-at: 2026-10-05
+- Source: session:164208c3#72c5f78a 2026-10-05
+- Quote: 「幫我在.catclaw加一個skill (腳本)可以下載FB粉絲團的照片https://www.facebook.com/profile.php?id=61592874884899 如果需要cookie或token 可以看怎麼提供」
 
 ## 知識
 

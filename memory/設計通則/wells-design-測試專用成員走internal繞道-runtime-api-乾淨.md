@@ -5,6 +5,7 @@
 - Confidence: [臨]
 - Trigger: internal, InternalsVisibleTo, 測試專用, public 成員, runtime 乾淨, API 表面, 監控屬性, 測試探針
 - Created-at: 2026-08-18
+- Source: commit:ccc8f1d 2026-08-18（原對話已逾保留期）
 
 ## 知識
 

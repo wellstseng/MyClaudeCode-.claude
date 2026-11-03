@@ -6,6 +6,7 @@
 - Trigger: upstream merge, fork 同步, IDENTITY 被蓋, 實例檔, instance 檔, vector 全量重建, already_running, index race, 去識別化
 - Created-at: 2026-09-04
 - Related: upstream-merge-mac-適配工作流, git-已push-commit-勿改寫-雙-push-url-gitlab-main-force-保護致遠端分叉, toolchain
+- Source: commit:84c8261 2026-09-04（原對話已逾保留期）
 
 ## 知識
 

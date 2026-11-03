@@ -5,6 +5,7 @@
 - Trigger: 決策, 記憶系統, 原子記憶, guardian, hooks, MCP, 架構細節, context budget
 - Last-used: 2026-05-28
 - Related: decisions-architecture, toolchain, toolchain-ollama
+- Source: commit:7deb043 2026-03-02（原對話已逾保留期）
 
 ## 知識
 

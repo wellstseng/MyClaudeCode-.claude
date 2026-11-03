@@ -5,6 +5,7 @@
 
 
 - Scope: global
+- Source: commit:9aee4f6 2026-06-13（原對話已逾保留期）
 
 
 - Author: wellstseng

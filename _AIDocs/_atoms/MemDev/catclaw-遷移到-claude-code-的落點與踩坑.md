@@ -6,6 +6,8 @@
 - Trigger: CatClaw 遷移, wendy 專案, ext 碎片, 專案記憶匯入, tool:migrate, MEMORY.md 發現, trigger 逗號, cronctl, 批次匯入 atom
 - Created-at: 2026-10-05
 - Related: 自動萃取層淨值審查-調整式拔除-2026-07, catclaw-agent-routing-boundaries
+- Source: session:a4ba321e#3db96728 2026-10-05
+- Quote: 「那先不用，先繼續原本的作業」
 
 ## 知識
 

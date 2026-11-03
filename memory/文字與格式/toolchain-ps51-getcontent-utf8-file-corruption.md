@@ -6,6 +6,7 @@
 - Trigger: Get-Content, Set-Content, UTF-8, 中文檔案, PowerShell 改檔, 編碼損毀, hot reload 改檔
 - Created-at: 2026-07-02
 - Related: toolchain-svn-powershell-中文log編碼, toolchain-batch-cmd-crlf-encoding
+- Source: commit:9aee4f6 2026-07-02（原對話已逾保留期）
 
 ## 知識
 

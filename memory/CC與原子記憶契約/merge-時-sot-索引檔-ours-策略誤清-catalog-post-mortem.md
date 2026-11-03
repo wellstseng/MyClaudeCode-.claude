@@ -6,6 +6,7 @@
 - Trigger: catalog 誤清, _INDEX.md 被刪, index 磁碟不一致, SoT 衝突解, _atom_index.json merge, sync-memory-index, atoms 隱形, 衝突檔 ours, 衍生索引, post-mortem
 - Created-at: 2026-07-06
 - Related: upstream-merge-mac-適配工作流, decisions-architecture, feedback-memory-structure
+- Source: commit:2cf7578 2026-07-06（原對話已逾保留期）
 
 ## 知識
 

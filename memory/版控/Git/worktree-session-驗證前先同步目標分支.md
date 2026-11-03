@@ -6,6 +6,7 @@
 - Trigger: worktree, 落後, ff-only, 孤兒目錄, stale branch, 驗證前同步, merge --ff-only, ahead behind
 - Created-at: 2026-07-15
 - Related: 併發-session-共用工作樹-收尾選擇性-staging-勿-git-add-a
+- Source: commit:0fed7ff 2026-07-15（原對話已逾保留期）
 
 ## 知識
 

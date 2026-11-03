@@ -6,6 +6,7 @@
 - Trigger: git mv, Permission denied, csdevkit, C# Dev Kit, rename directory, 目錄鎖, 搬遷, build-server
 - Created-at: 2026-07-12
 - Related: toolchain, toolchain-win-cmd-cwd-exepath
+- Source: commit:0fed7ff 2026-07-12（原對話已逾保留期）
 
 ## 知識
 

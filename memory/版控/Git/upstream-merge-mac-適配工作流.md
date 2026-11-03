@@ -6,6 +6,7 @@
 - Trigger: upstream merge, 整併, fork 同步, merge upstream, 衝突解, checkout --ours, settings 接線, python 3.9, write_text newline, 測資可移植
 - Created-at: 2026-07-06
 - Related: mac-缺-python-用-wrapper-指向-python3, toolchain, feedback-tooling-reliability, merge-時-sot-索引檔-ours-策略誤清-catalog-post-mortem, upstream合併-實例檔誤track會蓋本地實例-vector增量搶跑道
+- Source: commit:878f0ff 2026-07-06（原對話已逾保留期）
 
 ## 知識
 

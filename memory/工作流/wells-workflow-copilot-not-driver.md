@@ -8,6 +8,7 @@
 - Confirmations: 0
 - Created-at: 2026-05-22
 - Related: collaboration-protocol, preferences, feedback-已驗證的重複操作直接做完勿反覆確認, wells-design-principles-明碼優先-職責分離-防呆擋非法, feedback-移植轉寫類任務-忠實1比1-勿擅自對齊他版權威或加料
+- Source: commit:22f0867 2026-05-22（原對話已逾保留期）
 
 ## 知識
 

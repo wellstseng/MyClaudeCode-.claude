@@ -6,6 +6,7 @@
 - Trigger: ICLD, Sprint, 閉環, 功能拆解, 開發計畫, 大型新功能, 新系統規劃, 規格書
 - Tags: workflow, icld, sprint
 - Related: workflow-rules, icld-sprint-template, obsidian-sync-hook-全域同步-stdin-json-測試陷阱, doc-程式人員ai協作指南, goal-driven-verify-loopkarpathy-吸收
+- Source: commit:29ef962 2026-03-19（原對話已逾保留期）
 
 ## 知識
 

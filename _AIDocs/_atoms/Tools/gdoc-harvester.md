@@ -4,6 +4,7 @@
 - Confidence: [固]
 - Trigger: harvester, Google Docs, Sheets, 收割, Playwright, cookie, export, Google Sheets
 - Last-used: 2026-05-26
+- Source: commit:fbe5aef 2026-03-12（原對話已逾保留期）
 
 ## 知識
 

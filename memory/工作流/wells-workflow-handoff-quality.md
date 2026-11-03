@@ -8,6 +8,7 @@
 - Confirmations: 0
 - Created-at: 2026-05-22
 - Related: feedback-handoff-self-sufficient, feedback-fix-on-discovery, workflow-rules
+- Source: commit:22f0867 2026-05-22（原對話已逾保留期）
 
 ## 知識
 

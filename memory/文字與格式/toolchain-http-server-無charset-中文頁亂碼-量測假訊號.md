@@ -5,6 +5,7 @@
 - Confidence: [臨]
 - Trigger: python -m http.server, charset, 亂碼, mojibake, 本機預覽, SVG 驗證, getBBox, meta charset, latin-1
 - Created-at: 2026-08-20
+- Source: commit:ccc8f1d 2026-08-20（原對話已逾保留期）
 
 ## 知識
 

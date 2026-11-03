@@ -6,6 +6,7 @@
 - Trigger: luajit, ffi, cdef, 函式指標, function pointer, typedef, ffi.cast, ffi.typeof, ctype, goo.cdef, titangoo
 - Created-at: 2026-08-27
 - Related: titan-lua-socket-rpc機制-兩版同構, orbit-hotfix-lua-direction, luajit-cdef-typedef重複宣告沉默忽略-只有具名struct-tag會炸
+- Source: commit:ccc8f1d 2026-08-27（原對話已逾保留期）
 
 ## 知識
 

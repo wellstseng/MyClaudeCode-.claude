@@ -8,6 +8,7 @@
 - Confirmations: 2
 - Created-at: 2026-05-03
 - Related: workflow-rules, decisions-architecture
+- Source: commit:a9ddb47 2026-05-03（原對話已逾保留期）
 
 ## 知識
 

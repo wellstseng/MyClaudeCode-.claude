@@ -6,6 +6,7 @@
 - Last-used: 2026-04-08
 - Confirmations: 9
 - Related: preferences, workflow-rules, fail-cognitive, wells-workflow-copilot-not-driver, wells-workflow-feedback-driven-teaching
+- Source: commit:3149b98 2026-04-01（原對話已逾保留期）
 
 ## 知識
 

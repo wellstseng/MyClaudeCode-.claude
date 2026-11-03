@@ -6,6 +6,7 @@
 - Trigger: Sqlx, MysqlxClient, unknown type: Bytes, utf8mb3, utf8mb4_0900_as_cs, collation, TINYINT bool, DESC, SHOW INDEX, X protocol, MysqlxUtils.Column
 - Created-at: 2026-08-13
 - Related: dotnet-mysqldata-collation-id-相容
+- Source: commit:ccc8f1d 2026-08-13（原對話已逾保留期）
 
 ## 知識
 

@@ -6,6 +6,7 @@
 - Trigger: NETSDK1209, net10, .NET 10, VS 2026, Visual Studio 18, TFM 升級, LTS 升級, sln 檔頭, VisualStudioVersion, IDE 建不起來, CLI 能建 VS 不能建
 - Created-at: 2026-08-20
 - Related: dotnet-sdk10-rid-restore-runtime-pack, toolchain, titan-dotnet-split
+- Source: commit:ccc8f1d 2026-08-20（原對話已逾保留期）
 
 ## 知識
 

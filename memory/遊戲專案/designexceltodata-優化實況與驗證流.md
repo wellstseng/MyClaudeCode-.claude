@@ -3,6 +3,7 @@
 
 
 - Scope: global
+- Source: commit:9aee4f6 2026-07-03（原對話已逾保留期）
 
 - Author: wellstseng
 

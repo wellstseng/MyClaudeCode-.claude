@@ -6,6 +6,7 @@
 - Last-used: 2026-03-25
 - Confirmations: 1
 - Related: project-ecosystem, team-roster
+- Source: commit:0195068 2026-03-25（原對話已逾保留期）
 
 ## 知識
 

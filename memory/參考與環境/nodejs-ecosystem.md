@@ -6,6 +6,7 @@
 - Last-used: 2026-04-11
 - Confirmations: 155
 - Related: toolchain, fail-env
+- Source: commit:838ccf3 2026-04-02（原對話已逾保留期）
 
 ## 知識
 

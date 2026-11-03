@@ -6,6 +6,7 @@
 - Trigger: weak table, 弱表, __mode, collectgarbage, GC 驗證, 記憶體洩漏, ffi.string 回收, pb.decode GC
 - Created-at: 2026-09-02
 - Related: titan-lua-socket-rpc機制-兩版同構
+- Source: commit:ccc8f1d 2026-09-02（原對話已逾保留期）
 
 ## 知識
 

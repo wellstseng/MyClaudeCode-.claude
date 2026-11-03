@@ -6,6 +6,7 @@
 - Trigger: 設計原則, 明碼, 反直覺, 隱性語意, 哨兵值, 職責分離, 反射掃描, magic value, 註冊表, 防呆, 開發文化, design principle
 - Created-at: 2026-07-28
 - Related: wells-workflow-copilot-not-driver, decisions-architecture, preferences, coremodule-entry-assembly-拓撲前提地雷-orbit-tslg同dna, feedback-提議機制時要標示成熟度-風險分析不等於現在就建, winforms-關閉階段-async-續體不執行-formclosing-殺process必須同步
+- Source: commit:0fed7ff 2026-07-28（原對話已逾保留期）
 
 ## 知識
 

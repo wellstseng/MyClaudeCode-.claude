@@ -6,6 +6,7 @@
 - Last-used: 2026-04-13
 - Confirmations: 23
 - Related: redmine-config, discord-channels, hot-topics, project-ecosystem
+- Source: commit:0195068 2026-03-25（原對話已逾保留期）
 
 ## 知識
 

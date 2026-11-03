@@ -5,6 +5,7 @@
 - Type: reference
 - Trigger: obsidian, vault, WellsDB, 筆記庫, 寫到obsidian, 放到obsidian, 輸出obsidian
 - Related: preferences
+- Source: commit:cc40394 2026-05-28（原對話已逾保留期）
 
 ## 知識
 

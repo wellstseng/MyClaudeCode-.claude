@@ -6,6 +6,7 @@
 - Trigger: ffi.cdef, cdef, typedef, redefine, pcall ffi.cdef, luajit, 熱更 re-require, goo.bind, fp_typedef
 - Created-at: 2026-08-27
 - Related: luajit-ffi-函式指標型別三種等價寫法-ctype相等比較不可靠, goo-ffi-補0是lua讀取端協定-結尾0兼錯誤通道
+- Source: commit:ccc8f1d 2026-08-27（原對話已逾保留期）
 
 ## 知識
 
