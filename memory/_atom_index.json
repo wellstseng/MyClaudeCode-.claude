@@ -15131,6 +15131,62 @@
       "related": [
         "macos-zsh下log指令被內建蓋掉-查系統日誌要寫usr-bin-log"
       ]
+    },
+    {
+      "name": "onnxruntime-coreml-每換一次輸入張數就重編譯數秒-固定批次大小補空白",
+      "path": "memory/設計通則/效能/onnxruntime-coreml-每換一次輸入張數就重編譯數秒-固定批次大小補空白.md",
+      "triggers": [
+        "onnxruntime",
+        "CoreML",
+        "CoreMLExecutionProvider",
+        "推論變慢",
+        "batch",
+        "動態批次",
+        "人臉辨識",
+        "Apple Silicon"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "兒童人臉辨識-opencv-sface-分不清小孩-改用-arcface-w600k-r50-並用同照片不同人當反例定門檻",
+      "path": "memory/驗證與實證/影像辨識/兒童人臉辨識-opencv-sface-分不清小孩-改用-arcface-w600k-r50-並用同照片不同人當反例定門檻.md",
+      "triggers": [
+        "人臉辨識",
+        "人臉分群",
+        "face recognition",
+        "SFace",
+        "ArcFace",
+        "insightface",
+        "小孩照片",
+        "門檻校準"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "gallery-dl-下載紀錄-download-archive-讓刪掉的檔不重抓-abort-也算紀錄跳過",
+      "path": "memory/工作流/下載工具/gallery-dl-下載紀錄-download-archive-讓刪掉的檔不重抓-abort-也算紀錄跳過.md",
+      "triggers": [
+        "gallery-dl",
+        "download-archive",
+        "下載紀錄",
+        "重複下載",
+        "刪掉後重抓",
+        "--abort"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "macos-刪使用者檔案改用-usr-bin-trash-可救回-排程背景也能用-但-trash-資料夾列不出",
+      "path": "memory/設計通則/檔案操作/macos-刪使用者檔案改用-usr-bin-trash-可救回-排程背景也能用-但-trash-資料夾列不出.md",
+      "triggers": [
+        "垃圾桶",
+        "trash",
+        "刪除檔案",
+        "macOS",
+        "可救回",
+        "~/.Trash"
+      ],
+      "scope": "global"
     }
   ]
 }

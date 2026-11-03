@@ -778,3 +778,7 @@
 | decisions-architecture | _AIDocs/_atoms/MemDev/架構決策與規則檔/decisions-architecture.md | 架構, hooks, pipeline, guardian, SessionStart, hot cache, extract-worker, vector service, 架構決策, hooks 架構, dispatcher | global |  |
 | macos-zsh下log指令被內建蓋掉-查系統日誌要寫usr-bin-log | memory/OS-macOS/macos-zsh下log指令被內建蓋掉-查系統日誌要寫usr-bin-log.md | log show, /usr/bin/log, zsh log builtin, 系統日誌, unified log, too many arguments, macOS 查 log | global |  |
 | macos外接硬碟複製卡住先看usb-link-speed-掉到12mbps是hub供電不足降成usb1 | memory/OS-macOS/macos外接硬碟複製卡住先看usb-link-speed-掉到12mbps是hub供電不足降成usb1.md | 外接碟, 複製卡住, 複製很慢, Link Speed, 12 Mb/s, SPUSBHostDataType, USB hub, 供電不足, My Passport, 行程卡 U 狀態 | global |  |
+| onnxruntime-coreml-每換一次輸入張數就重編譯數秒-固定批次大小補空白 | memory/設計通則/效能/onnxruntime-coreml-每換一次輸入張數就重編譯數秒-固定批次大小補空白.md | onnxruntime, CoreML, CoreMLExecutionProvider, 推論變慢, batch, 動態批次, 人臉辨識, Apple Silicon | global |  |
+| 兒童人臉辨識-opencv-sface-分不清小孩-改用-arcface-w600k-r50-並用同照片不同人當反例定門檻 | memory/驗證與實證/影像辨識/兒童人臉辨識-opencv-sface-分不清小孩-改用-arcface-w600k-r50-並用同照片不同人當反例定門檻.md | 人臉辨識, 人臉分群, face recognition, SFace, ArcFace, insightface, 小孩照片, 門檻校準 | global |  |
+| gallery-dl-下載紀錄-download-archive-讓刪掉的檔不重抓-abort-也算紀錄跳過 | memory/工作流/下載工具/gallery-dl-下載紀錄-download-archive-讓刪掉的檔不重抓-abort-也算紀錄跳過.md | gallery-dl, download-archive, 下載紀錄, 重複下載, 刪掉後重抓, --abort | global |  |
+| macos-刪使用者檔案改用-usr-bin-trash-可救回-排程背景也能用-但-trash-資料夾列不出 | memory/設計通則/檔案操作/macos-刪使用者檔案改用-usr-bin-trash-可救回-排程背景也能用-但-trash-資料夾列不出.md | 垃圾桶, trash, 刪除檔案, macOS, 可救回, ~/.Trash | global |  |

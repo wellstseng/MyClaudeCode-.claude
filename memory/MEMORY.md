@@ -5,13 +5,13 @@
 | 範疇 | atom 數 | 深入 |
 |------|---------|------|
 | 版控 | 45 | `memory/版控/_INDEX.md` |
-| 工作流 | 50 | `memory/工作流/_INDEX.md` |
+| 工作流 | 51 | `memory/工作流/_INDEX.md` |
 | 思考與決策 | 27 | `memory/思考與決策/_INDEX.md` |
-| 驗證與實證 | 87 | `memory/驗證與實證/_INDEX.md` |
+| 驗證與實證 | 88 | `memory/驗證與實證/_INDEX.md` |
 | dotnet | 26 | `memory/dotnet/_INDEX.md` |
 | OS-Windows | 27 | `memory/OS-Windows/_INDEX.md` |
 | 文字與格式 | 16 | `memory/文字與格式/_INDEX.md` |
-| 設計通則 | 63 | `memory/設計通則/_INDEX.md` |
+| 設計通則 | 65 | `memory/設計通則/_INDEX.md` |
 | 行為契約 | 19 | `memory/行為契約/_INDEX.md` |
 | CC與原子記憶契約 | 67 | `memory/CC與原子記憶契約/_INDEX.md` |
 | Failures | 83 | `memory/Failures/_INDEX.md` |
