@@ -1,9 +1,10 @@
 ---
 name: code-guide
 description: 程式碼系統導讀產生器：輸入檔案路徑/類別名/系統名，AI 讀完原始碼後產出 8 區塊導讀地圖（心智模型、資料模型、入口與主流程、不變量、輔助層、閱讀順序、實機觀察、文件時效），協助開發者快速建立心智模型後再進入精讀。
-userInvocable: true
-triggers: code-guide, 導讀, 系統導讀, 導讀地圖, 接手系統, 看懂這個系統, 建立心智模型, 程式導讀
-pattern: generator
+user-invocable: true
+when_to_use: 觸發詞：code-guide, 導讀, 系統導讀, 導讀地圖, 接手系統, 看懂這個系統, 建立心智模型, 程式導讀
+metadata:
+  pattern: generator
 ---
 
 # Skill：code-guide

@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "ensure-mcp.py"
+_REAL_SUBPROCESS_RUN = subprocess.run   # run_case 換掉的是全域 subprocess.run；被 pytest 收進同一行程時跑完要還原，否則後面的測試全拿到假結果
 
 
 def load_module(name):
@@ -137,5 +138,14 @@ if sys.platform == "win32":
 else:
     check("非 Windows 不包外殼", got is None and err.getvalue() == "")
 
+subprocess.run = _REAL_SUBPROCESS_RUN
 print("ENSURE_MCP_CHECK " + ("FAIL" if fails else "PASS"))
-sys.exit(1 if fails else 0)
+
+
+def test_ensure_mcp_checks():
+    """pytest（run_verify）收這支時檢查在 import 時已跑完，這裡只交帳；頂層 sys.exit 會讓整組收集中斷。"""
+    assert not fails, fails
+
+
+if __name__ == "__main__":
+    sys.exit(1 if fails else 0)

@@ -366,6 +366,8 @@ def test_fingerprint_ignores_cwd_case_and_subdir(tree):
     fp = R(scripts).fingerprint
     pr.clear_cache()
     assert R(scripts / "lua" / "quest").fingerprint == fp      # 同一認領範圍內的子目錄
+    if sys.platform != "win32":
+        return   # 大小寫互換是 Windows 磁碟代號情境；POSIX 的 normcase 不轉小寫，cwd 也不會被改大小寫
     pr.clear_cache()
     swapped = str(scripts)
     swapped = swapped[0].swapcase() + swapped[1:] if swapped[0].isalpha() else swapped.upper()

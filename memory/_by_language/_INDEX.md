@@ -30,8 +30,10 @@
 | `memory/OS-Windows/windows上python的附加寫入不是原子的-多行程同時append會互蓋切斷多位元組字元-要在旁檔鎖下一次寫完.md` | Windows上Python的附加寫入不是原子的-多行程同時append會互蓋切斷多位元組字元-要在旁檔鎖下一次寫完 |
 | `memory/OS-Windows/windows上用python轉印git輸出每行會帶r-接shell迴圈前要tr-d或python端用stdout-buffer寫位元組.md` | windows上用python轉印git輸出每行會帶r-接shell迴圈前要tr-d或python端用stdout-buffer寫位元組 |
 | `memory/OS-Windows/windows刪測試暫存目錄要先關本行程開著的log-handler並清唯讀屬性-rmtree-ignore-errors會默默留下整個目錄-初始化中斷也要能清.md` | Windows刪測試暫存目錄要先關本行程開著的log-handler並清唯讀屬性-rmtree-ignore-errors會默默留下整個目錄-初始化中斷也要能清 |
+| `memory/OS-Windows/windows排程每小時用once加repetitioninterval-改時間set-scheduledtask只換trigger先比dayofweek與startboundary再寫-multipleinstances-ignorenew防疊跑.md` | windows排程每小時用once加repetitioninterval-改時間set-scheduledtask只換trigger先比dayofweek與startboundary再寫-multipleinstances-ignorenew防疊跑 |
 | `memory/OS-Windows/windows的git把worktree的git檔設成隱藏-python直接覆寫會permissionerror-要先unlink再寫.md` | windows的git把worktree的.git檔設成隱藏-python直接覆寫會PermissionError-要先unlink再寫 |
 | `memory/OS-macOS/mac-缺-python-用-wrapper-指向-python3.md` | Mac 缺 python 用 wrapper 指向 python3 |
+| `memory/工作流/多工人並行改同一套hooks的派工守則-檔案所有權表-共用出口主持端先做-settings單一擁有者-工人只回報片段-腳本式verify不進pytest清單.md` | 多工人並行改同一套hooks的派工守則-檔案所有權表-共用出口主持端先做-settings單一擁有者-工人只回報片段-腳本式verify不進pytest清單 |
 | `memory/工作流/版控走python啟動器時pretooluse的commit前閘都不觸發-commit前手動跑project-smells-commit-check與need-goal完整對照.md` | 版控走python啟動器時pretooluse的commit前閘都不觸發-commit前手動跑project-smells-commit-check與need-goal完整對照 |
 | `memory/工作流/版控走python啟動器時pretooluse的commit前閘都不觸發-commit前手動跑project-smells的commit-check-重建或刪啟動器會作廢先前收據.md` | 版控走Python啟動器時PreToolUse的commit前閘都不觸發-commit前手動跑project-smells的commit-check-重建或刪啟動器會作廢先前收據 |
 | `memory/文字與格式/bash-heredoc-會折掉一層反斜線-精確字串比對靜默失敗.md` | bash-heredoc-會折掉一層反斜線-精確字串比對靜默失敗 |
@@ -43,6 +45,7 @@
 | `memory/設計通則/擋訊息教的替代管道會被當成替代做法-寫明註解只放在不寫檔的指令上-宣告完照常用edit-write-同類說法全面grep並用掃原始碼的案例守住.md` | 擋訊息教的替代管道會被當成替代做法-寫明註解只放在不寫檔的指令上-宣告完照常用edit-write-同類說法全面grep並用掃原始碼的案例守住 |
 | `memory/驗證與實證/pytest-addopts與pythonoptimize會從環境縮小測試範圍-判斷要照執行順序算每段程式的有效值.md` | PYTEST_ADDOPTS與PYTHONOPTIMIZE會從環境縮小測試範圍-判斷要照執行順序算每段程式的有效值 |
 | `memory/驗證與實證/pytest判紅的例外型別要讀junitxml-裸assert不帶型別名-q摘要不附原因.md` | pytest判紅的例外型別要讀junitxml-裸assert不帶型別名-q摘要不附原因 |
+| `memory/驗證與實證/python-urllib逾時分兩型-裸timeouterror是請求已送出在等回應-連線階段逾時包成urlerror-判遠端服務是忙還是連不上.md` | Python-urllib逾時分兩型-裸TimeoutError是請求已送出在等回應-連線階段逾時包成URLError-判遠端服務是忙還是連不上 |
 | `memory/驗證與實證/verify檔直接python跑前先確認有-main-入口-沒有就只import後exit0是假綠.md` | verify檔直接python跑前先確認有__main__入口-沒有就只import後exit0是假綠 |
 | `memory/驗證與實證/全量驗證與agent測試並行跑會互相干擾出假失敗-作準的全量要單獨跑.md` | 全量驗證與agent測試並行跑會互相干擾出假失敗-作準的全量要單獨跑 |
 | `memory/驗證與實證/接派工單先核實檔案路徑與跑法-pytest收0案不是綠-掃描型verify腳本要直接python跑.md` | 接派工單先核實檔案路徑與跑法-pytest收0案不是綠-掃描型verify腳本要直接python跑 |
@@ -53,9 +56,6 @@
 | `memory/驗證與實證/測試隔離的這次執行記號要在開子行程前就存在-用root-conftest每次換的暫存目錄當記號-第一次用到才產生的環境變數記號會分帳或共用.md` | 測試隔離的這次執行記號要在開子行程前就存在-用root-conftest每次換的暫存目錄當記號-第一次用到才產生的環境變數記號會分帳或共用 |
 | `memory/驗證與實證/背景跑的測試hook拿不到輸出也不留收據-超過單次工具上限的批次要拆成數段前景跑.md` | 背景跑的測試hook拿不到輸出也不留收據-超過單次工具上限的批次要拆成數段前景跑 |
 | `memory/驗證與實證/路徑樣式比對要用相對專案根的路徑-絕對路徑會比到上層目錄名-pytest的tmp路徑含test會污染測試.md` | 路徑樣式比對要用相對專案根的路徑-絕對路徑會比到上層目錄名-pytest的tmp路徑含test會污染測試 |
-| `memory/OS-Windows/windows排程每小時用once加repetitioninterval-改時間set-scheduledtask只換trigger先比dayofweek與startboundary再寫-multipleinstances-ignorenew防疊跑.md` | windows排程每小時用once加repetitioninterval-改時間set-scheduledtask只換trigger先比dayofweek與startboundary再寫-multipleinstances-ignorenew防疊跑 |
-| `memory/工作流/多工人並行改同一套hooks的派工守則-檔案所有權表-共用出口主持端先做-settings單一擁有者-工人只回報片段-腳本式verify不進pytest清單.md` | 多工人並行改同一套hooks的派工守則-檔案所有權表-共用出口主持端先做-settings單一擁有者-工人只回報片段-腳本式verify不進pytest清單 |
-| `memory/驗證與實證/python-urllib逾時分兩型-裸timeouterror是請求已送出在等回應-連線階段逾時包成urlerror-判遠端服務是忙還是連不上.md` | Python-urllib逾時分兩型-裸TimeoutError是請求已送出在等回應-連線階段逾時包成URLError-判遠端服務是忙還是連不上 |
 
 ## C#／.NET
 
@@ -113,6 +113,7 @@
 | PowerShell | 說明 |
 |------|------|
 | `memory/OS-Windows/winget-升不動-powershell-msi-與-msix-通道分裂.md` | winget 升不動 PowerShell — MSI 與 MSIX 通道分裂 |
+| `memory/OS-Windows/腳本跳windows通知走powershell-winrt-toastnotificationmanager-appid用powershell自己的-文字走環境變數不拼字串-discord用webhook-post-content上限2000.md` | 腳本跳windows通知走powershell-winrt-toastnotificationmanager-appid用powershell自己的-文字走環境變數不拼字串-discord用webhook-post-content上限2000 |
 | `memory/文字與格式/powershell傳null給dotnet-string參數會變空字串-nullstring才是真null.md` | powershell傳null給dotnet-string參數會變空字串-NullString才是真null |
 | `memory/文字與格式/toolchain-ps51-getcontent-utf8-file-corruption.md` | toolchain-ps51-getcontent-utf8-file-corruption |
 | `memory/文字與格式/toolchain-svn-powershell-中文log編碼.md` | toolchain-svn-powershell-中文log編碼 |
@@ -120,7 +121,6 @@
 | `memory/版控/SVN/pwsh-傳中文路徑給svn-exe會亂碼且big5的一字含位元組觸發peg解析-改用python-subprocess.md` | pwsh-傳中文路徑給svn-exe會亂碼且big5的一字含@位元組觸發peg解析-改用python-subprocess |
 | `memory/設計通則/shell命令判定的語意陷阱-續行先接回再判-引號外token起頭的井號是註解-只有單引號是字面-外層語意先查整段原文.md` | shell命令判定的語意陷阱-續行先接回再判-引號外token起頭的井號是註解-只有單引號是字面-外層語意先查整段原文 |
 | `memory/設計通則/從指令字串辨識shell包裝要斷詞看執行檔basename再找執行旗標-regex會被帶引號完整路徑與啟動選項繞過-內層要認真子命令.md` | 從指令字串辨識shell包裝要斷詞看執行檔basename再找執行旗標-regex會被帶引號完整路徑與啟動選項繞過-內層要認真子命令 |
-| `memory/OS-Windows/腳本跳windows通知走powershell-winrt-toastnotificationmanager-appid用powershell自己的-文字走環境變數不拼字串-discord用webhook-post-content上限2000.md` | 腳本跳windows通知走powershell-winrt-toastnotificationmanager-appid用powershell自己的-文字走環境變數不拼字串-discord用webhook-post-content上限2000 |
 
 ## Bash／Shell
 

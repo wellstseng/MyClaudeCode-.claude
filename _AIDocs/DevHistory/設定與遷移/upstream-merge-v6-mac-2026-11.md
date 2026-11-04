@@ -14,3 +14,13 @@
 | 本 session 的 guardian MCP 載不到新碼 | node require 快取裡是舊 `paths.js`，新 `atom-tools.js` 找它要 `v6Enabled` → atom_write 報 `v6Enabled is not a function`；殺 :3848 的常駐 server 不影響本 session 的 stdio MCP 行程 | 合併後寫 atom 改走 `python -m lib.atom_io_cli`（action=append，同 MCP 落檔路徑）；新 session 才會載新碼 |
 | run_verify 被 VerifyBatch 閘擋 | 測試檔 ≥50 支算「會拖時間的整組驗證」，要使用者本回合原話有口令（整組／全量／run_verify）；派工 prompt 裡寫了 run_verify 仍判沒有 | 點名 9 個 verify 目錄用 pytest 跑（閘允許點名），或請使用者在回合裡下口令 |
 | git cassette 重錄污染工作樹 | 本機 git 版本與錄製時不同 → 全組第一次跑進錄製模式，改掉 341 個、新增 81 個 `hooks/verify/cassettes/**.json.gz`；第二次跑重播又 `CassetteMismatch：少了 .git/config`（macOS 重播缺陷，待修） | 跑完全組 `git checkout -- hooks/verify/cassettes && git clean -f -- hooks/verify/cassettes`，錄製檔不進 commit |
+
+## 2026-11-04 合 v6.1（88 commits）再踩的坑
+
+| 坑 | 現象 | 解法 |
+|---|---|---|
+| 腳本式驗證檔換掉全域 `subprocess.run` | upstream 新 `hooks/verify/verify_ensure_mcp.py` 模組頂層跑檢查、`run_case` 把 `em.subprocess.run`（＝全域 subprocess 模組）換成假函式不還原，結尾 `sys.exit` → pytest 收集時 INTERNALERROR 整組 0 案例；只拿掉 `sys.exit` 又變成後面 807 案全紅（git／子行程都拿到假結果），單支跑卻全綠 | 檔頭存 `_REAL_SUBPROCESS_RUN`、檢查跑完還原，`sys.exit` 收進 `__main__`，另給 `test_ensure_mcp_checks` 交帳。單支綠、整組紅 → 先懷疑前面某支改了全域模組沒還原 |
+| 錄製檔每跑一次就重錄 | 本機 git 版本與錄製時不同，跑一次全組改掉上百個 `cassettes/**.json.gz`；接著再跑就重播自己剛錄的檔而紅（看起來像新壞掉） | 每次全組或重跑紅測之前都先 `git checkout -- hooks/verify/cassettes tools/verify/cassettes && git clean -fq -- 同兩處` |
+| upstream 測試沒跟上自己的改動 | 安裝器補 `SYSTEM_CONTRACT_KEYS` 後 `verify_install` 兩案仍斷言 settings 只有 hooks／statusLine；儀表板 API 疊私人列後 `test_case1b` 仍只數共用索引（作者機器沒登錄 ~/.claude 所以 skip 掉）；skill 檔頭改 `when_to_use`／`metadata` 後本地獨有的 code-guide 還是舊鍵 | 測試照新設計改：容許契約鍵、計數改用含私人列的 `_index_rows()`；code-guide 檔頭改新格式 |
+| `cleanupPeriodDays: 14` 是系統契約鍵 | 合 settings 時照抄會在下次啟動刪掉 14～30 天的對話逐字稿（不可逆） | 先不設，留給使用者決定；其餘三個契約鍵照帶 |
+| 向量去重長查詢逾時 | 寫入閘查詢逾時 3 秒；本機 qwen3-embedding 嵌入 1,100 字約 4 秒 → 長卡的去重被略過（稽核記 `dedup_skipped_service_down`），對應測試紅。合併前就是這樣 | 未改；要嘛放寬逾時、要嘛換小一點的嵌入模型 |

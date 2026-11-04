@@ -378,7 +378,7 @@ def test_type_conflicts_go_to_backup_and_no_settings_gets_no_permissions(base, u
     assert (claude / "hooks" / "workflow-guardian.py").is_file()
     assert load(claude / "version.json")["guardian"]
     settings = load(claude / "settings.json")
-    assert {"hooks"} <= set(settings) <= {"hooks", "statusLine"}
+    assert {"hooks"} <= set(settings) <= {"hooks", "statusLine", *install.SYSTEM_CONTRACT_KEYS}   # 系統契約鍵缺的由安裝器補
     assert "git -C ~/.claude show HEAD:settings.json" in result.stdout
     system_config = json.loads(git("show", "HEAD:workflow/config.json", cwd=claude, home=home).stdout)
     assert load(claude / "workflow" / "config.json") == system_config
@@ -480,7 +480,7 @@ def test_missing_target_is_created_and_adopted(base, upstream):
     assert result.returncode == 0, result.stdout + result.stderr
     assert "接管" in result.stdout
     settings = load(claude / "settings.json")
-    assert "permissions" not in settings and {"hooks"} <= set(settings) <= {"hooks", "statusLine"}
+    assert "permissions" not in settings and {"hooks"} <= set(settings) <= {"hooks", "statusLine", *install.SYSTEM_CONTRACT_KEYS}
     assert marks(claude, home) == {"settings.json": "S", "workflow/config.json": "S"}
     assert tracked_changes(claude, home) == []
     assert state_of(claude)["phase"] == "done"

@@ -4,6 +4,10 @@
 > 每條僅留「標題 + 一句摘要」。實作細節見 `DevHistory/`（各主題演進檔）。
 
 ---
+## 2026-11-04 整併 upstream/main v6.1 到 Mac 線（88 commits）
+- **衝突解法**：17 檔——settings 以本地為底補 SubagentStart／InstructionsLoaded／StopFailure 與 codex rewake、拆 WebFetch 閘，頂層補三個系統契約鍵（`cleanupPeriodDays` 留待決定）；測試與文件衝突段吃 upstream；atom 取 upstream 檔頭再補回本地 Related；退役的 `native-memory-bridge.py`、`verify_data_file_ask.py` 照刪。
+- **修 upstream 帶進來的問題**：`verify_ensure_mcp.py` 換掉全域 `subprocess.run` 不還原、頂層 `sys.exit`（整組 pytest 收集崩或 807 案連帶紅）；`verify_install`、`verify_dashboard_api_atoms` 斷言沒跟上契約鍵與私人列；code-guide 檔頭改 `when_to_use`／`metadata`；指紋大小寫測試限 Windows；USER.md 補「例外：直上版控」硬契約行。
+- **驗證**：八個 Python 驗證目錄 5,618 綠、159 skip；修完的 7 支重跑全綠；剩 2 紅屬本機環境（向量長查詢 4 秒超過寫入閘 3 秒逾時、Codex CLI 未裝）。MCP Node 測試 9 支 PASS；`install.py --verify` 0 FAIL。坑的細節見 `DevHistory/設定與遷移/upstream-merge-v6-mac-2026-11.md`。
 ## 2026-11-04 v6.1 對 Claude Code 適應性補正更新：前提失效修補、拆腳手架換原生、注入精準度
 - **緣由**：官方文件全收割後對帳發現，CC 改了三個本系統當作前提的行為：子代理預設背景跑、hook 輸出上限 10,000 字元、壓縮後會跑 SessionStart(compact)。記憶因此在沒有訊號的情況下沒送到、沒記到帳：子代理效用帳 30 筆全標 `no_output`；hook 輸出被換成預覽 36 次；壓縮後第一時間送到卡片 0/18；壓縮時誤判換了專案根 14/17。另外有幾件自製功能原生已經有了，注入也有一大塊花在非真人回合。計畫見 `DevHistory/v6.1-對CC適應性補正-2026-11/analysis/00-總整與建議優先序.md`。
 - **做法**：

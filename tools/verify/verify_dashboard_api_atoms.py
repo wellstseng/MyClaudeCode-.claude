@@ -116,14 +116,18 @@ def live_server():
     pytest.skip(f"隔離埠都起不來：{last}")
 
 
-def _index_paths_existing() -> set[str]:
-    data = json.loads(ATOM_INDEX.read_text(encoding="utf-8"))
-    rows = data.get("atoms", [])
-    personal = ATOM_INDEX.parent / "personal" / "_personal_index.json"   # 本機私人卡的登記，API 疊在共用索引後面
+def _index_rows() -> list:
+    """共用索引列＋本機私人卡登記：API 疊在共用索引後面，計數與路徑都要一起算。"""
+    rows = json.loads(ATOM_INDEX.read_text(encoding="utf-8")).get("atoms", [])
+    personal = ATOM_INDEX.parent / "personal" / "_personal_index.json"
     if personal.exists():
         rows = rows + json.loads(personal.read_text(encoding="utf-8")).get("atoms", [])
+    return rows
+
+
+def _index_paths_existing() -> set[str]:
     out = set()
-    for e in rows:
+    for e in _index_rows():
         rel = str(e.get("path", "")).replace("\\", "/")
         if rel and (CLAUDE_DIR / rel).exists():
             out.add(rel)
@@ -159,8 +163,7 @@ def test_case1_api_atoms_matches_index(live_server):
 def test_case1b_api_projects_claude_dir_counts_from_index(live_server):
     port, _proc = live_server
     projects = _get_json(f"http://127.0.0.1:{port}/api/projects", timeout=10.0)
-    data = json.loads(ATOM_INDEX.read_text(encoding="utf-8"))
-    entries = data.get("atoms", [])
+    entries = _index_rows()
     want_fail = sum(
         1 for e in entries
         if str(e.get("path", "")).startswith(("memory/Failures/", "_AIDocs/Failures/"))

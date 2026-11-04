@@ -6,6 +6,7 @@
 
 | Atom | 說明 |
 |------|------|
+| agent工具的worktree隔離在工作目錄磁碟代號是小寫c時被拒-報core-worktree-redirect-等工作目錄回到大寫c再派並清掉殘留的鎖住工作樹 | Agent工具的worktree隔離在工作目錄磁碟代號是小寫c時被拒-報core-worktree-redirect-等工作目錄回到大寫C再派並清掉殘留的鎖住工作樹 |
 | atom-scope-讀取端可見性-候選池一次收窄-他專案不進池-personal只給本人 | atom-scope-讀取端可見性-候選池一次收窄-他專案不進池-personal只給本人 |
 | atom-write-global必須省略project-cwd | atom-write-global必須省略project-cwd |
 | bash寫入目標解析器會把python-c與pytest-c當成無法判定而擋-改寫成腳本檔或讓pytest自找ini-grep工具預設跳過gitignore檔 | bash寫入目標解析器會把python-c與pytest-c當成無法判定而擋-改寫成腳本檔或讓pytest自找ini-grep工具預設跳過gitignore檔 |
@@ -15,6 +16,7 @@
 | claude-bg起的背景session交完回合閒置約一小時會自己結束-背景執行的長任務會叫醒它-要等別人回覆先commit並送出交付 | claude-bg起的背景session交完回合閒置約一小時會自己結束-背景執行的長任務會叫醒它-要等別人回覆先commit並送出交付 |
 | claude-cli沒有ps子指令-未知子指令會被當成提問另開一次性session耗token-查背景session用transcript檔名或listagents | claude-cli沒有ps子指令-未知子指令會被當成提問另開一次性session耗token-查背景session用transcript檔名或listagents |
 | claude-code內建安全檢查會擋rm-rf加變數路徑-變數空時等於刪根目錄-權限規則放行不了-改字面絕對路徑或用冒號問號展開 | claude-code內建安全檢查會擋rm-rf加變數路徑-變數空時等於刪根目錄-權限規則放行不了-改字面絕對路徑或用冒號問號展開 |
+| claude-code官方文件可直接抓markdown-sitemap列全頁-llms-txt給分類-用tools-cc-docs-harvest收割到本地再查 | claude-code官方文件可直接抓markdown-sitemap列全頁-llms-txt給分類-用tools-cc-docs-harvest收割到本地再查 |
 | claude-code的mcp工具呼叫上限約27小時但互動模式滿120秒自動轉背景-要等長工作的mcp工具每次等待短於120秒分段等 | claude-code的mcp工具呼叫上限約27小時但互動模式滿120秒自動轉背景-要等長工作的mcp工具每次等待短於120秒分段等 |
 | claude-code的resume接續後前面回合hook注入的內容仍在context-只有壓縮才丟-判送過沒要跟壓縮時間比不能因resume重置 | claude-code的resume接續後前面回合hook注入的內容仍在context-只有壓縮才丟-判送過沒要跟壓縮時間比不能因resume重置 |
 | claude-code的rules檔可用paths前置欄位只在碰到符合的檔時才載入-讀改或cat單檔才觸發-沒寫paths就每場常駐 | claude-code的rules檔可用paths前置欄位只在碰到符合的檔時才載入-讀改或cat單檔才觸發-沒寫paths就每場常駐 |
@@ -24,6 +26,7 @@
 | claude-p無頭跑會被hook判成無法互動-g9第二意見整條不觸發-預設claude-code-entrypointclaude-vscode可保留但-p沒有askuserquestion | claude-p無頭跑會被hook判成無法互動-G9第二意見整條不觸發-預設CLAUDE_CODE_ENTRYPOINT=claude-vscode可保留但-p沒有AskUserQuestion |
 | claude-p無頭跑會被hook判成無法互動-問人類流程驗不到-預設claude-code-entrypointclaude-vscode可保留但-p沒有askuserquestion | claude-p無頭跑會被hook判成無法互動-問人類流程驗不到-預設CLAUDE_CODE_ENTRYPOINT=claude-vscode可保留但-p沒有AskUserQuestion |
 | claude-p的json回傳遇背景通知只剩通知那一小段-result與被拒清單要從transcript補整回合-total-cost-usd是session累計 | claude-p的json回傳遇背景通知只剩通知那一小段-result與被拒清單要從transcript補整回合-total_cost_usd是session累計 |
+| claude命令列可吃多值的旗標會把後面的開工句當成旗標值吃掉-要寫成等號逗號形式如-toolsab | claude命令列可吃多值的旗標會把後面的開工句當成旗標值吃掉-要寫成等號逗號形式如--tools=A,B |
 | claude背景session實測-用vscode擴充那支claudeexe起-bg-agents總覽enter就是attach-人能直接選答-hook全套照跑-esc兩下是rewind-關視窗不影響-用stop收 | claude背景session實測-用vscode擴充那支claude.exe起-bg-agents總覽Enter就是attach-人能直接選答-hook全套照跑-esc兩下是rewind-關視窗不影響-用stop收 |
 | commitorder閘只認最新一則使用者原話-中間夾系統通知或背景事件就要請使用者重下口令 | CommitOrder閘只認最新一則使用者原話-中間夾系統通知或背景事件就要請使用者重下口令 |
 | datafileask宣告行寫在回覆文字裡同一則訊息的工具呼叫在pretooluse讀不到-先跑一個bash開頭註解行再發edit | DataFileAsk宣告行寫在回覆文字裡同一則訊息的工具呼叫在PreToolUse讀不到-先跑一個Bash開頭註解行再發Edit |
@@ -31,7 +34,9 @@
 | edit工具new-string尾端空白會被裁掉-切點停在空白上會黏字-切點要停在非空白字元並看diff | Edit工具new_string尾端空白會被裁掉-切點停在空白上會黏字-切點要停在非空白字元並看diff |
 | escalation-hook-在-edit-count-proxy-上-false-fire-的辨識無真實失敗迴圈時不盲從不編造 | escalation-hook 在 edit-count-proxy 上 false-fire 的辨識（無真實失敗迴圈時不盲從不編造） |
 | hook-systemmessage-只給使用者看-模型讀不到-要回饋模型用additionalcontext或deny-reason | hook-systemMessage-只給使用者看-模型讀不到-要回饋模型用additionalContext或deny-reason |
+| hook單筆輸出超過一萬字元會被換成檔案路徑加前2000字預覽-模型不會被要求去讀-本系統以9000字元自截並留溢出全文檔 | hook單筆輸出超過一萬字元會被換成檔案路徑加前2000字預覽-模型不會被要求去讀-本系統以9000字元自截並留溢出全文檔 |
 | hook執行當下同一則assistant回覆還沒寫進transcript-平行工具呼叫要分批就用這次呼叫之前最後一則assistant的message-id當批次鍵-不能拿tool-use-id去查 | hook執行當下同一則assistant回覆還沒寫進transcript-平行工具呼叫要分批就用這次呼叫之前最後一則assistant的message-id當批次鍵-不能拿tool-use-id去查 |
+| hook讀transcript找宣告行時同一則回覆先寫的文字當下可能讀不到-宣告寫進那條指令自己的註解行 | hook讀transcript找宣告行時同一則回覆先寫的文字當下可能讀不到-宣告寫進那條指令自己的註解行 |
 | hook超過settings的timeout會被cc整支取消只在transcript留hook-cancelled-收尾所有守門靜默失效-加段就要量耗時並在超時前降級留帳 | hook超過settings的timeout會被CC整支取消只在transcript留hook_cancelled-收尾所有守門靜默失效-加段就要量耗時並在超時前降級留帳 |
 | mcp-json-與-user-scope-同名-server-並存雙開-黑窗第四層破口 | mcp-json-與-user-scope-同名-server-並存雙開-黑窗第四層破口 |
 | merge-時-sot-索引檔-ours-策略誤清-catalog-post-mortem | merge-時-SoT-索引檔-ours-策略誤清-catalog-post-mortem |
@@ -47,6 +52,7 @@
 | 並行子代理共用主session的scratchpad-同名暫存檔會互蓋-派工時給每個agent自己的子資料夾 | 並行子代理共用主session的scratchpad-同名暫存檔會互蓋-派工時給每個agent自己的子資料夾 |
 | 使用者原話算不算長期決策-對這次產出的糾正或指示不算-萃取不准比原話寬 | 使用者原話算不算長期決策-對這次產出的糾正或指示不算-萃取不准比原話寬 |
 | 使用者貼上的內容在transcript包成pasted-content區塊-拿原話當他說的之前先剔掉-閉合id要逐字比-data-id不算id | 使用者貼上的內容在transcript包成pasted_content區塊-拿原話當他說的之前先剔掉-閉合id要逐字比-data-id不算id |
+| 原生auto-memory已關的理由-原生沒有檢索靠claude自己想起讀檔-150場從未走過-系統提示詞教用write寫記憶與atom-write矛盾-關掉省500tok | 原生auto-memory已關的理由-原生沒有檢索靠claude自己想起讀檔-150場從未走過-系統提示詞教用write寫記憶與atom-write矛盾-關掉省500tok |
 | 原話不在任何一則的誤判先查那則原話當下有沒有掛在樹上-樹結束後收的原話要等重開才掛-不要先猜正規化 | 原話不在任何一則的誤判先查那則原話當下有沒有掛在樹上-樹結束後收的原話要等重開才掛-不要先猜正規化 |
 | 去重宣告看主張不看主題-新內容說舊卡哪句錯就是取代-補同一條判準的實例才是同一條 | 去重宣告看主張不看主題-新內容說舊卡哪句錯就是取代-補同一條判準的實例才是同一條 |
 | 同一回合先寫文字再呼叫工具時那段文字可能不進transcript-要讓hook或下一session看到的話必須以純文字回合結尾 | 同一回合先寫文字再呼叫工具時那段文字可能不進transcript-要讓hook或下一session看到的話必須以純文字回合結尾 |
@@ -54,11 +60,14 @@
 | 外部程式改claude-json要拿claude-code同一把鎖-建claude-json-lock目錄-鎖內重讀只合併要改的鍵-暫存檔再replace-換行照原檔 | 外部程式改claude-json要拿claude-code同一把鎖-建claude-json-lock目錄-鎖內重讀只合併要改的鍵-暫存檔再replace-換行照原檔 |
 | 失敗的工具呼叫cc只送posttoolusefailure-靠posttooluse記改檔與紅測的機制看不到exit1的heredoc寫檔-修改清單與紅測清單會漏記 | 失敗的工具呼叫CC只送PostToolUseFailure-靠PostToolUse記改檔與紅測的機制看不到exit1的heredoc寫檔-修改清單與紅測清單會漏記 |
 | 子代理呼叫hook帶的是主session的session-id-要知道它是哪一回合派出的-用子代理檔第一筆promptid對主檔同promptid的user紀錄 | 子代理呼叫hook帶的是主session的session_id-要知道它是哪一回合派出的-用子代理檔第一筆promptId對主檔同promptId的user紀錄 |
+| 子代理預設背景跑時agent工具結果只有async-launched沒有內容-子代理產出改從subagentstop的last-assistant-message回填 | 子代理預設背景跑時agent工具結果只有async-launched沒有內容-子代理產出改從subagentstop的last-assistant-message回填 |
 | 專案層tool事件閘要用原生hooks-根層只轉送sessionstart給project-hooks | 專案層tool事件閘要用原生hooks-根層只轉送SessionStart給project_hooks |
 | 從transcript回找使用者原話要停在開回合的紀錄-越過同伴訊息與背景通知會走到開工句 | 從transcript回找使用者原話要停在開回合的紀錄-越過同伴訊息與背景通知會走到開工句 |
+| 從transcript算本機token用量-assistant列以message-id加requestid去重-加權近計費input加5m快取1點25倍1h快取2倍讀0點1倍輸出5倍-專案名取projects下第一層-rglob含子代理 | 從transcript算本機token用量-assistant列以message-id加requestid去重-加權近計費input加5m快取1點25倍1h快取2倍讀0點1倍輸出5倍-專案名取projects下第一層-rglob含子代理 |
 | 換資料根的session向量檢索查的是全機共用live向量庫再用資料根可見池過濾-bm25為主時向量只在全沒命中才打-新卡要等向量重建 | 換資料根的session向量檢索查的是全機共用live向量庫再用資料根可見池過濾-bm25為主時向量只在全沒命中才打-新卡要等向量重建 |
 | 收割只寫讀程式讀不出下次會重犯的使用者糾正與被證錯的卡必收程式常數與當天狀態不收 | 收割只寫讀程式讀不出、下次會重犯的；使用者糾正與被證錯的卡必收，程式常數與當天狀態不收 |
 | 改既有記憶卡的depends與標題要走對的入口-depends只能write-raw-改標題用新卡取代-相似度過高被拒要先清引用再退役舊卡 | 改既有記憶卡的Depends與標題要走對的入口-Depends只能write_raw-改標題用新卡取代-相似度過高被拒要先清引用再退役舊卡 |
+| 查claude帳號用量不必開瀏覽器-拿claude-code登入token打api-oauth-usage-回整數百分比與重置時間-token過期只報不自刷-用量頁的usage-api週額度多條取最高 | 查Claude帳號用量不必開瀏覽器-拿claude-code登入token打api-oauth-usage-回整數百分比與重置時間-token過期只報不自刷-用量頁的usage-api週額度多條取最高 |
 | 沙盒與暫存資料夾別放磁碟根目錄-cc內建安全檢查不讓ai刪c槽根下的資料夾-清理要人手動 | 沙盒與暫存資料夾別放磁碟根目錄-cc內建安全檢查不讓ai刪c槽根下的資料夾-清理要人手動 |
 | 無頭受測要關掉全部hook用claude-settings的disableallhooks旗標-hooks只來自使用者層settings-資料根放空settings不生效 | 無頭受測要關掉全部hook用claude--settings的disableAllHooks旗標-hooks只來自使用者層settings-資料根放空settings不生效 |
 | 瘦身必載檔時搬走的內容要問需要那一刻會不會在眼前-skill內文只在觸發時載入-通用陷阱別搬進單一情境的skill | 瘦身必載檔時搬走的內容要問需要那一刻會不會在眼前-skill內文只在觸發時載入-通用陷阱別搬進單一情境的skill |
@@ -71,15 +80,6 @@
 | 部位表前綴一律寫成相對專案根-子字串命中的列會被任何錨在專案根的列整片蓋過 | 部位表前綴一律寫成相對專案根-子字串命中的列會被任何錨在專案根的列整片蓋過 |
 | 部位表路徑前綴要用反引號包-沒包整列被解析器略過-表看起來有程式讀到是空的 | 部位表路徑前綴要用反引號包-沒包整列被解析器略過-表看起來有程式讀到是空的 |
 | 重載只為讓常駐程序吃到啟動時才讀的東西-hook改動每事件新程序不用重載-改mcp啟動參數或環境變數才是重載原因 | 重載只為讓常駐程序吃到啟動時才讀的東西-hook改動每事件新程序不用重載-改mcp啟動參數或環境變數才是重載原因 |
-| agent工具的worktree隔離在工作目錄磁碟代號是小寫c時被拒-報core-worktree-redirect-等工作目錄回到大寫c再派並清掉殘留的鎖住工作樹 | Agent工具的worktree隔離在工作目錄磁碟代號是小寫c時被拒-報core-worktree-redirect-等工作目錄回到大寫C再派並清掉殘留的鎖住工作樹 |
-| claude-code官方文件可直接抓markdown-sitemap列全頁-llms-txt給分類-用tools-cc-docs-harvest收割到本地再查 | claude-code官方文件可直接抓markdown-sitemap列全頁-llms-txt給分類-用tools-cc-docs-harvest收割到本地再查 |
-| claude命令列可吃多值的旗標會把後面的開工句當成旗標值吃掉-要寫成等號逗號形式如-toolsab | claude命令列可吃多值的旗標會把後面的開工句當成旗標值吃掉-要寫成等號逗號形式如--tools=A,B |
-| hook單筆輸出超過一萬字元會被換成檔案路徑加前2000字預覽-模型不會被要求去讀-本系統以9000字元自截並留溢出全文檔 | hook單筆輸出超過一萬字元會被換成檔案路徑加前2000字預覽-模型不會被要求去讀-本系統以9000字元自截並留溢出全文檔 |
-| hook讀transcript找宣告行時同一則回覆先寫的文字當下可能讀不到-宣告寫進那條指令自己的註解行 | hook讀transcript找宣告行時同一則回覆先寫的文字當下可能讀不到-宣告寫進那條指令自己的註解行 |
-| 原生auto-memory已關的理由-原生沒有檢索靠claude自己想起讀檔-150場從未走過-系統提示詞教用write寫記憶與atom-write矛盾-關掉省500tok | 原生auto-memory已關的理由-原生沒有檢索靠claude自己想起讀檔-150場從未走過-系統提示詞教用write寫記憶與atom-write矛盾-關掉省500tok |
-| 子代理預設背景跑時agent工具結果只有async-launched沒有內容-子代理產出改從subagentstop的last-assistant-message回填 | 子代理預設背景跑時agent工具結果只有async-launched沒有內容-子代理產出改從subagentstop的last-assistant-message回填 |
-| 從transcript算本機token用量-assistant列以message-id加requestid去重-加權近計費input加5m快取1點25倍1h快取2倍讀0點1倍輸出5倍-專案名取projects下第一層-rglob含子代理 | 從transcript算本機token用量-assistant列以message-id加requestid去重-加權近計費input加5m快取1點25倍1h快取2倍讀0點1倍輸出5倍-專案名取projects下第一層-rglob含子代理 |
-| 查claude帳號用量不必開瀏覽器-拿claude-code登入token打api-oauth-usage-回整數百分比與重置時間-token過期只報不自刷-用量頁的usage-api週額度多條取最高 | 查Claude帳號用量不必開瀏覽器-拿claude-code登入token打api-oauth-usage-回整數百分比與重置時間-token過期只報不自刷-用量頁的usage-api週額度多條取最高 |
 | 閒置session收到跨session訊息會自動開新回合處理-不必靠工具呼叫或背景sleep叫醒-背景session收信做完是結束不是閒置 | 閒置session收到跨session訊息會自動開新回合處理-不必靠工具呼叫或背景sleep叫醒-背景session收信做完是結束不是閒置 |
 
 ## 子層
