@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -77,8 +78,8 @@ def test_resolve_model_slug_wrapper(cache_file):
 
 def test_live_config_model_exists_in_live_cache():
     """真 config 的 codex_companion.model 必須在真 cache 裡（唯讀，不改任何檔）。"""
-    if not LIVE_CACHE.is_file():
-        pytest.skip(f"這台沒有 {LIVE_CACHE}（未裝 codex）")
+    if not LIVE_CACHE.is_file() or shutil.which("codex") is None:
+        pytest.skip(f"這台沒裝 codex（{LIVE_CACHE} 不在、或只剩舊安裝留下的殘檔）")
     if not LIVE_CONFIG.is_file():
         pytest.skip(f"這台沒有 {LIVE_CONFIG}")
     config = json.loads(LIVE_CONFIG.read_text(encoding="utf-8"))

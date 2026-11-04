@@ -581,7 +581,8 @@ def check_dedup(
         params = urllib.parse.urlencode(query)
         url = f"http://127.0.0.1:{port}/search?{params}"
         req = urllib.request.Request(url, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=3) as resp:
+        # MCP 端（funnel.js execWriteGate）等整支寫入閘 15 秒；長內容的嵌入在較慢的機器要 4 秒以上，3 秒會讓長卡跳過去重
+        with urllib.request.urlopen(req, timeout=10) as resp:
             results = json.loads(resp.read())
 
         if not results:
