@@ -5,7 +5,7 @@
 
 ---
 ## 2026-11-04 整併 upstream/main v6.1 到 Mac 線（88 commits）
-- **衝突解法**：17 檔——settings 以本地為底補 SubagentStart／InstructionsLoaded／StopFailure 與 codex rewake、拆 WebFetch 閘，頂層補三個系統契約鍵（`cleanupPeriodDays` 留待決定）；測試與文件衝突段吃 upstream；atom 取 upstream 檔頭再補回本地 Related；退役的 `native-memory-bridge.py`、`verify_data_file_ask.py` 照刪。
+- **衝突解法**：17 檔——settings 以本地為底補 SubagentStart／InstructionsLoaded／StopFailure 與 codex rewake、拆 WebFetch 閘，頂層補三個系統契約鍵；`cleanupPeriodDays` 照使用者決定明寫 30（不取 upstream 的 14，也擋安裝器補 14）；測試與文件衝突段吃 upstream；atom 取 upstream 檔頭再補回本地 Related；退役的 `native-memory-bridge.py`、`verify_data_file_ask.py` 照刪。
 - **修 upstream 帶進來的問題**：`verify_ensure_mcp.py` 換掉全域 `subprocess.run` 不還原、頂層 `sys.exit`（整組 pytest 收集崩或 807 案連帶紅）；`verify_install`、`verify_dashboard_api_atoms` 斷言沒跟上契約鍵與私人列；code-guide 檔頭改 `when_to_use`／`metadata`；指紋大小寫測試限 Windows；USER.md 補「例外：直上版控」硬契約行。
 - **順手修本機兩紅**：寫入閘向量去重查詢逾時 3 → 10 秒（MCP 端等整支閘 15 秒；本機長內容嵌入約 4 秒，原本長卡會跳過去重）；`verify_codex_models` 的 live 對拍在沒裝 codex CLI 時跳過（殘留的舊 models_cache 不算有裝）。
 - **驗證**：八個 Python 驗證目錄全組 5,625 綠、160 skip、0 紅。MCP Node 測試 9 支 PASS；`install.py --verify` 0 FAIL。坑的細節見 `DevHistory/設定與遷移/upstream-merge-v6-mac-2026-11.md`。
