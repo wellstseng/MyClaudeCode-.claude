@@ -2,6 +2,11 @@
   "env": {
     "CLAUDE_USER": "wellstseng"
   },
+  "crossSessionInbound": "accept",
+  "worktree": {
+    "baseRef": "head"
+  },
+  "autoMemoryEnabled": false,
   "permissions": {
     "allow": [
       "Bash(*)",
@@ -87,16 +92,6 @@
       }
     ],
     "PreToolUse": [
-      {
-        "matcher": "WebFetch",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"$HOME/.claude/hooks/webfetch-guard.sh\"",
-            "timeout": 20
-          }
-        ]
-      },
       {
         "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash|PowerShell|Agent|Task|AskUserQuestion|ExitPlanMode|mcp__workflow-guardian__atom_write|mcp__workflow-guardian__atom_edit_meta|mcp__workflow-guardian__atom_retire|mcp__workflow-guardian__atom_move",
         "hooks": [
@@ -205,8 +200,10 @@
           },
           {
             "type": "command",
-            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/codex_companion.py'),run_name='__main__')\"",
-            "timeout": 20
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/codex_companion.py'),run_name='__main__')\" rewake",
+            "async": true,
+            "asyncRewake": true,
+            "timeout": 300
           },
           {
             "type": "command",
@@ -242,6 +239,39 @@
           }
         ]
       }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/workflow-guardian.py'),run_name='__main__')\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "InstructionsLoaded": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/handlers/instructions_loaded.py'),run_name='__main__')\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import runpy,pathlib;runpy.run_path(str(pathlib.Path.home()/'.claude/hooks/handlers/stop_failure.py'),run_name='__main__')\"",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   },
   "statusLine": {
@@ -270,5 +300,6 @@
     }
   },
   "language": "繁體中文",
-  "theme": "light"
+  "theme": "light",
+  "idleCompaction": false
 }

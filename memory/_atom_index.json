@@ -137,7 +137,8 @@
         "WebFetch",
         "capability",
         "PostCompact",
-        "PostToolBatch"
+        "PostToolBatch",
+        "官方文件"
       ],
       "scope": "global",
       "related": [
@@ -234,7 +235,9 @@
         "全自動完工",
         "自動推進",
         "auto-handoff",
-        "自動交接"
+        "自動交接",
+        "/goal",
+        "長任務續跑"
       ],
       "scope": "global",
       "related": [
@@ -1974,7 +1977,6 @@
         "並行llm即時通訊-inbox機制",
         "回訪機制-改完一週後看數據交給到期自動跑-交接以接手者零記憶為前提",
         "workflow-rules",
-        "feedback-計畫文件紀律-人稱標明角色-重大發現獨立成節-監督者與留意事項必寫",
         "feedback-建檔或改名後回報一律給絕對路徑-相對連結與中途改名讓使用者找不到報告",
         "總控台多軌合併經驗-退回同一面第二次就定死規則或改設計-整批合併後的紅先單跑歸軌補修不reset-接續單要寫舊步驟作廢與停工恢復條件",
         "讀資料要讀權威源頭-副本-前任派工單-續接單可能過時或不只一份-先確認來源再用"
@@ -2253,8 +2255,7 @@
       "related": [
         "feedback-live-檔與記憶不留版本操作脈絡歷史歸專門檔",
         "feedback-workflow-discipline",
-        "feedback-收尾報告使用者視角四要素-白話綜觀非片段細節",
-        "feedback-動手前先給預期外清單-使用者用一句話重述概念核對落差-順帶發現一起修"
+        "feedback-收尾報告使用者視角四要素-白話綜觀非片段細節"
       ]
     },
     {
@@ -3052,7 +3053,9 @@
         "ai-inbox",
         "斷線喚回",
         "monitor喚醒",
-        "compat hooks"
+        "compat hooks",
+        "to-opus",
+        "to-fable"
       ],
       "scope": "global",
       "related": [
@@ -3078,7 +3081,9 @@
         "雙 sessionstart",
         "monitor 重掛",
         "並行 session",
-        "面板 MCP"
+        "面板 MCP",
+        "reload 後名字換了",
+        "No agent named"
       ],
       "scope": "global",
       "related": [
@@ -3218,7 +3223,8 @@
         "實機一輪",
         "to-opus",
         "to-fable",
-        "雙 session"
+        "雙 session",
+        "總管模式"
       ],
       "scope": "global",
       "related": [
@@ -3705,7 +3711,6 @@
       "related": [
         "自己flag的維護動作直接做完不要反問",
         "feedback-未實證先別斷言-從根源驗證-先證再修-反退避反冗長",
-        "feedback-動手前先給預期外清單-使用者用一句話重述概念核對落差-順帶發現一起修",
         "feedback-全貌未對齊前不要一直要使用者拍板-先弄懂他要的全貌-再讓他看懂我們構思的全貌",
         "feedback-預計畫文件的三種退避形態-dry-run出廠-登記延後-一槓空格-補什麼要標閘注入工具規矩-怎麼驗要標題組機器數字第二家模型看人看"
       ]
@@ -4605,8 +4610,7 @@
       "scope": "global",
       "related": [
         "feedback-收尾報告使用者視角四要素-白話綜觀非片段細節",
-        "所有決策和報告必須提供清晰的問題-數據佐證-並以易懂的白話形式-指出錯誤-優化點",
-        "feedback-計畫文件紀律-人稱標明角色-重大發現獨立成節-監督者與留意事項必寫"
+        "所有決策和報告必須提供清晰的問題-數據佐證-並以易懂的白話形式-指出錯誤-優化點"
       ]
     },
     {
@@ -5718,7 +5722,9 @@
         "session 互踩",
         "add -A 預警",
         "late-collision",
-        "Agent Teams"
+        "Agent Teams",
+        "crossSessionInbound",
+        "跨 session SendMessage"
       ],
       "scope": "global",
       "related": [
@@ -6479,7 +6485,7 @@
         "FailureDetect 誤觸",
         "sub-agent 回報",
         "harness 生成 prompt",
-        "is_harness_generated_prompt",
+        "user_typed_text",
         "sanitize_harness_noise",
         "假糾正"
       ],
@@ -8098,7 +8104,6 @@
         "user_typed_text",
         "使用者原話",
         "權威判斷",
-        "is_harness_generated_prompt",
         "turn_prompts",
         "recent_user_prompts",
         "口令",
@@ -8538,7 +8543,8 @@
         "換手時機",
         "transcript usage",
         "cache_read_input_tokens",
-        "多 session 盤點"
+        "多 session 盤點",
+        "claude agents --json"
       ],
       "scope": "global"
     },
@@ -9840,20 +9846,18 @@
       "triggers": [
         "宣稱行",
         "不做行",
+        "追蹤行",
         "不是退避",
         "CLAIM_WORDS_ARE_HINTS",
+        "CLAIM_DISCLAIM_NEEDS_REASON",
+        "CLAIM_RECEIPT_REF_MATCH",
         "NOT_DOING_DECLARED",
-        "USER_WAIVER_NEEDS_CITATION",
         "說明句誤擋",
         "非本回合宣稱",
         "對應哪張收據",
         "退避例外入口",
-        "先這樣 跳過 豁免",
-        "claim_disclaimed",
-        "testfail_waived",
-        "G6 階段 4",
-        "判斷入口盤點 P6",
-        "P7"
+        "先這樣 跳過",
+        "claim_disclaimed"
       ],
       "scope": "global"
     },
@@ -10034,7 +10038,9 @@
         "promptId",
         "SubagentStop",
         "agent_modified_files",
-        "子代理改碼"
+        "子代理改碼",
+        "transcripts_of",
+        "assistant_texts"
       ],
       "scope": "global",
       "related": [
@@ -10216,13 +10222,9 @@
         ".claude.json.lock",
         "saveConfigWithLock",
         "原子寫入 config",
-        "整份覆寫設定檔",
-        "console-spawn ensure_trust"
+        "整份覆寫設定檔"
       ],
-      "scope": "global",
-      "depends": [
-        "path:~/.claude/skills/console/scripts/console-spawn.py"
-      ]
+      "scope": "global"
     },
     {
       "name": "windows剛被別的行程搬動或寫入的檔會短暫拒絕存取-資料夾內有開著的檔就搬不動-多行程搶檔要對permissionerror稍等重試",
@@ -10372,7 +10374,6 @@
       "name": "紅測不准用skip躲-使用者說跳過是這件不做-先寫不做行讓程式留帳",
       "path": "memory/驗證與實證/紅測不准用skip躲-使用者說跳過是這件不做-先寫不做行讓程式留帳.md",
       "triggers": [
-        "不做｜",
         "紅測",
         "skip",
         "xfail",
@@ -10381,11 +10382,10 @@
         "測試跳過",
         "標 skip",
         "改舊測試",
-        "OldTestDeclare",
-        "OLD_TEST_CHANGE_NEEDS",
         "加 skip",
         "斷言變了",
-        "先不用管"
+        "先不用管",
+        "先這樣"
       ],
       "scope": "global",
       "entry": [
@@ -10539,9 +10539,8 @@
       "name": "動使用者資料檔先看改完使用者會看到什麼-行為會變或不在需求裡就先問-修語法也可能改了全部輸出",
       "path": "memory/行為契約/動使用者資料檔先看改完使用者會看到什麼-行為會變或不在需求裡就先問-修語法也可能改了全部輸出.md",
       "triggers": [
-        "DataFileAsk",
         "動資料檔",
-        "USER_DATA_FILE_NEEDS",
+        "改設定檔",
         "使用者既有的資料檔",
         "先問使用者",
         "需求沒點名",
@@ -10559,12 +10558,12 @@
       "triggers": [
         "SmellGate",
         "病形閘",
-        "GateBypass",
-        "不是繞閘",
-        "繞閘嫌疑",
+        "smell-ok",
         "移出暫存",
         "暫存區",
         "別人的改動",
+        "只提交自己的檔",
+        "git commit --",
         "上GIT",
         "commit"
       ],
@@ -10684,12 +10683,13 @@
       "path": "memory/行為契約/使用者要求過的事不能用不做行推掉-引用原話豁免只限原話放掉的就是這一件.md",
       "triggers": [
         "使用者說「",
-        "USER_WAIVER_NEEDS_CITATION",
         "先這樣",
         "跳過",
         "明天再說",
         "原句片段",
-        "之後再補"
+        "之後再補",
+        "引用原話",
+        "使用者放掉"
       ],
       "scope": "global",
       "entry": [
@@ -11069,7 +11069,6 @@
       "triggers": [
         "G6",
         "G6 評分",
-        "不做｜",
         "跳過",
         "驗證範圍",
         "誤判",
@@ -11346,7 +11345,6 @@
         "contract test",
         "ERP 介面",
         "對外介面測試",
-        "改舊測試｜",
         "斷言紅了",
         "外部系統格式"
       ],
@@ -11449,7 +11447,7 @@
       "triggers": [
         "改語意",
         "舊斷言跟不上",
-        "改舊測試宣告",
+        "改舊測試",
         "重跑仍紅",
         "RETRY_COUNTS_RERUN_CYCLES",
         "重試計數",
@@ -11575,10 +11573,12 @@
       "path": "memory/設計通則/靠使用者原話放行的帳要記身分與可被推翻-記節點不只名字-推翻要當次寫回state-原話視窗只留5則帳會在視窗外復活.md",
       "triggers": [
         "豁免帳",
-        "紅測豁免",
+        "放行帳",
         "使用者撤回",
         "state 帳復活",
-        "原話視窗"
+        "原話視窗",
+        "口令失效",
+        "使用者本人打的字"
       ],
       "scope": "global"
     },
@@ -11769,11 +11769,12 @@
       "name": "datafileask宣告行寫在回覆文字裡同一則訊息的工具呼叫在pretooluse讀不到-先跑一個bash開頭註解行再發edit",
       "path": "memory/CC與原子記憶契約/datafileask宣告行寫在回覆文字裡同一則訊息的工具呼叫在pretooluse讀不到-先跑一個bash開頭註解行再發edit.md",
       "triggers": [
-        "動資料檔｜",
-        "DataFileAsk",
         "宣告行讀不到",
         "文字還沒落盤",
-        "資料檔宣告"
+        "宣告寫進指令註解",
+        "負向對照｜",
+        "NEGATIVE_CONTROL_DECLARED",
+        "同一則訊息的工具呼叫"
       ],
       "scope": "global",
       "related": [
@@ -12067,7 +12068,8 @@
         "子行程繼承環境變數",
         "ListAgents",
         "project",
-        "local"
+        "local",
+        "setting-sources project local"
       ],
       "scope": "global",
       "related": [
@@ -13034,24 +13036,6 @@
       "scope": "global",
       "related": [
         "閘判不了時只免掉判不了的那一條-能獨立判的照查-擋滿放行要走正常放行路徑"
-      ]
-    },
-    {
-      "name": "這支測試在基底就紅的證據要綁真的跑過的那一次-記head與工作樹乾淨-只認單段測試指令-基底早於session開始-追蹤文件整詞點名",
-      "path": "memory/驗證與實證/這支測試在基底就紅的證據要綁真的跑過的那一次-記head與工作樹乾淨-只認單段測試指令-基底早於session開始-追蹤文件整詞點名.md",
-      "triggers": [
-        "基底就紅",
-        "基底紅",
-        "改動前就紅",
-        "既有紅測",
-        "pre-existing failure",
-        "紅測放行",
-        "基底 commit",
-        "追蹤文件"
-      ],
-      "scope": "global",
-      "related": [
-        "放行或豁免要綁使用者看過的那幾件-鍵用規則加完整對象-之後又改了檔就失效"
       ]
     },
     {
@@ -14077,7 +14061,9 @@
         "claude stop",
         "ListAgents bg waiting",
         "收尾放行題沒人答",
-        "工作樹 Permission denied"
+        "工作樹 Permission denied",
+        "CLAUDE_JOB_DIR",
+        "背景 session 收尾閘"
       ],
       "scope": "global"
     },
@@ -14096,7 +14082,10 @@
         "信任鍵",
         "Rewind",
         "native-binary claude.exe",
-        "2.1.304"
+        "--name",
+        "--worktree",
+        "worktree.baseRef",
+        "console-spawn"
       ],
       "scope": "global"
     },
@@ -14203,7 +14192,8 @@
         "軌名",
         "分頁標題",
         "多 session 回報",
-        "總控台回報"
+        "總控台回報",
+        "--name"
       ],
       "scope": "global"
     },
@@ -14265,6 +14255,7 @@
         "轉告",
         "SendMessage",
         "ListAgents",
+        "claude agents --json",
         "同伴 session",
         "跨 session 訊息",
         "哪個 session",
@@ -14381,11 +14372,12 @@
         "worktree 隔離",
         "寫不到 live",
         "交付信",
-        "信箱",
         "SendMessage 交付",
         "工作 session",
         "收據 root",
-        "primary working directory"
+        "primary working directory",
+        "--worktree",
+        ".claude/worktrees"
       ],
       "scope": "global",
       "related": [
@@ -14436,8 +14428,8 @@
         "根層專案層溝通",
         "跨session對齊",
         "跟根層談",
-        "信箱摩槽",
-        "兩個session討論同題"
+        "兩個session討論同題",
+        "SendMessage 跨 session 討論"
       ],
       "scope": "global",
       "related": [
@@ -14502,22 +14494,6 @@
       "scope": "global"
     },
     {
-      "name": "跨session訊息只在收件端下一次呼叫工具時才送進來-光結束回合等不到同伴回覆-要等人答完再醒可先背景跑短sleep當計時器",
-      "path": "memory/CC與原子記憶契約/跨session訊息只在收件端下一次呼叫工具時才送進來-光結束回合等不到同伴回覆-要等人答完再醒可先背景跑短sleep當計時器.md",
-      "triggers": [
-        "跨 session 訊息何時送進來",
-        "等同伴回覆",
-        "結束回合等不到",
-        "背景 sleep 計時器",
-        "被叫回來",
-        "ListAgents 收信"
-      ],
-      "scope": "global",
-      "related": [
-        "跨session訊息在收件端進計畫模式時會被扣住等使用者核准-逾時就作廢不送達-補充事項要寫進開工句或等對方離開計畫模式再送"
-      ]
-    },
-    {
       "name": "跨session訊息在收件端進計畫模式時會被扣住等使用者核准-逾時就作廢不送達-補充事項要寫進開工句或等對方離開計畫模式再送",
       "path": "memory/CC與原子記憶契約/跨session訊息在收件端進計畫模式時會被扣住等使用者核准-逾時就作廢不送達-補充事項要寫進開工句或等對方離開計畫模式再送.md",
       "triggers": [
@@ -14527,12 +14503,10 @@
         "not approved before expiry",
         "計畫模式 收不到訊息",
         "權限模式不同",
+        "crossSessionInbound",
         "開工句補充"
       ],
-      "scope": "global",
-      "related": [
-        "跨session訊息只在收件端下一次呼叫工具時才送進來-光結束回合等不到同伴回覆-要等人答完再醒可先背景跑短sleep當計時器"
-      ]
+      "scope": "global"
     },
     {
       "name": "閘本體的案例綠不等於真實任務裡會動-三個真洞都是工作軌照自己用法測-合併前每軌先用無頭claude跑一個真實小任務再合",
@@ -15185,6 +15159,698 @@
         "macOS",
         "可救回",
         "~/.Trash"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "把既有行為包進寫碼守門開關時守門關的原功能會一起消失-測試預設守門開所以抓不到-包之前列出守門關原行為並補守門關案例",
+      "path": "_AIDocs/_atoms/MemDev/寫碼守門閘/把既有行為包進寫碼守門開關時守門關的原功能會一起消失-測試預設守門開所以抓不到-包之前列出守門關原行為並補守門關案例.md",
+      "triggers": [
+        "守門開關",
+        "if v6",
+        "包進開關",
+        "守門關案例",
+        "糾正計數",
+        "DeepPostMortem",
+        "退步",
+        "非 v6 維持原樣"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "feedback-交接越傳目標視野越小-每次交接從使用者原話重抄根目標-要帶怎麼想那層-每條原則標出處是使用者說的還是ai推的",
+      "path": "memory/Failures/工作流/feedback-交接越傳目標視野越小-每次交接從使用者原話重抄根目標-要帶怎麼想那層-每條原則標出處是使用者說的還是ai推的.md",
+      "triggers": [
+        "交接",
+        "handoff",
+        "接續單",
+        "新 session",
+        "目標視野",
+        "越讀越小",
+        "知識轉移",
+        "腦袋越來越殘"
+      ],
+      "scope": "global",
+      "related": [
+        "handoff-綜觀品質與抗失真寫法",
+        "feedback-始末要講原始目標-階段目標-簡略經過-對目標而言的結果-只講經過就是目光狹隘-功能越修腦袋越縮",
+        "feedback-評估守門或系統價值要回到使用者原話-ai整理出的機制與目標樹節點不是使用者的目標"
+      ]
+    },
+    {
+      "name": "codex-歪樓三因與入場用法-只給diff沒綜觀-沒嚴重度門檻照單全收-叫它找洞沒停止條件-對策是同步包自讀repo加兩級嚴重度一輪封頂",
+      "path": "_AIDocs/_atoms/Tools/codex-歪樓三因與入場用法-只給diff沒綜觀-沒嚴重度門檻照單全收-叫它找洞沒停止條件-對策是同步包自讀repo加兩級嚴重度一輪封頂.md",
+      "triggers": [
+        "加派 codex",
+        "codex 入場",
+        "codex 審查",
+        "codex 施工",
+        "codex agent",
+        "codex 歪樓",
+        "帶歪",
+        "第二意見",
+        "同步包",
+        "codex-call"
+      ],
+      "scope": "global",
+      "related": [
+        "feedback-總控台要主動發掘矛盾與困擾並維持使用者立的工作要求-不被codex或自檢工具牽著走",
+        "第二意見分歧裁決-codex的block要親自重現成立才採-重現不了才不採-我方測試全綠不是駁回理由"
+      ]
+    },
+    {
+      "name": "feedback-退避常是把目標相干的範圍一句帶過-力氣花在不相干或好交差的事-使用者寧可錯殺-收尾報告要白話分三類讓他一眼看出",
+      "path": "memory/Failures/行為契約/feedback-退避常是把目標相干的範圍一句帶過-力氣花在不相干或好交差的事-使用者寧可錯殺-收尾報告要白話分三類讓他一眼看出.md",
+      "triggers": [
+        "退避",
+        "寧可錯殺",
+        "一句話帶過",
+        "收尾檢核",
+        "收尾報告",
+        "HUD",
+        "技術臭",
+        "基礎分類",
+        "AI 自己做主",
+        "歪樓",
+        "飄移"
+      ],
+      "scope": "global",
+      "related": [
+        "feedback-改碼中發現相鄰問題要順手修或白話提出一併修正的確認-不准另外處理之後再說不在範圍帶過"
+      ]
+    },
+    {
+      "name": "agent工具的worktree隔離在工作目錄磁碟代號是小寫c時被拒-報core-worktree-redirect-等工作目錄回到大寫c再派並清掉殘留的鎖住工作樹",
+      "path": "memory/CC與原子記憶契約/agent工具的worktree隔離在工作目錄磁碟代號是小寫c時被拒-報core-worktree-redirect-等工作目錄回到大寫c再派並清掉殘留的鎖住工作樹.md",
+      "triggers": [
+        "isolation worktree",
+        "worktree 隔離",
+        "core.worktree redirect",
+        "Refusing to use",
+        "磁碟代號大小寫",
+        "子代理工作樹",
+        "agent worktree",
+        "locked worktree"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "python-urllib逾時分兩型-裸timeouterror是請求已送出在等回應-連線階段逾時包成urlerror-判遠端服務是忙還是連不上",
+      "path": "memory/驗證與實證/python-urllib逾時分兩型-裸timeouterror是請求已送出在等回應-連線階段逾時包成urlerror-判遠端服務是忙還是連不上.md",
+      "triggers": [
+        "TimeoutError",
+        "URLError",
+        "urllib 逾時",
+        "timed out",
+        "連不上",
+        "遠端服務逾時",
+        "WinError 10053",
+        "回報管理者"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "擋程式寫法的閘要防偏離主題與改不完-每回合同repo只擋一次-舊碼搬動改名合併與別人的碼會被算成新寫-擋訊息要教不是這次寫的就不修",
+      "path": "memory/設計通則/擋程式寫法的閘要防偏離主題與改不完-每回合同repo只擋一次-舊碼搬動改名合併與別人的碼會被算成新寫-擋訊息要教不是這次寫的就不修.md",
+      "triggers": [
+        "病形閘",
+        "SmellGate",
+        "擋次上限",
+        "改不完",
+        "測不完",
+        "偏離主題",
+        "無限迴圈",
+        "commit 前檢查",
+        "程式寫法閘",
+        "smell-ok"
+      ],
+      "scope": "global",
+      "related": [
+        "閘的擋次上限要照同一則回覆算一次-逐個工具呼叫計數會在ai看到擋訊息前就用完上限-擋次去重上限跟分批用同一套批次鍵"
+      ]
+    },
+    {
+      "name": "hook讀transcript找宣告行時同一則回覆先寫的文字當下可能讀不到-宣告寫進那條指令自己的註解行",
+      "path": "memory/CC與原子記憶契約/hook讀transcript找宣告行時同一則回覆先寫的文字當下可能讀不到-宣告寫進那條指令自己的註解行.md",
+      "triggers": [
+        "宣告行讀不到",
+        "文字還沒落盤",
+        "宣告寫進指令註解",
+        "負向對照｜",
+        "NEGATIVE_CONTROL_DECLARED",
+        "同一則訊息的工具呼叫"
+      ],
+      "scope": "global",
+      "related": [
+        "擋訊息教的替代管道會被當成替代做法-寫明註解只放在不寫檔的指令上-宣告完照常用edit-write-同類說法全面grep並用掃原始碼的案例守住"
+      ]
+    },
+    {
+      "name": "紅測不准用skip躲-使用者說跳過是這件不做-測試照紅不動-收尾報告講明哪支沒修並引原話",
+      "path": "memory/驗證與實證/紅測不准用skip躲-使用者說跳過是這件不做-測試照紅不動-收尾報告講明哪支沒修並引原話.md",
+      "triggers": [
+        "紅測",
+        "skip",
+        "xfail",
+        "跳過",
+        "先不管",
+        "測試跳過",
+        "標 skip",
+        "改舊測試",
+        "加 skip",
+        "斷言變了",
+        "先不用管",
+        "先這樣"
+      ],
+      "scope": "global",
+      "entry": [
+        "E08",
+        "E21"
+      ]
+    },
+    {
+      "name": "刻意改程式語意前先讀碼列出會被打到的舊斷言-一次改完再跑-第一次紅就對清單不重跑",
+      "path": "memory/驗證與實證/刻意改程式語意前先讀碼列出會被打到的舊斷言-一次改完再跑-第一次紅就對清單不重跑.md",
+      "triggers": [
+        "改語意",
+        "舊斷言跟不上",
+        "改舊測試",
+        "重跑仍紅",
+        "RETRY_COUNTS_RERUN_CYCLES",
+        "重試計數",
+        "刻意改行為",
+        "post-mortem",
+        "舊契約寫死",
+        "舊測試守著漏洞",
+        "改契約"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "feedback-派工單叫子代理順手報範圍外問題卻沒停止條件-主session把它們原樣轉成新決策就是自己歪樓-延伸前先問這項針對什麼問題真正該問什麼",
+      "path": "memory/Failures/工作流/feedback-派工單叫子代理順手報範圍外問題卻沒停止條件-主session把它們原樣轉成新決策就是自己歪樓-延伸前先問這項針對什麼問題真正該問什麼.md",
+      "triggers": [
+        "派工單",
+        "範圍外問題",
+        "延展",
+        "延伸",
+        "歪樓",
+        "自我檢討",
+        "要你決定的",
+        "快且有效",
+        "停止條件",
+        "子代理回報",
+        "並行 agent"
+      ],
+      "scope": "global",
+      "related": [
+        "feedback-改碼中發現相鄰問題要順手修或白話提出一併修正的確認-不准另外處理之後再說不在範圍帶過"
+      ]
+    },
+    {
+      "name": "使用者說務必的流程不能做成靠ai讀description自己判斷的skill-真實設計題實測沒被叫-排除條款會被拿來當不叫的理由",
+      "path": "_AIDocs/_atoms/CC與原子記憶契約/使用者說務必的流程不能做成靠ai讀description自己判斷的skill-真實設計題實測沒被叫-排除條款會被拿來當不叫的理由.md",
+      "triggers": [
+        "skill 觸發",
+        "description 觸發",
+        "務必",
+        "自動叫 skill",
+        "skill 沒被叫",
+        "加派 codex",
+        "入場條件",
+        "排除條款",
+        "第二意見"
+      ],
+      "scope": "global",
+      "related": [
+        "feedback-派工單叫子代理順手報範圍外問題卻沒停止條件-主session把它們原樣轉成新決策就是自己歪樓-延伸前先問這項針對什麼問題真正該問什麼"
+      ]
+    },
+    {
+      "name": "feedback-使用者對同一題久久無法裁定時不要一直壓他拍板-換方法更白話解釋-解釋不清常是ai自己哪裡搞壞的訊號",
+      "path": "memory/Failures/行為契約/feedback-使用者對同一題久久無法裁定時不要一直壓他拍板-換方法更白話解釋-解釋不清常是ai自己哪裡搞壞的訊號.md",
+      "triggers": [
+        "裁定",
+        "拍板",
+        "無法裁定",
+        "看不懂",
+        "更白話",
+        "拐彎貓膩",
+        "一直問",
+        "壓著我",
+        "要拍什麼",
+        "開發期 token"
+      ],
+      "scope": "global",
+      "related": [
+        "feedback-派工單叫子代理順手報範圍外問題卻沒停止條件-主session把它們原樣轉成新決策就是自己歪樓-延伸前先問這項針對什麼問題真正該問什麼"
+      ]
+    },
+    {
+      "name": "從使用者指正寫成的卡靠使用者的話觸發-永遠在他已經提醒之後才送到-管做事時機的原則要綁在ai自己的動作時刻",
+      "path": "_AIDocs/_atoms/MemDev/從使用者指正寫成的卡靠使用者的話觸發-永遠在他已經提醒之後才送到-管做事時機的原則要綁在ai自己的動作時刻.md",
+      "triggers": [
+        "一而再再而三提醒",
+        "重複提醒",
+        "修正類卡",
+        "觸發時機",
+        "卡太晚到",
+        "動作時刻",
+        "切入點",
+        "關鍵處埋 code",
+        "行為原則"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "自動截vs-code裡claude-code的用量面板-另開專屬vs-code帶偵錯埠用cdp接-skip-welcome-清electron-run-as-node-同步playwright不用timesleep等",
+      "path": "memory/驗證與實證/自動截vs-code裡claude-code的用量面板-另開專屬vs-code帶偵錯埠用cdp接-skip-welcome-清electron-run-as-node-同步playwright不用timesleep等.md",
+      "triggers": [
+        "VS Code 自動化",
+        "Claude Code 用量面板",
+        "Account & Usage",
+        "/usage",
+        "connect_over_cdp",
+        "remote-debugging-port",
+        "user-data-dir",
+        "ELECTRON_RUN_AS_NODE",
+        "skip-welcome",
+        "webview frame",
+        "用量截圖",
+        "Electron CDP"
+      ],
+      "scope": "global",
+      "related": [
+        "自動化開claude-ai用量頁-headless-edge撞cloudflare人類驗證-日常chrome-profile被鎖不可借用-改專屬chrome-profile一次登入",
+        "electron-uia-automation"
+      ]
+    },
+    {
+      "name": "feedback-雞肋判準-有跟沒有一樣是雞肋-沒用還多花時間效能或讓ai歪樓是絕對雞肋-評估要看功能全開時使用者直接承受的token與時間",
+      "path": "memory/Failures/思考與決策/feedback-雞肋判準-有跟沒有一樣是雞肋-沒用還多花時間效能或讓ai歪樓是絕對雞肋-評估要看功能全開時使用者直接承受的token與時間.md",
+      "triggers": [
+        "雞肋",
+        "絕對雞肋",
+        "可以拔掉",
+        "有跟沒有一樣",
+        "不必要的消耗",
+        "簡單工作變慢",
+        "對所有人開啟",
+        "功能盤點"
+      ],
+      "scope": "global",
+      "related": [
+        "量閘的效果前先查閘何時上下線-時間窗要切在政策變更點-否則會拿已拔掉的閘當現況"
+      ]
+    },
+    {
+      "name": "量測前後要核受測模型與effort-settings的model與effortlevel會蓋過claude-effort環境變數-同一跑殼隔幾小時可能換了模型",
+      "path": "memory/驗證與實證/量測前後要核受測模型與effort-settings的model與effortlevel會蓋過claude-effort環境變數-同一跑殼隔幾小時可能換了模型.md",
+      "triggers": [
+        "CLAUDE_EFFORT",
+        "effortLevel",
+        "settings.json model",
+        "受測模型",
+        "量測對照",
+        "modelUsage",
+        "拔前拔後",
+        "xhigh",
+        "同一跑殼",
+        "token 少一半"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "補發歷史版本的github-release要先用git-committer-date把標籤打成當年日期再建release-release排序吃建立當下的標籤日期-事後改標籤不會更新",
+      "path": "memory/版控/補發歷史版本的github-release要先用git-committer-date把標籤打成當年日期再建release-release排序吃建立當下的標籤日期-事後改標籤不會更新.md",
+      "triggers": [
+        "GitHub Release",
+        "gh release create",
+        "release notes",
+        "歷史版本",
+        "補標籤",
+        "GIT_COMMITTER_DATE",
+        "release 排序",
+        "tagger date",
+        "Latest"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "多代理分片寫跨版本文件要加跨版一致性檢查與共同決定表-共同決定先查證再發給各代理",
+      "path": "memory/工作流/多代理分片寫跨版本文件要加跨版一致性檢查與共同決定表-共同決定先查證再發給各代理.md",
+      "triggers": [
+        "release notes",
+        "CHANGELOG 補寫",
+        "多代理分片",
+        "workflow 寫文件",
+        "跨版一致性",
+        "共同決定",
+        "各版本的發布說明"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "查claude帳號用量不必開瀏覽器-拿claude-code登入token打api-oauth-usage-回整數百分比與重置時間-token過期只報不自刷-用量頁的usage-api週額度多條取最高",
+      "path": "memory/CC與原子記憶契約/查claude帳號用量不必開瀏覽器-拿claude-code登入token打api-oauth-usage-回整數百分比與重置時間-token過期只報不自刷-用量頁的usage-api週額度多條取最高.md",
+      "triggers": [
+        "帳號用量",
+        "額度",
+        "usage API",
+        "oauth/usage",
+        ".credentials.json",
+        "claudeAiOauth",
+        "seven_day",
+        "five_hour",
+        "resets_at",
+        "utilization",
+        "用量頁",
+        "limits",
+        "weekly",
+        "重置時間",
+        "usage-watch",
+        "usage-snapshot"
+      ],
+      "scope": "global",
+      "depends": [
+        "path:~/.claude/tools/usage-watch.py",
+        "path:~/.claude/tools/usage-snapshot/usage_snapshot.py"
+      ]
+    },
+    {
+      "name": "windows排程每小時用once加repetitioninterval-改時間set-scheduledtask只換trigger先比dayofweek與startboundary再寫-multipleinstances-ignorenew防疊跑",
+      "path": "memory/OS-Windows/windows排程每小時用once加repetitioninterval-改時間set-scheduledtask只換trigger先比dayofweek與startboundary再寫-multipleinstances-ignorenew防疊跑.md",
+      "triggers": [
+        "Task Scheduler",
+        "排程",
+        "ScheduledTask",
+        "New-ScheduledTaskTrigger",
+        "Set-ScheduledTask",
+        "RepetitionInterval",
+        "每小時",
+        "MultipleInstances",
+        "StartBoundary",
+        "DaysOfWeek",
+        "pythonw 排程",
+        "Register-ScheduledTask"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "腳本跳windows通知走powershell-winrt-toastnotificationmanager-appid用powershell自己的-文字走環境變數不拼字串-discord用webhook-post-content上限2000",
+      "path": "memory/OS-Windows/腳本跳windows通知走powershell-winrt-toastnotificationmanager-appid用powershell自己的-文字走環境變數不拼字串-discord用webhook-post-content上限2000.md",
+      "triggers": [
+        "Windows 通知",
+        "toast",
+        "ToastNotification",
+        "桌面通知",
+        "Discord",
+        "webhook",
+        "通知管道",
+        "跳通知",
+        "WinRT",
+        "AppId",
+        "notify"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "從transcript算本機token用量-assistant列以message-id加requestid去重-加權近計費input加5m快取1點25倍1h快取2倍讀0點1倍輸出5倍-專案名取projects下第一層-rglob含子代理",
+      "path": "memory/CC與原子記憶契約/從transcript算本機token用量-assistant列以message-id加requestid去重-加權近計費input加5m快取1點25倍1h快取2倍讀0點1倍輸出5倍-專案名取projects下第一層-rglob含子代理.md",
+      "triggers": [
+        "token 用量",
+        "transcript usage",
+        "加權 token",
+        "cache_creation",
+        "ephemeral_1h_input_tokens",
+        "cache_read_input_tokens",
+        "requestId",
+        "message.id 去重",
+        "哪個專案在燒",
+        "本機用量",
+        "projects jsonl"
+      ],
+      "scope": "global",
+      "related": [
+        "盤點並行session的context用量-讀projects下各transcript最後一筆assistant-usage三欄相加-名字對應靠worktree資料夾與listagents啟動時間"
+      ]
+    },
+    {
+      "name": "排程死人開關的逾期提醒要分排程跑與手動跑-手動查一次也寫同一個last-run會讓沒註冊的人從此每場被提醒-last-run記scheduled只對排程跑法提醒",
+      "path": "memory/設計通則/排程死人開關的逾期提醒要分排程跑與手動跑-手動查一次也寫同一個last-run會讓沒註冊的人從此每場被提醒-last-run記scheduled只對排程跑法提醒.md",
+      "triggers": [
+        "死人開關",
+        "dead man switch",
+        "逾期提醒",
+        "last-run",
+        "排程沒跑",
+        "SessionStart 提醒",
+        "advisory",
+        "每場都提醒",
+        "手動跑",
+        "stale",
+        "token 稅",
+        "雞肋"
+      ],
+      "scope": "global",
+      "related": [
+        "feedback-審同伴mr的收錄判準-對協作真有幫助才收-雞肋浪費token不收-專案層慣例不進核心-部分取用要寫清楚取捨"
+      ]
+    },
+    {
+      "name": "feedback-設計方向題的答案是一句可做的操作不是現況診斷-尺讀了引了卻沒當結論-染源含自己session剛讀的判準卡",
+      "path": "memory/Failures/思考與決策/feedback-設計方向題的答案是一句可做的操作不是現況診斷-尺讀了引了卻沒當結論-染源含自己session剛讀的判準卡.md",
+      "triggers": [
+        "設計方向題",
+        "盲題",
+        "預測終局",
+        "技術口水",
+        "建設性",
+        "障礙表",
+        "從零最簡形狀",
+        "現況診斷",
+        "建議操作",
+        "被現況染",
+        "判準卡",
+        "噴技術"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "多llm群聊激辯的做法-同一討論串輪流回應不是各寫一份-派對立角色每輪必出新反對-主持只傳話拉回原話不圈題不催收斂-收斂輪才限每人一個做法",
+      "path": "_AIDocs/_atoms/工作流/多llm群聊激辯的做法-同一討論串輪流回應不是各寫一份-派對立角色每輪必出新反對-主持只傳話拉回原話不圈題不催收斂-收斂輪才限每人一個做法.md",
+      "triggers": [
+        "多 LLM 激辯",
+        "群聊討論",
+        "討論群",
+        "多 agent 討論",
+        "互相批判",
+        "激辯",
+        "主持人",
+        "收斂輪",
+        "對立角色",
+        "Codex 討論",
+        "Opus 4.6",
+        "跳題稽核"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "跨機共用的案例不要綁作者環境-真卡只認檔名-本機代號驗格式-全庫門檻只數線上看得到的",
+      "path": "memory/驗證與實證/跨機共用的案例不要綁作者環境-真卡只認檔名-本機代號驗格式-全庫門檻只數線上看得到的.md",
+      "triggers": [
+        "別台電腦紅",
+        "非作者機器",
+        "綁機器",
+        "綁作者環境",
+        "拿真卡當輸入",
+        "platform.node",
+        "全庫門檻",
+        "測試讀真實資料",
+        "多機測試"
+      ],
+      "scope": "global",
+      "related": [
+        "案例不要寫死會合法增長的清單長度-照實際讀到的算-只斷言每一項的性質"
+      ]
+    },
+    {
+      "name": "放寬gitignore前先搬走不該公開的檔-背景同步隨時會把新放行的檔commit並push-搬檔結果要看完整輸出不先grep",
+      "path": "memory/版控/放寬gitignore前先搬走不該公開的檔-背景同步隨時會把新放行的檔commit並push-搬檔結果要看完整輸出不先grep.md",
+      "triggers": [
+        "放寬 gitignore",
+        "gitignore 放行",
+        "負向規則",
+        "背景同步",
+        "自動 push",
+        "knowledge harvest",
+        "放行名單",
+        "資料搬移順序"
+      ],
+      "scope": "global",
+      "related": [
+        "改名被gitignore忽略的資料夾要同一個commit改gitignore-否則新名字底下的檔全變未追蹤-一次git-add就把不該公開的東西推出去"
+      ]
+    },
+    {
+      "name": "feedback-防護要分級-只擋真正敏感的-把私人當機密會扼殺那層設計-提防範前先算外流代價與發生頻率",
+      "path": "memory/Failures/思考與決策/feedback-防護要分級-只擋真正敏感的-把私人當機密會扼殺那層設計-提防範前先算外流代價與發生頻率.md",
+      "triggers": [
+        "過度防範",
+        "防護分級",
+        "用起來變難用",
+        "拒寫",
+        "擋寫入",
+        "機密",
+        "鑑別敏感",
+        "確保日後任何人",
+        "外流代價"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "記憶系統repo在github是公開的-進版控等於對外公開-內網位址與個人敏感資訊不寫進會上版控的檔",
+      "path": "memory/版控/記憶系統repo在github是公開的-進版控等於對外公開-內網位址與個人敏感資訊不寫進會上版控的檔.md",
+      "triggers": [
+        "公開 repo",
+        "repo 可見性",
+        "對外公開",
+        "外流",
+        "進版控",
+        "gh repo view",
+        "內網位址",
+        "使用者原話回填"
+      ],
+      "scope": "global",
+      "related": [
+        "放寬 gitignore前先搬走不該公開的檔-背景同步隨時會把新放行的檔commit並push-搬檔結果要看完整輸出不先grep",
+        "git-已push-commit-勿改寫-雙-push-url-gitlab-main-force-保護致遠端分叉"
+      ]
+    },
+    {
+      "name": "claude命令列可吃多值的旗標會把後面的開工句當成旗標值吃掉-要寫成等號逗號形式如-toolsab",
+      "path": "memory/CC與原子記憶契約/claude命令列可吃多值的旗標會把後面的開工句當成旗標值吃掉-要寫成等號逗號形式如-toolsab.md",
+      "triggers": [
+        "--tools",
+        "多值旗標",
+        "開工句被吃掉",
+        "開工句沒送到",
+        "claude 命令列參數",
+        "--mcp-config",
+        "空格分隔旗標"
+      ],
+      "scope": "global",
+      "related": [
+        "claude背景session實測-用vscode擴充那支claudeexe起-bg-agents總覽enter就是attach-人能直接選答-hook全套照跑-esc兩下是rewind-關視窗不影響-用stop收"
+      ]
+    },
+    {
+      "name": "閒置session收到跨session訊息會自動開新回合處理-不必靠工具呼叫或背景sleep叫醒-背景session收信做完是結束不是閒置",
+      "path": "memory/CC與原子記憶契約/閒置session收到跨session訊息會自動開新回合處理-不必靠工具呼叫或背景sleep叫醒-背景session收信做完是結束不是閒置.md",
+      "triggers": [
+        "跨 session 訊息何時送進來",
+        "等同伴回覆",
+        "閒置收信",
+        "自動開回合",
+        "notify_when_idle",
+        "背景 session 結束",
+        "被叫回來",
+        "SendMessage 等回信"
+      ],
+      "scope": "global",
+      "related": [
+        "跨session訊息在收件端進計畫模式時會被扣住等使用者核准-逾時就作廢不送達-補充事項要寫進開工句或等對方離開計畫模式再送",
+        "feedback-要轉告別的session就自己sendmessage-名稱對不上session-id就用開始時間比對對話紀錄第一筆"
+      ]
+    },
+    {
+      "name": "hook單筆輸出超過一萬字元會被換成檔案路徑加前2000字預覽-模型不會被要求去讀-本系統以9000字元自截並留溢出全文檔",
+      "path": "memory/CC與原子記憶契約/hook單筆輸出超過一萬字元會被換成檔案路徑加前2000字預覽-模型不會被要求去讀-本系統以9000字元自截並留溢出全文檔.md",
+      "triggers": [
+        "hook 輸出上限",
+        "additionalContext 上限",
+        "一萬字元",
+        "10000 字元",
+        "hook-overflow",
+        "cap_hook_output",
+        "HOOK_TEXT_CAP",
+        "Guardian:Truncated",
+        "注入被截斷"
+      ],
+      "scope": "global",
+      "depends": [
+        "path:~/.claude/hooks/wg_core.py"
+      ]
+    },
+    {
+      "name": "子代理預設背景跑時agent工具結果只有async-launched沒有內容-子代理產出改從subagentstop的last-assistant-message回填",
+      "path": "memory/CC與原子記憶契約/子代理預設背景跑時agent工具結果只有async-launched沒有內容-子代理產出改從subagentstop的last-assistant-message回填.md",
+      "triggers": [
+        "async_launched",
+        "背景子代理",
+        "子代理結果歸因",
+        "SubagentStop",
+        "last_assistant_message",
+        "PostToolUse Agent",
+        "子代理效用帳",
+        "子代理沒有輸出"
+      ],
+      "scope": "global",
+      "depends": [
+        "path:~/.claude/hooks/handlers/stop.py"
+      ]
+    },
+    {
+      "name": "claude-code官方文件可直接抓markdown-sitemap列全頁-llms-txt給分類-用tools-cc-docs-harvest收割到本地再查",
+      "path": "memory/CC與原子記憶契約/claude-code官方文件可直接抓markdown-sitemap列全頁-llms-txt給分類-用tools-cc-docs-harvest收割到本地再查.md",
+      "triggers": [
+        "Claude Code 官方文件",
+        "code.claude.com",
+        "查官方文件",
+        "hooks 事件名",
+        "settings 鍵名",
+        "新名詞",
+        "官方規格",
+        "cc_docs_harvest",
+        "llms.txt",
+        "sitemap",
+        "文件收割",
+        "CC 能力查證"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "多工人並行改同一套hooks的派工守則-檔案所有權表-共用出口主持端先做-settings單一擁有者-工人只回報片段-腳本式verify不進pytest清單",
+      "path": "memory/工作流/多工人並行改同一套hooks的派工守則-檔案所有權表-共用出口主持端先做-settings單一擁有者-工人只回報片段-腳本式verify不進pytest清單.md",
+      "triggers": [
+        "多工人",
+        "並行施工",
+        "派工守則",
+        "檔案所有權",
+        "共用守則檔",
+        "BRIEF",
+        "settings.json 誰改",
+        "工人回報格式",
+        "二十個 agent",
+        "一天完工",
+        "並行改 hooks"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "原生auto-memory已關的理由-原生沒有檢索靠claude自己想起讀檔-150場從未走過-系統提示詞教用write寫記憶與atom-write矛盾-關掉省500tok",
+      "path": "memory/CC與原子記憶契約/原生auto-memory已關的理由-原生沒有檢索靠claude自己想起讀檔-150場從未走過-系統提示詞教用write寫記憶與atom-write矛盾-關掉省500tok.md",
+      "triggers": [
+        "auto memory",
+        "autoMemoryEnabled",
+        "原生記憶",
+        "自動記憶",
+        "MEMORY.md 原生",
+        "projects memory 目錄",
+        "橋接檔",
+        "native-memory-bridge",
+        "要不要開 auto memory",
+        "併行原生記憶"
       ],
       "scope": "global"
     }

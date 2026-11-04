@@ -11,6 +11,7 @@ handlers/session_start.py — SessionStart hook handler
 - Vector service fire-and-forget bg subprocess
 """
 
+import getpass
 import json
 import os
 import subprocess
@@ -22,7 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from wg_core import (
     CLAUDE_DIR, CODE_DIR, WORKFLOW_DIR, MEMORY_DIR, EPISODIC_DIR,
     MEMORY_INDEX,
-    _now_iso, _atom_debug_error, v6_enabled,
+    _now_iso, _atom_debug_error, v6_enabled, cap_hook_output,
     get_project_memory_dir, find_project_root,
     register_project,
     read_state, write_state, new_state, _find_active_sibling_state,
@@ -37,6 +38,7 @@ from wg_atoms import (
     parse_memory_index, parse_aidocs_index, extract_aidocs_keywords,
     build_candidate_pool,
 )
+from atom_spec import ALL_INDEX_FILES, INDEX_FILES, SCOPE_DIR_NAMES   # lib/：共用名字
 from project_root import claude_config_dir   # lib/（wg_core 已放進 sys.path）：Claude Code 設定目錄，啟動檔在這裡
 from wg_evasion import (
     _load_oscillation_warnings, _check_periodic_review_due,
@@ -189,6 +191,27 @@ def _index_stale_reason(memory_dir: Path, json_path: Path) -> str:
     return ""
 
 
+def _split_personal_if_pending(memory_dir: Path) -> str:
+    """根層個人卡登記還沒搬出共用索引，或 pull 來的個人卡還沒登記 → 跑一次分流，回要顯示的一行。
+    結果看分流後的狀態，不看 exit code：工具遇到別的索引漂移也會回 1。"""
+    try:
+        from atom_index_json import personal_split_pending
+        if not personal_split_pending(memory_dir):
+            return ""
+        import subprocess as _sp
+        r = _sp.run([sys.executable, str(CODE_DIR / "tools" / "sync-atom-index.py"),
+                     "--memory-dir", str(memory_dir), "--split-personal"],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+                    creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0))
+        if personal_split_pending(memory_dir):
+            return (f"[Guardian:Index] ⚠ 私人卡登記沒搬成：{(r.stderr or '').strip()[:200]}"
+                    f"——可能隨 repo 外流或注入不到 → 手動 python ~/.claude/tools/sync-atom-index.py --split-personal")
+    except Exception as e:  # noqa: BLE001
+        _atom_debug_error("session_start:split_personal", e)
+        return f"[Guardian:Index] ⚠ 私人卡登記分流失敗（{e}）→ 手動 python ~/.claude/tools/sync-atom-index.py --split-personal"
+    return "[Guardian:Index] 個人卡登記已更新到本機索引（memory/personal/_personal_index.json，不進版控）。"
+
+
 def _rebuild_index_if_missing(memory_dir: Optional[Path]) -> str:
     """索引檔不在（沒入版控／被清掉／新 clone）、或專案記憶卡比索引新 → 就地從磁碟重建。
 
@@ -208,7 +231,7 @@ def _rebuild_index_if_missing(memory_dir: Optional[Path]) -> str:
     stale = ""
     if json_path.exists() and md_path.exists():
         if _under_claude_dir(memory_dir):
-            return ""
+            return _split_personal_if_pending(memory_dir)
         stale = _index_stale_reason(memory_dir, json_path)
         if not stale:
             return ""
@@ -453,6 +476,40 @@ def _health_advisory(last_run_path) -> list:
         ]
 
 
+USAGE_WATCH_STALE_HOURS = 72  # 每小時排程；留週末關機的寬限
+
+
+def _usage_watch_advisory(last_run_path) -> list:
+    """用量異常監控死人開關 → advisory 行（無異常回 []）。
+
+    排程沒被叫起或被刪時腳本不會寫 last-run，只能從逾 USAGE_WATCH_STALE_HOURS 沒更新反推；
+    只有排程跑法（scheduled=True，帶 --notify）才算：手動查過一次就不管的人，不該從此每場都被提醒去註冊排程。
+    上次查詢失敗、通知跳不出來也浮出（否則異常發生了也沒人知道）。缺檔＝這台沒用這支工具，不提示。
+    """
+    try:
+        if not last_run_path.exists():
+            return []
+        d = json.loads(last_run_path.read_text(encoding="utf-8"))
+        at = datetime.fromisoformat(d.get("at", "")).replace(tzinfo=None)
+        if d.get("scheduled") and datetime.now() - at > timedelta(hours=USAGE_WATCH_STALE_HOURS):
+            task = f"Claude-Usage-Watch-{getpass.getuser()}"
+            return [
+                f"[Guardian:UsageWatch] ⚠ 用量異常監控已 {(datetime.now() - at).days} 天沒跑（上次 "
+                f"{at:%Y-%m-%d %H:%M}）——查 Task Scheduler {task}（沒有就 python tools/usage-watch.py --register）。"
+            ]
+        problems = ([d.get("error")] if not d.get("ok") else []) + [
+            f"{ch} 通知失敗：{err}" for ch, err in (d.get("notify_errors") or {}).items()]
+        if problems:
+            return [f"[Guardian:UsageWatch] ⚠ 上次用量監控（{at:%m-%d %H:%M}）有問題：{'；'.join(problems)}"]
+        return []
+    except Exception as e:
+        _atom_debug_error("session_start:usage_watch_advisory", e)
+        return [
+            "[Guardian:UsageWatch] ⚠ workflow/usage-watch/last-run.json 不可解析——"
+            "監控狀態未知，手動跑 python tools/usage-watch.py --account-only。"
+        ]
+
+
 def _scope_layout_advisory(project_mem_dir) -> list:
     """專案記憶尚未依 scope 分層整理 → 開場一行說明改動＋整理入口。
 
@@ -497,59 +554,6 @@ def _local_catalog_lines(cwd: str) -> List[str]:
     except Exception as e:  # noqa: BLE001
         _atom_debug_error("realm:local_catalog_inject", e)
         return []
-
-
-def _tracking_advisory(cwd: str, state: Dict[str, Any]) -> list:
-    """本專案追蹤帳本（AEC (k) 與交付時「順手看到最該修」寫的）：一個 session 只列一次（state["tracking_advisory_sent"]，
-    重建 state 時照搬）。先列附了建議、還沒解的項目（不分部位，最新 3 筆＋要 AI 第一則回覆告訴使用者）；再列沒標部位、
-    沒附建議的未結項筆數＋最舊 3 筆；最後列標了部位、沒附建議的未結項（各部位筆數＋最舊 3 筆＋帳本路徑）。
-    同專案疑似由舊算法（子目錄 cwd）分裂出的帳本只在 stderr 列，不自動合併。讀不到只 stderr，回 []。"""
-    if not cwd or state.get("tracking_advisory_sent"):
-        return []
-    state["tracking_advisory_sent"] = True
-    try:
-        from wg_harvest import open_tracking_items, proposal_lines, read_tracking, tracking_path, tracking_slug
-        slug = tracking_slug(cwd)
-        tdir = WORKFLOW_DIR / "tracking"
-        split = sorted(p.name for p in tdir.glob(f"{slug}-*.jsonl")) if tdir.is_dir() else []
-        if split:
-            print(f"[Guardian:Tracking] 疑似同專案分裂的追蹤帳本（舊版用子目錄 cwd 命名，不自動合併）：{', '.join(split)}；"
-                  f"本專案帳本＝{slug}.jsonl", file=sys.stderr)
-        open_items = open_tracking_items(read_tracking(slug))
-        proposals = proposal_lines(open_items)
-        unproposed = [e for e in open_items if not str(e.get("proposal") or "").strip()]
-        items = [e for e in unproposed if not str(e.get("part") or "").strip()]
-        parted = [e for e in unproposed if str(e.get("part") or "").strip()]
-        ledger = tracking_path(slug)
-    except Exception as e:  # noqa: BLE001
-        print(f"[Guardian:Tracking] 讀追蹤項失敗：{type(e).__name__}: {e}", file=sys.stderr)
-        return []
-    out = ["\n".join(proposals)] if proposals else []
-    tail = [_parted_tracking_block(parted, ledger)] if parted else []
-    if not items:
-        return out + tail
-    oldest = sorted(items, key=lambda e: str(e.get("at") or ""))[:3]
-    lines = [f"[Guardian:Tracking] 本專案未結追蹤項 {len(items)} 筆（未標部位）；最舊 3 筆："]
-    lines += [f"- {str(e.get('text') or '')[:200]}（{str(e.get('at') or '')[:10]}）" for e in oldest]
-    lines.append("處理完在 AEC (k) 寫「結案：<原文開頭至少 8 字；原文不足 8 字就寫全文>」（未標部位的項目，結案行也不帶部位）；"
-                 "新記的追蹤項可在行尾加「｜建議：<怎麼解>｜該誰解：<誰>」；跟帳上某一筆是同一件就加「｜同追蹤項：<那筆裡連續至少 8 字>」，"
-                 "系統換成新說法、不另記一筆。")
-    return out + ["\n".join(lines)] + tail
-
-
-def _parted_tracking_block(items: List[Dict[str, Any]], ledger: Path) -> str:
-    """標了部位、沒附建議的未結追蹤項：各部位筆數＋最舊 3 筆＋帳本路徑＋帶部位的結案寫法。"""
-    counts: Dict[str, int] = {}
-    for e in items:
-        part = str(e.get("part") or "").strip()
-        counts[part] = counts.get(part, 0) + 1
-    oldest = sorted(items, key=lambda e: str(e.get("at") or ""))[:3]
-    lines = [f"[Guardian:Tracking] 本專案標了部位的未結追蹤項 {len(items)} 筆（"
-             + "、".join(f"{part} {n}" for part, n in counts.items()) + "）；最舊 3 筆："]
-    lines += [f"- [{str(e.get('part') or '').strip()}] {str(e.get('text') or '')[:200]}（{str(e.get('at') or '')[:10]}）"
-              for e in oldest]
-    lines.append(f"全部的帳在 {ledger}；處理完在 AEC (k) 寫「[部位] 結案：<原文開頭至少 8 字；原文不足 8 字就寫全文>」。")
-    return "\n".join(lines)
 
 
 def _followup_advisory() -> list:
@@ -784,7 +788,7 @@ def _index_conflict_advisory(cwd: str) -> list:
             timeout=2, cwd=cwd, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if r.returncode != 0:
             return lines
-        index_names = {"MEMORY.md", "_ATOM_INDEX.md", "_atom_index.json", "_INDEX.md", "_local_catalog.md"}
+        index_names = set(ALL_INDEX_FILES)
         names = sorted({
             entry.split("\t", 1)[1].rsplit("/", 1)[-1]
             for entry in (r.stdout or "").split("\0") if "\t" in entry
@@ -799,7 +803,7 @@ def _index_conflict_advisory(cwd: str) -> list:
         return lines
 
 
-_SVN_INDEX_NAMES = ("MEMORY.md", "_ATOM_INDEX.md", "_atom_index.json")
+_SVN_INDEX_NAMES = INDEX_FILES
 
 
 def _svn_index_conflict_advisory(cwd: str, root: Path) -> list:
@@ -1036,20 +1040,25 @@ _CARRY_ON_REBUILD = (
     "stop_blocked_count", "topic_tracker", "session_context_injected",
     # A2.4：專案根指紋變了重建 atom_index 時，OverviewHub 的讀檔帳／意圖／Depends 已提示的卡照搬，不重送
     "overview_hub", "turn_intent", "depends_hints",
-    # 一 session 一次的旗標也要照搬，否則重建後權威地圖、未結追蹤項提示會重送
-    "authority_map_injected", "tracking_advisory_sent",
+    # 一 session 一次的旗標也要照搬，否則重建後權威地圖會重送
+    "authority_map_injected",
     # 收尾同步提醒的額度與底部一般擋擋過的項目（一 session 一次／同一筆不重擋），不搬的話重建後同一個 session 又提醒一次
     "sync_reminder_count", "sync_block_shown",
     # 回合編號與使用者回合鍵（規則 USER_TURN_KEY_KEPT）：只搬鍵的話 turn_seq 歸零、鍵比 turn_seq 還大；不搬的話之後只進同伴訊息時
-    # user_turn 退回 turn_seq、每則同伴訊息都當成新使用者回合（PickOne 每則重問、各閘每回合的擋次重來）。照搬的 modified_files
+    # user_turn 退回 turn_seq、每則同伴訊息都當成新使用者回合（各閘每回合的擋次重來）。照搬的 modified_files
     # 也帶著舊的 turn_seq，編號接著走才對得上
     "turn_seq", "turn_prompts_seq", "user_turn_count", "turn_open", "turn_typed", "exec_turn_seq",
     # 事件序號：modified_files 的 last_seq 照搬了，event_seq 不搬就從頭算，壓縮後的收據 seq 全小於舊的 last_seq、等值證法閘整批略過
     "event_seq",
-    # 各閘的「問過／放行／擋過」帳本（鍵都是 session id，compact 不換 session）：不搬的話重建後 PickOne、對帳閘、清理閘、
+    # 各閘的「問過／放行／擋過」帳本（鍵都是 session id，compact 不換 session）：不搬的話重建後對帳閘、
     # 收據全部重來，使用者剛選的「放行這一回合」當場失效
-    "pick_one", "user_released", "pending_release", "last_block", "verify_receipts",
-    "reconcile_gate_turn", "cleanup_gate_turn",
+    "user_released", "pending_release", "last_block", "verify_receipts",
+    "reconcile_gate_turn",
+    # 壓縮前已注入的卡名快照：SessionStart(compact) 沒送成（中途降級）時，PostCompact 要靠它暫存內文給 PostToolBatch 補位
+    "pre_compact_injected_atoms",
+    # PreCompact 剛寫的自動交接單與它的時間：SessionStart(compact) 跑在 PostCompact 之前，不搬的話重建後 PostCompact 填不了
+    # 壓縮摘要（COMPACT_SUMMARY_TO_HANDOFF）、PostToolBatch 也不送補全提示
+    "pending_handoff_emit", "handoff_stub_path", "handoff_stub_at", "pre_compact_snapshot",
 )
 
 
@@ -1062,7 +1071,7 @@ def _mod_turn_of(m: Dict[str, Any]) -> int:
 
 def floor_turn_seq(state: Dict[str, Any]) -> None:
     """規則 USER_TURN_KEY_KEPT 的底線：回合編號不倒退。更舊版本寫的 state 沒有 turn_seq，照搬的 modified_files 卻帶著 2..11，
-    各閘的「問過／放行」會記在第 0 回合、pick_due 的「改檔回合 > 問過的回合」永遠成立（實測一場 PickOne 連問 12 次）。
+    各閘的「問過／放行」會記在第 0 回合，「改檔回合 > 問過的回合」這類判法永遠成立、同一批改動被一直重問。
     以 modified_files 最大的回合墊底；turn_prompts_seq 不動，下一則 UserPromptSubmit 會自己錨定。"""
     floor = max((_mod_turn_of(m) for m in state.get("modified_files") or [] if isinstance(m, dict)), default=0)
     if floor > int(state.get("turn_seq") or 0):
@@ -1076,14 +1085,6 @@ def carry_on_rebuild(existing: Dict[str, Any], state: Dict[str, Any]) -> None:
             state[key] = existing[key]
     state["phase"] = existing.get("phase", "working")
     floor_turn_seq(state)
-
-
-def _harvest_staged_line(n: int) -> str:
-    """開場一行：資料根有 n 張背景收割候選待審。規則 OPENING_NOTICE_NOT_TODO：處置句寫清誰決定、要不要現在處理——寫成待辦口吻
-    （「…不要的刪掉」）時，使用者說「先告訴我、再等我說要做什麼」，AI 仍照提示刪了草稿。"""
-    return (f"[Harvest] {n} 張背景收割候選待審（memory/_staging/harvest-candidates/，背景模型草擬的記憶草稿，核可前不注入）。"
-            "要不要現在處理由使用者決定：使用者這回合要的是別的事，只在回覆裡轉述這一行、不動這些檔；"
-            "使用者說要處理，再由你逐張判斷，值得留的用 atom_write 落卡、不要的刪掉。")
 
 
 def _first_session_hint_lines(root_res, cwd: str) -> list:
@@ -1111,27 +1112,14 @@ def _first_session_hint_lines(root_res, cwd: str) -> list:
 
 
 def _next_phase_pointer(cwd: str, source: str) -> list:
-    """壓縮／恢復後的接續指標：找最新的 `_staging/next-phase-*.md`（專案層優先，其次根層），
-    一行叫模型先 Read 它並覆述現狀＋下一步。壓縮會丟掉對話裡的計畫脈絡；這個檔是單一權威狀態，
-    不靠模型記得「該去讀」。找不到就不吵。fail-open。"""
+    """壓縮／恢復後的接續指標：找最新的交接單（與 /continue 查詢同一組檔：ups_search.continue_handoff_path，專案層與根層
+    staging 的 next-phase*.md 取最新），一行叫模型先 Read 它並覆述現狀＋下一步。壓縮會丟掉對話裡的計畫脈絡；這個檔是
+    單一權威狀態，不靠模型記得「該去讀」。找不到就不吵。fail-open。"""
     try:
-        from wg_core import resolve_staging_dir
-        cands = []
-        dirs = []
-        try:
-            dirs.append(resolve_staging_dir(cwd))
-        except Exception:
-            pass
-        dirs.append(MEMORY_DIR / "_staging")
-        seen = set()
-        for d in dirs:
-            if not d or str(d) in seen or not Path(d).is_dir():
-                continue
-            seen.add(str(d))
-            cands += [p for p in Path(d).glob("next-phase-*.md") if p.is_file()]
-        if not cands:
+        from handlers.ups_search import continue_handoff_path
+        newest = continue_handoff_path("", cwd)
+        if not newest:
             return []
-        newest = max(cands, key=lambda p: p.stat().st_mtime)
         why = "context 剛壓縮" if source == "compact" else "session 恢復"
         return [
             f"[Guardian:Resume] {why}：對話裡的計畫脈絡可能已失真 → 先 `Read {newest.as_posix()}`"
@@ -1157,19 +1145,64 @@ def _take_git_snapshot(state: Dict[str, Any], cwd: str) -> None:
         state["git_snapshot"] = snap
 
 
-def _ss_output(lines: List[str]) -> str:
-    return json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "\n".join(lines)}},
-                      ensure_ascii=False)
+def _compact_recovery(existing: Optional[Dict[str, Any]], config: Dict[str, Any]) -> Tuple[str, List[str], List[str]]:
+    """壓縮前已注入卡的緊湊內文（規則 COMPACT_REINJECT_AT_SESSION_START）。從壓縮前那份 state 組：名單是 PreCompact 快照
+    pre_compact_injected_atoms（SessionStart(compact) 跑在 PostCompact 之前），卡路徑照它的 atom_index——壓縮時 cwd 跟開場
+    不同而走重建分支也一樣送得出。組法與預算同 post_compact.recovery_blob。回 (內文, 送出的卡名, 索引查不到的卡名)；
+    組不出 → 空，內文交給 PostCompact 暫存、PostToolBatch 補位；出錯另寫 stderr 一行。"""
+    if not existing:
+        return "", [], []
+    try:
+        from handlers.post_compact import recovery_blob
+        return recovery_blob(existing, config)
+    except Exception as e:  # noqa: BLE001
+        print(f"[Atom Recovery] SessionStart(compact) 組不出卡片內文，改由 PostToolBatch 補位：{type(e).__name__}: {e}",
+              file=sys.stderr)
+        return "", [], []
+
+
+_RESUME_CACHE_NOTE_MIN_TOKENS = 100_000   # 規則 RESUME_CACHE_REWRITE_NOTE：快取多半失效、重送量到這裡才提
+
+
+def _resume_cache_note(input_data: Dict[str, Any], source: str) -> str:
+    """規則 RESUME_CACHE_REWRITE_NOTE：重開舊 session 要重寫多少快取，一行給使用者（systemMessage）與 Claude（additionalContext）。
+    資料是官方 SessionStart(resume／fork) 輸入：context_tokens＝第一個請求要重送的 token 數，prompt_cache_likely_expired＝
+    快取多半已失效（閒置超過存留期、或之後壓縮過），seconds_since_last_response＝閒置秒數。快取還在、量不到門檻都不提；
+    欄位沒給（舊版 Claude Code、逐字稿還沒有回應）＝估不出，不送。"""
+    if source not in ("resume", "fork") or input_data.get("prompt_cache_likely_expired") is not True:
+        return ""
+    try:
+        tokens = int(input_data.get("context_tokens") or 0)
+        idle_s = int(input_data.get("seconds_since_last_response") or 0)
+    except (TypeError, ValueError):
+        return ""
+    if tokens < _RESUME_CACHE_NOTE_MIN_TOKENS:
+        return ""
+    if idle_s >= 3600:
+        idle = f"距上次回應約 {idle_s / 3600:.1f} 小時，"
+    elif idle_s >= 60:
+        idle = f"距上次回應約 {idle_s // 60} 分鐘，"
+    else:
+        idle = ""
+    return (f"[Guardian:ResumeCache] {idle}快取多半已失效：這次重開的第一個請求要重寫約 {round(tokens / 10000)} 萬 token 快取；"
+            "要省就改開新 session 接續。")
+
+
+def _ss_output(lines: List[str], system_message: str = "") -> str:
+    out: Dict[str, Any] = {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "\n".join(lines)}}
+    if system_message:   # 給使用者看的那一行（目前只有 RESUME_CACHE_REWRITE_NOTE）
+        out["systemMessage"] = system_message
+    return json.dumps(cap_hook_output(out), ensure_ascii=False)
 
 
 def _fallback_output(lines: List[str]) -> str:
-    """背景鬧鐘代送（到上限 95% 還沒送出）：當下已備好的開場提示（追蹤提示在前段）＋一行說明；state 這次沒寫回。"""
+    """背景鬧鐘代送（到上限 95% 還沒送出）：當下已備好的開場提示＋一行說明；state 這次沒寫回。"""
     return _ss_output([*lines, "[Guardian:HookTiming] 開場 hook 快到上限被取消，先送出已備好的開場提示，其餘這次沒跑、"
                                "session 狀態這次沒寫回（下一則提問會重建）；各段耗時記在 Logs/guard-hook_timing.jsonl。"])
 
 
 def _degraded_exit(session_id: str, state: Dict[str, Any], lines: List[str]) -> None:
-    """開場超時降級（累計過上限 80%）：state 寫回、已備好的提示照送（追蹤提示在最前段），後面的選配提示與檢查
+    """開場超時降級（累計過上限 80%）：state 寫回、已備好的提示照送，後面的選配提示與檢查
     這次跳過（含開場 git 快照、清舊 state、向量服務旗標與啟動）。"""
     lines.append(_hook_timing.degrade_note())
     write_state(session_id, state)
@@ -1219,17 +1252,21 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
                 }
             write_state(session_id, redirect_state)
             lines = [f"[Workflow Guardian] Session merged ({source}).", *root_lines]
-            print(json.dumps({
+            print(json.dumps(cap_hook_output({
                 "hookSpecificOutput": {
                     "hookEventName": "SessionStart",
                     "additionalContext": "\n".join(lines),
                 }
-            }, ensure_ascii=False))
+            }), ensure_ascii=False))
             sys.exit(0)
 
     existing = read_state(session_id)
+    # 壓縮後送回的卡片內文：在兩條路（沿用舊 state／專案根變了重建）分岔前從舊 state 組好，匯合後才送
+    compact_blob, compact_sent, compact_unresolved = (
+        _compact_recovery(existing, config) if source == "compact" else ("", [], []))
     _hook_lap("前置")
     _index_rebuild_notes: List[str] = []   # resume 分支不重建，仍要有值供收尾組訊息
+    vector_flag: Optional[str] = None      # 新 session 在健檢段就 ping 向量服務；resume 分支留 None，收尾再 ping
     root_rebuilt = False
     if existing and source in ("compact", "resume") and not _root_fingerprint_matches(existing, root_res):
         # 專案根指紋變了（cwd 換了、宣告檔改了、或舊 state 還沒有指紋）→ 走下方重建分支重算
@@ -1256,13 +1293,8 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         if kq_count > 0:
             items = [q["content"][:40] for q in state["knowledge_queue"][:3]]
             lines.append(f"Pending knowledge: {'; '.join(items)}")
-        # 注：full `/compact` 會觸發 SessionStart(source=compact)
-        # （序：PreCompact → SessionStart(compact) → PostCompact），故本分支非死碼、保留。
-        # 但此處僅「列出壓縮前 atom 名稱」（資訊性 ~30 tok）；完整內文的壓縮後復原由
-        # PostCompact(snapshot stash)→PostToolBatch(一次性注入) 負責（選配 #4），兩者互補不重複。
-        # 且 SessionStart(compact) 不保證觸發（no-op / auto-compact 僅 PreCompact+PostCompact），
-        # 故內文復原不可依賴本分支。詳見 _AIDocs/ClaudeCodeInternals/cc-hook-system.md。
-        if prev_atoms:
+        # 壓縮後送得出卡片內文的話卡名已在內文裡；resume 或組不出內文才只列卡名
+        if prev_atoms and not compact_blob:
             atom_names = ", ".join(prev_atoms)
             lines.append(f"[Atom Recovery] 壓縮前已載入: {atom_names}")
     else:
@@ -1272,11 +1304,9 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         if sibling and source == "startup":
             state["_skip_vector_init"] = True
 
-        # 追蹤提示最先算（只要 cwd 與 state）：開場超時降級、或背景鬧鐘代送時，最該到眼前的這段已經備好
-        tracking_lines = _tracking_advisory(cwd, state) if v6 else []
-        lines = ["[Workflow Guardian] Active.", *root_lines, *tracking_lines]
+        # 開場超時降級、或背景鬧鐘代送時，至少送出這幾行
+        lines = ["[Workflow Guardian] Active.", *root_lines]
         _hook_timing.set_fallback(lambda: _fallback_output(lines))
-        _hook_lap("追蹤提示")
 
         # ── 記憶層背景「拉」：在首次讀索引之前 detached 起 vcs-sync worker（秒回、不等）。
         # 趕不趕得上本次候選池隨緣——拉入的 atom 下一個 session 才一定進候選池，advisory 只報同步事實。
@@ -1321,7 +1351,7 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         project_atoms_merged = pool["project"]
 
         v4_layout_active = bool(project_mem_dir) and any(
-            (project_mem_dir / d).is_dir() for d in ("shared", "roles", "personal")
+            (project_mem_dir / d).is_dir() for d in SCOPE_DIR_NAMES
         )
 
         state["atom_index"] = {
@@ -1361,7 +1391,6 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             f"Global: {len(g_names)} atoms. Project: {len(p_names)}.",
             *[n for n in _index_rebuild_notes if n],
             *root_lines,
-            *tracking_lines,
         ]
         if _hook_lap("候選池"):
             _degraded_exit(session_id, state, lines)
@@ -1467,7 +1496,15 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         # 缺檔/逾期 = 排程器本身死了；red>0 = 上次健檢有待處理項。兩者都必須
         # 在 session 內浮出（fail-open 必告知）——「靜默死 27 天」的最後防線。
         lines.extend(_health_advisory(WORKFLOW_DIR / "health-last-run.json"))
-        lines.extend(_vector_index_advisory(config))
+        lines.extend(_usage_watch_advisory(WORKFLOW_DIR / "usage-watch" / "last-run.json"))
+        # 服務沒回應就不問索引狀態：Windows 連關著的埠要等滿逾時，多問一次就多等一秒。
+        try:
+            vector_flag = _refresh_vector_flag(config)
+        except Exception as e:
+            vector_flag = "error"
+            _atom_debug_error("SessionStart:vector_flag_refresh", e)
+        if vector_flag == "kept":
+            lines.extend(_vector_index_advisory(config))
         if _hook_lap("健檢"):
             _degraded_exit(session_id, state, lines)
 
@@ -1498,15 +1535,6 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             pending = _count_pending_review(project_mem_dir)
             if pending > 0:
                 lines.append(f"[Pending Review] {pending} 件待裁決（shared/_pending_review/）")
-        try:   # 背景收割（wg_bg_harvest）落在資料根的待審候選：有才提一行，讓它有人看（不看就是死路）；寫碼守門關不載
-            _staged = 0
-            if v6:
-                from wg_bg_harvest import staged_count
-                _staged = staged_count()
-            if _staged:
-                lines.append(_harvest_staged_line(_staged))
-        except Exception as e:  # noqa: BLE001
-            print(f"[Harvest] 數待審候選失敗：{type(e).__name__}: {e}", file=sys.stderr)
 
         if v4_user and config.get("userExtraction", {}).get("enabled", False):
             try:
@@ -1533,6 +1561,17 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             except Exception as e:
                 _atom_debug_error("project_hook:session_start", e)
 
+    if compact_blob:
+        # 規則 COMPACT_REINJECT_AT_SESSION_START：送出的卡算回已注入（使用偵測、效用歸因接得上），記號讓 PostCompact 不暫存、
+        # PostToolBatch 不重送。重建分支中途降級退出就到不了這裡、沒有記號，照舊由 PostToolBatch 補位
+        lines.append(compact_blob)
+        state["compact_reinjected_at"] = _now_iso()
+        state["injected_atoms"] = list(dict.fromkeys((state.get("injected_atoms") or []) + compact_sent))
+        if compact_unresolved:   # 索引查不到的卡留痕，不靜默少送
+            state["pending_reinjection_unresolved"] = compact_unresolved
+    resume_note = _resume_cache_note(input_data, source)   # 規則 RESUME_CACHE_REWRITE_NOTE：降級提早送出時也在 additionalContext 裡
+    if resume_note:
+        lines.append(resume_note)
     _hook_timing.set_fallback(lambda: _fallback_output(lines))   # compact／resume 那支也有代送（startup 前面已登記）
     if _hook_lap("開場主段"):
         _degraded_exit(session_id, state, lines)
@@ -1700,14 +1739,15 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
         print(f"SessionStart cleanup error: {e}", file=sys.stderr)
 
     # 服務已暖則保留 flag（省冷啟動 no_flag 空窗），只有 health ping 失敗才拆（fail-closed）。
-    try:
-        _refresh_vector_flag(config)
-    except Exception as e:
-        _atom_debug_error("SessionStart:vector_flag_refresh", e)
+    if vector_flag is None:
+        try:
+            _refresh_vector_flag(config)
+        except Exception as e:
+            _atom_debug_error("SessionStart:vector_flag_refresh", e)
     _hook_lap("清舊 state 與向量旗標")
 
     _hook_timing.claim_output()
-    print(_ss_output(lines))
+    print(_ss_output(lines, resume_note))
 
     # ── Vector service：fire-and-forget 啟動器（自癒/觀測邏輯在 starter.py）──
     # 已降級就不起：輸出送出後行程還得在上限內結束（Claude Code 取消時不保證採用已印的輸出）

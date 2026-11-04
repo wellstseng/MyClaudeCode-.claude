@@ -13,6 +13,7 @@
 | 在既有模組加判斷的兩個盲點-同名helper遮蔽原版-具體判斷插在寬判斷提早return之後會被巢狀路徑繞過 | 在既有模組加判斷的兩個盲點-同名helper遮蔽原版-具體判斷插在寬判斷提早return之後會被巢狀路徑繞過 |
 | 守門文件寫的擋滿第3次放行與續跑一回合是照擋送法-寫碼守門開時提醒規則stop只留帳-照擋分支是rule-mode換送法用的不是死碼 | 守門文件寫的擋滿第3次放行與續跑一回合是照擋送法-寫碼守門開時提醒規則Stop只留帳-照擋分支是RULE_MODE換送法用的不是死碼 |
 | 第二意見工具四輪退回-宣稱不變量前先寫對抗測試-時限與切參數用系統原語不自己發明-pipefail | 第二意見工具四輪退回-宣稱不變量前先寫對抗測試-時限與切參數用系統原語不自己發明-pipefail |
+| 從使用者指正寫成的卡靠使用者的話觸發-永遠在他已經提醒之後才送到-管做事時機的原則要綁在ai自己的動作時刻 | 從使用者指正寫成的卡靠使用者的話觸發-永遠在他已經提醒之後才送到-管做事時機的原則要綁在AI自己的動作時刻 |
 
 ## 子層
 
@@ -24,7 +25,7 @@
 | v6總控台 | 3 | `_AIDocs/_atoms/MemDev/v6總控台/_INDEX.md` |
 | vcs-sync與版控 | 10 | `_AIDocs/_atoms/MemDev/vcs-sync與版控/_INDEX.md` |
 | worktree與隔離資料根 | 14 | `_AIDocs/_atoms/MemDev/worktree與隔離資料根/_INDEX.md` |
-| 寫碼守門閘 | 22 | `_AIDocs/_atoms/MemDev/寫碼守門閘/_INDEX.md` |
+| 寫碼守門閘 | 23 | `_AIDocs/_atoms/MemDev/寫碼守門閘/_INDEX.md` |
 | 擋訊息與放行判定 | 17 | `_AIDocs/_atoms/MemDev/擋訊息與放行判定/_INDEX.md` |
 | 收尾閘與收據 | 15 | `_AIDocs/_atoms/MemDev/收尾閘與收據/_INDEX.md` |
 | 架構決策與規則檔 | 18 | `_AIDocs/_atoms/MemDev/架構決策與規則檔/_INDEX.md` |

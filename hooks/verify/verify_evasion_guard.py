@@ -196,7 +196,7 @@ def test_evasion_flags_deferral_keywords(text):
     assert r is not None, f"未抓到退避語：{text!r}"
 
 
-# ─── G6 階段 4（P7）：退避例外的入口接上——不做行＋理由、使用者引用對到事項（規則 NOT_DOING_DECLARED／USER_WAIVER_NEEDS_CITATION）────
+# ─── G6 階段 4（P7）：退避例外的入口接上——不做行＋理由、使用者引用對到事項（規則 NOT_DOING_DECLARED）────
 
 def test_p7_dismiss_word_alone_no_longer_waives():
     """使用者近 3 則有「先這樣」不再整段關掉偵測（舊 escape hatch）：要 AI 引用原句對到事項才算。"""
@@ -252,11 +252,16 @@ def test_p7_flag_carries_category_and_hint():
     assert "追蹤｜" in r["hint"] and "改得快又有效" in r["hint"]
 
 
-def test_p7_ups_dismiss_no_longer_clears_failing_tests(monkeypatch):
-    """ups_gates：使用者說「先這樣」不再清掉整份紅測清單（豁免改在 Stop 由不做行引用對到那一筆）。"""
+@pytest.mark.parametrize("on", ["1", "0"])
+def test_p7_ups_dismiss_clears_failing_tests_either_way(monkeypatch, on):
+    """ups_gates：使用者說「先這樣／跳過」整份紅測清單清掉，寫碼守門開或關同一套（9e476fd0 的做法）；別的話不清。"""
     from handlers import ups_gates as ug
+    monkeypatch.setenv("WG_V6", on)
     state = {"failing_tests": [{"cmd": "pytest verify_a.py", "session_id": "s"}], "recent_user_prompts": []}
     ug.run_pre_gates("s", state, {}, "先這樣", "先這樣", [])
+    assert state["failing_tests"] == []
+    state = {"failing_tests": [{"cmd": "pytest verify_a.py", "session_id": "s"}], "recent_user_prompts": []}
+    ug.run_pre_gates("s", state, {}, "繼續修", "繼續修", [])
     assert state["failing_tests"]
 
 
@@ -392,7 +397,7 @@ def test_stop_hook_feedback_is_not_a_turn_boundary():
     """Claude Code 把 Stop hook 的擋訊息寫成 user 紀錄「Stop hook feedback:…」：不是使用者打字，不是回合起點
     （第二意見閘與退避預告切點共用這個判定；C-1 被別的閘擋一次，已跑完的第二意見就被切掉）。"""
     from wg_evasion import is_turn_start
-    fb = "Stop hook feedback:\n[Guardian:ReadingPath] ✗ (t) TURN_JUDGMENT_REQUIRED：側面數據到門檻"
+    fb = "Stop hook feedback:\n[Guardian:ReconcileGate] ✗ (d) CASE_COVERS_CHANGE：改了程式沒有案例"
     rec = lambda content, meta: {"type": "user", "isMeta": meta, "message": {"role": "user", "content": content}}  # noqa: E731
     assert is_turn_start(rec(fb, True)) is False
     assert is_turn_start(rec([{"type": "text", "text": fb}], True)) is False

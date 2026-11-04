@@ -79,7 +79,7 @@
 
 ### hooks/handlers/
 
-9 個 handler 檔接 11 個事件：`PostToolUseFailure` 走 `post_tool_use`、`SubagentStop` 走 `stop`。
+12 個 handler 檔接 14 個事件：`PostToolUseFailure` 走 `post_tool_use`、`SubagentStop` 走 `stop`；`InstructionsLoaded`、`StopFailure` 由 settings.json 直接跑 handler 檔、不經 dispatcher。
 
 | 檔案 | 負責什麼 |
 |------|----------|
@@ -92,6 +92,9 @@
 | [`hooks/handlers/pre_compact.py`](../hooks/handlers/pre_compact.py) | PreCompact 事件 handler |
 | [`hooks/handlers/post_compact.py`](../hooks/handlers/post_compact.py) | PostCompact 事件 handler |
 | [`hooks/handlers/post_tool_batch.py`](../hooks/handlers/post_tool_batch.py) | PostToolBatch 事件 handler |
+| [`hooks/handlers/subagent_start.py`](../hooks/handlers/subagent_start.py) | SubagentStart 事件 handler：不經 Agent 工具的子代理（skill fork、Workflow）補記憶注入 |
+| [`hooks/handlers/instructions_loaded.py`](../hooks/handlers/instructions_loaded.py) | InstructionsLoaded 事件 handler：規則與索引載入只記帳（`Logs/instructions-loaded.jsonl`） |
+| [`hooks/handlers/stop_failure.py`](../hooks/handlers/stop_failure.py) | StopFailure 事件 handler：API 錯誤結束的回合留帳、待結算注入歸因標 aborted |
 | [`hooks/handlers/ups_gates.py`](../hooks/handlers/ups_gates.py) | UPS（UserPromptSubmit）四段之一：閘 |
 | [`hooks/handlers/ups_context.py`](../hooks/handlers/ups_context.py) | UPS 四段之一：脈絡 |
 | [`hooks/handlers/ups_search.py`](../hooks/handlers/ups_search.py) | UPS 四段之一：搜尋 |
@@ -155,22 +158,12 @@
 
 | 檔案 | 負責什麼 |
 |------|----------|
-| [`hooks/wg_data_file.py`](../hooks/wg_data_file.py) | 改資料檔的宣告閘（[乙6](coding-guard.md#乙6-其他寫碼守門)） |
-| [`hooks/wg_oldtest.py`](../hooks/wg_oldtest.py) | 改舊測試的宣告閘（[乙6](coding-guard.md#乙6-其他寫碼守門)） |
-| [`hooks/wg_gate_bypass.py`](../hooks/wg_gate_bypass.py) | 繞閘的宣告閘（[乙6](coding-guard.md#乙6-其他寫碼守門)） |
 | [`hooks/wg_ask_gate.py`](../hooks/wg_ask_gate.py) | 問使用者前每題要附推薦（AskUserQuestion／ExitPlanMode），帳寫 `Logs/guard-ask.jsonl` |
-| [`hooks/wg_reading_path.py`](../hooks/wg_reading_path.py) | 閱讀路徑與拐彎判斷（[乙3](coding-guard.md#乙3-收尾閘序守門開時與收據)） |
-| [`hooks/wg_closing_round.py`](../hooks/wg_closing_round.py) | 收尾只跑一輪（[乙3](coding-guard.md#乙3-收尾閘序守門開時與收據)） |
-| [`hooks/wg_bg_harvest.py`](../hooks/wg_bg_harvest.py) | 守門開時收割交背景免費模型（[跨層表](../TECH.md#守門開關會改到記憶系統的地方) #25） |
 | [`hooks/wg_lazy_re.py`](../hooks/wg_lazy_re.py) | 模組層正規表示式與寫碼守門模組第一次用到才編譯／載入（`lazy_re`、`lazy_module`，[§11.2](../TECH.md#112-每句話每次工具呼叫的代價)） |
 | [`hooks/wg_chain.py`](../hooks/wg_chain.py) | 連鎖斷路器判定（純函式，[乙8](coding-guard.md#乙8-連鎖斷路器)） |
 | [`hooks/plan_bash_guard.py`](../hooks/plan_bash_guard.py) | Plan Mode 必彈窗的 Bash 寫法 deny＋改寫提示（[甲 §7.4](../TECH.md#74-改檔前的閘)） |
 
 - **hooks/wg_ask_gate.py**：開關跟寫碼守門總開關；沒附推薦的提問提醒補上（ASK_NEEDS_RECOMMENDATION），提問涉及改法選擇時另提醒先讀部位檔（ASK_OVERVIEW_BEFORE_DECISION）。
-- **hooks/wg_closing_round.py**：
-  - PostToolBatch 起跑拐彎判斷量測。
-  - 交收尾檢核那批附結果與最該修（[乙3](coding-guard.md#乙3-收尾閘序守門開時與收據)）。
-- **hooks/wg_bg_harvest.py**：Stop 丟背景、產待審候選卡。
 - **hooks/wg_lazy_re.py**：
   - `lazy_re`：每個 hook 事件少編上百條正規表示式。
   - `lazy_module`：取代模組層的 `import`，第一次取屬性才真的載入；寫碼守門的模組都經它載，守門關時一行都不載，守門開也只在那道閘真的要判時才載。
@@ -193,7 +186,6 @@
 | [`hooks/ensure-mcp.py`](../hooks/ensure-mcp.py) | 確保 MCP 就緒 |
 | [`hooks/user-init.sh`](../hooks/user-init.sh) | shell hook |
 | [`hooks/post-git-pull.sh`](../hooks/post-git-pull.sh) | shell hook |
-| [`hooks/webfetch-guard.sh`](../hooks/webfetch-guard.sh) | shell hook |
 
 - **hooks/vcs-sync-worker.py**：
   - git：pathspec add＋commit → 拉 → push 守門。
@@ -239,7 +231,7 @@
 - **lib/memory_search.py**：MCP `memory_search`、cli `search`、[`tools/memory-search.py`](../tools/memory-search.py) 共用。
 - **lib/provenance.py**：函式有 `sanitize_quote`、`format_source_session`、`parse_source`、`find_transcript`、`resolve_context`、`atom_source`（三態）。
 
-### lib/ 部位表與閱讀路徑
+### lib/ 部位表
 
 | 檔案 | 負責什麼 |
 |------|----------|
@@ -247,11 +239,6 @@
 | [`lib/hub_config.py`](../lib/hub_config.py) | [`overview-hub.json`](../.claude/overview-hub.json) 四層合併（[附錄 設定來源](../TECH/guards.md#設定來源)） |
 | [`lib/hub_card.py`](../lib/hub_card.py) | 導讀卡五段與寫卡預算 |
 | [`lib/overview_scaffold.py`](../lib/overview_scaffold.py) | 從零掃表（[附錄 部位表](../TECH/guards.md#部位表)） |
-| [`lib/turn_metrics.py`](../lib/turn_metrics.py) | Python 函式與類別的側面數據（只量不判，[乙3](coding-guard.md#乙3-收尾閘序守門開時與收據)） |
-| [`lib/turn_metrics_cs.py`](../lib/turn_metrics_cs.py) | C# 函式與類別的側面數據（只量不判，[乙3](coding-guard.md#乙3-收尾閘序守門開時與收據)） |
-| [`lib/reading_path_cs.py`](../lib/reading_path_cs.py) | C# 改動的一跳範圍閱讀路徑（[乙3](coding-guard.md#乙3-收尾閘序守門開時與收據) ReadingPath） |
-| [`lib/cs_roslyn.py`](../lib/cs_roslyn.py) | Roslyn 解析前端（[乙3](coding-guard.md#乙3-收尾閘序守門開時與收據) ReadingPath） |
-| [`lib/cs_roslyn/`](../lib/cs_roslyn/) | Roslyn 解析的小程式（[乙3](coding-guard.md#乙3-收尾閘序守門開時與收據) ReadingPath） |
 
 ### lib/ 收據、文字與其他
 
@@ -290,7 +277,6 @@
 | [`tools/sync-atom-index.py`](../tools/sync-atom-index.py) | 同步 atom 索引 |
 | [`tools/sync-memory-index.py`](../tools/sync-memory-index.py) | 同步記憶索引 |
 | [`tools/sync_doc_counts.py`](../tools/sync_doc_counts.py) | 同步文件計數 |
-| [`tools/native-memory-bridge.py`](../tools/native-memory-bridge.py) | 原生記憶橋接 |
 | [`tools/merge-atom-index.py`](../tools/merge-atom-index.py) | 合併 atom 索引 |
 | [`tools/atom-io-audit.py`](../tools/atom-io-audit.py) | 稽核帳壞行檢查（`--check`）與修復（`--repair`） |
 
@@ -336,15 +322,13 @@
 - **tools/install.py**：操作步驟見 [`Install-forAI.md`](../Install-forAI.md)。
 - **tools/codex-call.py**：可當函式 import，也可命令列跑（`--help`）；叫不起來或逾時回非 0 並印原因，不報成功。
 
-### tools/ 評分、閱讀路徑與量測
+### tools/ 評分與量測
 
 | 檔案 | 負責什麼 |
 |------|----------|
 | [`tools/text-score.py`](../tools/text-score.py) | 文字規格評分（[甲 §7.7](../TECH.md#77-文字規格評分toolstext-scorepy)） |
 | [`tools/text-score-weekly.py`](../tools/text-score-weekly.py) | 文字評分週彙總（[甲 §7.7](../TECH.md#77-文字規格評分toolstext-scorepy)） |
 | [`tools/project-smells.py`](../tools/project-smells.py) | commit 前病形檢查（[乙6](coding-guard.md#乙6-其他寫碼守門) SmellGate） |
-| [`tools/reading-path.py`](../tools/reading-path.py) | 閱讀路徑量尺 |
-| [`tools/reading_path_lang.py`](../tools/reading_path_lang.py) | 閱讀路徑語言解析 |
 | [`tools/overview-map-scaffold.py`](../tools/overview-map-scaffold.py) | 部位表骨架 |
 | [`tools/project-tree.py`](../tools/project-tree.py) | `project-tree.json` 增刪改 |
 | [`tools/refix-churn.py`](../tools/refix-churn.py) | 反覆修熱點 |
@@ -368,7 +352,6 @@
 | [`tools/memory-vector-service/`](../tools/memory-vector-service/) | 向量服務 |
 | [`tools/codex-companion/`](../tools/codex-companion/) | Codex 評估夥伴 |
 | [`tools/workflow-guardian-mcp/`](../tools/workflow-guardian-mcp/) | MCP server（Node.js） |
-| [`tools/auto-continue/`](../tools/auto-continue/) | 自動續接 |
 | [`tools/gdoc-harvester/`](../tools/gdoc-harvester/) | Google 文件收割 |
 | [`tools/unity-desktop/`](../tools/unity-desktop/) | Unity 桌面工具 |
 | [`tools/usage-snapshot/`](../tools/usage-snapshot/) | 用量快照 |
@@ -394,7 +377,7 @@
 
 ## skills/
 
-<!-- skill-count -->31<!-- /skill-count --> 個 active skill。
+<!-- skill-count -->33<!-- /skill-count --> 個 active skill。
 
 | 檔案 | 負責什麼 |
 |------|----------|
@@ -403,6 +386,7 @@
 | [`skills/behavior-preservation/`](../skills/behavior-preservation/) | active skill |
 | [`skills/browse-sprites/`](../skills/browse-sprites/) | active skill |
 | [`skills/changelog-debug/`](../skills/changelog-debug/) | active skill |
+| [`skills/codex/`](../skills/codex/) | active skill：CC 判斷要不要叫 Codex 當第二意見或施工者；同步包範本在 `assets/`，入口 `scripts/codex-run.py`（經 [`tools/codex-call.py`](../tools/codex-call.py)） |
 | [`skills/codex-companion/`](../skills/codex-companion/) | active skill |
 | [`skills/conflict/`](../skills/conflict/) | active skill |
 | [`skills/consciousness-stream/`](../skills/consciousness-stream/) | active skill |
@@ -450,6 +434,7 @@
 - **memory/<Lv1>/**：核心 atom，範疇如版控／工作流／…／CC與原子記憶契約；可再分 `<Lv2>/`。
 - **memory/Failures/**：另有 `_reference/` 參考文件。
 - **memory/ 其他資料夾**：`episodic/`、`wisdom/`、`_staging/`、`_drafts/`、`_distant/`、`_reference/`、`personal/`、[`templates/`](../templates/)。
+- **memory/personal/**：`<帳號>/` 的卡照 [`.gitignore`](../.gitignore) 放行名單進版控，`<帳號>/secret/` 一律不進（`atom_write(secret=true)`，判定在 [`lib/sensitive_gate.py`](../lib/sensitive_gate.py)）；`_personal_index.json` 是本機登記。
 - **memory/_meta/**：
   - [`taxonomy.json`](../memory/_meta/taxonomy.json)
   - [`forbidden-phrases.json`](../memory/_meta/forbidden-phrases.json)
@@ -509,8 +494,6 @@ runtime state（多數 gitignored）。
 | `workflow/health-reports/` | 健康報告 |
 | `workflow/verify-ledger/` | 收據帳本 |
 | `workflow/tracking/` | 追蹤項 |
-| `workflow/old-test-snap/` | 改舊測試快照 |
-| `workflow/reading-path/` | 閱讀路徑 |
 | `workflow/chain-snap/<session>/` | 連鎖斷路器的改檔前快照（gitignore，[乙8](coding-guard.md#乙8-連鎖斷路器)） |
 | `workflow/inbox/` | 多 session 派工信箱 |
 | `workflow/harvest-ledger/<sid>.jsonl` | 收割核對帳本（gitignore） |
@@ -524,7 +507,7 @@ runtime state（多數 gitignored）。
 | 檔案 | 負責什麼 |
 |------|----------|
 | `Logs/` | 各種執行紀錄 |
-| `projects/<slug>/memory/` | CC 原生 auto-memory；`atom-index-bridge.md` 橋接（不是記憶層） |
+| `projects/<slug>/memory/` | CC 原生 auto-memory 目錄（已用 `autoMemoryEnabled: false` 關閉，不使用） |
 | `{project_root}/.claude/` | 專案自治層 |
 | `{project_root}/.claude/memory/` | 專案記憶 |
 | `{project_root}/.claude/project-tree.json` | 根層列 subs／子層指 root |
@@ -542,7 +525,7 @@ runtime state（多數 gitignored）。
 收尾不跑全量：該跑哪些由 AI 判斷，說修好要有改完之後的收據（[乙3](coding-guard.md#乙3-收尾閘序守門開時與收據)）。
 
 - 全量入口 [`python run_verify.py`](../run_verify.py) 已從流程拔掉，只留手動排查（全量改增量待補）。
-- 掃描範圍：[`hooks/`](../hooks/)、[`lib/`](../lib/)、[`tools/`](../tools/)、`codex-companion`、`auto-continue` 及 skills 各 [`verify/`](../verify/)。
+- 掃描範圍：[`hooks/`](../hooks/)、[`lib/`](../lib/)、[`tools/`](../tools/)、`codex-companion` 及 skills 各 [`verify/`](../verify/)。
 - `--help` 只印用法不跑。
 - 結尾印哨兵 `VERIFY_CHECK DONE cases=<n> failed=0`；有紅印 FAIL 且 exit 1。
 - 自寫收據記紅掉的測試名 `failed_cases`。
@@ -590,10 +573,10 @@ runtime state（多數 gitignored）。
 - 錄製檔在測試模組旁 `cassettes/<模組>/<測試>.json.gz`（隨程式碼上版控）。
 - 限制：受測程式開子程序再叫的 git（例：[`merge-atom-index.py --resolve`](../tools/merge-atom-index.py)）照常真跑。
 
-### 目前套用（共 13 支）
+### 目前套用（共 10 支）
 
 - git 呼叫量最大的一批。
-- hooks/verify：`verify_vcs_sync_worker`、`verify_stop_reconcile`、`verify_merge_driver_gate`、`verify_overview_hub`、`verify_unpushed_advisory`、`verify_sync_reminder_unpushed`、`verify_reading_path_hook`、`verify_personal_sync_advisory`、`verify_gate_bypass`、`verify_smell_gate`。
-- tools/verify：`verify_reading_path`、`verify_merge_atom_index`、`verify_normalize_eol`。
+- hooks/verify：`verify_vcs_sync_worker`、`verify_stop_reconcile`、`verify_merge_driver_gate`、`verify_overview_hub`、`verify_unpushed_advisory`、`verify_sync_reminder_unpushed`、`verify_personal_sync_advisory`、`verify_smell_gate`。
+- tools/verify：`verify_merge_atom_index`、`verify_normalize_eol`。
 - `verify_install` 不適用：repo 建在模組共用目錄、git 在 [`install.py`](../tools/install.py) 子程序裡跑。
 - 其餘 git 呼叫 10 次以下的測試檔照舊跑真 git。

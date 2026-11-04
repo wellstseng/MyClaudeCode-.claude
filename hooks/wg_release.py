@@ -12,7 +12,7 @@
   放行記成「這一回合＋放行的那幾件」（release_items：擋訊息每條 ✗ 的規則與現象）：同一回合整個放；之後的回合那幾件原因還在
   就不再要求放行（keep_released／drop_items），原因消失就從紀錄拿掉。
   無法互動（non_interactive_reason：裁判子 session、子代理、headless／SDK）→ 不叫它問；擋滿照預算放行並留帳（由呼叫端記）。
-  用在寫程式碼的查核閘（ReconcileGate、TestFailGate）、等值證法。
+  用在寫程式碼的查核閘（ReconcileGate）、等值證法。
 怎麼跑：被 handlers/stop.py 匯入；verify 在 hooks/verify/verify_stop_reconcile.py（件一段）、verify_pull_stop_gates.py。
 """
 from __future__ import annotations
@@ -69,7 +69,8 @@ def non_interactive_reason(input_data: Dict[str, Any], transcript_path: Optional
     ① 環境變數 CLAUDE_COMPANION_JUDGE（裁判子 session；dispatcher 現已整組早退，這裡是第二道）；
     ② hook 輸入是 SubagentStop、或帶 agent_id（官方：子代理內才有）；
     ③ entrypoint 是 sdk-*（`claude -p`／SDK 呼叫）：環境變數 CLAUDE_CODE_ENTRYPOINT 優先（CC 設給子行程，hook 繼承），
-       沒有再看 transcript 最後一筆紀錄的 entrypoint 欄。互動入口是 cli／claude-vscode 等，不算。"""
+       沒有再看 transcript 最後一筆紀錄的 entrypoint 欄。互動入口是 cli／claude-vscode 等，不算；
+    ④ 環境變數 CLAUDE_JOB_DIR（官方：每個背景 session 都設，指向 ~/.claude/jobs/<id>）：背景工作軌，沒人守著答。"""
     env = os.environ if env is None else env
     if env.get("CLAUDE_COMPANION_JUDGE"):
         return "裁判子 session（CLAUDE_COMPANION_JUDGE=1）"
@@ -78,6 +79,8 @@ def non_interactive_reason(input_data: Dict[str, Any], transcript_path: Optional
     ep = str(env.get("CLAUDE_CODE_ENTRYPOINT") or _transcript_entrypoint(transcript_path) or "")
     if ep.startswith("sdk"):
         return f"headless／SDK（entrypoint={ep}）"
+    if env.get("CLAUDE_JOB_DIR"):
+        return "背景 session（CLAUDE_JOB_DIR）"
     return None
 
 

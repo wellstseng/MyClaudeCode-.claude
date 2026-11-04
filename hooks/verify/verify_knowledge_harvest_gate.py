@@ -26,8 +26,7 @@ _SID = "sid"
 _DONE = "全部完成了"
 _CORE = r"c:\a\.claude\hooks\x.py"
 _ATOM_PATH = r"C:\Users\u\.claude\memory\dotnet\foo-bar.md"
-_CFG = {"harvest": {"enabled": True, "min_turns": 3, "min_accessed": 5, "min_turns_between": 3,
-                    "background": False}}   # 測擋下這條路（背景送不出去或開關關掉時走它）
+_CFG = {"harvest": {"enabled": True, "min_turns": 3, "min_accessed": 5, "min_turns_between": 3}}
 _PTU_CFG = {"docdrift": {"enabled": False}, "aec": {}, **_CFG}
 
 
@@ -77,7 +76,7 @@ def ptu(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(pt, "_hud_alive", lambda *a, **k: (True, {}))
     monkeypatch.setattr(pt, "append_guard_log", lambda *a, **k: None)
     monkeypatch.setattr(pt, "_write_aec_report_file", lambda *a, **k: None)
-    monkeypatch.setattr(pt, "_run_companion_hooks", lambda *a, **k: ([], []))
+    monkeypatch.setattr(pt, "_run_companion_hooks", lambda *a, **k: [])
     monkeypatch.setattr(pt.aec_ledger, "collect_at_completion", lambda *a, **k: 0)
     monkeypatch.setattr(
         pt, "spawn_vcs_sync",

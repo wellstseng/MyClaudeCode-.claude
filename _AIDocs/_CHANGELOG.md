@@ -4,6 +4,83 @@
 > 每條僅留「標題 + 一句摘要」。實作細節見 `DevHistory/`（各主題演進檔）。
 
 ---
+## 2026-11-04 v6.1 對 Claude Code 適應性補正更新：前提失效修補、拆腳手架換原生、注入精準度
+- **緣由**：官方文件全收割後對帳發現，CC 改了三個本系統當作前提的行為：子代理預設背景跑、hook 輸出上限 10,000 字元、壓縮後會跑 SessionStart(compact)。記憶因此在沒有訊號的情況下沒送到、沒記到帳：子代理效用帳 30 筆全標 `no_output`；hook 輸出被換成預覽 36 次；壓縮後第一時間送到卡片 0/18；壓縮時誤判換了專案根 14/17。另外有幾件自製功能原生已經有了，注入也有一大塊花在非真人回合。計畫見 `DevHistory/v6.1-對CC適應性補正-2026-11/analysis/00-總整與建議優先序.md`。
+- **做法**：
+  - 相容修正：SubagentStop 依 `agent_id` 回填 `last_assistant_message`，沒收到的標 waiting。hook 出口一律過 `cap_hook_output`（9,000 字元自截，溢出全文存 `workflow/hook-overflow/`）。壓縮後卡片內文改由 SessionStart(compact) 讀 PreCompact 快照直送，PostToolBatch 退成備援。專案根指紋只看 `normcase(生效根)`。裁判改 `--tools Read,Grep,Glob`＋`--strict-mcp-config`＋`ENABLE_CLAUDEAI_MCP_SERVERS=false`。設定 `crossSessionInbound: accept`。Stop 讀 `background_tasks`／`session_crons`，延後紅測閘以外的收尾閘，連延 5 次照擋。家目錄 `AGENTS.md` 極簡化，並加 `claudeMdExcludes`。SessionEnd 60 秒說法更正。webfetch-guard 拆除。
+  - 修剪：`autoMemoryEnabled: false`，橋接檔與 `native-memory-bridge.py` 退役。console-spawn 改 `claude --bg --name <軌名> --worktree <軌名>`，加 `worktree.baseRef: head`。Claude 對 Claude 檔案信箱退場改 SendMessage（mailbox 保留）。刪 `tools/auto-continue/` 改用 `/goal`。ensure-mcp 改呼叫 `claude mcp add-json`（自我修復保留、註冊形狀與 live 同形）。12 個 skill 的 `triggers`／`pattern` 改成 `when_to_use`／`metadata`，audit-skill 跟改。`cleanupPeriodDays: 14`。
+  - 進化：整則沒有使用者打的字（背景通知、同伴訊息）就不注入（`NON_HUMAN_PROMPT_NO_INJECT`，實測這類回合吃掉 2,399 張、佔 63%）。`/continue` 的查詢接交接單前段（`CONTINUE_QUERY_FROM_HANDOFF`）。SubagentStart 補不經 Agent 工具的子代理（`SUBAGENT_START_NON_AGENT_INJECT`）。Codex 審查掛 `asyncRewake`。InstructionsLoaded、StopFailure 留帳。壓縮摘要填自動交接單，重開舊 session 提示快取重寫量。同檔預警附對方 session 名，`CLAUDE_JOB_DIR` 算沒人能回答。MCP 給非 CC 客戶端 `instructions`，`memory_search` 開場載入。週健檢接 `/skill-doctor`、`/context`。新量尺四支：`hook-timing-debuglog`、`compact-reinject-report`、`injection-miss-report`、`search-terms-to-triggers`。
+  - 版本：`version.json` 6.1／6.1.0；release note 見 `DevHistory/v6.1-對CC適應性補正-2026-11/`（`技術對照.md` 列出每項改的檔、規則與驗證檔；`升級全紀錄.md` 一列一項總表；`analysis/` 計畫原文）。
+- **驗證**：發行前重跑本版新增的 11 支與改過的 14 支相關驗證檔，全綠，全量沒跑。發行當天的真 session 已有 InstructionsLoaded、SubagentStart、Stop 背景延後、非真人不注入四種帳。壓縮直送、子代理回填、Codex 叫醒、auto memory 關閉、MCP instructions 還要等真 session 實跑確認，plugin eval 整組要點名才跑。安裝器（`--apply`／`--upgrade`）會補四個新頂層設定（使用者沒設才補）；`claudeMdExcludes` 含本機路徑不帶，其他機器手補（release note「要你動手的」第 4 條）。
+## 2026-11-04 Claude Code 官方文件全收割 228 頁＋索引＋現況對帳＋進化分析
+- **緣由**：官網出現大量新功能與新名詞（agent teams、workflows、mods、routines、channels、cross-session messaging…），`ClaudeCodeInternals/` 14 章是 2026-04 源碼研究、已過時；要有一份以官方現行文件為準的本地參考，並據此檢視原子記憶系統哪些前提失效、哪些自製可拆。
+- **做法**：新 `tools/cc_docs_harvest.py`（`fetch`：sitemap → 全部 zh-TW 頁 `.md` 原文＋changelog／claude-tag 英文，依 llms.txt 分類落 `_AIDocs/ClaudeCodeInternals/Docs/<八夾>/`，產 `_manifest.json`；`index`：合併各夾 `_keywords*.json` → `_INDEX.md`／`_KEYWORDS.md`（2,348 詞反查＋記憶系統接點）／`_GLOSSARY.md`（453 詞）／`_keywords_all.json`）。9 個 sonnet 子代理寫各夾 `_SUMMARY.md` 導讀卡＋ `08-whats-new/TIMELINE-新功能與新名詞.md`（97 新名詞、165 版）；1 個 opus 寫 `_現況對帳-原子記憶系統用到的CC機制.md`（11／33 hook 事件在用、25 項自製疑似原生已有）；3 個 opus 寫 `DevHistory/v6.1-對CC適應性補正-2026-11/analysis/01～03`（46 案）；Fable 總整 `analysis/00-總整與建議優先序.md`。兩層 `_INDEX.md` 加入口。
+- **驗證**：228 頁 HTTP 200、無 HTML 誤抓；`index` 子命令重跑與首次輸出同體；三份分析內部相對連結全部指得到檔；關鍵發現附逐字稿統計（子代理注入歸因 30 筆全 `no_output`、hook 輸出被換預覽 36 次、壓縮後 SessionStart(compact) 17／18 有跑、裁判黑名單漏 `atom_write` 等工具）。提案尚未動工，程式與設定未改。
+## 2026-11-04 個人隱私敏感資訊放 personal/<user>/secret/，其他個人卡開放進版控
+- **緣由**：個人卡全部鎖單機等於廢了跨機這層，真正敏感的只有少數；而這個 repo 在 GitHub 是公開的，要有明確的規則和把關，日後任何人都不會把敏感資訊寫到公開處。
+- **做法**：`atom_write(secret=true)` 落 `memory/personal/<user>/secret/`（不進版控、不送向量、卡名不進橋接檔、觸發詞照常注入）；`.gitignore` 改放行名單，其他人的個人卡預設仍不進。規則進必載的 `rules/core.md` 並登記硬契約。把關集中在 `lib/sensitive_gate.py`：字眼命中要宣告（`secret=true` 或 `not_sensitive=<理由>`）；真實 token／私鑰在寫檔、背景上版控、週健檢各擋一次；背景萃取命中就不寫；自動回填的使用者原話（Quote）命中也不填，曾因此把內網路徑帶進公開卡。內網共用路徑與內網 IP 也算敏感字眼。`atom-heal` 不把別的卡接到 secret 卡；pull 來的新個人卡開場自動補登記。
+- **驗證**：新 `lib/verify/verify_secret_cards.py`、`tools/workflow-guardian-mcp/verify/verify_atom_write_secret.js`；3 張卡搬進 secret/，16 張推送前讀過全文。字眼表抓不到的隱私內容仍靠 AI 判斷。
+## 2026-11-04 私人卡登記搬出共用索引
+- **緣由**：根層 `memory/personal/` 的卡不進版控，但 19 筆登記（卡名、觸發詞）在進版控的 `_atom_index.json` 與 `_ATOM_INDEX.md`，隨 repo 推到遠端；別台還會把它們當懸空列。
+- **做法**：`lib/atom_index_json` 根層 `save` 把私人列分流到 gitignore 的 `memory/personal/_personal_index.json`、`load` 疊回，鏡像不列；專案層不分流。`sync-atom-index --split-personal` 收斂舊資料，SessionStart 偵測到就跑。直接讀 JSON 的遺忘流程、日期檢查、效果報告、原生記憶橋接、來源回看、Node 儀表板改成疊上私人列。6 張公開卡的 `Related` 拿掉私人卡名，連結改寫在私人卡那邊（反向連結在記憶體算，本機連結圖不變）。
+- **驗證**：新 `lib/verify/verify_personal_index.py`；搬移前後 744 筆逐字相同（725 共用＋19 私人）、連結圖 453 節點相同。已進 git 歷史的卡名不會消失。
+## 2026-11-04 同事回報 M0027：6 支紅測與索引合併留兩列
+- **緣由**：同事在別台整併 upstream 跑全量，6 案紅、索引出現同一張卡新舊兩列。本機重現 5 案（第 6 案只在非作者機器紅）。
+- **做法**：`wg_overview`／`wg_read_fast`／`codex-run` 補 `newline=`；`wg_atoms` 的 `atom_spec` import 排到 `wg_core` 之後（先載 wg_atoms 就炸）；`merge-atom-index` 加 `collapse_moved`（一側搬檔、另一側改舊列 → 收成新路徑一列）。測試：真卡只認檔名不認資料夾、followups 的 host 驗雜湊格式不比本機、同步提醒案例跟上 (d) 閘已拔、全庫重疊對只數進得了候選池的卡（被 Supersedes 取代的舊卡線上先踢出，實際 6 對不是 24 對）。
+- **驗證**：點名 6 案與 7 個相關測試檔全綠；負向對照：關掉補帳第 5 案紅、關掉 `collapse_moved` 新案例 3 紅、假裝別台電腦第 4 案綠。全量未跑。
+## 2026-11-03 索引檔名、記憶資料夾名集中到 atom_spec（!11 輕量版）
+- **緣由**：出過事的都是「同一組資料夾名在多處各寫一份、其中一份漏項」（`_archived`／`_rejected`／`templates` 三例）；單獨字面沒有出事紀錄。照 !11 審查定的邊界重做，取代原本 129 檔的版本。
+- **做法**：`lib/atom_spec.py` 加扁平字串常數（索引檔 5 個＋`INDEX_FILES`／`ALL_INDEX_FILES`、記憶資料夾名 16 個、衍生物 `DERIVED_FILES`／`DERIVED_DIRS`、scope 分層三子樹 `SCOPE_DIR_NAMES`），每個一句說明；hooks／lib／tools 共 25 份清單改由常數組成，各份內容維持原樣（atom_io 的 scope 值檢查改用既有 `VALID_SCOPES`，global 已先處理完，行為等值）。不做拼路徑方法、JSON、JS 側、單獨字面守衛。
+- **驗證**：新 `lib/verify/verify_name_lists_single_source.py`（只擋「atom_spec 之外用字串再寫一份 ≥2 個受管名字的清單」，`except ImportError` 備援區放行）；各份清單逐一比對 origin/main 原值，值與型別相同、tuple 連順序相同；相關案例檔 22＋7 支。
+## 2026-11-03 usage-watch：帳號級用量異常偵測、排程、Discord 通知與 /usage-watch skill
+- **緣由**：要看「整個帳號」每小時／每日／每週用量有沒有異常升高並留紀錄供日後圖表；本機 transcript 只涵蓋單台機器（同帳號多機或網頁共用時嚴重低報），且只留兩三週。
+- **做法**：新 `tools/usage-watch.py`：帳號段用 Claude Code 的 OAuth token 打 `api/oauth/usage`（免瀏覽器；token 過期不自刷新只報錯），判 ①突增（固定 4%/h，滿 10 筆改歷史中位×3；比較點至少隔 45 分鐘，因 API ％只到整數）②最近 24h 速度預估重置前用完 ③50／75／90％ ④5h 窗、日用量（預算 20％或歷史中位×2）、上週同期與週結算；本機段加權 token 每小時／每日／每週並列專案。`--register [watch]` 建每小時監控排程（`--account-only --notify`），`--register report --at HH:MM [--on weekdays|mon,wed,fri]` 建定時摘要排程（`--report`，可只在工作日或指定星期；不需要可不建），`--unregister [watch|report]`；`--report` 也可手動發；通知＝Windows toast＋Discord webhook（`workflow/usage-watch/settings.json`，不進版控），依 key 冷卻；`--status`、`--test-notify`、`--chart`（chart.html：每週走勢＋重置／異常標記、每日用量、本機各專案每日 token，附數據表）。SessionStart 新增 `_usage_watch_advisory`（逾 72h 沒跑／查詢或通知失敗）。新 skill `/usage-watch`。紀錄落 `workflow/usage-watch/`（gitignore）。
+- **驗證**：`hooks/verify/verify_usage_watch.py` 39 案（合併時補 1 案：手動跑過不算排程，逾期不提醒） `USAGE_WATCH_CHECK PASS`；實跑帳號＋本機、Discord／toast 實發、排程註冊並手動觸發 LastTaskResult 0；skill audit 0 fail／0 warning。
+- **合併時的取捨**（審查紀錄 `DevHistory/檢視與審查/同伴MR審查-2026-11-03.md`）：last-run 多記 `scheduled`（只有帶 --notify 的排程跑法為 true），SessionStart 的「逾 72h 沒跑」只看排程跑法——不然手動查過一次、沒註冊排程的人，三天後每場 session 都多一行叫他去註冊。
+## 2026-11-03 週用量截圖排程跟著帳號的週重置時間走
+- **緣由**：排程寫死週二 03:30 只對重置在週二凌晨的帳號成立；別的帳號（實例：週一 21:00 重置）會在重置後才截，只拍到 0%。
+- **做法**（`tools/usage-snapshot/usage_snapshot.py`）：截網頁時攔用量頁自己打的 `/usage` API，週額度多條取用量最高那條，把排程每週觸發對齊到重置前 10 分鐘（`Set-ScheduledTask` 只換 trigger）；結果記 last-run 的 weekly_used／weekly_reset／schedule。VS Code 面板那條沒有重置時間來源，排程不動並寫明。
+- **驗證**：新增 `tools/verify/verify_usage_snapshot_align.py`（取最高週額度、重置時間取整、對齊四種結果與跨午夜、兩條截圖路徑）＋既有 usage 測試共 12 passed；網頁路徑的 API 攔截與對齊在另一台正式排程跑過（週一 21:00 重置帳號，對齊到 20:50）。
+
+## 2026-11-02 寫碼守門拔五刀、出廠改開
+- **緣由**：使用者定雞肋判準（「有與沒有幾乎一樣甚至更差」是雞肋；「沒用還多耗時間效能、或帶歪」是絕對雞肋），要在守門對所有人開啟前，把開了才有、會送字給 AI 卻沒讓結果變好的拔掉，然後開開關上版。
+- **做法**（五條子代理分支合併，守門關時 hook 輸出逐字不變）：
+  - 拔：糾正詞先問 AI（開關都直接計數）、背景收割（開時收割只剩一句提醒，`wg_bg_harvest.py` 刪）、拐彎判斷與閱讀路徑整套（含 Python／C# 以外語言問一句；`wg_reading_path.py`、`lib/turn_metrics*`、`lib/reading_path_cs.py`、`lib/cs_roslyn*`、`tools/reading-path*` 刪）、「順手看到最該修」PickOne 與開場追蹤項（`pick_one` 設定段刪；退縮閘的「追蹤｜」行照寫帳本）、寫碼查核 (d) 補案例提醒（含 case_for 宣告與十條判定規則；`block_letters` 只留 a）、驗收規格提示（規格檔登記與裁判照留）、收尾自清提醒與 Stop 閘（產出物帳本與 HUD 照舊）。
+  - 兩刀拔完 `hooks/wg_closing_round.py` 只剩空殼，整支刪；收尾那批的認法 `closing_call` 搬進 `handlers/post_tool_batch.py`。
+  - 開關：`workflow/config.json` 的 `coding_guard.enabled` 出廠改 true；本機要關寫 `config.local.json` `{"coding_guard": {"enabled": false}}` 或設 `WG_CODING_GUARD=0`。TECH 甲乙篇、README、config.md、guards.md 的「出廠關」照改；跨層表 34 → 30 列（刪 #15、#25、#29、#33，列號不重編）。
+  - 修錯字：收尾檢核 (k) 的兩處說明（MCP schema、Stop 擋訊息）原寫「會進 workflow/tracking 帳本」，守門關時本來就不存、開時現在也不存，改成「存進收尾報告給 HUD 看」；這段擋訊息在出廠設定（`aec.scan_report_gate=false`）下兩種模式都不送。
+- **驗證**：五刀合併後跑五條分支點名的 32 支測試檔；`verify_stop_reconcile` 錄製檔三條分支都重錄過，合併後用 `--git-record` 重錄一次再重播；出廠開的三態測試新增「local 寫 false 關得掉」。拔前拔後的 token／時間對照 → `DevHistory/v6.0-寫程式碼的進化-2026-10/v6.0的代價-拔留改後上版-2026-11-02.md`。
+
+## 2026-11-02 週用量截圖改截 VS Code 的 Claude Code 用量面板，網頁降為退路
+- **緣由**：使用者要 VS Code `/usage` 叫出的 Account & Usage 面板：比網頁多了帳號、方案，以及「哪些東西吃掉用量」、子代理與 MCP 佔比。
+- **做法**（`tools/usage-snapshot/usage_snapshot.py`）：另開專屬 VS Code（`vscode-data/` 獨立設定資料夾＋隨機偵錯埠＋`--skip-welcome`＋被遮住照常繪製參數），Playwright 接上後畫面撐到 1280×2000，Claude Code 分頁打 `/usage`、切 Week、只截面板，帳號取面板 Email。連試 3 次都失敗才退截網頁，每次原因記進 notes。排程單次上限 10→20 分鐘並重新註冊。踩到的坑：從 VS Code 終端機跑時 `ELECTRON_RUN_AS_NODE` 讓 Code.exe 變成 Node；新設定資料夾跳 Copilot 引導視窗擋畫面；同步版 Playwright 用 `time.sleep` 等時收不到新框架事件。
+- **驗證**：真跑主路徑成功（Fable、Week、MCP 段都在面板文字裡），再連跑兩次各約 20 秒、無殘留程序；VS Code 不在時連試 3 次後退網頁成功；存檔導暫存、推送換空動作。
+
+## 2026-11-02 週用量截圖修復：認新版用量頁、展開 Fable、檔名照截圖帳號
+- **緣由**：10/20、10/27 兩週排程都失敗。claude.ai 用量頁改成 `/new#settings/usage` 設定彈窗、中文寫「已使用 68%」（字在前），舊判斷式只認「68% used」字序 → 45 秒逾時；「本週」列預設收合，Fable 每週上限沒拍到；檔名取這台 Claude Code 帳號，10/27 那天 CC 登 _3、瀏覽器登 _5，圖會標錯人。
+- **做法**（`tools/usage-snapshot/usage_snapshot.py`）：判斷式兩種字序都認；截圖前點開彈窗內收合的「本週」鈕；檔名用頁面 `/api/account` 的信箱，跟 CC 帳號不同時記進 last-run `notes`，讀不到才退用 CC 帳號。
+- **驗證**：真瀏覽器跑完整流程（存檔導暫存、推送換空動作）成功，抓到「已使用 68%」與 Fable「已使用 75%」，CC 假裝 _3 時檔名標 _5 並出警告；帳號判斷三情況假頁面測；`verify_tools_data_root`／`verify_code_paths_from_code_root` 相關 11 案綠；GitLab 非互動 `push --dry-run` 通。
+
+## 2026-11-02 收尾一輪：關交接自動審、收尾報告核對「你說」、清死碼、拐彎判斷說明對齊
+- **緣由**：使用者照建議拍板。舊 Codex Companion 近 30 天 97% 的審查是改交接檔自動觸發、96% 回要跟進且同回合重複審；收尾報告第一類「你說」是 AI 自己抄的，抄錯或捏造時使用者在 HUD 上分辨不出來；拔閘後留下走不到的機制與死碼；拐彎判斷的說明還寫「擋」，實際是提醒。
+- **做法**：
+  - Companion：`codex_companion.soft_gate.handoff_review` 設 false（守門開看的鍵本來就關），計畫審、回合審、驗收裁判與 `enabled` 不動；交接靠 handoff Step 3.5 自審，要第二意見叫 skill `codex`。
+  - 收尾報告：PostToolUse 拿主對話紀錄裡使用者本人打的字（含中途插話）核對 `goal[].said`，標本回合／第 N 回合前／派工／對不到／太短不判／判不了；HUD「你說」旁標記號、第一類上方摺疊列本回合原話；只加記號、不擋（`hooks/handlers/aec_said_check.py`）。
+  - 清死碼（行為不變）：連鎖斷路器拔掉沒有閘在用的「擋的對象」（兩條規則、經過表一欄）；`deny_cap` 的 cap 改必填；`assistant_texts_since` 改名 `assistant_texts`；刪五個沒人用的名字。
+  - 拐彎判斷 TURN_JUDGMENT_REQUIRED 說明改成現況：守門開只提醒一次、守門關不跑；走不到的擋下分支保留。
+- **驗證**：交接檔 Edit 改前判會審、改後不審，計畫審不變；斷路器七情境拆前拆後輸出逐字相同（只差預期的兩處）；規則補句 139 條只有這一條變；「你說」核對 12 案、20MB 級紀錄一次 0.18～0.28 秒；合併後三組相關測試見下一行 commit。
+
+## 2026-11-02 v6 拔留改收尾：補回糾正計數、拔四道閘、病形閘一回合只擋一次、收尾報告分三類、codex skill
+- **緣由**：使用者對拔留改的待決事項一次拍板，原則是「對 v6 做處置，非 v6 的結果維持原本該有的樣子」。守門開那週的真實帳顯示四道 AI 推出的閘沒擋到真傷害；病形閘程式上沒有擋次上限，可能「測不完也改不完」；HUD 越寫越技術臭、沒有基礎分類；開場服務沒起時多等 1 秒；遠端 Ollama 恢復後停用提醒仍反覆問 29 次。
+- **做法**：
+  - 糾正計數：守門關時使用者本人打的字命中糾正詞就直接記一次（補回 9e476fd0；跨 session 訊息不再誤計），守門開照舊問 AI（`wg_friction.record_correction`）。
+  - 拔閘：動資料檔先宣告、改舊測試先宣告、繞閘宣告（含繞閘卡片拒寫）、新版紅測閘；紅測閘守門開關同一套，「先這樣／跳過」清紅測只認使用者本人打的字。跨層表 36 → 34 列（刪 #13、#27，列號不重編）。
+  - 病形閘：同一回合同一個 repo 只擋一次（`SMELL_GATE_ONCE_PER_TURN`），第二次起放行、留帳、擋訊息改當提醒要 AI 寫進收尾報告；處置句改成「不是你這次寫的就不修」，修法提示照設計尺（不為壓層數抽一次性小函式）。
+  - 閱讀路徑：守門開時 Python／C# 以外的語言改到也問 AI 一句。
+  - 收尾檢核：報告分三類（你這次要的事每件掛原話／碰到長期原則／AI 自己做主），HUD 三類分區加份量行，技術細節收進附錄；MCP 退回的報告守門開關都不算交。
+  - 新 skill `codex`：CC 自己判斷叫不叫，同步包原文貼使用者的尺、兩級嚴重度、一輪封頂、沙箱依模式固定；`codex-call.py` 命令列輸出固定 UTF-8、工作目錄不存在就報錯、成功時吐出 Codex 執行紀錄。
+  - 開場：向量服務沒回應就不查 `/status`。遠端 Ollama 長期停用標記記恢復時刻，過了自動清。健檢的索引漂移紅燈寫出哪張卡。
+- **驗證**：守門關七組情境拔閘前後逐字相同（唯一例外：寫卡不再有繞閘拒寫）；糾正計數與 9e476fd0 逐步對照 diffs=0；開場服務關著時實測少一次 1.07 秒逾時；codex skill 實跑 SGI 唯讀審查 147 秒、repo 前後狀態相同；合併後三組相關測試 855＋829＋421 案，紅的 3 案是舊案例還在驗已拔的繞閘字樣與規則數下限，改完重跑綠，最後一輪改動再跑 441＋208 案綠；MCP 冒煙與守門關工具清單 PASS。
 ## 2026-11-01 整併 upstream/main v6.0 到 Mac 線（1560 commits）+ Mac 適配 + 去識別化
 - **衝突解法**：個人 atom 19 顆內文留本地、Related 欄兩邊聯集；程式 11 檔吃 upstream 再重套本地 Mac delta（`wg_core._ROOT_HOME_RE` 認 POSIX 家目錄、`wg_evasion` 的「0 failed」不算失敗、`realm_gate._ABS_PATH_RE` 認 POSIX 絕對路徑、smoke 測試不分大小寫檔案系統判法）；索引三檔與各層 `_INDEX.md` 由 merge driver 自動合成。
 - **settings.json**：以本地為底（hook 走 `python`／`bash` + `$HOME`，不抄 `pythonw.exe`），補接線 delta：PreToolUse／PostToolUse guardian matcher 擴充、新增 PostToolUseFailure 與 SubagentStop、SessionStart／Stop timeout 對齊、`modelSettings` 區塊；頂層 `model` 本地保留。

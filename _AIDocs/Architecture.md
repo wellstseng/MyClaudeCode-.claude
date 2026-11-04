@@ -5,7 +5,7 @@
 
 ## Hooks 系統
 
-11 個 hook 事件掛哪些腳本、timeout、職責：TECH §3.1；一個回合的序列圖：TECH §3.2。入口鏈：`settings.json` → `hooks/workflow-guardian.py`（薄 shim）→ `dispatcher.py`（純路由、惰性 import）→ `handlers/<event>.py`。每道 寫碼守門擋還是提醒，送法照 `hooks/wg_release_rules.RULE_MODE`（呼叫端經 `gate_mode(rule, v6)` 問；照擋只有病形、宣告、紅測三類，其餘提醒一行掛前一個動作的工具結果；安全邊界閘不讀表、照擋；寫碼守門關一律照舊）：TECH/coding-guard.md 乙1〈擋或提醒〉。
+14 個 hook 事件掛哪些腳本、timeout、職責：TECH §3.1；一個回合的序列圖：TECH §3.2。入口鏈：`settings.json` → `hooks/workflow-guardian.py`（薄 shim）→ `dispatcher.py`（純路由、惰性 import）→ `handlers/<event>.py`。每道 寫碼守門擋還是提醒，送法照 `hooks/wg_release_rules.RULE_MODE`（呼叫端經 `gate_mode(rule, v6)` 問；照擋只有病形、宣告、紅測三類，其餘提醒一行掛前一個動作的工具結果；安全邊界閘不讀表、照擋；寫碼守門關一律照舊）：TECH/coding-guard.md 乙1〈擋或提醒〉。
 
 ### 事件 × handler 入口表
 
@@ -15,9 +15,12 @@
 | `UserPromptSubmit` | `handlers/user_prompt_submit.py`（orchestrator）→ `ups_gates.py`（detect：evasion 追蹤、使用者決策 L0、long_die、Atom-Write Guard）→ `ups_context.py`（episodic、wisdom、parallel／research 建議、_AIDocs 指標、JIT）→ `ups_search.py`（找）→ `ups_inject.py`（裝） | 記憶注入主路徑 + guard 提醒；UPS 被 kill 哨兵；AEC 刪除決策後驗 | TECH §5、§5.7 |
 | `PreToolUse` | `handlers/pre_tool_use.py` | 寫入守門（下節）+ 跨 session 同檔預警 + 索引三檔合併閘 + git 隱私閘 + commit 口令閘 + subagent 記憶注入 + 寫碼守門開時 AskUserQuestion／ExitPlanMode 前查推薦（`wg_ask_gate`） | TECH §7.3、§7.4、§4.5、§12；`wg_ask_gate` 見 TECH/coding-guard.md 乙6 |
 | `PostToolUse` | `handlers/post_tool_use.py`（末段同程序呼叫 `version_guard.run()`／`acceptance_spec.run()`） | 改檔追蹤 + 增量索引 + test-fail 偵測 + changelog auto-roll + AEC one-writer + late-collision + `wg_depends.on_read_depends`（讀到某卡 Depends 指的檔 → 一行一卡指標；文件檔命中 `authority_map` 一次性注入地圖） + **收割 one-writer**（`atom_write`／`atom_retire` receipt → `state.atom_ops[sid]`；`knowledge_harvest_report` items ↔ receipt 核對 → `state.knowledge_harvest[sid]` + `workflow/harvest-ledger/<sid>.jsonl`，validated 時清同 turn AEC d_pending 並 `spawn_vcs_sync(reason="harvest")`；純函式在 `wg_harvest.py`） | TECH §6.3、§7.2、§7.4；驗收規格見 TECH/coding-guard.md 乙5 |
-| `PreCompact`／`PostCompact`／`PostToolBatch` | `handlers/pre_compact.py`／`post_compact.py`／`post_tool_batch.py` | 壓縮前快照 state + `injected_atoms` + handoff stub；壓縮後 stash atom 緊湊內文，沒有 atom 就不 stash；下一批工具一次性重注入 + stub 補全提示 | 本檔 Auto-Handoff 節 |
-| `Stop` | `handlers/stop.py`；standalone `codex_companion.py`／`lang_guard.py` | 閘序：TestFail → Reconcile（`wg_verify_ledger` 收尾宣稱對帳本收據）→ Evasion／DeferralGate → KnowledgeHarvest → Harvest-Pending → ScanReport → AEC-Pending → HUD fallback → 同步閘（root 有 vcs-sync 活鎖跳過該 root）→ AtomAudit → Deep Post-Mortem → 驗收裁判 enforce（獨立 hook）→ 迴歸提示 → PickOne（寫碼交付時用 additionalContext 送一次「最該修的一件」、不擋；回覆裡那段記成附建議的追蹤項，`wg_harvest`）；效用歸因；token 預警 piggyback；退避偵測（`detect_evasion` 對 last assistant text 於此執行）；transcript 單次 tail-read 供各消費者共用 | TECH §7.1（基本守門）、TECH/coding-guard.md 乙3（寫碼守門）、§6.4 |
-| `SubagentStop` | `handlers/stop.py handle_subagent_stop` | 子代理收尾只跑寫碼查核（對帳 (a)～(d)，用 `agent_modified_files[agent_id]` 與 `agent_receipt_key` 的收據）；沒有人能回答放行，所以跟主 session 同一種擋次預算（每個使用者回合 `reconcile_gate.max_blocks_per_turn` 次，每個子代理各自計次），擋滿就放行並留帳 `subagent_released`，主 session 收尾照看這些改檔（規則 NONINTERACTIVE_RELEASE_AT_BUDGET）；裁判子 session（`CLAUDE_COMPANION_JUDGE=1`）的 Stop 同規則，留帳 `judge_released` | TECH/coding-guard.md 乙3、乙4 |
+| `PreCompact`／`PostCompact`／`PostToolBatch` | `handlers/pre_compact.py`／`post_compact.py`／`post_tool_batch.py` | 壓縮前快照 state + `injected_atoms` + handoff stub；壓縮後主路 SessionStart(compact) 直送 PreCompact 快照內文，PostToolBatch 補位（一次性重注入 + stub 補全提示） | 本檔 Auto-Handoff 節 |
+| `InstructionsLoaded` | `handlers/instructions_loaded.py`（直接掛 handler 檔） | 只記帳 `Logs/instructions-loaded.jsonl` | TECH §3.1 |
+| `StopFailure` | `handlers/stop_failure.py`（直接掛 handler 檔） | 記 `Logs/guard-stop_failure.jsonl`；待結算注入歸因標 aborted | TECH §3.1 |
+| `Stop` | `handlers/stop.py`；standalone `codex_companion.py`／`lang_guard.py` | 閘序：TestFail → Reconcile（`wg_verify_ledger` 收尾宣稱對帳本收據）→ Evasion／DeferralGate → KnowledgeHarvest → Harvest-Pending → ScanReport → AEC-Pending → HUD fallback → 同步閘（root 有 vcs-sync 活鎖跳過該 root）→ AtomAudit → Deep Post-Mortem → 驗收裁判 enforce（獨立 hook）→ 迴歸提示；效用歸因；token 預警 piggyback；退避偵測（`detect_evasion` 對 last assistant text 於此執行）；transcript 單次 tail-read 供各消費者共用 | TECH §7.1（基本守門）、TECH/coding-guard.md 乙3（寫碼守門）、§6.4 |
+| `SubagentStart` | `handlers/subagent_start.py` | 不經 Agent 工具的子代理（skill `context: fork`、Workflow）補記憶注入：父逐字稿最近派工動作是 Skill／Workflow 才挑卡（Agent／Task 已由 PreToolUse 注入），additionalContext 送，登記 `subagent_injections` 等 SubagentStop 回填（規則 SUBAGENT_START_NON_AGENT_INJECT） | TECH §3.1、附錄 A5 subagent 記憶 |
+| `SubagentStop` | `handlers/stop.py handle_subagent_stop` | 子代理收尾只跑寫碼查核（對帳 (a)～(d)，用 `agent_modified_files[agent_id]` 與 `agent_receipt_key` 的收據）；沒有人能回答放行，所以跟主 session 同一種擋次預算（每個使用者回合 `reconcile_gate.max_blocks_per_turn` 次，每個子代理各自計次），擋滿就放行並留帳 `subagent_released`，主 session 收尾照看這些改檔（規則 NONINTERACTIVE_RELEASE_AT_BUDGET）；裁判子 session（`CLAUDE_COMPANION_JUDGE=1`）的 Stop 同規則，留帳 `judge_released`；另回填子代理效用帳（守門關時也進） | TECH/coding-guard.md 乙3、乙4 |
 | `SessionEnd` | `handlers/session_end.py` | episodic 生成 + 使用者決策萃取 spawn + decay 每日護欄 + selective forget（預設 dry-run）+ recall-miss + 晉升 sweep + outcome 遙測 + GC；增量索引之後 `spawn_vcs_sync(reason="promotion"|"session_end")` 一次（舊 `_auto_commit_promotions` 已移除，TECH §14.2）（SessionEnd 全量萃取**未啟動**） | TECH §6.3、§6.4、§8 |
 
 ### 模組職責（一行）
@@ -34,7 +37,7 @@
 | `wg_handoff.py` | Auto-Handoff：stub 六區塊 + token 預警純函式 |
 | `wg_coordination.py` | 跨 session 同檔互寫預警 + git 收尾指令預警（純檔案、warn-only） |
 | `wg_overview.py` | OverviewHub 留下的共用工具（被各守門 import）：部位設定四層合併（`_cfg`，專案覆蓋檔 `<專案根>/.claude/overview-hub.json`；退役鍵如 `dry_run`／`deny_parts` 寫了只警告、不報錯，每個設定檔改動後警告一次，標記 `workflow/_overview-hub-retired-warned.json`）、部位查表（`_lookup`）、意圖（`_intent_of`）、讀檔擷取（`read_targets`：Bash 的 cat/head/tail/less/more/sed -n/grep -n/svn cat/git show 一段裡每個路徑都算讀檔，算不算由規則 BASH_READONLY_COUNTS_AS_READ 判，指令失敗、變數、glob、非實檔不算）、提醒帳（`remind_*`，同一條規則同一個對象只提醒一次）、gitignore 一次查一批（`_gitignored_set`）；純函式（讀表、最長前綴命中、Bash 讀檔擷取）在 `lib/overview_hub.py`；表由專案寫在 `<專案根>/.claude/overview-map.md` |
-| `wg_code_path.py` | 寫碼類判準（各閘共用同一份）：`is_code_path` 看單一路徑（部位類別 knowledge 不算；其餘看寫碼查核的副檔名清單，沒副檔名看 `#!`）；使用者：`wg_core.coding_turn`、`stop`、`post_tool_batch`、`wg_data_file`、`wg_harvest`、`tools/project-smells.py` |
+| `wg_code_path.py` | 寫碼類判準（各閘共用同一份）：`is_code_path` 看單一路徑（部位類別 knowledge 不算；其餘看寫碼查核的副檔名清單，沒副檔名看 `#!`）；使用者：`wg_core.coding_turn`、`stop`、`post_tool_batch`、`wg_harvest`、`tools/project-smells.py` |
 | `wg_ask_gate.py` | 問使用者前的閘（開關跟寫碼守門總開關）：AskUserQuestion 每題要附推薦，沒有就提醒（ASK_NEEDS_RECOMMENDATION）；提問涉及改法選擇時提醒先讀部位檔（ASK_OVERVIEW_BEFORE_DECISION）；帳 `Logs/guard-ask.jsonl` |
 | `wg_rescue.py` | 救援日誌：注入 atom 高特異 token → 後續工具呼叫命中＝「真被用上」 |
 | `wg_recall_miss.py` | 失念偵測：失敗證據 × 庫中未注入 atom trigger |
@@ -52,7 +55,7 @@
 | `lang_guard.py` | standalone Stop hook（TECH §7.6） |
 | `plan_bash_guard.py` | standalone PreToolUse(Bash) hook：Plan Mode 下必彈窗且 allow 壓不過的寫法（cd、sed 非 `N,Mp`、寫入）直接 deny＋改寫提示（TECH §7.4） |
 | `version_guard.py`／`acceptance_spec.py` | 模組：`run(input_data, config) -> list[str]`，由 guardian PostToolUse 呼叫（version_guard 見 TECH §7.4，acceptance_spec 見 TECH/coding-guard.md 乙5） |
-| `run-hidden.py`／`run-bash-hidden.py`／`ensure-mcp.py`／`user-init.sh`／`post-git-pull.sh`／`webfetch-guard.sh` | 不閃窗 spawn／MCP 可用性／USER.md 初始化／pull 後審計／WebFetch 護欄 |
+| `run-hidden.py`／`run-bash-hidden.py`／`ensure-mcp.py`／`user-init.sh`／`post-git-pull.sh` | 不閃窗 spawn／MCP 可用性／USER.md 初始化／pull 後審計／WebFetch 護欄 |
 
 > V4 終態（16 個 `wg_*.py` + 2651 行單檔 dispatcher）歸檔在 [`DevHistory/v4-archive/`](DevHistory/v4-archive/)。
 
@@ -80,30 +83,30 @@ Bash／PowerShell：
 | 層 | Hook | 角色 | 觸發信號 |
 |----|------|------|---------|
 | **Layer 2** 核心保底 | `PreCompact` | 壓縮真發生時 `should_write_stub` 通過 → `build_handoff_stub` 寫客觀 stub 到 `resolve_staging_dir`，設 `pending_handoff_emit` | 壓縮事件（**不依賴 token 量測**，最可靠） |
-| **Layer 3** 品質補全 | `PostToolBatch` | 壓縮後首批工具呼叫見 `pending_handoff_emit` → 與 `pending_reinjection` blob **合流**注入提示叫模型補全主觀 TODO 區塊 + 清 flag | `pending_handoff_emit` |
+| **Layer 3** 品質補全 | `PostToolBatch` | 壓縮後首批工具呼叫見 `pending_handoff_emit` → 注入提示叫模型補全主觀 TODO 區塊（卡片內文已由 SessionStart(compact) 送回，這裡只在沒送成時補位；交接單已含壓縮摘要時提示縮短） + 清 flag | `pending_handoff_emit` |
 | **Layer 1** 提前預警 | `Stop` | `token_warn_payload` 算 usage ratio ≥ `token_warn_ratio`（預設 0.85）→ piggyback 既有 block 附 token 預警（一次性 `token_warn_emitted`，零額外打斷） | usage ratio（讀 `message.usage` 真實 token；分母 `context_window_tokens`，曾破 200k 必為 1M；無 usage 時 fallback char-proxy；僅信號） |
 | **Layer 4** 直結兜底 | `SessionEnd` | session 直接結束（非壓縮）、有未完成工作且無既有 handoff → 補寫客觀 stub（不設 `pending_handoff_emit`，已無 PostToolBatch 可消費） | `should_write_stub`（modified_files；與 `sync_pending` 同源） |
 
 - **stub 六區塊**：前置脈絡／已完成／權威來源／產出位置（客觀，自動填 git branch+commit、modified+accessed files、injected atoms、knowledge_queue）+ 做法／決策依據／why（主觀，留 `TODO(模型補全)` 佔位）。第一行為 `/continue` 選單摘要、檔名 `next-phase-auto.md`（`/continue` glob `next-phase*.md` 涵蓋）。
 - **state 欄位**（additive，舊 state 讀不到當 False）：`pending_handoff_emit`／`handoff_stub_path`／`handoff_stub_at`／`token_warn_emitted`。
 - **IDENTITY 收尾串接**：Layer 1 程式化 token 量測取代「純 AI 自估」；見 `[Auto-Handoff]` 預警則由 AI 語意判斷是否已處理失真（語意層保留，見 `stop.py` ScanReport gate (c) 文字）。
-- **Phase 4 外部編排 watcher**（`tools/auto-continue/`，實驗性、非正式上線）：監看 `next-phase*.md` → 起 headless `claude -p "/continue"` 自動接續 → 完工寫新 stub → 遞迴；四道 guard 與 headless 實證見 `tools/auto-continue/README.md`。
+- **長任務自動續跑**：用原生 `/goal <完成條件>`。
 
 ### 常駐可觀測層
 
 statusline／週健檢／效果報表／救援日誌／失念偵測／回訪／guard JSONL：TECH §8。取捨：週健檢用 Windows Task Scheduler 而非 CC 原生 CronCreate／Routines——後者為雲端 agent，碰不到本機 `~/.claude`；OTEL export 不做（TECH §8 末段）。
 
-## Skills（全域 <!-- skill-count -->31<!-- /skill-count --> 個 active）
+## Skills（全域 <!-- skill-count -->33<!-- /skill-count --> 個 active）
 
 逐 skill 檔案與用途：DocIndex-System §5。`init-roles`／`conflict-review` 單人環境 dormant → `skills/_archived/`（不計入）；V5 從 `commands/*.md` 遷移與已刪除清單：SPEC §4。
 
-**invocation 硬化**（本段為唯一來源）：9 個重炮／儀式／debug 型 skill 設 frontmatter `disable-model-invocation: true`（atom-debug／changelog-debug／codex-companion／continue／extract／fix-escalation／generate-episodic／heal-review／upgrade）——模型不可呼叫（含自然語言請求）、description 不佔 context，僅使用者 `/slash` 可觸發；codex-companion 另有反逃避意涵（模型不得自關監督器）。保留模型可呼叫的例外依據：consciousness-stream（`rules/core.md`「用識流…」映射由模型代打）、handoff（`wg_handoff.py` 注入「建議主動 /handoff」）、skill-creator／karpathy-guidelines（設計上要自動觸發）、其餘工具型（browse-sprites／harvest／journal／memory／conflict／read-project／refile／vector）自然語言觸發利大於誤觸。
+**invocation 硬化**（本段為唯一來源）：9 個重炮／儀式／debug 型 skill 設 frontmatter `disable-model-invocation: true`（atom-debug／changelog-debug／codex-companion／continue／extract／fix-escalation／generate-episodic／heal-review／upgrade）——模型不可呼叫（含自然語言請求）、description 不佔 context，僅使用者 `/slash` 可觸發；codex-companion 另有反逃避意涵（模型不得自關監督器）。保留模型可呼叫的例外依據：consciousness-stream（`rules/core.md`「用識流…」映射由模型代打）、handoff（`wg_handoff.py` 注入「建議主動 /handoff」）、skill-creator／karpathy-guidelines（設計上要自動觸發）、codex（入場由 CC 自己判斷，不設 hook 閘）、其餘工具型（browse-sprites／harvest／journal／memory／conflict／read-project／refile／vector）自然語言觸發利大於誤觸。
 
 ## 演化中 feature
 
 ### 反退避：Evasion Guard／Test-Fail Gate／ScanReport（`wg_evasion.py`）
 
-程式碼強固 LLM「錯誤的迴避」行為——不依賴模型自律。Stop 閘序、禁語單一來源（含三類宣稱）、十欄報告 (a)(b)(d)–(k)、one-writer cross-check、產出物帳本受保護路徑與當場刪除、AEC-Pending、遙測：TECH §7.1、§7.2。以下為 TECH 未收的判定細節（本段為唯一來源）：
+程式碼強固 LLM「錯誤的迴避」行為——不依賴模型自律。Stop 閘序、禁語單一來源（含三類宣稱）、報告三類（目標／大原則／AI 自己做主）＋系統帳 (a)(b)(d)(g)–(k)、one-writer cross-check、產出物帳本受保護路徑與當場刪除、AEC-Pending、遙測：TECH §7.1、§7.2。以下為 TECH 未收的判定細節（本段為唯一來源）：
 
 - **Test-Fail Gate 資料流**：PostToolUse(Bash) 解析測試指令（pytest／tsc／node --check／jest／go test／cargo test）stdout+stderr → 失敗尾 20 行寫 `state["failing_tests"][]`；同 cmd 重跑成功即清舊紀錄。Stop 見 `failing_tests` 非空 + last assistant text 命中完成宣告 → block，要求 (a)修復 (b)標為 regression (c)降級任務。使用者放行詞（先這樣／跳過／known regression）清 `failing_tests`；近 3 則 user prompt 有放行詞 → 不掛 evasion flag。
 - **退避偵測時點**：Stop 對 last assistant text 跑 `detect_evasion`（禁語表 `memory/_meta/forbidden-phrases.json`）→ `evasion_flag` + `evasion_events` 證據暫存（不受 UPS 清旗影響，供 AEC (b) cross-check）→ 下輪 UPS 注入 `[Guardian:Evasion]` 舉證要求後清旗。
@@ -116,9 +119,9 @@ statusline／週健檢／效果報表／救援日誌／失念偵測／回訪／g
 要解的事：閘擋下 → AI 修 → 修的動作又讓別道（或同一道）閘擋下……這種間接連鎖靠逐道閘修判斷條件拔不乾淨，所以在所有閘外面加一層只記錄與中止的斷路器。寫碼守門總開關開著、`config.chain_breaker.enabled` 才跑；總開關關著時 `chain_store` 每個公開函式都照「沒事」回（以總開關為準）。
 
 - **一筆觸發**：閘真的要擋下或記欠的那一刻（收尾閘在擋的分支開頭問 `_chain_hold`；工具前閘走 `_deny`）。工具後只提示的、只記錄的不算。PostToolUse 記下的欠帳不另算一次，到它真的擋下（收尾或下一個工具前）才算——否則同一筆欠帳記一次、擋一次就被當成同一道閘第 2 次。閘名取擋訊息的 `[Guardian:名稱]` 標記，收尾閘由呼叫端給（跟「後面還會擋」預覽用同一套名字）。
-- **一條邊**：同一使用者回合、同一對話者（主 session 或同一個子代理）裡，閘B 接在閘A 之後觸發、中間 AI 有動作就接上（判法與排除見 `wg_chain.RULES` 的 `CHAIN_EDGE_*`、`CHAIN_SAME_EVENT`、`CHAIN_NO_FIX_NO_EDGE`）。閘A 擋下時預覽已列出的閘B 不接（它本來就欠著）。同一道閘接連觸發、中間沒記到 AI 動作（原樣重試、只改寫回覆）不接、也不算同閘次數，交回那道閘自己的擋次上限（CHAIN_SAME_GATE_NO_ACTION）。`watched`（閘看哪些檔）模組支援，目前沒有呼叫端給。
+- **一條邊**：同一使用者回合、同一對話者（主 session 或同一個子代理）裡，閘B 接在閘A 之後觸發、中間 AI 有動作就接上（判法與排除見 `wg_chain.RULES` 的 `CHAIN_EDGE_*`、`CHAIN_SAME_EVENT`、`CHAIN_NO_FIX_NO_EDGE`）。閘A 擋下時預覽已列出的閘B 不接（它本來就欠著）。同一道閘接連觸發、中間沒記到 AI 動作（原樣重試、只改寫回覆）不接、也不算同閘次數，交回那道閘自己的擋次上限（CHAIN_SAME_GATE_NO_ACTION）。
 - **AI 動作**：`wg_chain.action_of` 判——改檔（Edit／Write／Bash 寫入，含判不出目標的寫入）、重跑測試或驗證（含紅掉的 PostToolUseFailure）、寫卡、重交收尾檢核或收割回報、其他非唯讀指令與子代理；讀檔不算。
-- **警報**：深度到 `max_depth`（預設 2）或同一道閘這一段第 `max_same_gate` 次（預設 2；只數跟上一次之間 AI 有動作的）。響了之後：這一回合其餘閘只記錄（跳過那道閘的擋與記欠，所以不會留下「本回合擋過」「整個 session 問過一次」這類標記；拐彎判斷與寫碼查核自己出錯〔GATE_SELF_ERROR〕是在閘的函式裡先記標記，被改成只記錄時 `stop._unmark` 放回原值；選繼續後照常擋）；能互動的 session 工具先停手，只放讀檔工具、`readonly_shell` 認可的唯讀指令（白名單、不准寫檔重導向與指令替換、PowerShell 不准括號；是護欄不是沙箱）與 AskUserQuestion；收尾擋一次送連鎖過程表與三選一（題目帶【收尾放行確認】【連鎖中止】）；「順手看到最該修」那一問不送。沒人能答（headless／SDK、子代理）不叫它問、不停手：其餘閘只記錄、AI 照常做完，讓警報響的那次工具呼叫照放，收尾擋一次要 AI 把表寫進收尾報告；不還原、不繼續。
+- **警報**：深度到 `max_depth`（預設 2）或同一道閘這一段第 `max_same_gate` 次（預設 2；只數跟上一次之間 AI 有動作的）。響了之後：這一回合其餘閘只記錄（跳過那道閘的擋與記欠，所以不會留下「本回合擋過」「整個 session 問過一次」這類標記；寫碼查核自己出錯〔GATE_SELF_ERROR〕是在閘的函式裡先記標記，被改成只記錄時 `stop._unmark` 放回原值；選繼續後照常擋）；能互動的 session 工具先停手，只放讀檔工具、`readonly_shell` 認可的唯讀指令（白名單、不准寫檔重導向與指令替換、PowerShell 不准括號；是護欄不是沙箱）與 AskUserQuestion；收尾擋一次送連鎖過程表與三選一（題目帶【收尾放行確認】【連鎖中止】）。沒人能答（headless／SDK、子代理）不叫它問、不停手：其餘閘只記錄、AI 照常做完，讓警報響的那次工具呼叫照放，收尾擋一次要 AI 把表寫進收尾報告；不還原、不繼續。
 - **使用者答案**：只認 tool_use_id 對得上的 AskUserQuestion 結果，題目逐字等於通知那一題。還原＝只還原這一段的快照（快照是工具前放行那一刻存的；動手前核對檔案現況等於這一段最後一次寫入後的內容，被別處改過就不動）；繼續＝開新的一段、額度重給；放行＝這一回合其餘閘只記錄，同一個答案也被既有閘的 `wg_release.user_released` 認成放行（紅測、對帳、等值證法那一套照它們的規則記放行）。答案的處理結果附在那次收尾的出口（systemMessage／擋訊息尾）。答案在停手那題就認過的（帳上有 answer），同一回合的收尾不擋、不重送經過表，只附一行結果（`wg_chain.stop_step` 回 answered）。
 - **清理**：SessionEnd 刪這個 session 的快照，和 7 天沒動的別 session 快照與連鎖帳（`chain_store.session_cleanup`）；這個 session 的帳留著，事後（含無頭跑完的驗收）要讀。
 - **斷路器自己出錯**：一律照原本的閘行為（不中止、不只記錄、不停手），stderr 印一行。pytest 底下每一案各用一份帳與快照、放測試用的 Logs 暫存目錄（`chain_store._test_root`），免得前一案的觸發讓後一案誤判、快照落進資料根。
@@ -230,7 +233,6 @@ TECH 未收的行為（本段為唯一來源）：
 hooks/verify/                 ← hook 守衛（atom／evasion／extract／wisdom／rrf_fusion／recall_miss／lf_writes／merge_driver_gate／attribution／injection_delivery…）
 tools/verify/                 ← check_bypass／memory_eval／stale_deps／vector_service／merge_atom_index／normalize_eol／doc_counts…
 tools/codex-companion/verify/ ← assessor／scorer／heuristics／handoff_review／artifact_sampling／prompt_input_integrity（smoke_plan_review.py 手動冒煙不被收集）
-tools/auto-continue/verify/
 lib/verify/                   ← atom_io_equivalence contract／edit_metadata／atom_spec_depends_evidence／usefulness_access／locate_single_authority／realm_injection_gate／provenance_backfill…
 skills/<name>/verify/         ← skill 自帶守衛
 ```

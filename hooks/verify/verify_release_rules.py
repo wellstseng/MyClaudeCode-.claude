@@ -42,16 +42,14 @@ def test_044_every_rule_has_a_case():
     ("VERIFY_FULL_RUN_NEEDS_USER_ORDER", "verify_verify_batch.py"),
     ("VERIFY_SAME_BATCH_ALREADY_GREEN", "verify_verify_batch.py"),
     ("VERIFY_BATCH_BLOCK_ONCE_PER_TURN", "verify_verify_batch.py"),
-    ("NEGATED_MENTION_IS_NOT_NAMING", "verify_data_file_ask.py"),
-    ("DATA_FILE_DECL_VOIDED_BY_LATER_MENTION", "verify_data_file_ask.py"),
-    ("OWN_COMMIT_CHANGES_STILL_COMPARED", "verify_old_test_declare.py"),
+    ("SMELL_GATE_ONCE_PER_TURN", "verify_gate_mode_pre.py"),
     ("BLOCK_BUDGET_SHARED", "verify_gate_trim.py"),
     ("STATE_RMW_LOCKED", "verify_state_parallel_rmw.py"),
-    ("DECL_HINT_KEEPS_EDIT_TOOLS", "verify_data_file_ask.py"),
     ("UNKNOWN_WRITE_RECOVERED", "verify_unknown_write_recover.py"),
     ("PROJECT_RULE_WORDS_ARE_HINTS", "verify_user_extract_routing.py"),
     ("NON_CODING_TURN_NO_NUDGE", "verify_inject_lean.py"),
-    ("NON_CODING_TURN_NO_NUDGE", "verify_data_file_ask.py"),
+    ("SUBAGENT_RESULT_FROM_SUBAGENT_STOP", "verify_stop_subagent_bg_remind.py"),
+    ("STOP_DEFERS_WHILE_BACKGROUND_RUNNING", "verify_stop_subagent_bg_remind.py"),
 ])
 def test_rules_with_end_to_end_cases_elsewhere(rule, case_file):
     """這幾條要走真入口（PreToolUse／PostToolUse／Stop）才驗得到，案例在各自的 verify 檔：核對規則有登記、案例檔真的點到規則名。"""
@@ -68,24 +66,13 @@ def test_negative_control_declared_verdict():
         assert rr.negative_control_verdict(cmd, rr.parse_negative_controls(line)).owed, line
 
 
-@pytest.mark.parametrize("text, negated", [
-    ("shop.json 先不要動", True), ("不要動 shop.json", True), ("折扣碼不要放 shop.json，放新檔", True),
-    ("折扣碼不要寫死在程式裡，放進 shop.json", False), ("把 shop.json 的門檻改成 500", False),
-])
-def test_mention_negated(text, negated):
-    """NEGATED_MENTION_IS_NOT_NAMING 純函式：同一子句左邊有否定字或右邊緊接否定才算；否定在前一個子句不算。"""
-    i = text.index("shop.json")
-    assert rr.mention_negated(text, i, i + len("shop.json")) is negated
-
 # ─── G6 階段 5：其餘固定規則改交 AI 判（純函式；端到端案在 verify_g6_rules_to_llm.py） ─────────────
 
-def test_g6_correction_and_veto_declarations():
-    """CORRECTION_WORDS_ARE_HINTS／EXTRACT_VETO_NEEDS_JUDGMENT：宣告行只認行首、最後一條為準、佔位不算；沒回不計（owed＝計一次）。"""
+def test_g6_veto_declarations():
+    """EXTRACT_VETO_NEEDS_JUDGMENT：宣告行只認行首（可帶清單符號）、最後一條為準、佔位不算。"""
     assert "EXTRACT_VETO_NEEDS_JUDGMENT" in rr.RULES
-    assert rr.correction_verdict(None).owed is False                                     # 沒回：詞表不替 AI 判
-    yes = rr.yes_no_declaration("- 糾正｜是：他指出我改錯檔", "糾正")
-    assert rr.correction_verdict(yes).owed is True and rr.correction_verdict(yes).rule == "CORRECTION_WORDS_ARE_HINTS"
-    assert rr.yes_no_declaration("不要寫『糾正｜是：x』\n糾正｜不是：在問進度", "糾正")["yes"] is False
+    assert rr.yes_no_declaration("- 否決記憶｜是：他說這條不要記", "否決記憶")["yes"] is True
+    assert rr.yes_no_declaration("不要寫『否決記憶｜是：x』\n否決記憶｜不是：在問能不能改", "否決記憶")["yes"] is False
     assert rr.yes_no_declaration("否決記憶｜是：<理由>", "否決記憶") is None
 
 
@@ -136,13 +123,13 @@ def test_closing_ritual_switches_scan_report_gate():
     (r"C:\x\src\a.py", "C:/x/./src/a.py"),
 ])
 def test_044_same_file_spellings(a, b):
-    """SAME_FILE：反斜線／正斜線、大小寫、`..`、`.` 都是同一個檔。"""
-    assert rr.same_file(a, b) and rr.canon_path(a) == rr.canon_path(b)
+    """SAME_FILE：反斜線／正斜線、大小寫、`..`、`.` 都是同一個檔（比 canon_path）。"""
+    assert rr.canon_path(a) == rr.canon_path(b)
 
 
 def test_044_same_file_different_files():
-    assert not rr.same_file(r"C:\x\src\a.py", r"C:\x\src\b.py")
-    assert not rr.same_file(r"C:\x\src\a.py", r"C:\x\a.py")
+    assert rr.canon_path(r"C:\x\src\a.py") != rr.canon_path(r"C:\x\src\b.py")
+    assert rr.canon_path(r"C:\x\src\a.py") != rr.canon_path(r"C:\x\a.py")
 
 
 # ─── TURN_SINCE_USER_PROMPT ─────────────────────────────────────────────
@@ -193,71 +180,6 @@ def test_044_claim_is_modifier_unit():
     assert not rr.claim_is_modifier("是我修好的", 5)
 
 
-# ─── EXCLUDED_REGION ────────────────────────────────────────────────────
-
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
-def test_044_excluded_region():
-    """EXCLUDED_REGION：在專案根底下、部位表判 knowledge 才排除；類別 code、沒有部位表（None）、拿不到根、不在根下、
-    `..` 繞出根都不排除（部位類別的判法本身在 verify_overview_hub／verify_stop_reconcile 的 know 段）。"""
-    assert rr.excluded_region(r"c:\proj\workflow\inbox\x\a.py", r"c:\proj", "knowledge")
-    assert not rr.excluded_region(r"c:\proj\tools\a.py", r"c:\proj", "code")
-    assert not rr.excluded_region(r"c:\proj\workflow\inbox\a.py", r"c:\proj", None)
-    assert not rr.excluded_region(r"c:\proj\workflow\inbox\..\..\..\src\a.py", r"c:\proj", "knowledge")   # `..` 繞出根
-    assert not rr.excluded_region(r"c:\proj\workflow\inbox\a.py", None, "knowledge")
-    assert not rr.excluded_region(r"c:\other\_AIDocs\a.py", r"c:\proj", "knowledge")
-
-
-def test_excluded_region_gitignored_is_not_project_code():
-    """EXCLUDED_REGION 收 git 忽略事實（與 RUNTIME_DATA_NO_OVERVIEW 同一個判式）：根底下被 .gitignore 忽略、在執行期資料目錄
-    或快取目錄 → 排除（不欠案例、不能清帳）；追蹤中的檔、查不到（None）、不在根底下照算。"""
-    assert rr.excluded_region(r"c:\proj\box\verify_x_snapshot.sh", r"c:\proj", None, gitignored=True)
-    assert rr.excluded_region(r"c:\proj\box\a.py", r"c:\proj", "code", gitignored=True)        # 忽略優先於表上的 code
-    assert rr.excluded_region(r"c:\proj\Logs\a.py", r"c:\proj", None, gitignored=None)         # 執行期資料目錄
-    assert not rr.excluded_region(r"c:\proj\tools\x.py", r"c:\proj", None, gitignored=False)
-    assert not rr.excluded_region(r"c:\proj\tools\x.py", r"c:\proj", None, gitignored=None)
-    assert not rr.excluded_region(r"c:\other\box\a.py", r"c:\proj", None, gitignored=True)     # 不在根底下
-
-
-# ─── 已不存在的改檔：GONE_OUTSIDE_VCS／GONE_IN_GIT_NOTHING_NEW／MOVED_NEW_CODE_SEEN／GONE_UNVERIFIABLE ─────
-
-def test_044_gone_outside_vcs():
-    """GONE_OUTSIDE_VCS：不在任何版控根內（打錯路徑寫到 worktree 外又刪、worktree 被移除）→ 不欠。"""
-    v = rr.gone_verdict("need-goal.js", None)
-    assert v.rule == "GONE_OUTSIDE_VCS" and v.owed is False and "need-goal.js" in v.why
-
-
-def test_044_gone_in_git_nothing_new():
-    """GONE_IN_GIT_NOTHING_NEW：git 根內、同根沒有新程式檔 → 刪除、不欠。"""
-    v = rr.gone_verdict("a.py", "git", [])
-    assert v.rule == "GONE_IN_GIT_NOTHING_NEW" and v.owed is False
-
-
-def test_044_moved_new_code_seen():
-    """MOVED_NEW_CODE_SEEN：同根出現新程式檔 → 可能搬走，照欠，證據列出新檔名。"""
-    v = rr.gone_verdict("a.py", "git", ["src/moved.py"])
-    assert v.rule == "MOVED_NEW_CODE_SEEN" and v.owed is True and "moved.py" in v.why
-
-
-def test_0a_moved_copy_needs_same_name_or_same_content():
-    """0a（10-15 調度收尾誤擋：已刪的信箱快照腳本 vs 同 session 合進來的新測試檔）：同根新出現的程式檔裡，檔名相同（不分大小寫）、
-    內容與它最後一次寫入時相同、或判不出（新檔讀不到）才算可能是它搬過去的副本；檔名與內容都不同的是別的檔。
-    它沒有內容紀錄（舊 state）→ 判不出，全算（照欠）。"""
-    new = {"hooks/verify/verify_workflow_retention.py": "s2", "pkg/A.sh": "s9", "tools/moved.py": "s1", "tools/unread.py": None}
-    seen, other = rr.moved_copy_candidates("a.sh", "s1", new)
-    assert seen == ["pkg/A.sh", "tools/moved.py", "tools/unread.py"] and other == ["hooks/verify/verify_workflow_retention.py"]
-    seen, other = rr.moved_copy_candidates("a.sh", None, new)
-    assert seen == list(new) and other == []
-    v = rr.gone_verdict("verify_x_snapshot.sh", "git", [], unrelated=["hooks/verify/verify_workflow_retention.py"])
-    assert v.rule == "GONE_IN_GIT_NOTHING_NEW" and v.owed is False and "verify_workflow_retention.py" in v.why
-
-
-@pytest.mark.parametrize("kind, failed", [("svn", ""), ("git", "在 C:/r 查 git 回非零")])
-def test_044_gone_unverifiable(kind, failed):
-    """GONE_UNVERIFIABLE：svn 工作副本、或查 git 失敗 → 判不出去向，照欠。"""
-    v = rr.gone_verdict("a.py", kind, [], failed)
-    assert v.rule == "GONE_UNVERIFIABLE" and v.owed is True
-
-
 # ─── GATE_SELF_ERROR ───────────────────────────────────────────────
 
 def test_gate_self_error_stop_gate_blocks_once_then_releases():
@@ -274,28 +196,15 @@ def test_gate_self_error_tool_gate_releases_directly():
     assert v.rule == "GATE_SELF_ERROR" and not v.owed and "直接放行" in v.why
 
 
-# ─── CASE_COVERS_CHANGE ───────────────────────────────────────────────
-
-def test_case_covers_change_verdict_evidence():
-    """CASE_COVERS_CHANGE：有覆蓋的案例 → 不欠並列出；本 session 改過的案例都沒提到 → 欠並列出那些案例；沒改過案例 → 欠。"""
-    v = rr.case_cover_verdict("a.py", ["test_a.py"], ["test_a.py", "test_b.py"])
-    assert v.rule == "CASE_COVERS_CHANGE" and not v.owed and "test_a.py" in v.why
-    v = rr.case_cover_verdict("a.py", [], ["test_b.py"])
-    assert v.owed and "test_b.py" in v.why and "case_for" in v.why
-    v = rr.case_cover_verdict("a.py", [], [])
-    assert v.owed and "沒有改過仍存在、同根的案例檔" in v.why
-
-
 # ─── 要查 git 的豁免：規則名登記在 RULES、條件在 wg_verify_ledger（端到端案例見 verify_stop_reconcile 的 042／044 段） ──
 
-def test_044_snapshot_settled_and_net_unchanged_are_registered():
-    """SNAPSHOT_SETTLED、NET_UNCHANGED：規則名在 RULES 有登記、說明指向 wg_verify_ledger。"""
-    for name in ("SNAPSHOT_SETTLED", "NET_UNCHANGED"):
-        assert "wg_verify_ledger" in rr.RULES[name]
+def test_044_net_unchanged_is_registered():
+    """NET_UNCHANGED：規則名在 RULES 有登記、說明指向 wg_verify_ledger。"""
+    assert "wg_verify_ledger" in rr.RULES["NET_UNCHANGED"]
 
 
 def test_exemption_peers_code_only_keeps_code_and_cases():
-    """EXEMPTION_PEERS_CODE_ONLY：三個豁免共用一個判法（wg_verify_ledger.exemption_peers），要一起比的同根改檔只留程式檔與案例檔，
+    """EXEMPTION_PEERS_CODE_ONLY：兩個豁免共用一個判法（wg_verify_ledger.exemption_peers），要一起比的同根改檔只留程式檔與案例檔，
     文件、紀錄檔、資料不算；同一個寫法只留一次。端到端案例見 verify_stop_reconcile 的 exemption_peers 段。"""
     assert "exemption_peers" in rr.RULES["EXEMPTION_PEERS_CODE_ONLY"]
     got = vl.exemption_peers(["a/x.py", "a/notes.md", "t/test_x.py", "w/run.log", "d/rows.json", "a/x.py"], vl.reconcile_cfg({}))
@@ -317,13 +226,13 @@ def test_red_case_facts_needs_a_complete_red_list():
 # ─── 擋訊息格式（契約） ───────────────────────────────────────────────────────
 
 def test_045_format_hit_and_parse_hits_roundtrip():
-    v = rr.Verdict("CASE_COVERS_CHANGE", True, "x.py 改過", ("最後一次改的案例是 verify_x.py", "x.py 在那之後還改過"))
-    line = rr.format_hit("d", v)
-    assert line.startswith("✗ (d) CASE_COVERS_CHANGE：x.py 改過｜證據：")
+    v = rr.Verdict("CLAIM_MEASURED_NEEDS_DONE", True, "說量了", ("本回合沒有 DONE 收據", "量尺 verify_x.py 沒跑"))
+    line = rr.format_hit("b", v)
+    assert line.startswith("✗ (b) CLAIM_MEASURED_NEEDS_DONE：說量了｜證據：")
     assert "；" in line and "verify_x.py" in line
     text = "[Guardian:ReconcileGate] 頭\n  " + rr.format_hit("a", rr.Verdict("PASS_MISSING", True, "沒 PASS")) + "\n  " + line
-    assert rr.parse_hits(text) == ["a", "d"]
-    assert rr.parse_hit_rules(text) == [("a", "PASS_MISSING"), ("d", "CASE_COVERS_CHANGE")]
+    assert rr.parse_hits(text) == ["a", "b"]
+    assert rr.parse_hit_rules(text) == [("a", "PASS_MISSING"), ("b", "CLAIM_MEASURED_NEEDS_DONE")]
 
 
 def test_045_format_hit_without_evidence_uses_why():
@@ -345,17 +254,17 @@ def test_045_parse_hits_ignores_prose_with_letters():
 
 def test_045_block_budget_per_rule_two_rules_once_each_not_exhausted():
     rec = rr.budget_tick(None, 7, ["a"])
-    rec = rr.budget_tick(rec, 7, ["d"])
-    assert rec["counts"] == {"a": 1, "d": 1} and rec["count"] == 1
-    assert rr.budget_exhausted(rec, 7, 2, ["a", "d"]) == []
+    rec = rr.budget_tick(rec, 7, ["b"])
+    assert rec["counts"] == {"a": 1, "b": 1} and rec["count"] == 1
+    assert rr.budget_exhausted(rec, 7, 2, ["a", "b"]) == []
 
 
 def test_045_block_budget_per_rule_same_rule_twice_exhausted_and_lists_all():
-    rec = rr.budget_tick(None, 7, ["d"])
-    rec = rr.budget_tick(rec, 7, ["a", "d"])
-    assert rr.budget_exhausted(rec, 7, 2, ["a", "d"]) == ["d"]
-    text = "頭\n  ✗ (a) PASS_MISSING：沒 PASS｜證據：x\n  ✗ (d) CASE_COVERS_CHANGE：欠｜證據：y"
-    assert rr.exhausted_summary(text) == "✗ (a) PASS_MISSING；✗ (d) CASE_COVERS_CHANGE"
+    rec = rr.budget_tick(None, 7, ["b"])
+    rec = rr.budget_tick(rec, 7, ["a", "b"])
+    assert rr.budget_exhausted(rec, 7, 2, ["a", "b"]) == ["b"]
+    text = "頭\n  ✗ (a) PASS_MISSING：沒 PASS｜證據：x\n  ✗ (b) CLAIM_MEASURED_NEEDS_DONE：欠｜證據：y"
+    assert rr.exhausted_summary(text) == "✗ (a) PASS_MISSING；✗ (b) CLAIM_MEASURED_NEEDS_DONE"
 
 
 def test_045_block_budget_per_rule_new_turn_resets_and_legacy_record_is_conservative():
@@ -364,20 +273,6 @@ def test_045_block_budget_per_rule_new_turn_resets_and_legacy_record_is_conserva
     legacy = {"turn": 7, "count": 2}                                 # 升級前整場一個 count：每條都當已擋 2 次（不因升級多放）
     assert rr.budget_exhausted(legacy, 7, 2, ["a", "d"]) == ["a", "d"]
     assert rr.budget_tick(legacy, 7, ["a"])["count"] == 3
-
-
-# ─── CASE_COVERS_CHANGE：案例內容提到程式檔 ──────────────────────────────────
-
-def test_case_names_code_file_or_module_whole_word():
-    assert rr.case_names_code("import wg_x as wx\n", r"c:\p\hooks\wg_x.py")
-    assert rr.case_names_code('SRC = ROOT / "tools" / "Foo-Bar.py"', "tools/foo-bar.py")
-    assert not rr.case_names_code("import wg_xy\n", "hooks/wg_x.py")                   # 整詞：wg_xy 不是 wg_x
-    assert not rr.case_names_code("import my_wg_x\n", "hooks/wg_x.py")
-    assert not rr.case_names_code("ab = 1", "hooks/ab.py")                              # 模組名不到 3 字只認檔名
-    assert rr.case_names_code("run('ab.py')", "hooks/ab.py")
-    assert rr.case_covers_code("hooks/verify/verify_ab.py", "", "hooks/ab.py")         # 檔名照模組取
-    assert rr.case_covers_code("tests/test_ab.py", "", "src/ab.py") and rr.case_covers_code("t/ab_test.go", "", "ab.go")
-    assert not rr.case_covers_code("tests/test_abc.py", "", "src/ab.py")
 
 
 # ─── B3 COMMENT_ONLY_CHANGE ────────────────────────────────────────────────────
@@ -402,11 +297,6 @@ def test_045_comment_only_change_none_when_unparsable_or_not_python():
 
 
 # ─── B13 CONTENT_EQUALS_COMMITTED ──────────────────────────────────────────────
-
-def test_045_blob_sha_matches_git_formula():
-    assert rr.blob_sha(b"") == "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
-    assert rr.blob_sha(b"hello\n") == "ce013625030ba8dba906f756967f9e9ca394464a"
-
 
 def test_045_content_equals_committed_merge_head_and_main_count_head_only_without_own_commit():
     refs = {"HEAD": "h1", "MERGE_HEAD": "m1", "main": "mm"}
@@ -540,20 +430,10 @@ def test_045_hook_python_exe_single_source(monkeypatch, tmp_path):
     assert wg_core.hook_python_exe() == str(pyw)                                               # 沒有 python.exe → 原樣
     monkeypatch.setattr(sys, "executable", str(tmp_path / "python3.exe"))
     assert wg_core.hook_python_exe() == str(tmp_path / "python3.exe")
-    import wg_reading_path as rph                                                              # 收尾附閱讀路徑影響也起 Python 子行程
-    assert getattr(rph, "hook_python_exe", None) is wg_core.hook_python_exe and not hasattr(rph, "_python_exe")
     own = [p.relative_to(HOOKS_DIR).as_posix() for p in sorted(HOOKS_DIR.rglob("*.py"))
            if "verify" not in p.parts and p.name != "wg_core.py"
            and 'with_name("python.exe")' in p.read_text(encoding="utf-8", errors="replace")]
     assert own == [], f"hook 模組各自留了 pythonw→python.exe 的對應：{own}（一律呼叫 wg_core.hook_python_exe）"
-
-
-# ─── ⑧ VCS_ROOT_UNREADABLE ────────────────────────────
-
-def test_045_vcs_root_unreadable_is_owed_not_outside_vcs():
-    v = rr.vcs_unreadable_verdict("a.py", "PermissionError: [WinError 5]")
-    assert v.rule == "VCS_ROOT_UNREADABLE" and v.owed is True and "PermissionError" in v.evidence[0]
-    assert rr.gone_verdict("a.py", None).owed is False                                      # 真的不在版控才不欠
 
 
 # ─── B7 WORKTREE_NO_PUSH ───────────────────────────────────────────────────────
@@ -600,60 +480,6 @@ def test_045_temp_repo_commit_exempt_and_temp_copy_not_project():
     assert not rr.is_temp_path(r"C:\Users\me\.claude-wt\track-x\hooks\x.py", roots)
     assert rr.temp_commit_verdict(r"C:\Users\me\AppData\Local\Temp\claude\s\repo", roots).owed is False
     assert rr.temp_commit_verdict(r"C:\Users\me\.claude", roots).owed is True
-    assert rr.temp_copy_verdict("/tmp/x/tools/x.py", roots).owed is False
-    assert rr.temp_copy_verdict(r"C:\Users\me\.claude-wt\t\tools\x.py", roots).owed is True
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
-def test_003_session_scratch_not_code_only_two_shapes():
-    """SESSION_SCRATCH_NOT_CODE：設定目錄下 jobs/<id>/tmp/ 與 Temp/claude/…/scratchpad/ 才算暫存區；repo 裡同名的目錄、
-    jobs/<id> 底下不在 tmp 的、設定目錄本身的程式照算。"""
-    dirs = rr.cc_config_dirs({"CLAUDE_CONFIG_DIR": r"D:\cc"}, home=r"C:\Users\me")
-    assert dirs == [r"D:\cc", r"C:\Users\me\.claude"]
-    assert rr.cc_config_dirs({}, home=r"C:\Users\me") == [r"C:\Users\me\.claude"]
-    roots = rr.temp_roots({"TEMP": r"C:\Users\me\AppData\Local\Temp"}, tempdir=r"C:\Users\me\AppData\Local\Temp")
-
-    def hit(p):
-        return rr.is_session_scratch(p, dirs, roots)
-    assert hit(r"C:\Users\me\.claude\jobs\8bd2fa36\tmp\probe.py")
-    assert hit(r"d:/CC/jobs/abc/tmp/sub/m.py")                                                 # 斜線、大小寫不影響
-    assert hit(r"C:\Users\me\AppData\Local\Temp\claude\C--x\s1\scratchpad\m.py")
-    assert not hit(r"C:\proj\jobs\8bd2fa36\tmp\probe.py")                                     # repo 內同名路徑
-    assert not hit(r"C:\Users\me\.claude-wt\t\jobs\8bd2fa36\tmp\probe.py")                    # worktree 不是設定目錄
-    assert not hit(r"C:\Users\me\.claude\jobs\8bd2fa36\state.py")                             # jobs/<id> 但不在 tmp
-    assert not hit(r"C:\Users\me\.claude\hooks\wg_core.py")
-    assert not hit(r"C:\project\scratchpad\x.py")                                             # 正式 repo 的子目錄叫 scratchpad
-    assert not hit(r"C:\repo\Temp\claude\demo\scratchpad\service.py")                        # Codex：形狀一樣但不在暫存根下
-    assert not hit(r"C:\Users\me\AppData\Local\Temp\pytest-of-me\scratchpad\x.py")           # 暫存根下但不是 claude/…/scratchpad
-    assert not rr.is_session_scratch(r"C:\Users\me\AppData\Local\Temp\claude\x\scratchpad\m.py", dirs, rr.TEMP_DISABLED)
-
-
-def test_003_session_scratch_not_code_scratchpad_under_real_temp_root(monkeypatch):
-    """Codex 複審 NOTE：scratchpad 走實際的系統暫存根（短路徑與長路徑兩種寫法都認），經事實端 session_scratch 與 is_excluded；
-    repo 裡同形狀的照算。"""
-    import os
-    import tempfile
-    from handlers import _shared
-    monkeypatch.delenv("WG_TEMP_RULES", raising=False)
-    cfg = vl.reconcile_cfg({})
-    for tmp in (tempfile.gettempdir(), _shared._long_path(tempfile.gettempdir())):
-        p = os.path.join(tmp, "claude", "C--x", "sid1", "scratchpad", "measure.py")
-        assert vl.session_scratch(p) and vl.is_excluded(p, cfg, None), p
-    assert not vl.session_scratch(r"C:\repo\Temp\claude\demo\scratchpad\service.py")
-    monkeypatch.setenv("WG_TEMP_RULES", "off")
-    assert not vl.session_scratch(os.path.join(tempfile.gettempdir(), "claude", "x", "scratchpad", "m.py")), "暫存規則關掉時只認 jobs"
-
-
-def test_003_session_scratch_not_code_excluded_from_case_debt(tmp_path, monkeypatch):
-    """寫碼查核：暫存區的腳本 is_excluded（不欠補案例、不能清帳），不看根；repo 內同形狀的照算。"""
-    cc = tmp_path / "cc"
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cc))
-    cfg = vl.reconcile_cfg({})
-    scratch = str(cc / "jobs" / "j1" / "tmp" / "probe.py")
-    assert vl.is_excluded(scratch, cfg, None) and vl.is_excluded(scratch, cfg, str(tmp_path / "proj"))
-    assert not vl.is_excluded(str(tmp_path / "proj" / "jobs" / "j1" / "tmp" / "probe.py"), cfg, str(tmp_path / "proj"))
-    mods = [{"path": scratch, "tool": "Write", "turn_seq": 3, "last_turn_seq": 3, "last_seq": 1}]
-    assert vl.case_debt(mods, 3, cfg, lambda p: None) == []
 
 
 # ─── B10 DeepPostMortem 指令不分在不在 worktree ─────────────────────────────────────────────────
@@ -898,7 +724,7 @@ def test_045_retry_counts_rerun_cycles_messages_roundtrip_parse_hits():
         assert "第 2 輪" in text and "tests/x.py::t3" in text
 
 
-# ─── MOVE_CODE_DIR_NEEDS_SCAN_AND_SAMPLE（搬程式目錄：欠路徑掃描與抽樣兩張收據，不欠整組案例）──────────────────
+# ─── MOVE_CODE_DIR_NEEDS_SCAN_AND_SAMPLE（搬程式目錄：欠路徑掃描與抽樣兩張收據）──────────────────
 
 _MV_TOOL = str(HOOKS_DIR.parent / "tools" / "move-dir-check.py")
 
@@ -1497,48 +1323,6 @@ def test_044_later_turn_sync_rules_point_to_handlers():
     assert "handlers/stop.py" in rr.RULES["SYNC_BLOCK_NEW_ITEMS_ONLY"]
 
 
-# ─── LEFTOVER_NEEDS_CLEANUP（收尾自清；事實由 aec_ledger.list_alive 現場查，真 git 的案例在 verify_session_artifacts） ───
-
-def _art(kind, title, **kw):
-    base = {"kind": kind, "title": title, "path": "C:/x/" + title, "label": "", "can_delete": True,
-            "source": "bash", "note": "", "decision": None, "busy": ""}
-    return {**base, **kw}
-
-
-def test_leftover_needs_cleanup():
-    """使用者原話：「要提醒 LLM，他才會去把已經用完的工作用分支從 git 上刪掉」。宣告完成時，本 session 建的工作樹、
-    已合併分支（被候選工作樹用著的也算，刪完工作樹就刪得掉）、臨時 repo、專案外檔案資料夾還在又沒說要留 → 擋。
-    不列：沒合併的分支、主工作樹用著的分支、暫存區、專案裡還沒進版控的新檔、gitignore 的檔、遠端分支、
-    別的開著的 session 正在用的、使用者按過保留的、AI 在 (i) 寫過理由的、開場快照比對出來（來源不明）的。"""
-    items = [
-        _art("worktree", "wt", path="C:/x/wt"),
-        _art("branch", "feat", merged=True, can_delete=False, used_by="C:/x/wt"),
-        _art("branch", "idle", merged=True),
-        _art("branch", "topic", merged=False, confirm="沒合併"),
-        _art("branch", "onmain", merged=True, can_delete=False, used_by="C:/x/main"),
-        _art("repo", "scratch"),
-        _art("repo", "cwdrepo", can_delete=False),
-        _art("dir", "probe", where="outside"),
-        _art("file", "s.txt", where="temp"),
-        _art("file", "new.py", where="untracked"),
-        _art("file", "ign.log", where="ignored"),
-        _art("remote_branch", "origin/feat"),
-        _art("worktree", "busywt", busy="另一個開著的 session 正在用"),
-        _art("worktree", "kept", decision="keep"),
-        _art("dir", "noted", where="outside", note="使用者要的產出", source="aec-i"),
-        _art("file", "olddecl.txt", where="outside", note="舊格式 (d) 宣告過", source="aec-d"),
-        _art("branch", "snap", merged=True, source="snapshot"),
-    ]
-    v = rr.leftover_cleanup_verdict(True, items)
-    assert v.rule == "LEFTOVER_NEEDS_CLEANUP" and v.owed and "5 樣" in v.why
-    assert [c["title"] for c in rr.leftover_candidates(items)] == ["wt", "feat", "idle", "scratch", "probe"]
-    assert len(v.evidence) == 5 and v.evidence[0].startswith("wt")
-    assert not rr.leftover_cleanup_verdict(False, items).owed, "沒宣告完成不擋"
-    rest = [it for it in items if it["title"] in ("topic", "onmain", "s.txt", "new.py", "busywt", "kept", "noted", "snap")]
-    assert not rr.leftover_cleanup_verdict(True, rest).owed, "只剩不該列的 → 不擋"
-    assert not rr.leftover_cleanup_verdict(True, []).owed
-
-
 # ─── G6 階段 4（判斷入口盤點 P6／P7）：宣稱行、不做行、使用者引用 ─────────────────────────────
 
 def test_p6_parse_claim_dispositions():
@@ -1590,74 +1374,13 @@ def test_p7_not_doing_verdict():
     v = rr.not_doing_verdict("這是既有的問題，本輪已修。", dis, [])
     assert not v.owed and "不是退避" in v.why
     assert rr.not_doing_verdict("這是既有的問題，本輪已修。", rr.parse_not_doing("不是退避｜既有的問題：..."), []).owed
-    _, w = rr.waived_failures([{"cmd": "pytest verify_a.py", "summary": ""}],
-                              rr.parse_not_doing("不是退避｜verify_a.py：使用者說「先這樣」"), ["先這樣"])
-    assert not w, "不是退避行不能豁免紅測"
-    kept, w = rr.waived_failures([{"cmd": "pytest verify_a.py", "summary": ""}],
-                                 rr.parse_not_doing("不做｜verify_a.py：使用者說「先這樣」"), ["繼續"])
-    assert "USER_WAIVER_NEEDS_CITATION" in rr.RULES and not kept and w   # 紅測豁免的原句不再比對使用者原話，寫了就放行留帳
-
-
-def test_p7_waived_failures_only_cited_and_matching():
-    failing = [{"cmd": "python -m pytest hooks/verify/verify_a.py", "summary": "1 failed", "turn_seq": 5},
-               {"cmd": "python -m pytest hooks/verify/verify_b.py", "summary": "1 failed", "turn_seq": 5}]
-    decls = rr.parse_not_doing("不做｜verify_a.py：使用者說「verify_a 先這樣」")
-    kept, waived = rr.waived_failures(failing, decls, ["verify_a 先這樣，b 要修"])
-    assert [f["cmd"] for f in kept] == [failing[1]["cmd"]] and waived[0][1]["item"] == "verify_a.py"
-    kept, waived = rr.waived_failures(failing, decls, ["b 要修"])
-    assert len(kept) == 1 and waived, "原句不再比對使用者原話：寫了「使用者說」就豁免那一支（留帳抽查）"
-    kept, _ = rr.waived_failures(failing, rr.parse_not_doing("不做｜verify_a.py：太難了，風險高"), ["verify_a 先這樣"])
-    assert len(kept) == 2, "AI 自己的理由不能豁免紅測，只有使用者引用能"
-    # codex BLOCK：事項要指得到那一筆（完整 token），通用字或檔名的一截不行
-    for item in ("py", "pytest", "verify", "old_verify_a.py", "verify_ab.py", "hooks"):
-        kept, _ = rr.waived_failures(failing, rr.parse_not_doing(f"不做｜{item}：使用者說「先這樣」"), ["先這樣"])
-        assert len(kept) == 2, item
-    kept, _ = rr.waived_failures(failing, rr.parse_not_doing("不做｜hooks/verify/verify_a.py：使用者說「先這樣」"), ["先這樣"])
-    assert len(kept) == 1, "完整路徑指得到"
-    node = [{"cmd": "python -m pytest hooks/verify/verify_a.py::test_x", "summary": "1 failed"}]
-    kept, _ = rr.waived_failures(node, rr.parse_not_doing("不做｜verify_a.py::test_x：使用者說「先這樣」"), ["先這樣"])
-    assert not kept, "測試節點指得到"
-
-
-def test_004_waiver_per_listed_test_ledger_same_test_and_later_mention():
-    """codex 004：摘要逐支列出失敗時每支各自要有豁免（同一筆裡 A 被點名、B 沒有 → 整筆照紅；收集錯誤也算一支）；帳只認記帳那時的
-    同一支（別檔同名函式不借帳）；使用者記帳後又提到這支 → 帳不算，以新的話為準（那則擠出近 3 則也一樣）。"""
-    decl = rr.parse_not_doing("不做｜test_total：使用者說「test_total 先跳過」")
-    two = [{"cmd": "pytest tests", "summary": "FAILED tests/a.py::test_total - x\nFAILED tests/a.py::test_other - y"}]
-    kept, w = rr.waived_failures(two, decl, ["test_total 先跳過"])
-    assert kept == two and not w, "test_other 沒人豁免"
-    both = rr.parse_not_doing("不做｜test_total：使用者說「test_total 先跳過」\n不做｜test_other：使用者說「test_other 也先跳過」")
-    kept, w = rr.waived_failures(two, both, ["test_total 先跳過，test_other 也先跳過"])
-    assert not kept and sorted(u for _, h in w for u in h["units"]) == ["tests/a.py::test_other", "tests/a.py::test_total"]
-    col = [{"cmd": "pytest tests", "summary": "FAILED tests/a.py::test_total - x\nERROR tests/c.py - ImportError"}]
-    kept, _ = rr.waived_failures(col, decl, ["test_total 先跳過"])
-    assert kept == col, "收集錯誤也是一支"
-    a = [{"cmd": "pytest tests", "summary": "FAILED tests/a.py::test_total - x"}]
-    _, w = rr.waived_failures(a, decl, ["test_total 先跳過"])
-    assert w[0][1]["units"] == ["tests/a.py::test_total"]
-    led = [{"item": "test_total", "quote": "test_total 先跳過", "said": "test_total 先跳過", "units": w[0][1]["units"],
-            "cmd": "pytest tests"}]
-    later = ["好", "再跑一次", "繼續"]
-    kept, w = rr.waived_failures(a, decl, later, led)
-    assert not kept and w[0][1]["via"] in ("quote", "ledger"), "同一支：不做行在就放行（引用或看帳）"
-    b = [{"cmd": "pytest tests", "summary": "FAILED tests/b.py::test_total - y"}]
-    kept, _ = rr.waived_failures(b, rr.parse_not_doing("不做｜test_total：太難了先不修"), later, led)
-    assert kept == b, "別檔同名函式不借帳"
-    reason_only = rr.parse_not_doing("不做｜test_total：太難了先不修")
-    kept, _ = rr.waived_failures(a, reason_only, ["取消剛才的豁免，test_total 必須修好", "好", "繼續"], led)
-    assert kept == a, "記帳後使用者又提到這支：帳不算；只有 AI 自己的理由也不豁免"
-    kept, _ = rr.waived_failures(a, reason_only, later, led, history=["之前的話", "test_total 先跳過", *later])
-    assert not kept, "記帳那則之後沒再提到：照帳"
 
 
 def test_p7_reason_and_quote_need_text_not_length():
-    """codex WARN／BLOCK：理由看有沒有文字內容不看字數（「風險高」算、「....」不算）；引用純標點不算、英文整詞比對。"""
+    """codex WARN／BLOCK：理由看有沒有文字內容不看字數（「風險高」算、「....」不算）；事項名英文整詞比對。"""
     assert rr.reason_present("風險高") and rr.reason_present("不需要") and not rr.reason_present("....") and not rr.reason_present("<理由>")
     assert not rr.reason_present("<理由：風險／為什麼超出>") and not rr.reason_present("  <為什麼>  ")
     assert not rr.reason_present("留到下個 session，<理由>"), "半抄範本、留著理由佔位不算"
-    assert not rr.quote_in_prompts("!!", ["請修好!!"]) and not rr.quote_in_prompts("ok", ["broken"])
-    assert rr.quote_in_prompts("ok", ["ok, skip it"]) and rr.quote_in_prompts("skip it", ["ok,  skip   it"])
-    assert rr.quote_in_prompts("先這樣", ["好，先 這樣吧"])
     assert rr.names_item("python -m pytest hooks/verify/verify_a.py", "verify_a.py")
     assert not rr.names_item("python -m pytest hooks/verify/verify_a.py", "python")
     assert rr.names_item("python -m pytest hooks/verify/verify_a.py -q", "pytest hooks/verify/verify_a.py"), "帶空白的逐字片段"
@@ -1669,82 +1392,6 @@ def test_evasion_context_exempt_boundary():
     assert not rr.evasion_context_exempt_verdict(True, 0.76, 0.75, True, ["繼續"], True).owed
 
 
-# ─── T2.16 動資料檔 ───
-
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows 路徑測資（C:\\…）在 POSIX 不是絕對路徑，判定走樣；非 Windows 跳過")
-def test_t216_user_data_file_needs_declaration():
-    """USER_DATA_FILE_NEEDS_DECLARATION：四件事實全成立又沒宣告才擋；宣告路徑檔名完整比對；原話點名要整個檔名。完整案例在 verify_data_file_ask.py。"""
-    t = "C:\\w1\\qb-report\\config\\settings.json"
-    facts = {"code": False, "ext": ".json", "ext_listed": True, "existed": True, "created": False, "named": None, "prompts": 1}
-    assert rr.data_file_verdict(t, "config/settings.json", facts, []).owed
-    assert not rr.data_file_verdict(t, "config/settings.json", {**facts, "created": True}, []).owed
-    decl = rr.parse_data_file_decls("動資料檔｜`config/settings.json`：修多逗號，幣別會變 TWD")
-    assert not rr.data_file_verdict(t, "config/settings.json", facts, decl).owed
-    for p in ("settings.json", "config/settings.json", "C:\\w1\\qb-report\\config\\settings.json", "./config/settings.json"):
-        assert rr.decl_names_file(p, t), p
-    for p in ("ettings.json", "other.json", "x/settings.json", ""):
-        assert not rr.decl_names_file(p, t), p
-    assert rr.parse_data_file_decls("動資料檔｜C:\\a\\b.json：理由")[0][:2] == ("C:\\a\\b.json", "理由")
-    assert rr.prompt_names_file(["把settings.json的逗號修掉"], t) and rr.prompt_names_file(["改 Config/Settings.JSON"], t)
-    assert not rr.prompt_names_file(["改 settings.json.bak", "看 mysettings.json", "設定檔"], t)
-    zh = "C:\\p\\設定.json"
-    assert not rr.prompt_names_file(["請修改「備份設定.json」", "請修改備份設定.json"], zh), "更長的中文檔名不算點名"
-    assert rr.prompt_names_file(["請修改「設定.json」", "改 設定.json 的值"], zh)
-    assert rr.reason_present("修正 <幣別> 標籤") and rr.reason_present("通貨を直す") and rr.reason_present("x")
-    assert not any(rr.reason_present(w) for w in ("", "。。", "  ", "<為什麼要動它、動了使用者會看到什麼>"))
-
-
-def test_reason_quoting_a_tag_is_still_a_reason_on_claim_and_not_doing_lines():
-    """CLAIM_DISCLAIM_NEEDS_REASON／NOT_DOING_DECLARED：理由裡引用 <中文> 標籤（XML、範本名）是有理由；整段是角括號佔位才不算。"""
-    disp = rr.parse_claim_dispositions("宣稱｜修好：非本回合宣稱，因為 修好的是同伴改的 <幣別> 標籤，不是我")
-    assert not rr.claim_disposition_verdict("fixed", disp, lambda ref: None).owed
-    disp = rr.parse_claim_dispositions("宣稱｜修好：非本回合宣稱，因為 <理由>")
-    assert rr.claim_disposition_verdict("fixed", disp, lambda ref: None).owed
-    line = "不做｜改 <幣別> 欄位：要使用者拍板幣別預設值"
-    assert not rr.not_doing_verdict(line, rr.parse_not_doing(line), []).owed
-    line = "不做｜幣別欄位：<理由：風險／為什麼超出>"
-    assert rr.not_doing_verdict(line, rr.parse_not_doing(line), []).owed
-# ─── T2.17 改舊測試 ───
-
-def test_old_test_change_needs_declaration_names_and_reason():
-    """OLD_TEST_CHANGE_NEEDS_DECLARATION：完整案例在 verify_old_test_declare.py；這裡守宣告行的名字與理由對法。"""
-    ch = [{"key": "TestR.test_a", "kind": "assert", "detail": "assertx==1"}, {"key": "test_b", "kind": "renamed", "detail": "", "new_key": "test_b2"}]
-    v = rr.old_test_change_verdict("tests/test_r.py", ch, [])
-    assert v.owed and v.rule == "OLD_TEST_CHANGE_NEEDS_DECLARATION" and "test_r.py：test_b（改名 → test_b2）" in v.evidence
-    ok = rr.parse_old_test_declarations("改舊測試｜tests/test_r.py:TestR.test_a、test_b: 使用者說欄位改了")
-    assert ok[0]["reason"] == "使用者說欄位改了" and not rr.old_test_change_verdict("tests/test_r.py", ch, ok).owed
-    assert rr.old_test_change_verdict("tests/test_r.py", ch, rr.parse_old_test_declarations("改舊測試｜test_a、test_b2：欄位改了")).owed, \
-        "改名只認舊名：新名不能替舊的那支宣告"
-    for other in ("改舊測試｜tests/test_x.py:test_a、test_b：別的檔", "改舊測試｜TestOther.test_a、test_b：別的類別"):
-        assert rr.old_test_change_verdict("tests/test_r.py", ch, rr.parse_old_test_declarations(other)).owed, other
-    v = rr.old_test_change_verdict("tests/test_r.py", ch, rr.parse_old_test_declarations("改舊測試｜test_a：<理由>"))
-    assert v.owed and any("佔位" in e for e in v.evidence) and len(v.evidence) == 3
-# ─── T2.19 繞閘嫌疑 ───
-
-def test_t219_gate_bypass_verdicts():
-    """GATE_BYPASS_NEEDS_DECLARATION／ATOM_BYPASS_HOWTO_REFUSED：完整案例在 verify_gate_bypass.py；這裡守判式——
-    有序列事實沒理由（或只有佔位）擋、有理由放行、沒事實不擋；卡片兩訊號都有才拒。"""
-    facts = ["git restore 把 notify/retry.py 移出暫存區"]
-    assert rr.gate_bypass_verdict("notify/retry.py（匿名函式疊用）", facts).owed
-    assert rr.gate_bypass_verdict("x", facts, "<理由：這批檔是誰的>").owed
-    v = rr.gate_bypass_verdict("x", facts, "retry.py 是別人的改動")
-    assert v.rule == "GATE_BYPASS_NEEDS_DECLARATION" and not v.owed
-    assert not rr.gate_bypass_verdict("x", []).owed
-    assert rr.atom_bypass_verdict(["SmellGate"], ["拆三步"]).owed
-    v = rr.atom_bypass_verdict(["SmellGate"], [])
-    assert v.rule == "ATOM_BYPASS_HOWTO_REFUSED" and not v.owed and not rr.atom_bypass_verdict([], ["git stash"]).owed
-    assert not rr.atom_bypass_verdict(["SmellGate"], ["git reset"], "這張卡寫的是禁止規避").owed     # 宣告了不是教繞閘
-    assert rr.atom_bypass_verdict(["SmellGate"], ["git reset"], "<理由：這張卡在教什麼>").owed      # 佔位照拒
-
-
-# ─── G11 拐彎判斷 ─────────────────────────────────────────────────────────────
-
-def test_g11_turn_judgment_required_needs_five_columns():
-    """TURN_JUDGMENT_REQUIRED：到門檻的每一條要有五欄齊的拐彎判斷行；完整案例在 verify_g11_turns.py，這裡只守規則名與五欄。"""
-    item = {"kind": "函式", "name": "y.py::b", "keys": ["y.py::b", "b"], "nums": "巢狀 4"}
-    assert rr.turn_judgment_verdict([item], rr.parse_turn_judgments("拐彎判斷｜y.py::b｜不會｜只有一層｜合理，因為短")).owed is False
-    v = rr.turn_judgment_verdict([item], rr.parse_turn_judgments("拐彎判斷｜y.py::b｜不會｜只有一層"))
-    assert v.rule == "TURN_JUDGMENT_REQUIRED" and v.owed and "怎麼改直" in "".join(v.evidence)
 # ─── G7 等值與熱路徑 ───
 
 def test_g7_equivalence_and_hot_path_rules():
@@ -1763,7 +1410,6 @@ def test_g7_equivalence_and_hot_path_rules():
 
 _C1_ERP = "tests/test_erp_contract.py::test_checkout_fields_match_erp_contract"
 _C1_NOT_DOING = "不做｜test_checkout_fields_match_erp_contract：使用者說「先不用管它、跳過」"
-_C1_SAID = "test_erp_contract 那支是 ERP 對接的舊合約測試，先不用管它、跳過。其他照做。"
 # 第四跑 C-1 第 7 回合那條混了 git 與 pytest 的指令：摘要（最後 20 行）第一行是 git status 的 Untracked files:
 _C1_MIXED_SUMMARY = ("Untracked files:\n  (use \"git add <file>...\" to include in what will be committed)\n"
                      "\t.gitattributes\n\tconfig/promos.json\n$ git diff --stat\n README.md | 2 +-\n"
@@ -1786,43 +1432,6 @@ def test_005_red_items_only_from_failure_lines_label_and_cmd():
     assert "沒列出" in rr.red_item_label(failed), "沒有節點行就明說沒列出，不拿 Exit code 行當失敗項"
     go = {"cmd": "go test ./...", "summary": "--- FAIL: TestTotal (0.00s)\nFAIL\nok  other 0.1s"}
     assert rr.red_item_label(go).startswith("--- FAIL: TestTotal")
-
-
-def test_005_unlisted_red_not_waived_by_comment_or_git_output():
-    """RED_ITEMS_ONLY_FROM_FAILURE_LINES：摘要沒列節點時整筆當一支，比對文字只有指令實際跑的部分與失敗行——AI 寫在指令註解裡的
-    不做行、git status 列出的測試檔都不能讓不做行「對到」（舊碼拿指令全文＋整段摘要比，兩種都會誤放）。"""
-    decls = rr.parse_not_doing("不做｜test_erp_contract.py：使用者說「先不用管它、跳過」")
-    commented = {"cmd": "# 跳過 test_erp_contract.py 照紅\npython -m pytest tests -q 2>&1 | tail -1", "summary": "1 failed, 14 passed"}
-    kept, waived = rr.waived_failures([commented], decls, [_C1_SAID])
-    assert kept and not waived, "輸出沒列是哪一支，指令註解裡寫的檔名不算（要不截斷重跑）"
-    noisy = {"cmd": "python -m pytest -q", "summary": "Untracked files:\n\ttests/test_legacy.py\n1 failed"}
-    kept, waived = rr.waived_failures([noisy], rr.parse_not_doing("不做｜test_legacy.py：使用者說「先不用管它、跳過」"),
-                                      [_C1_SAID])
-    assert kept and not waived, "git status 列出的檔不是失敗項"
-    # 反例：指令實際點名那個案例檔、或失敗行帶名字 → 照對得到
-    named = {"cmd": "python -m pytest tests/test_erp_contract.py -q | tail -1", "summary": "1 failed"}
-    kept, waived = rr.waived_failures([named], rr.parse_not_doing("不做｜test_erp_contract.py：使用者說「先不用管它、跳過」"),
-                                      [_C1_SAID])
-    assert not kept and waived
-    go = {"cmd": "go test ./...", "summary": "--- FAIL: TestErpContract (0.00s)\nFAIL"}
-    kept, waived = rr.waived_failures([go], rr.parse_not_doing("不做｜TestErpContract：使用者說「先不用管它、跳過」"), [_C1_SAID])
-    assert not kept and waived
-
-
-def test_005_waiver_miss_notes_say_why_the_line_did_not_count():
-    """RED_ITEMS_ONLY_FROM_FAILURE_LINES：不做行對到了那支、卻只寫自己的理由（沒有使用者說）→ 擋訊息說出這件事；對不到的不說。"""
-    entry = {"cmd": _C1_MIXED_CMD, "summary": _C1_MIXED_SUMMARY}
-    later = ["收尾時順便跟我說一下", "交材料：把這一題的目標樹整理成一則回覆給我"]
-    own = _C1_NOT_DOING.split("：使用者說")[0] + "：太難了先不修"
-    kept, _ = rr.waived_failures([entry], rr.parse_not_doing(own), later)
-    notes = rr.waiver_miss_notes(kept, rr.parse_not_doing(own), later)
-    assert len(notes) == 1 and _C1_ERP.lower() in notes[0] and "只寫了自己的理由" in notes[0], notes
-    assert rr.waiver_miss_notes(kept, rr.parse_not_doing("不做｜test_total：使用者說「先不用管它、跳過」"), later) == []
-    # 帳上有這支、收尾沒寫不做行 → 給那一行照抄；帳上是別支 → 不說
-    led = [{"item": "test_checkout_fields_match_erp_contract", "quote": "先不用管它、跳過", "units": [_C1_ERP.lower()]}]
-    notes = rr.waiver_miss_notes(kept, [], later, led)
-    assert len(notes) == 1 and "帳上有" in notes[0] and f"「{_C1_NOT_DOING}」" in notes[0], notes
-    assert rr.waiver_miss_notes(kept, [], later, [{**led[0], "units": ["tests/test_cart.py::test_total"]}]) == []
 
 
 _C1_THREE = "cd /c/w4/qc2-orders && python -m pytest tests/test_pricing.py tests/test_checkout.py tests/test_cli.py -q"
@@ -1865,34 +1474,6 @@ def test_005_codex_green_dirs_and_narrowed_after_partial_clear():
     assert not v.owed and ran == ["tests/test_b.py::test_b"], v
 
 
-def test_005_codex_unlisted_units_ignore_trailing_comment_echo_and_split_per_failure():
-    """RED_ITEMS_ONLY_FROM_FAILURE_LINES（codex 005，基底同樣誤放）：沒列節點時，行尾註解、echo 這類別段的檔名不算；
-    go／unittest 一行一支的失敗各自要有豁免，只豁免一支整筆照紅；結算行（FAIL、FAIL\t<套件>）不是一支。"""
-    decl = rr.parse_not_doing("不做｜test_erp_contract.py：使用者說「先不用管它、跳過」")
-    for cmd in ("python -m pytest tests -q # test_erp_contract.py", "echo test_erp_contract.py && python -m pytest tests -q"):
-        kept, waived = rr.waived_failures([{"cmd": cmd, "summary": "1 failed, 14 passed"}], decl, [_C1_SAID])
-        assert kept and not waived, cmd
-    go = {"cmd": "go test ./...", "summary": "--- FAIL: TestErpContract (0.00s)\n    --- FAIL: TestErpContract/fields (0.00s)\n"
-                                              "--- FAIL: TestPayment (0.00s)\nFAIL\nFAIL\tgithub.com/x/pkg\t0.01s"}
-    assert rr.failure_units(go["summary"]) == ["TestErpContract", "TestPayment"]
-    kept, _ = rr.waived_failures([go], rr.parse_not_doing("不做｜TestErpContract：使用者說「先不用管它、跳過」"), [_C1_SAID])
-    assert kept, "付款那支沒豁免，整筆照紅"
-    both = "不做｜TestErpContract：使用者說「先不用管它、跳過」\n不做｜TestPayment：使用者說「先不用管它、跳過」"
-    kept, waived = rr.waived_failures([go], rr.parse_not_doing(both), [_C1_SAID])
-    assert not kept and sorted(u for _f, h in waived for u in h["units"]) == ["TestErpContract", "TestPayment"]
-    ut = "FAIL: test_contract (tests.test_erp.ErpCase)\n----\nFAILED (failures=1)"
-    assert rr.failure_units(ut) == ["test_contract"]
-
-
-def test_005_codex_miss_notes_skip_tests_already_waived_by_ledger():
-    """codex 005（本輪新開）：ERP 照帳豁免了、整筆還紅是因為付款那支——不再對 ERP 說「帳上也沒有」。"""
-    entry = {"cmd": "python -m pytest tests -q", "summary": f"FAILED {_C1_ERP} - x\nFAILED tests/test_pay.py::test_pay - y"}
-    decls = rr.parse_not_doing(_C1_NOT_DOING)
-    led = [{"item": "test_checkout_fields_match_erp_contract", "quote": "先不用管它、跳過", "units": [_C1_ERP.lower()]}]
-    kept, _ = rr.waived_failures([entry], decls, ["好"], led, ["好"])
-    assert kept and rr.waiver_miss_notes(kept, decls, ["好"], led) == []
-
-
 # ─── 閘小修 006 ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -1924,7 +1505,7 @@ def test_006_claim_conditional_not_claim():
 
 
 def test_006_tracking_same_item_not_rewritten(tmp_path, monkeypatch):
-    """TRACKING_SAME_ITEM_NOT_REWRITTEN：同一句不重記；「同追蹤項」對到唯一一筆就換新說法。B5 重播與反例在 verify_pick_one.py 006 段。"""
+    """TRACKING_SAME_ITEM_NOT_REWRITTEN：同一句不重記；「同追蹤項」對到唯一一筆就換新說法。B5 重播與反例在 verify_tracking_readback.py 006 段。"""
     import wg_harvest as wh
     monkeypatch.setattr(wh, "WORKFLOW_DIR", tmp_path)
     wh.append_tracking("s006", wh.tracking_entries("sid", 1, "[報表] monthly 用 UTC 切月份"))
@@ -1957,30 +1538,21 @@ def test_launcher_not_code_source_shapes():
 # 案例函式在各自的 verify 檔（走真入口才驗得到）；這裡只核對規則有登記、對照的案例檔與函式真的在。
 
 _ELSEWHERE_CASES = {
-    "GATE_DENY_CAP": [("verify_pull_tool_gates.py", "test_deny_cap_counts_each_item_per_user_turn"),
-                      ("verify_pull_tool_gates.py", "test_data_file_gate_releases_after_two_denies_in_same_turn")],
-    "DENY_CAP_PER_REPLY": [("verify_pull_tool_gates.py", "test_deny_cap_per_reply_counts_one_reply_once"),
-                           ("verify_pull_tool_gates.py", "test_data_file_gate_parallel_edits_in_one_reply_count_once")],
-    "PICK_ONCE_PER_USER_TURN": [("verify_pick_one.py", "test_stop_continuation_after_red_test_block_still_asks_once")],
+    "GATE_DENY_CAP": [("verify_pull_tool_gates.py", "test_deny_cap_counts_each_item_per_user_turn")],
+    "DENY_CAP_PER_REPLY": [("verify_pull_tool_gates.py", "test_deny_cap_per_reply_counts_one_reply_once")],
     "SVN_TEST_BLOCK_OPT_IN": [("verify_pull_tool_gates.py", "test_svn_test_block_off_by_default"),
                               ("verify_pull_tool_gates.py", "test_svn_test_block_on_looks_only_at_commit_paths"),
                               ("verify_pull_tool_gates.py", "test_svn_test_block_user_sentence_this_turn_allows")],
-    "GATE_BYPASS_NAMED_FILES_MERGED": [
-        ("verify_pull_tool_gates.py", "test_excluded_named_file_still_needs_declaration_after_other_file_fixed"),
-        ("verify_pull_tool_gates.py", "test_declaration_after_a_named_still_counts_for_a"),
-        ("verify_pull_tool_gates.py", "test_declaration_before_b_named_does_not_cover_b")],
     # 收尾閘那一批：案例在 verify_pull_stop_gates.py，每支 docstring 開頭寫「規則：<名>」
     "PENDING_SAME_USER_TURN": [("verify_pull_stop_gates.py", "test_1_pending_from_previous_user_turn_gives_fresh_budget")],
     "RELEASE_COVERS_SHOWN_ITEMS": [
         ("verify_pull_stop_gates.py", "test_1_released_item_not_asked_again_next_turn_until_cause_gone"),
         ("verify_pull_stop_gates.py", "test_release_binds_to_items_the_user_was_shown"),
-        ("verify_pull_stop_gates.py", "test_unformatted_new_reason_is_not_swallowed_by_released_item"),
-        ("verify_pull_stop_gates.py", "test_8_released_red_tests_do_not_cover_a_new_failure")],
+        ("verify_pull_stop_gates.py", "test_unformatted_new_reason_is_not_swallowed_by_released_item")],
     "NONINTERACTIVE_RELEASE_AT_BUDGET": [
         ("verify_pull_stop_gates.py", "test_3_headless_main_session_releases_on_third_and_never_says_cannot_release"),
         ("verify_pull_stop_gates.py", "test_3_subagent_block_message_does_not_say_cannot_release"),
-        ("verify_pull_stop_gates.py", "test_3_headless_equivalence_exhausted_releases_and_logs"),
-        ("verify_pull_stop_gates.py", "test_8_testfail_third_stop_releases_and_logs_headless")],
+        ("verify_pull_stop_gates.py", "test_3_headless_equivalence_exhausted_releases_and_logs")],
     "ORDER_UNTIL_PUSH": [("verify_pull_stop_gates.py", "test_4_order_survives_commit_and_notification_for_gate_forced_fix"),
                          ("verify_pull_stop_gates.py", "test_4_user_new_message_in_continuation_needs_new_order"),
                          ("verify_pull_stop_gates.py", "test_4_push_done_spends_order_even_within_same_turn"),
@@ -2030,45 +1602,10 @@ def test_deny_cap_old_names_folded_into_gate_deny_cap():
     assert "DECL_GATE_DENY_CAP" in rr.RULES["GATE_DENY_CAP"] and "LOCATE_DENY_CAP" in rr.RULES["GATE_DENY_CAP"]
 
 
-def test_decl_hints_do_not_steer_to_bash_writes():
-    """規則 DECL_HINT_KEEPS_EDIT_TOOLS：擋 Edit／Write 要先交宣告行的閘，擋訊息不准再用會被讀成「改用 Bash 寫檔」的說法
-    （補題第一版：AI 照「或寫成 Bash 指令開頭的 # 註解」全程用 python -c 改檔，改檔紀錄整個 session 是空的）。掃 hooks 全部
-    原始碼；繞閘宣告（擋的就是那條 Bash 指令，寫「這條」指令的註解）不在此列。"""
-    banned = ("或寫成 Bash／PowerShell 指令開頭的 `#` 註解", "或寫成下一個 Bash／PowerShell 指令開頭的", "下一個 Bash 開頭",
-              "下一個工具呼叫的參數（Bash 開頭的註解）")
-    hits = []
-    for p in sorted(HOOKS_DIR.rglob("*.py")):
-        if "verify" in p.relative_to(HOOKS_DIR).parts:
-            continue
-        src = p.read_text(encoding="utf-8")
-        hits += [f"{p.relative_to(HOOKS_DIR).as_posix()}：{b}" for b in banned if b in src]
-    assert not hits, hits
-    assert "照常用 Edit／Write" in rr.DECL_KEEP_EDIT and "不寫檔" in rr.DECL_VIA_COMMENT
-
-
-def test_decl_where_teaches_only_comment_channel():
-    """DECL_HINT_KEEPS_EDIT_TOOLS：每句教宣告放哪的字（動資料檔｜、改舊測試｜）只教一條路——
-    「同一則先發不寫檔指令的 `#` 註解」，並講原因（同一則裡接著呼叫工具的文字 hook 當下讀不到）；早一則的回覆文字、備援工具都不出現
-    （程式照認，只在規則表講）。009 實跑擋訊息同時教三條路，AI 挑了最貴的那條多 4 個模型回合。"""
-    import wg_oldtest as ot
-    assert rr.DECL_WHERE.startswith("同一則回覆裡先發一條不寫檔的") and "hook 當下讀不到" in rr.DECL_WHERE
-    texts = {"DECL_WHERE": rr.DECL_WHERE, "DECL_WHERE_SHORT": rr.DECL_WHERE_SHORT,
-             "data_file_hint": rr.data_file_hint("a.json"), "data_file_fix": rr.data_file_fix(["a.json"]),
-             "data_file_read_hint": rr.data_file_read_hint(["a.json"], True), "oldtest.hint": ot.hint("test_x")}
-    for name, t in texts.items():
-        assert "`#` 註解" in t, name
-        for other in ("早一則", "回覆文字", "locate 欄", "data_files", "need_goal(action=set", "備援"):
-            assert other not in t, (name, other)
-
-
 # ─── 閘小修 008 A：規則名登錄、對照的案例真的在、案例點到規則名 ───
 _008A_CASES = {
-    "OLD_TEST_COMPARED_ON_FAILED_COMMAND": ("verify_old_test_declare.py",
-                                            "test_failed_command_changing_old_test_still_compared_and_blocks_next_call"),
-    "USER_TURN_KEY_KEPT": ("verify_user_turn_key.py", "test_rebuilt_state_three_peer_messages_pick_one_asks_once"),
+    "USER_TURN_KEY_KEPT": ("verify_user_turn_key.py", "test_rebuilt_state_three_peer_messages_stay_in_one_user_turn"),
     "COMPLETION_CLAIM_PER_SENTENCE": ("verify_evasion_guard.py", "test_completion_exclude_only_cancels_its_own_sentence"),
-    "OPENING_NOTICE_NOT_TODO": ("verify_opening_notice.py",
-                                "test_harvest_staged_line_says_who_decides_and_relay_only_when_user_wants_else"),
     "GATE_TEXT_AVOIDS_EVASION_WORDS": ("verify_evasion_guard.py", "test_gate_texts_do_not_trip_evasion_detector"),
     "SUBPROCESS_RUN_LOOKED_UP_AT_CALL": ("verify_subprocess_run_default.py", "test_no_parameter_defaults_to_subprocess_run"),
 }
@@ -2115,48 +1652,10 @@ def test_008_delete_and_dir_target_rules_registered():
     assert "wg_overview.write_target_root" in rr.RULES["DIR_TARGET_JUDGED_BY_CONTAINER"]
 
 
-def test_008_base_red_tracked_not_owed():
-    """BASE_RED_TRACKED_NOT_OWED：三件都對得上才放行；缺一照算紅並說缺哪件；沒有基底紅行對到的紅原樣留著、不附註。"""
-    d = rr.parse_base_red("收尾\n基底紅｜test_a：ABCDEF1234 也紅；追蹤 `docs/known red.md:12`\n基底紅｜test_b：沒寫雜湊")
-    assert d[0]["item"] == "test_a" and d[0]["base"] == "abcdef1234" and d[0]["tracking"] == "docs/known red.md"
-    assert d[1]["base"] == "" and d[1]["tracking"] == ""
-    assert rr.parse_base_red("基底紅｜test_a：abcdef1 也紅；追蹤｜x/t.md")[0]["tracking"] == "x/t.md"
-    unit_a, unit_b = "t.py::test_a", "t.py::test_b"
-    red = {"cmd": "pytest t.py", "summary": f"FAILED {unit_a} - x\nFAILED {unit_b} - y", "cwd": "C:/r"}
-    runs = [{"clean": True, "head": "abcdef1234" + "0" * 30, "units": [unit_a, unit_b]}]
-    track = {"k.md": {"exists": True, "doc": True, "own_edit": False, "text": "test_a test_b 基底就紅"}}
-    both = rr.parse_base_red("基底紅｜test_a：abcdef1234 也紅；追蹤 k.md\n基底紅｜test_b：abcdef1234 也紅；追蹤 k.md")
-    ok = {"runs": runs, "ancestry": {("abcdef1234", "C:/r"): True}, "own_shas": [], "base_times": {"abcdef1234": 100.0},
-          "started": 200.0, "tracking": track}
-    kept, based, notes = rr.base_red_failures([red], both, ok)
-    assert not kept and not notes and [r["unit"] for r in based[0][1]] == [unit_a, unit_b]
-    kept, based, notes = rr.base_red_failures([red], both[:1], ok)                      # 兩支只宣告一支 → 整筆照紅
-    assert kept and not based and any("沒有對到它的基底紅行" in n and unit_b in n for n in notes)
-    kept, _, notes = rr.base_red_failures([red], both, {**ok, "ancestry": {("abcdef1234", "C:/r"): False}})
-    assert kept and any("不是現在 HEAD 的祖先" in n for n in notes)
-    kept, _, notes = rr.base_red_failures([red], both, {**ok, "runs": [{**runs[0], "units": [unit_a]}]})   # 基底只紅 a、b 是這次才紅
-    assert kept and any(unit_b in n and "沒在基底" in n for n in notes)
-    kept, _, notes = rr.base_red_failures([red], both, {**ok, "tracking": {"k.md": {**track["k.md"], "doc": False}}})
-    assert kept and any("不是 .md" in n for n in notes)
-    unlisted = {"cmd": "pytest t.py", "summary": "1 failed", "cwd": "C:/r"}
-    kept, _, notes = rr.base_red_failures([unlisted], rr.parse_base_red("基底紅｜t.py：abcdef1234 也紅；追蹤 k.md"), ok)
-    assert kept and any("逐支列得出" in n for n in notes)
-    kept, based, notes = rr.base_red_failures([red], [], ok)
-    assert kept == [red] and not based and not notes
-    other = {"k.md": {**track["k.md"], "text": "known: test_a_other test_b_other"}}         # 只提到名字更長的別支 → 沒點名
-    kept, _, notes = rr.base_red_failures([red], both, {**ok, "tracking": other})
-    assert kept and any("沒點名 test_a" in n for n in notes)
-    for over, why in (({"base_times": {"abcdef1234": 300.0}}, "早於本 session 開始"), ({"base_times": {}}, "查不到時間"),
-                      ({"started": None}, "早於本 session 開始"), ({"own_shas": ["ABCDEF1234ffff"]}, "自己提交的")):
-        kept, _, notes = rr.base_red_failures([red], both, {**ok, **over})   # 本 session 開始後才有的 commit（自己的 merge）、自己的提交
-        assert kept and any(why in n for n in notes), (over, notes)
-    assert rr.listed_red_units(f"FAILED {unit_a} - x") == [unit_a] and rr.listed_red_units("1 failed") == []
-
-
 # ─── 閘的三件設計題：規則名登錄、對照的案例真的在、案例點到規則名 ───
 _GATE_DESIGN_CASES = {
     "CHAIN_HEADLESS_KEEPS_DATA_GATES": ("verify_chain_wiring.py",
-                                        "test_headless_after_alarm_data_file_blocked_code_file_record_only"),
+                                        "test_headless_after_alarm_data_gate_blocked_code_file_record_only"),
     "SHELL_READ_COUNTS_LIKE_READ": ("verify_overview_hub.py", "test_shell_read_counts_like_read"),
     "SHELL_WRITE_COMMAND_NOT_A_READ": ("verify_overview_hub.py", "test_shell_write_command_not_a_read"),
     "EPHEMERAL_WRITE_NOTED_ONCE": ("verify_ephemeral_path.py", "test_temp_project_write_not_noted_but_said_once_per_root"),
@@ -2193,41 +1692,18 @@ def test_inject_lean_rules_registered_with_cases():
         assert rule in rr.RULES and rule in text and f"def {fn}(" in text, rule
 
 
-# ─── 擋訊息瘦身、讀到資料檔就先提示：規則名登錄、對照的案例真的在、案例點到規則名 ───
-_SLIM_CASES = {
-    "DENY_TEXT_SLIM": ("verify_data_file_ask.py", "test_deny_text_slim_rule_fix_and_hit_only"),
-    "DATA_FILE_READ_HINT": ("verify_data_file_ask.py", "test_read_hint_on_first_read_of_data_file"),
-}
-
-
-@pytest.mark.parametrize("rule", sorted(_SLIM_CASES))
-def test_slim_rules_registered_with_cases(rule):
-    case_file, fn = _SLIM_CASES[rule]
-    text = (Path(__file__).parent / case_file).read_text(encoding="utf-8")
-    assert rule in rr.RULES and f"def {fn}(" in text and rule in text, (rule, case_file, fn)
-
-
-@pytest.mark.parametrize("rule", ["READING_PATH_EARLY_START", "TURN_JUDGMENT_PRE_CLOSE", "PICK_ONE_PRE_CLOSE",
-                                  "PICK_ONE_WITH_TURN_JUDGMENT"])
-def test_closing_round_rules_cased_in_closing_round(rule):
-    """收尾只跑一輪的規則：端到端案例在 verify_closing_round.py（PostToolBatch→Stop）。"""
-    assert rule in rr.RULES
-    assert rule in (Path(__file__).parent / "verify_closing_round.py").read_text(encoding="utf-8")
-
-
-def test_closing_call_rule_cased_in_closing_round():
-    """收尾那批的認法（CLOSING_CALL_ALL_THREE）：案例在 verify_closing_round.py。"""
+def test_closing_call_rule_cased_in_gate_mode_stop():
+    """收尾那批的認法（CLOSING_CALL_ALL_THREE）：案例在 verify_gate_mode_stop.py。"""
     assert "CLOSING_CALL_ALL_THREE" in rr.RULES
-    assert "CLOSING_CALL_ALL_THREE" in (Path(__file__).parent / "verify_closing_round.py").read_text(encoding="utf-8")
+    assert "CLOSING_CALL_ALL_THREE" in (Path(__file__).parent / "verify_gate_mode_stop.py").read_text(encoding="utf-8")
 
 
-# ─── 擋或提醒（RULE_MODE）：每條規則有 mode、三類照擋、其餘提醒、總開關關一律照舊 ───
-_BLOCK_RULES = ("COMMIT_SMELL_NEW_BLOCKS", "GATE_BYPASS_NEEDS_DECLARATION", "USER_DATA_FILE_NEEDS_DECLARATION",
-                "OLD_TEST_CHANGE_NEEDS_DECLARATION", "RED_TEST_BLOCKS_COMPLETION", "CLAIM_FIXED_NEEDS_PASS")
+# ─── 擋或提醒（RULE_MODE）：每條規則有 mode、兩類照擋、其餘提醒、總開關關一律照舊 ───
+_BLOCK_RULES = ("COMMIT_SMELL_NEW_BLOCKS", "RED_TEST_BLOCKS_COMPLETION", "CLAIM_FIXED_NEEDS_PASS")
 _REMIND_RULES = ("DEFERRAL_OF_DOABLE_WORK", "HARVEST_AT_PHASE_DONE", "HARVEST_ITEM_NEEDS_RECEIPT",
                  "CLOSING_CHECK_REQUIRED", "CLOSING_CHECK_MEMORY_NOT_DEFERRED", "SYNC_REMINDER_UNSYNCED",
                  "SYNC_BLOCK_PENDING_ITEMS", "DEEP_POSTMORTEM_ON_FAILURE", "ATOM_CONSUMPTION_AUDIT",
-                 "EVASION_FLAG_NEXT_PROMPT", "CASE_COVERS_CHANGE", "ASK_NEEDS_RECOMMENDATION",
+                 "EVASION_FLAG_NEXT_PROMPT", "CLAIM_MEASURED_NEEDS_DONE", "ASK_NEEDS_RECOMMENDATION",
                  "REMIND_ON_PRIOR_RESULT", "GATE_MODE_TABLE")
 
 
@@ -2239,8 +1715,8 @@ def test_rule_mode_covers_every_rule_with_block_or_remind():
 
 
 @pytest.mark.parametrize("rule", _BLOCK_RULES)
-def test_three_classes_block_when_v6_on(rule):
-    assert rule in rr.RULES and rr.RULE_CLASS[rule] in ("病形", "宣告", "紅測")
+def test_two_classes_block_when_v6_on(rule):
+    assert rule in rr.RULES and rr.RULE_CLASS[rule] in ("病形", "紅測")
     assert rr.gate_mode(rule, True) == rr.BLOCK
 
 
@@ -2257,15 +1733,15 @@ def test_out_of_scope_rules_stay_block():
 
 
 def test_hit_mode_follows_letter_main_rule():
-    """寫碼查核的字母：(a) 照擋、(d) 提醒，就算擋訊息帶的是判宣稱的共用規則名。"""
+    """寫碼查核的字母：(a) 照擋、(b) 提醒，就算擋訊息帶的是判宣稱的共用規則名。"""
     assert rr.hit_mode("a", "CLAIM_WORDS_ARE_HINTS", True) == rr.BLOCK
-    assert rr.hit_mode("d", "SAME_FILE", True) == rr.REMIND
-    assert rr.hit_mode("d", "SAME_FILE", False) == rr.BLOCK
+    assert rr.hit_mode("b", "CLAIM_WORDS_ARE_HINTS", True) == rr.REMIND
+    assert rr.hit_mode("b", "CLAIM_WORDS_ARE_HINTS", False) == rr.BLOCK
 
 
 def test_remind_line_one_line_with_rule_and_fix_and_cap():
-    line = rr.remind_line("CASE_COVERS_CHANGE", "改了 a.py\n沒案例", "補 verify_a.py")
-    assert line.startswith("[Guardian:提醒] CASE_COVERS_CHANGE：") and "\n" not in line and "做法：補 verify_a.py" in line
+    line = rr.remind_line("SYNC_REMINDER_UNSYNCED", "改了 a.py\n還沒 commit", "照口令交代")
+    assert line.startswith("[Guardian:提醒] SYNC_REMINDER_UNSYNCED：") and "\n" not in line and "做法：照口令交代" in line
     long = rr.remind_line("X", "y" * 500, "z")
     assert len(long) <= rr.REMIND_LINE_CAP and long.endswith("…")
 
@@ -2288,8 +1764,8 @@ def test_pre_gate_remind_rules_registered_with_mode():
     assert rr.RULE_CLASS["OVERVIEW_READONLY_PATHS"] == "不在範圍" and rr.gate_mode("OVERVIEW_READONLY_PATHS", True) == rr.BLOCK
     assert rr.remind_key("GATE_SELF_ERROR", "戰鬥") == "GATE_SELF_ERROR|戰鬥"
 # ─── 收尾改提醒：Stop 只留帳（STOP_REMIND_LEDGER_ONLY）；入口案例在 verify_gate_mode_stop.py ───
-@pytest.mark.parametrize("rule", ("STOP_REMIND_LEDGER_ONLY", "TURN_JUDGMENT_REQUIRED",
-                                  "REFACTOR_NEEDS_EQUIVALENCE", "LEFTOVER_NEEDS_CLEANUP",
+@pytest.mark.parametrize("rule", ("STOP_REMIND_LEDGER_ONLY",
+                                  "REFACTOR_NEEDS_EQUIVALENCE",
                                   "RELOAD_ADVICE_ALREADY_LOADED", "AEC_EVIDENCE_PATH", "GATE_SELF_ERROR"))
 def test_stop_remind_rules_are_remind_when_v6_on(rule):
     """Stop 改提醒的那幾道閘：規則名在表上、v6 開是 remind、關是 block（照舊）；(a)（CLAIM_FIXED_NEEDS_PASS）照擋見上面的三類案。"""
@@ -2301,3 +1777,68 @@ def test_overview_hub_under_v6_rule_registered():
     assert "OVERVIEW_HUB_UNDER_V6" in rr.RULES and rr.gate_mode("OVERVIEW_HUB_UNDER_V6", True) == rr.REMIND
 
 
+# ─── 背景 session 算沒人能回答（NONINTERACTIVE_RELEASE_AT_BUDGET 的第④訊號 CLAUDE_JOB_DIR） ───
+
+def test_background_session_job_dir_is_non_interactive():
+    """規則：NONINTERACTIVE_RELEASE_AT_BUDGET。CLAUDE_JOB_DIR 有設 → 非互動理由；沒設 → 原行為（互動 None）。"""
+    import wg_release as rl
+    assert rl.non_interactive_reason({}, None, env={"CLAUDE_JOB_DIR": "x"}) == "背景 session（CLAUDE_JOB_DIR）"
+    assert rl.non_interactive_reason({}, None, env={"CLAUDE_CODE_ENTRYPOINT": "cli", "CLAUDE_JOB_DIR": "x"}).startswith("背景")
+    assert rl.non_interactive_reason({}, None, env={"CLAUDE_CODE_ENTRYPOINT": "cli"}) is None
+    assert rl.non_interactive_reason({}, None, env={"CLAUDE_JOB_DIR": ""}) is None
+
+
+# ─── 子代理記憶補位：SubagentStart 補不經 Agent 工具的子代理（案例在 verify_subagent_start.py） ───
+
+def test_subagent_start_non_agent_inject_registered():
+    """規則 SUBAGENT_START_NON_AGENT_INJECT：有登記、指向 handlers/subagent_start、送法是說明型（提醒，不是擋點）、案例檔點到規則名。"""
+    rule = "SUBAGENT_START_NON_AGENT_INJECT"
+    assert "handlers/subagent_start" in rr.RULES[rule] and rr.gate_mode(rule, True) == rr.REMIND
+    assert rule in (Path(__file__).parent / "verify_subagent_start.py").read_text(encoding="utf-8")
+
+
+# ─── 檢索查詢、規則載入與中斷記帳、壓縮與重開與跨 session、MCP 開場與註冊外殼：規則有登記、點到判法所在、案例檔在 ───
+# 規則名 → (案例檔（相對 repo 根）, 案例檔裡要有的字（案例函式或它斷言的帳名）, 規則文字要點到的判法位置)
+_REPO_ROOT = HOOKS_DIR.parent
+_LEDGER_AND_ENTRY_CASES = {
+    "NON_HUMAN_PROMPT_NO_INJECT": ("hooks/verify/verify_ups_non_human_inject.py",
+                                   "def test_pure_task_notification_skips_injection_and_logs(", "harness_text.non_human_kind"),
+    "CONTINUE_QUERY_FROM_HANDOFF": ("hooks/verify/verify_ups_non_human_inject.py",
+                                    "def test_continue_query_uses_newest_handoff(", "ups_search.continue_handoff_path"),
+    "INSTRUCTIONS_LOADED_LEDGER": ("hooks/verify/verify_instructions_loaded_stop_failure.py",
+                                   "instructions-loaded.jsonl", "handlers/instructions_loaded"),
+    "STOP_FAILURE_ABORTED": ("hooks/verify/verify_instructions_loaded_stop_failure.py",
+                             "turn_aborted_seq", "handlers/stop_failure"),
+    "COMPACT_SUMMARY_TO_HANDOFF": ("hooks/verify/verify_auto_handoff.py",
+                                   "def test_compact_summary_filled_into_stub(", "post_compact.fill_handoff_summary"),
+    "RESUME_CACHE_REWRITE_NOTE": ("hooks/verify/verify_resume_cache_note.py",
+                                  "def test_session_start_resume_shows_note_to_user_and_claude(", "session_start._resume_cache_note"),
+    "COORD_WARN_PEER_NAME": ("hooks/verify/verify_session_coordination.py",
+                             "def test_peer_name_in_conflict_warning(", "wg_coordination._peer_label"),
+    "MCP_INSTRUCTIONS_NON_CC_ONLY": ("tools/workflow-guardian-mcp/verify/verify_initialize_instructions.js",
+                                     "anthropic/alwaysLoad", "mcp.js initializeResult"),
+    "MCP_ENTRY_HIDDEN_LAUNCHER": ("hooks/verify/verify_ensure_mcp.py",
+                                  "[ensure_mcp:hidden]", "ensure-mcp.py _hidden_launcher"),
+}
+
+
+@pytest.mark.parametrize("rule", sorted(_LEDGER_AND_ENTRY_CASES))
+def test_ledger_and_entry_rules_registered_with_cases(rule):
+    """說明型規則（送法提醒，不是擋點）：規則文字點到判法所在、案例檔裡有對應案例；pytest 案例檔還要點到規則名。"""
+    case_file, marker, where = _LEDGER_AND_ENTRY_CASES[rule]
+    assert rule in rr.RULES and where in rr.RULES[rule] and rr.gate_mode(rule, True) == rr.REMIND, rule
+    assert "——" not in rr.RULES[rule], rule
+    text = (_REPO_ROOT / case_file).read_text(encoding="utf-8")
+    assert marker in text, (rule, case_file, marker)
+    if marker.startswith("def test_"):
+        assert rule in text, (rule, case_file)
+
+
+@pytest.mark.parametrize("rule,case_file", [
+    ("HOOK_TEXT_CAP_SELF_TRUNCATE", "verify_hook_text_cap.py"),
+    ("COMPACT_REINJECT_AT_SESSION_START", "verify_post_compact_reinjection_phase4.py"),
+])
+def test_output_cap_and_compact_reinject_rules_registered(rule, case_file):
+    """字元上限自截與壓縮後直送：規則已登記、提醒類、案例檔存在。"""
+    assert rule in rr.RULES and rr.RULE_MODE.get(rule) == rr.REMIND
+    assert (Path(__file__).parent / case_file).exists()

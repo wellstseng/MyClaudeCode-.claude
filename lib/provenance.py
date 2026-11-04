@@ -24,7 +24,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
+from .atom_index_json import load_personal_rows
 from .atom_spec import parse_frontmatter, slugify
+from .sensitive_gate import secret_value_found, sensitive_words
 from .harness_text import is_kickoff_prompt, strip_pasted, user_typed_text
 from .project_root import claude_data_dir
 
@@ -81,8 +83,11 @@ QUOTE_MIN_CHARS = 6   # 清完短於這個（「A」「好」「上GIT」）就�
 
 def usable_quote(text: str, max_chars: Optional[int] = None) -> str:
     """回填 Quote 用的原句：sanitize_quote 清完，短於 QUOTE_MIN_CHARS 回空字串（不回填）。
+    提到驗證、隱私或內網位址也不回填：這是使用者原話自動進卡片，沒經過寫入閘，卡片又會隨 repo 公開。
     PostToolUse 自動填（hooks/wg_provenance）與舊卡回填（tools/atom-provenance-backfill.py）共用這一支。"""
     q = sanitize_quote(text, max_chars)
+    if secret_value_found(text or "") or sensitive_words(text or ""):
+        return ""
     return q if len(q) >= QUOTE_MIN_CHARS else ""
 
 
@@ -307,7 +312,7 @@ def _locate_by_index(atom: str, memory_dir: Path) -> Optional[Path]:
         return None
     rows = data.get("atoms") if isinstance(data, dict) else data
     want = slugify(atom)
-    for row in rows or []:
+    for row in (rows or []) + load_personal_rows(memory_dir):
         if not isinstance(row, dict):
             continue
         name = str(row.get("name") or "")

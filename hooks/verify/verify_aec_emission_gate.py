@@ -442,7 +442,8 @@ def test_b5_node_chip_does_not_print_j(tmp_path):
               "require.cache[mp]={id:mp,filename:mp,loaded:true,exports:{sendToolResult:(id,t)=>console.log(JSON.stringify(t))}};"
               "const ae=require(js);const c=JSON.parse(process.argv[2]);"
               "console.log(JSON.stringify(c.map(([j,r,l])=>ae.aecEvidenceAutofill(j,r,l))));"
-              "ae.toolAntiEvasionReport(1,{a:'無',b:'無',d:'無',e:'無',f:'無',g:'無',h:'可關閉',j_evidence_path:'',k_followups:'無'});")
+              "ae.toolAntiEvasionReport(1,{goal:[{said:'s',done:'d',verified:'1 個過',not_done:'無'}],principles:[],ai_decided:[],"
+              "a:'無',b:'無',d:'無',g:'無',h:'可關閉',j_evidence_path:'',k_followups:'無'});")
     res = subprocess.run(["node", "-e", script, str(js), json.dumps(cases, ensure_ascii=False)],
                          capture_output=True, text=True, encoding="utf-8", errors="replace")
     assert res.returncode == 0, res.stderr
@@ -467,22 +468,20 @@ def test_ptu_legacy_emit_without_jk_keys_is_exempt(monkeypatch, tmp_path, driven
 
 def test_scan_report_message_lists_j_and_k(driven, capsys):
     out = driven([_mf(_CORE)], capsys, turn_seq=5)
-    assert "(j) 證據持久路徑" in out and "(k) 追蹤項" in out and "十參" in out and "(c) Token" not in out
+    assert "(j) 證據持久路徑" in out and "(k) 追蹤項" in out and "(c) Token" not in out
+    # 三類是報告的核心：擋訊息先講三類，舊的 (e)(f) 不再要 AI 填
+    assert "goal" in out and "principles" in out and "ai_decided" in out and "使用者原話" in out
+    assert "(e) 未告知決策" not in out and "(f) 靜默狀態改變" not in out
 
 
-def test_ptu_k_followups_tracking_hook(monkeypatch, tmp_path):
-    """(k)≠「無」→ 呼叫 wg_harvest.append_tracking；k=「無」不呼叫。wg_harvest 的兩函式以 monkeypatch 提供。
-    本案的輸入沒有 cwd → slug＝tracking_slug("")＝"_no-cwd"（舊版寫 "root"，讀回端永遠對不上）。"""
+def test_ptu_k_followups_not_written_to_tracking_ledger(monkeypatch, tmp_path):
+    """寫碼守門開：(k) 不是「無」也不寫追蹤帳本（舊碼呼叫 wg_harvest.append_tracking 記一筆）；報告照存 k_followups 給 HUD。"""
     import wg_harvest
     calls = []
-    monkeypatch.setattr(wg_harvest, "tracking_entries",
-                        lambda sid, turn, k: [] if str(k).strip() in ("", "無") else [{"text": k, "turn_seq": turn}],
-                        raising=False)
-    monkeypatch.setattr(wg_harvest, "append_tracking", lambda slug, entries: calls.append((slug, entries)), raising=False)
-    _drive_ptu(monkeypatch, tmp_path, _full_input(k_followups="[hooks] 補 PowerShell 案"))
-    assert len(calls) == 1 and calls[0][0] == "_no-cwd" and calls[0][1][0]["text"] == "[hooks] 補 PowerShell 案"
-    _drive_ptu(monkeypatch, tmp_path, _full_input(k_followups="無"))
-    assert len(calls) == 1
+    monkeypatch.setenv("WG_CODING_GUARD", "1")
+    monkeypatch.setattr(wg_harvest, "append_tracking", lambda *a, **k: calls.append(a), raising=False)
+    state = _drive_ptu(monkeypatch, tmp_path, _full_input(k_followups="[hooks] 補 PowerShell 案"))
+    assert calls == [] and state["anti_evasion_report"]["k_followups"] == "[hooks] 補 PowerShell 案"
 
 
 @pytest.mark.skipif(not __import__("shutil").which("node"), reason="node not available")
@@ -515,8 +514,8 @@ def test_mcp_schema_requires_j_k():
     res = subprocess.run(["node", "-e", script, str(js)], capture_output=True, text=True, encoding="utf-8")
     assert res.returncode == 0, res.stderr
     req = json.loads(res.stdout)
-    # (c) Token 警示欄已刪；e／f／g 只上 HUD，給了 report（白話全文）可省，沒給由 Node 端照擋（CLOSING_REPORT_ONE_CALL）
-    assert req == ["a", "b", "d", "h", "i", "j_evidence_path", "k_followups"]
+    # 沒有 (c)；e／f 不在 schema（內容歸 ai_decided）；三類（goal／principles／ai_decided）與版控 g 必填
+    assert req == ["goal", "principles", "ai_decided", "a", "b", "d", "g", "h", "i", "j_evidence_path", "k_followups"]
 
 
 def test_stop_pending_sibling_not_blocked(driven, capsys):

@@ -4,20 +4,19 @@ handlers/post_tool_batch.py — PostToolBatch hook handler（選配 #4：壓縮�
 PostToolBatch：一批（含並行）工具呼叫全解析後觸發一次，於下個 model request 前（CC 2.1.159+；
 payload: tool_calls[]；反編譯實證支援 hookSpecificOutput.additionalContext）。
 
-職責：把 PostCompact stash 的 atom 復原內文「一次性」注入，閉合 mid-turn auto-compact 缺口
-（壓縮後不一定有 UserPromptSubmit 可重 trigger，但隨後的工具批次會觸發本 hook）；PreToolUse 沒攔到的提問事後提醒
-（wg_ask_gate）併進同一段送出；收尾只跑一輪（wg_closing_round）：改完程式就起跑拐彎判斷量測、
-交收尾檢核那批附上收尾要問的（拐彎判斷結果、最該修）。
+職責：壓縮後卡片內文的補位——SessionStart(compact) 沒送成時，把 PostCompact 暫存的內文「一次性」送出
+（SessionStart 送過就只清旗標）；PreToolUse 沒攔到的提問事後提醒
+（wg_ask_gate）併進同一段送出。
 收尾類守門的提醒（規則 REMIND_ON_PRIOR_RESULT；判定與送法照 wg_release_rules 檔尾的 RULE_MODE）：這一批改了程式檔，就算出目前欠的
-各一行（closing_reminders：欠案例、等值意圖、搬目錄、改了 MCP 檔、退縮歸屬、收尾檢核、同步、深度檢討、取用稽核；
-改過程式之後測試跑綠的那批＝交付邊界，「順手看到最該修」那一問也掛這裡（PICK_ONE_PRE_CLOSE，wg_closing_round.pick_on_test_green））；
-建了工作樹那則 Bash 附自清、背景量完附拐彎判斷欠項、收尾那批附知識收割欠項與報告待寫。同一條規則同一個對象同一個 session
+各一行（closing_reminders：等值意圖、搬目錄、改了 MCP 檔、退縮歸屬、收尾檢核、同步、深度檢討、取用稽核）；
+收尾那批附知識收割欠項與報告待寫。同一條規則同一個對象同一個 session
 只提醒一次（state remind_sent 清單，wg_overview.remind_mark）；Stop 對同一件只留帳、不擋、不續跑（handlers/stop._remind_logged）。
 **每批都會跑** → idle 路徑必須極輕（讀 flag → early exit）。設計：plans/deep-wobbling-bentley.md。
 """
 
 import re
 import sys
+from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 from wg_core import _ensure_state, write_state, output_json, output_nothing, v6_enabled, coding_turn
@@ -36,22 +35,29 @@ def _ask_module() -> Any:
         return None
 
 
-def _closing_round(state: Dict[str, Any], session_id: str, input_data: Dict[str, Any], config: Dict[str, Any]) -> tuple:
-    """收尾只跑一輪（wg_closing_round）：改完程式就起跑拐彎判斷量測、交收尾檢核那批附上收尾要問的。
-    回 (段落, state 有沒有改)；載入失敗 → stderr 一行、這批不做（收尾照舊在 Stop 送）。"""
-    try:
-        import wg_closing_round
-        return wg_closing_round.on_batch(state, session_id, input_data, config)
-    except Exception as e:  # noqa: BLE001
-        print(f"[Guardian:ClosingRound] 收尾一輪的批次處理失敗（收尾照舊送）：{type(e).__name__}: {e}", file=sys.stderr)
-        return [], False
+CLOSING_TOOL_SUFFIX = "__anti_evasion_report"
+HARVEST_SUFFIX = "__knowledge_harvest_report"
+
+
+def _calls(tool_calls: Any) -> List[Tuple[str, Dict[str, Any]]]:
+    out = []
+    for c in tool_calls if isinstance(tool_calls, list) else []:
+        c = c if isinstance(c, dict) else {}
+        inp = c.get("tool_input", c.get("input"))
+        out.append((str(c.get("tool_name") or c.get("name") or ""), inp if isinstance(inp, dict) else {}))
+    return out
+
+
+def closing_call(name: str) -> bool:
+    """收尾那批的認法（規則 CLOSING_CALL_ALL_THREE）：收尾檢核（anti_evasion_report，harvest_items 欄帶著知識收割），
+    或分開交的知識收割回報（knowledge_harvest_report）。"""
+    return name.endswith(CLOSING_TOOL_SUFFIX) or name.endswith(HARVEST_SUFFIX)
 
 
 # ─── 收尾類守門的提醒：掛在改程式檔那則工具結果（規則 REMIND_ON_PRIOR_RESULT） ──────────────────────────
 
 _HIT_ROW_RE = re.compile(r"^\s*✗ \(([^)]+)\) ([A-Z][A-Z0-9_]*)：(.*?)(?:｜證據：|$)")
 _MCP_SEGMENT = "/tools/workflow-guardian-mcp/"
-FIX_CASE = "補一支會紅的案例（檔名照它取或內容提到它）；已有案例在驗它就寫一行「case_for｜<程式檔>：<案例檔或節點>」"
 FIX_MOVE = "掃一次舊路徑的引用、跑一支搬過去的抽樣，兩張收據都要在"
 FIX_EQUIV = "最後一次改程式之後跑 order／side_effect／boundary 三類變異、各印 PRESERVE_CHECK PASS；不適用寫「等值證法｜不適用｜<理由>」"
 FIX_HOT = "收尾答一題「這次改動碰到熱路徑或大量配置嗎」：是→量、附 DONE 收據；否→一句為什麼"
@@ -61,9 +67,6 @@ FIX_CLOSING = "收尾最後呼叫 anti_evasion_report（知識收割放 harvest_
 FIX_SYNC = "收尾照口令規則交代：有「上GIT」口令就 commit＋push 一氣，沒口令就列改了哪些檔等口令、不先 commit"
 FIX_DPM = "結束前用 atom_write 補一張完整檢討卡（為什麼失敗、怎麼找到根因、下次怎麼避）"
 FIX_AUDIT = "收尾一行交代每張注入的指標卡有沒有用到、用在哪"
-FIX_CLEANUP = "用完的刪掉（git worktree remove／branch -d／刪暫存 repo）；要留的在收尾檢核 (i) 寫理由"
-FIX_TJ = "收尾每條寫一行「拐彎判斷｜<名稱>｜<不會／會：…>｜<理由>｜<怎麼改直／合理>」"
-TJ_NAMES_SHOWN = 3   # 拐彎判斷的一行提醒最多列幾條名字
 FIX_HARVEST = "值得留的先 atom_write，再交收割清單（anti_evasion_report 的 harvest_items 一起交，或 knowledge_harvest_report）"
 FIX_HARVEST_ITEM = "收割清單裡的每一項要對得上寫卡收據：真寫完再重報"
 FIX_AEC_PENDING = "現在就 atom_write 寫完，再重交 anti_evasion_report 把該項改成「→ 已寫入 atom <名>」或「→ 不寫（理由）」"
@@ -81,12 +84,11 @@ def _hit_rows(text: str) -> List[Tuple[str, str, str]]:
 
 def closing_reminders(state: Dict[str, Any], sid: str, input_data: Dict[str, Any], config: Dict[str, Any]) -> Tuple[List[str], bool]:
     """這一批之後欠的收尾類守門，各一行（remind_line）→ (要附的行, state 有沒有改)。
-    時點：這批改了程式檔（modified_files 的 last_seq 比上次看到的大，state remind_mark[sid]）→ 欠案例 (d)、搬目錄 (v)、等值意圖、改了 MCP 檔、退縮歸屬、收尾檢核、同步、深度檢討、取用稽核；
-    這批有 git 建東西的 Bash → 收尾自清；搬了含程式檔的目錄（moved_code_dirs 多一筆）→ (v)；背景量完有欠項 → 拐彎判斷；
+    時點：這批改了程式檔（modified_files 的 last_seq 比上次看到的大，state remind_mark[sid]）→ 等值意圖、改了 MCP 檔、退縮歸屬、收尾檢核、同步、深度檢討、取用稽核；
+    搬了含程式檔的目錄（moved_code_dirs 多一筆）→ (v)；
     這批是收尾那批（closing_call）→ 知識收割、收割對帳、報告待寫。
     每條規則每個對象每 session 一次（wg_overview.remind_mark：已送鍵存 state remind_sent 清單，與工具前守門的提醒帳同一份）。判定重用各閘的純函式，不另複製；
     一段判不出只少那一段、浮 stderr。沒有任何時點成立就不做事（idle 極輕）。"""
-    import wg_closing_round as cr
     own = [m for m in state.get("modified_files") or [] if isinstance(m, dict) and m.get("path")
            and m.get("session_id", sid) == sid]
     marks = state.setdefault("remind_mark", {})
@@ -96,13 +98,8 @@ def closing_reminders(state: Dict[str, Any], sid: str, input_data: Dict[str, Any
     if top != mark:
         marks[sid] = top
         changed = True
-    calls = cr._calls(input_data.get("tool_calls"))
-    closing = any(cr.closing_call(n) for n, _inp in calls)
-    git_cmds = [str(inp.get("command") or "") for n, inp in calls
-                if n in ("Bash", "PowerShell") and "git" in str(inp.get("command") or "")]
-    rp = ((state.get("reading_path") or {}).get(sid)) or {}
-    tj_owed = rp.get("owed") or {}
-    tj_due = bool(tj_owed.get("items")) and not tj_owed.get("stale") and not rp.get("job")   # 還有一批在量：等它量完再提
+    calls = _calls(input_data.get("tool_calls"))
+    closing = any(closing_call(n) for n, _inp in calls)
     try:
         from wg_code_path import is_code_path
         new_code = [m for m in own if int(m.get("last_seq") or 0) > mark and is_code_path(str(m["path"]), config)]
@@ -115,9 +112,7 @@ def closing_reminders(state: Dict[str, Any], sid: str, input_data: Dict[str, Any
     if new_move:
         seen_moves[sid] = len(moved)
         changed = True
-    green, green_changed = _test_green_batch(state, sid)
-    changed = changed or green_changed
-    if not (new_code or closing or git_cmds or tj_due or new_move or green):
+    if not (new_code or closing or new_move):
         return [], changed
     from wg_overview import remind_mark   # 提醒帳本只有一份（state remind_sent 清單），與 remind_flush 同一支記法
     lines: List[str] = []
@@ -135,7 +130,6 @@ def closing_reminders(state: Dict[str, Any], sid: str, input_data: Dict[str, Any
             print(f"[Guardian:提醒] {name}判不出（這批少這一段）：{type(e).__name__}: {e}", file=sys.stderr)
 
     if new_code:
-        part("欠案例", lambda: _code_check_reminders(state, own, config, say, str(input_data.get("transcript_path") or "")))
         part("等值意圖", lambda: _equivalence_reminders(state, config, cwd, say))
         if any(_MCP_SEGMENT in str(m["path"]).replace("\\", "/").lower() for m in new_code):
             say("RELOAD_ADVICE_ALREADY_LOADED", "改了 tools/workflow-guardian-mcp/ 的檔", FIX_RELOAD)
@@ -147,72 +141,11 @@ def closing_reminders(state: Dict[str, Any], sid: str, input_data: Dict[str, Any
         part("深度檢討與取用稽核", lambda: _postmortem_audit_reminders(state, sid, config, say))
     if new_move:
         part("搬目錄", lambda: _move_reminder(state, sid, config, say))
-    if git_cmds:
-        part("收尾自清", lambda: _cleanup_reminder(sid, git_cmds, cwd, say))
-    if tj_due:   # 只有超線的條目才會成為欠項（wg_reading_path._collect）：一行列最多 3 條名字，其餘報個數
-        items = tj_owed["items"]
-        names = "、".join(str(it.get("name")) for it in items[:TJ_NAMES_SHOWN])
-        more = f"（另 {len(items) - TJ_NAMES_SHOWN} 條）" if len(items) > TJ_NAMES_SHOWN else ""
-        say("TURN_JUDGMENT_REQUIRED", f"背景量完，{len(items)} 條到門檻：{names}{more}", FIX_TJ, tj_owed.get("at") or tj_owed.get("turn"))
     if closing:
         part("知識收割", lambda: _closing_batch_reminders(state, sid, own, config, turn_seq, say))
-    if green:   # 改過程式之後測試跑綠＝交付邊界（PICK_ONE_PRE_CLOSE）：該問就附那一問（該不該問、記問過在 wg_closing_round）
-        part("最該修", lambda: _pick_on_green(cr, state, sid, config, input_data, lines))
     return lines, changed or bool(lines)
 
 
-def _pick_on_green(cr, state, sid, config, input_data, lines: List[str]) -> None:
-    text = cr.pick_on_test_green(state, sid, config, input_data)
-    if text:
-        lines.append(text)
-
-
-def _test_green_batch(state: Dict[str, Any], sid: str) -> Tuple[bool, bool]:
-    """這批有沒有跑綠的測試：post_tool_use 記的收據（state verify_receipts，事件序號 seq 比上次看到的大＝這批新落的），
-    是測試指令或帶 PASS 哨兵、且跑綠（wg_verify_batch.receipt_green：沒有 FAIL 哨兵、結束碼 0）。回 (綠, state 改了)；
-    看過的序號記 state remind_receipt_seq[sid]。
-    紅的測試指令也算到交付邊界，條件是還紅的每一支都在使用者豁免帳上（state testfail_waivers，USER_WAIVER_NEEDS_CITATION 記的）：
-    使用者叫跳過的那支永遠不會綠，只認「全綠」那一問永遠到不了（011 實跑 C′）。"""
-    from wg_verify_ledger import receipts_of
-    seen = state.setdefault("remind_receipt_seq", {})
-    mark = int(seen.get(sid) or 0)
-    new = [r for r in receipts_of(state, sid) if int(r.get("seq") or 0) > mark]
-    if not new:
-        return False, False
-    seen[sid] = max(int(r.get("seq") or 0) for r in new)
-    from wg_evasion import is_test_command
-    from wg_verify_batch import receipt_green
-
-    def is_test(r: Dict[str, Any]) -> bool:
-        return is_test_command(str(r.get("cmd") or "")) or any(
-            str(s.get("verdict")) == "PASS" for s in r.get("sentinels") or [] if isinstance(s, dict))
-    if any(receipt_green(r) and is_test(r) for r in new):
-        return True, True
-    return any(is_test(r) for r in new) and _reds_all_waived(state, sid), True
-
-
-def _reds_all_waived(state: Dict[str, Any], sid: str) -> bool:
-    """本 session 還紅的測試（state failing_tests）每一支都在豁免帳上（testfail_waivers 的 units）→ True；沒有紅、或有一支不在帳上 → False。"""
-    from wg_release_rules import red_units
-    reds = [f for f in state.get("failing_tests") or [] if isinstance(f, dict) and f.get("session_id", sid) == sid]
-    waived = {u for e in state.get("testfail_waivers") or [] if isinstance(e, dict) for u in e.get("units") or []}
-    if not reds or not waived:
-        return False
-    return all(red_units(f) and set(red_units(f)) <= waived for f in reds)
-
-
-def _code_check_reminders(state, own, config, say, tpath: str = "") -> None:
-    """(d) 每個改過的程式檔一次（wg_verify_ledger.case_debt，同 Stop 的判法；案例覆蓋也認 transcript 裡的「case_for｜…」宣告行）。"""
-    import wg_verify_ledger as vl
-    from pathlib import Path
-    rg = vl.reconcile_cfg(config)
-    if not rg.get("enabled", True):
-        return
-    why: Dict[str, Any] = {}
-    for p in vl.case_debt(own, int(state.get("turn_seq", 0) or 0), rg, vl.file_root_of, evidence=why,
-                          case_for=vl.declared_cases(rg, tpath)):
-        v = why.get(p)
-        say(v.rule if v else "CASE_COVERS_CHANGE", f"改了 {Path(p).name}，{v.why if v else '還沒有案例覆蓋它'}", FIX_CASE, p)
 
 
 def _move_reminder(state, sid, config, say) -> None:
@@ -265,27 +198,14 @@ def _postmortem_audit_reminders(state, sid, config, say) -> None:
             say("ATOM_CONSUMPTION_AUDIT", f"注入的指標卡還沒回報有沒有用到：{'、'.join(aa[1][:3])}", FIX_AUDIT, "|".join(sorted(aa[1])[:5]))
 
 
-def _cleanup_reminder(sid, git_cmds, cwd, say) -> None:
-    """這批的 Bash 有 git 建東西（worktree／branch／init／clone）→ 照收尾自清閘同一套事實（aec_ledger.cleanup_facts）判，欠就提醒。"""
-    from handlers import aec_ledger
-    from wg_release_rules import leftover_cleanup_verdict
-    if not any(aec_ledger.parse_git_artifacts(cmd, cwd) for cmd in git_cmds):
-        return
-    cv = leftover_cleanup_verdict(True, aec_ledger.cleanup_facts(sid))
-    if cv.owed:
-        say(cv.rule, f"這個 session 建的還在：{'；'.join(cv.evidence[:3])}", FIX_CLEANUP, "|".join(sorted(cv.evidence)))
-
-
 def _closing_batch_reminders(state, sid, own, config, turn_seq, say) -> None:
-    """收尾那批：知識收割欠不欠（背景收割開著就不提）、收割對帳待補、收尾檢核把記憶寫入推到之後。"""
-    from wg_bg_harvest import background_on
+    """收尾那批：知識收割欠不欠、收割對帳待補、收尾檢核把記憶寫入推到之後。"""
     from wg_harvest import harvest_gate_reason, pending_gate_reason
     from wg_release_rules import in_turn, user_turn
     uturn = user_turn(state, turn_seq)
-    if not background_on(config):
-        hv = harvest_gate_reason(state, sid, "", config, own, turn_seq, gate_turn=uturn, claimed=True)
-        if hv:
-            say("HARVEST_AT_PHASE_DONE", "階段完工還沒交知識收割清單", FIX_HARVEST, uturn)
+    hv = harvest_gate_reason(state, sid, "", config, own, turn_seq, gate_turn=uturn, claimed=True)
+    if hv:
+        say("HARVEST_AT_PHASE_DONE", "階段完工還沒交知識收割清單", FIX_HARVEST, uturn)
     hp = pending_gate_reason(state, sid, turn_seq, "", gate_turn=uturn)
     if hp:
         items = (state.get("knowledge_harvest", {}).get(sid) or {}).get("pending", [])[:5]
@@ -294,6 +214,18 @@ def _closing_batch_reminders(state, sid, own, config, turn_seq, say) -> None:
     pending = aec.get("d_pending") or []
     if pending and aec.get("session_id") == sid and in_turn(aec.get("turn_seq"), turn_seq, uturn):
         say("CLOSING_CHECK_MEMORY_NOT_DEFERRED", f"收尾檢核把 {len(pending)} 項記憶寫入推到之後", FIX_AEC_PENDING, aec.get("turn_seq"))
+
+
+def _stub_has_compact_summary(stub_path: str) -> bool:
+    """交接單裡已有 PostCompact 寫的壓縮摘要段（記號同 post_compact._SUMMARY_BEGIN）；讀不到當沒有、stderr 一行。"""
+    if not stub_path:
+        return False
+    from handlers.post_compact import _SUMMARY_BEGIN
+    try:
+        return _SUMMARY_BEGIN in Path(stub_path).read_text(encoding="utf-8")
+    except OSError as e:
+        print(f"[auto-handoff] 讀不到交接單，補全提示照完整版送：{e}", file=sys.stderr)
+        return False
 
 
 def handle_post_tool_batch(input_data: Dict[str, Any], config: Dict[str, Any]) -> None:
@@ -305,7 +237,6 @@ def handle_post_tool_batch(input_data: Dict[str, Any], config: Dict[str, Any]) -
     coding = bool(state) and v6 and not sub and coding_turn(state, config)    # 規則 CODING_TURN_ONLY
     ask = _ask_module() if coding else None
     ask_due = bool(ask) and ask.has_ask_calls(input_data.get("tool_calls"))
-    close_parts, close_changed = _closing_round(state, session_id, input_data, config) if state and v6 and not sub else ([], False)
     remind_lines, remind_changed = ([], False)
     if state and v6 and not sub:
         try:
@@ -315,7 +246,7 @@ def handle_post_tool_batch(input_data: Dict[str, Any], config: Dict[str, Any]) -
     # idle 極輕路徑：pending 皆無、這批也沒有提問立即退出（每批觸發，杜絕常態開銷）
     if not state or not (
         state.get("pending_reinjection") or state.get("pending_handoff_emit")
-        or ask_due or close_parts or close_changed or remind_lines or remind_changed
+        or ask_due or remind_lines or remind_changed
     ):
         output_nothing()
         return
@@ -324,7 +255,8 @@ def handle_post_tool_batch(input_data: Dict[str, Any], config: Dict[str, Any]) -
     try:
         ah = config.get("auto_handoff", {}) or {}
 
-        # (1) 壓縮後 atom 內文復原（既有 #4 機制，一次性）
+        # (1) 壓縮後卡片內文補位（一次性）：主路是 SessionStart(compact) 直接送；它送過（compact_reinjected_at，
+        #     規則 COMPACT_REINJECT_AT_SESSION_START）就只清旗標不重送，沒送成才由這裡送 PostCompact 暫存的內文
         if state.get("pending_reinjection"):
             blob = state.get("pending_reinjection_blob", "") or ""
             atoms = state.get("pending_reinjection_atoms", []) or []
@@ -336,19 +268,25 @@ def handle_post_tool_batch(input_data: Dict[str, Any], config: Dict[str, Any]) -
             if atoms:
                 merged = list(dict.fromkeys((state.get("injected_atoms", []) or []) + atoms))
                 state["injected_atoms"] = merged
-            if blob:
+            if blob and not state.get("compact_reinjected_at"):
                 parts.append(blob)
 
         # (2) Auto-Handoff 補全提示（Layer 3，與 (1) 合流同一 additionalContext）
         if state.get("pending_handoff_emit"):
             if ah.get("enabled", True) and ah.get("postbatch_emit", True):
                 stub_path = state.get("handoff_stub_path", "") or "(staging)"
-                parts.append(
-                    f"[Auto-Handoff] 剛發生壓縮。已自動備妥 handoff stub 於 `{stub_path}`"
-                    f"（客觀區塊已填）。請**補全其中 `TODO(模型補全)` 三區塊**"
-                    f"（why / 做法 / 決策依據）使其達六區塊自足，"
-                    f"確保接手的 session 用 `/continue` 無損接續。"
-                )
+                if _stub_has_compact_summary(state.get("handoff_stub_path", "")):   # PostCompact 已把壓縮摘要填進去（COMPACT_SUMMARY_TO_HANDOFF）
+                    parts.append(
+                        f"[Auto-Handoff] 剛發生壓縮。handoff stub `{stub_path}` 的壓縮摘要已填入，"
+                        f"只需確認下一步並補 `TODO(模型補全)`，確保接手的 session 用 `/continue` 無損接續。"
+                    )
+                else:
+                    parts.append(
+                        f"[Auto-Handoff] 剛發生壓縮。已自動備妥 handoff stub 於 `{stub_path}`"
+                        f"（客觀區塊已填）。請**補全其中 `TODO(模型補全)` 三區塊**"
+                        f"（why / 做法 / 決策依據）使其達六區塊自足，"
+                        f"確保接手的 session 用 `/continue` 無損接續。"
+                    )
             state["pending_handoff_emit"] = False  # 一次性，即使 config 關亦清旗標
 
         # (3) 提問的事後提醒與審計（PreToolUse 沒處理到的提問）：判不了只寫 stderr，不擋其他段
@@ -358,8 +296,7 @@ def handle_post_tool_batch(input_data: Dict[str, Any], config: Dict[str, Any]) -
             except Exception as e:  # noqa: BLE001
                 print(f"[Guardian:Ask] post_tool_batch 提問提醒失敗（不擋）：{type(e).__name__}: {e}", file=sys.stderr)
 
-        parts.extend(close_parts)     # (4) 收尾一輪：收尾前附的拐彎判斷、最該修
-        parts.extend(remind_lines)    # (5) 收尾類守門的提醒（REMIND_ON_PRIOR_RESULT）：每規則每對象每 session 一行
+        parts.extend(remind_lines)    # (4) 收尾類守門的提醒（REMIND_ON_PRIOR_RESULT）：每規則每對象每 session 一行
         write_state(session_id, state)
     except Exception as e:
         print(f"[#4] post_tool_batch reinject error: {e}", file=sys.stderr)

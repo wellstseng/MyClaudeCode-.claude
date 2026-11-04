@@ -5,10 +5,10 @@
 
 | 語言 | atom 數 |
 |------|---------|
-| Python | 38 |
+| Python | 41 |
 | C#／.NET | 36 |
-| JavaScript／Node | 3 |
-| PowerShell | 8 |
+| JavaScript／Node | 5 |
+| PowerShell | 9 |
 | Bash／Shell | 25 |
 
 ## Python
@@ -53,6 +53,9 @@
 | `memory/驗證與實證/測試隔離的這次執行記號要在開子行程前就存在-用root-conftest每次換的暫存目錄當記號-第一次用到才產生的環境變數記號會分帳或共用.md` | 測試隔離的這次執行記號要在開子行程前就存在-用root-conftest每次換的暫存目錄當記號-第一次用到才產生的環境變數記號會分帳或共用 |
 | `memory/驗證與實證/背景跑的測試hook拿不到輸出也不留收據-超過單次工具上限的批次要拆成數段前景跑.md` | 背景跑的測試hook拿不到輸出也不留收據-超過單次工具上限的批次要拆成數段前景跑 |
 | `memory/驗證與實證/路徑樣式比對要用相對專案根的路徑-絕對路徑會比到上層目錄名-pytest的tmp路徑含test會污染測試.md` | 路徑樣式比對要用相對專案根的路徑-絕對路徑會比到上層目錄名-pytest的tmp路徑含test會污染測試 |
+| `memory/OS-Windows/windows排程每小時用once加repetitioninterval-改時間set-scheduledtask只換trigger先比dayofweek與startboundary再寫-multipleinstances-ignorenew防疊跑.md` | windows排程每小時用once加repetitioninterval-改時間set-scheduledtask只換trigger先比dayofweek與startboundary再寫-multipleinstances-ignorenew防疊跑 |
+| `memory/工作流/多工人並行改同一套hooks的派工守則-檔案所有權表-共用出口主持端先做-settings單一擁有者-工人只回報片段-腳本式verify不進pytest清單.md` | 多工人並行改同一套hooks的派工守則-檔案所有權表-共用出口主持端先做-settings單一擁有者-工人只回報片段-腳本式verify不進pytest清單 |
+| `memory/驗證與實證/python-urllib逾時分兩型-裸timeouterror是請求已送出在等回應-連線階段逾時包成urlerror-判遠端服務是忙還是連不上.md` | Python-urllib逾時分兩型-裸TimeoutError是請求已送出在等回應-連線階段逾時包成URLError-判遠端服務是忙還是連不上 |
 
 ## C#／.NET
 
@@ -102,6 +105,8 @@
 | `memory/OS-Windows/windows上node測試chdir進暫存夾後rmsync刪不掉當前目錄-空catch吞錯每跑一次留一個殘目錄-收尾先chdir離開再刪失敗印warn.md` | windows上node測試chdir進暫存夾後rmSync刪不掉當前目錄-空catch吞錯每跑一次留一個殘目錄-收尾先chdir離開再刪失敗印warn |
 | `memory/參考與環境/nodejs-ecosystem.md` | Node.js / TypeScript 生態系知識庫 |
 | `memory/文字與格式/toolchain.md` | 工具鏈實戰記憶 |
+| `memory/驗證與實證/自動截vs-code裡claude-code的用量面板-另開專屬vs-code帶偵錯埠用cdp接-skip-welcome-清electron-run-as-node-同步playwright不用timesleep等.md` | 自動截VS Code裡Claude Code的用量面板-另開專屬VS Code帶偵錯埠用CDP接-skip-welcome-清ELECTRON_RUN_AS_NODE-同步Playwright不用time.sleep等 |
+| `memory/驗證與實證/跨機共用的案例不要綁作者環境-真卡只認檔名-本機代號驗格式-全庫門檻只數線上看得到的.md` | 跨機共用的案例不要綁作者環境-真卡只認檔名-本機代號驗格式-全庫門檻只數線上看得到的 |
 
 ## PowerShell
 
@@ -115,6 +120,7 @@
 | `memory/版控/SVN/pwsh-傳中文路徑給svn-exe會亂碼且big5的一字含位元組觸發peg解析-改用python-subprocess.md` | pwsh-傳中文路徑給svn-exe會亂碼且big5的一字含@位元組觸發peg解析-改用python-subprocess |
 | `memory/設計通則/shell命令判定的語意陷阱-續行先接回再判-引號外token起頭的井號是註解-只有單引號是字面-外層語意先查整段原文.md` | shell命令判定的語意陷阱-續行先接回再判-引號外token起頭的井號是註解-只有單引號是字面-外層語意先查整段原文 |
 | `memory/設計通則/從指令字串辨識shell包裝要斷詞看執行檔basename再找執行旗標-regex會被帶引號完整路徑與啟動選項繞過-內層要認真子命令.md` | 從指令字串辨識shell包裝要斷詞看執行檔basename再找執行旗標-regex會被帶引號完整路徑與啟動選項繞過-內層要認真子命令 |
+| `memory/OS-Windows/腳本跳windows通知走powershell-winrt-toastnotificationmanager-appid用powershell自己的-文字走環境變數不拼字串-discord用webhook-post-content上限2000.md` | 腳本跳windows通知走powershell-winrt-toastnotificationmanager-appid用powershell自己的-文字走環境變數不拼字串-discord用webhook-post-content上限2000 |
 
 ## Bash／Shell
 

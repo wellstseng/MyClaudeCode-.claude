@@ -30,6 +30,7 @@ description: 跨 Session Handoff Prompt Builder — 強制 6 區塊 self-suffici
 - 專案根目錄絕對路徑（例：`D:/work/acme-shop/.claude/`）
 - 工作分支 / 工作目錄
 - 為什麼做這件事（**含 why**，不只 what）
+- **原始目標從使用者原話的來源逐字重抄**（對話原句、原話輯），不抄上一份交接單：每次轉述上一份轉述，目標會一輪輪縮成手上那件事。
 - **目標的始末（四段都要，小任務也一樣）**：原始目標（使用者原話）→ 階段目標（拆成哪幾段、各段狀態）→ 簡略經過（每段一兩句、附 commit）→ 對原始目標而言的結果（做到哪、還差什麼、憑什麼數據判斷）。只寫做法或只指向文件，下個 session 會只知道「去做 X」，不知道做完拿來判斷什麼。
 
 ### 2.【已完成】
@@ -55,6 +56,7 @@ description: 跨 Session Handoff Prompt Builder — 強制 6 區塊 self-suffici
 - 為什麼選此做法
 - 拒絕了哪些 alternatives 與原因
 - 已知限制 / 已知坑
+- **怎麼想**（只交待辦，新 session 只會看到任務清單）：判斷用的尺、本場使用者指正過的事（附原句）、走歪過的實證與怎麼拉回；每條原則標出處——使用者說的（原句）還是 AI 推的。
 
 ---
 
@@ -170,7 +172,7 @@ description: 跨 Session Handoff Prompt Builder — 強制 6 區塊 self-suffici
 
 知識依據見 atom [[handoff-綜觀品質與抗失真寫法]]、[[跨session資訊失真機制與對策]]。
 
-> **獨立他評後盾（codex-companion 開啟時）**：把 handoff 寫入 `_staging/next-phase*.md` 後，Codex 會以前 8 問當對抗式 checklist 自動複審該檔（最後兩問要知道這個 session 改了什麼、判斷過什麼，只能作者自審）（PostToolUse 觸發 `handoff_review`），中度以上缺口會在下一輪以 `[Codex Companion: Handoff 自檢]` 注入。這是「他評」補「自評抓不到自身盲點」——但**不取代** Step 3.5 自審（codex 可能離線/未開）；自審仍是必經硬閘。
+> **交接靠 Step 3.5 自審**：寫進 `_staging/next-phase*.md` 不會自動叫 Codex 複審（Companion 的 `soft_gate.handoff_review` 設 false）；Step 3.5 自審是必經硬閘。要另一個 context 挑這份交接的盲點時，主動叫 skill `codex` 做唯讀審查，拿前 8 問當 checklist（最後兩問要知道這個 session 改了什麼、判斷過什麼，只能作者自審）。
 
 ## Step 4：輸出
 

@@ -38,8 +38,7 @@ CONFIG_PATH = WORKFLOW_DIR / "config.json"
 CONFIG_LOCAL_PATH = WORKFLOW_DIR / "config.local.json"   # 這台機器專屬覆寫（不進版控），同名鍵蓋過 config.json
 # V5+ Realm 維度：SessionEnd 自動搬移的待提示 marker（永不靜默；session_start 讀+清）
 REALM_AUTOMOVE_MARKER = WORKFLOW_DIR / "realm_automove_pending.json"
-MEMORY_INDEX = "MEMORY.md"
-ATOM_INDEX = "_ATOM_INDEX.md"
+from atom_spec import ATOM_INDEX, MEMORY_INDEX, SCOPE_DIR_NAMES  # noqa: E402  共用名字唯一一份
 REGISTRY_PATH = MEMORY_DIR / "project-registry.json"
 
 # atom 物理位置 / 白名單規則來源（單一來源 lib.atom_locations）
@@ -51,6 +50,12 @@ try:
     )
 except ImportError:
     atom_writable_dir_segments = None
+    # 備援白名單（atom_locations 載不進來時用；與 atom_locations._BASE_WRITABLE_DIR_SEGMENTS 保持一致）。
+    # 不含 'Failures'：Failures atom 由 _is_failures_atom_path 主動 gate，非白名單豁免。
+    _FALLBACK_WRITABLE_DIR_SEGMENTS = frozenset({
+        "_meta", "_staging", "_archived", "_distant", "_reference", "_pending_review",
+        "_vectordb", "_rejected", "templates", "episodic", "wisdom", "personal",
+    })
     failures_atom_stems = None
     is_local_realm_path = None
     is_cross_project_local = None
@@ -211,12 +216,13 @@ def coding_guard_opt(config: Optional[Dict[str, Any]], key: str, default: Any = 
 
 
 def v6_enabled(config: Dict[str, Any]) -> bool:
-    """寫碼守門總開關，預設關：關時 hook 只跑寫碼守門關時也跑的（9e476fd0 就有的）處理。函式名沿用、不改。
+    """寫碼守門總開關，出廠開：關時 hook 只跑寫碼守門關時也跑的（9e476fd0 就有的）處理。函式名沿用、不改。
 
     判法（先到先贏）：
     1. 環境變數 WG_CODING_GUARD=1 開、=0 關；沒設才看舊名 WG_V6（同義，coding_guard_env）。
-    2. config：coding_guard.enabled 是 JSON true 就開；不是（出廠 false）再看舊鍵 v6.enabled 是 JSON true 也開——
-       舊的 workflow/config.local.json 寫 {"v6": {"enabled": true}} 照樣能開，不必改鍵。要強制關用環境變數 =0。
+    2. config：coding_guard.enabled 是 JSON true 就開（出廠 true；本機要關在 workflow/config.local.json 寫
+       {"coding_guard": {"enabled": false}}，同名鍵蓋過出廠值）；不是 true 再看舊鍵 v6.enabled 是 JSON true 也開——
+       舊的 config.local.json 寫 {"v6": {"enabled": true}} 照樣能開，不必改鍵。要強制關用環境變數 =0。
     只認 JSON 的 true：寫成字串 "false"、段不是物件，一律當關。
     """
     env = coding_guard_env()
@@ -225,15 +231,12 @@ def v6_enabled(config: Dict[str, Any]) -> bool:
     return any(isinstance(config.get(k), dict) and config[k].get("enabled") is True for k in ("coding_guard", "v6"))
 
 
-# 規則 CODING_TURN_ONLY：寫碼類意圖（wg_atoms.INTENT_PATTERNS 的鍵）；其餘（general、design、recall、handoff）不算。
-# 只當提示的開關（讀到資料檔時提早送宣告提示：wg_data_file.read_hint），不當守門開關（coding_turn 不看它）
-CODE_INTENTS = frozenset({"debug", "feature", "refactor", "perf", "new_project", "build"})
 def coding_turn(state: Optional[Dict[str, Any]], config: Optional[Dict[str, Any]] = None) -> bool:
     """規則 CODING_TURN_ONLY：這個使用者回合是不是寫碼回合——看實質行為：這個使用者回合已經有改程式檔的工具行為
     （Edit／Write／NotebookEdit 或 Bash／PowerShell 寫進程式檔：modified_files 有一筆，程式照 wg_code_path.is_code_path 判，
     .bat／.cmd 也算；只改文件不算），或判不出寫入目標的指令（unknown_writes，不知道寫了什麼，保守算）。
     使用者 prompt 的關鍵字分類（turn_intent）不當開關：只決定記憶選片，與讀到資料檔時要不要提早送宣告提示。
-    寫碼守門的每回合守門（退避偵測、退縮閘、收尾檢核、閱讀路徑）只在寫碼回合啟動；寫碼守門關時也跑的
+    寫碼守門的每回合守門（退避偵測、退縮閘、收尾檢核）只在寫碼回合啟動；寫碼守門關時也跑的
     處理（記憶注入、收割、vcs-sync、語言守門）照舊每回合跑。config coding_guard.coding_turn_only=false 退回每回合都啟動。"""
     st = state or {}
     if coding_guard_opt(config, "coding_turn_only", True) is False:
@@ -350,11 +353,6 @@ def truncate_to_tokens(text: str, max_tokens: int) -> str:
 
 # 「使用者本人打的字」的規則（harness 區塊、同伴訊息邊界、系統通知標記行、hook 殘渣行、殘留標籤字樣整則不認）
 # 只有一份：lib/harness_text.user_typed_text（頂部 import），這裡的 user_typed_text 就是它。
-
-
-def is_harness_generated_prompt(text: str) -> bool:
-    """整則 prompt 裡沒有使用者打的字（user_typed_text 為空；空訊息也算）。"""
-    return not user_typed_text(text)
 
 
 def user_typed_prompts(prompts: Optional[List[str]]) -> List[str]:
@@ -583,7 +581,7 @@ def get_project_memory_dir(cwd: str) -> Optional[Path]:
         if new_mem.is_dir():
             if (new_mem / MEMORY_INDEX).exists():
                 return new_mem
-            if any((new_mem / d).is_dir() for d in ("shared", "roles", "personal")):
+            if any((new_mem / d).is_dir() for d in SCOPE_DIR_NAMES):
                 return new_mem
     slug = cwd_to_project_slug(cwd)
     old_mem = CLAUDE_DIR / "projects" / slug / "memory"
@@ -615,34 +613,10 @@ def transcripts_of(transcript_path: str, agent_id: str) -> Tuple[str, List[str]]
     return str(p), [str(p)] + ([str(agent)] if agent is not None and agent.exists() else [])
 
 
-def transcript_sizes(transcript_path: str) -> Dict[str, int]:
-    """主 session transcript 與它底下現在每一份子代理 transcript 的大小（byte），鍵是正斜線小寫路徑。
-    記「從這一刻起才算」的起點用：之後才出現的子代理檔不在裡面，整份都算這一刻之後。"""
-    main, _ = transcripts_of(transcript_path, "")
-    if not main:
-        return {}
-    files = [Path(main)] + sorted((Path(main).with_suffix("") / "subagents").glob("agent-*.jsonl"))
-    out: Dict[str, int] = {}
-    for f in files:
-        try:
-            out[str(f).replace("\\", "/").lower()] = f.stat().st_size
-        except OSError:
-            continue
-    return out
-
-
-def assistant_texts_since(transcript_path: str, agent_id: str, channel: str, offsets: Any = None, legacy_offset: int = 0) -> str:
-    """要找 AI 宣告／定位行的那幾份 transcript（transcripts_of：主檔＋子代理檔）在起點之後的 assistant 內容，主檔在前。
-    起點各檔各算：offsets（transcript_sizes 記下的）有記的照記；沒記的檔＝記的時候還不存在，整份都在起點之後。
-    offsets 不是 dict（只有舊紀錄的單一 byte offset）時，legacy_offset 只套在 hook 給的那一份、其他檔從頭。"""
+def assistant_texts(transcript_path: str, agent_id: str, channel: str) -> str:
+    """要找 AI 宣告行的那幾份 transcript（transcripts_of：主檔＋子代理檔）從頭起的 assistant 內容，主檔在前。"""
     from overview_hub import assistant_text_after
-    parts: List[str] = []
-    for f in transcripts_of(transcript_path, agent_id)[1]:
-        if isinstance(offsets, dict):
-            off = int(offsets.get(f.replace("\\", "/").lower(), 0))
-        else:
-            off = int(legacy_offset) if f == transcript_path else 0
-        parts.append(assistant_text_after(f, off, channel))
+    parts = [assistant_text_after(f, 0, channel) for f in transcripts_of(transcript_path, agent_id)[1]]
     return "\n".join(p for p in parts if p)
 
 
@@ -810,7 +784,7 @@ def discover_all_project_memory_dirs() -> List[Tuple[str, Path]]:
 
 def hook_python_exe() -> str:
     """hook 要起 Python 子行程時用的直譯器：hook 本身在 pythonw.exe 下跑（無 console）時，spawn sys.executable 會沒有 stdout
-    → 改用同目錄的 python.exe；其他情況就是 sys.executable。pre_tool_use（合併驅動／svn 工具）與 wg_reading_path 共用這一支。"""
+    → 改用同目錄的 python.exe；其他情況就是 sys.executable。pre_tool_use（合併驅動／svn 工具）用這一支。"""
     exe = Path(sys.executable)
     if exe.name.lower() == "pythonw.exe":
         sib = exe.with_name("python.exe")
@@ -822,7 +796,7 @@ def hook_python_exe() -> str:
 def find_vcs_root_ex(start: Path) -> Tuple[Optional[Tuple[str, Path]], str]:
     """從 start 往上找最近的 VCS 根：.git（dir 或 worktree/submodule 的 file）或 .svn 目錄。回 (命中, 錯誤原因)：
     命中＝("git"|"svn", root)，不在工作區＝None；檔案系統出錯（權限、網路路徑斷、路徑太長）→ (None, "OSError: …")，
-    讀不到和「不在版控」是兩回事（規則 VCS_ROOT_UNREADABLE：讀不到照欠）。純檔案系統 walk-up、零 subprocess。
+    讀不到和「不在版控」是兩回事。純檔案系統 walk-up、零 subprocess。
     巢狀時取最近的那個（svn WC 住在 git repo 裡，如 svn 工作副本 <repo>/Tools 在 git repo <repo> 之下）。"""
     cur = Path(start)
     while True:
@@ -1542,8 +1516,7 @@ _MERGE_TYPES: Tuple[Tuple[str, str], ...] = (
     ("decl_deny_counts.counts.*", "add"),
     ("overview_hub.*", "version:injected_turn"),   # 分版本整組：版本新的整組勝（重新注入整筆換掉），同版本才逐欄併
     ("decl_deny_counts", "version:turn"),          # 換使用者回合整組歸零
-    ("commit_snapshot", "atomic"),                 # 整組換掉、欄位互相綁定：兩邊都改留磁碟那份
-    ("anti_evasion_report", "atomic"),
+    ("anti_evasion_report", "atomic"),             # 整組換掉、欄位互相綁定：兩邊都改留磁碟那份
     ("knowledge_harvest.*", "atomic"),             # validated 不能跟 items／pending 拆開
 )
 _ISO_TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}")
@@ -1861,7 +1834,7 @@ def _ensure_state(
 
 
 def output_json(data: Dict[str, Any]) -> None:
-    print(json.dumps(data, ensure_ascii=False))
+    print(json.dumps(cap_hook_output(data), ensure_ascii=False))
     sys.exit(0)
 
 
@@ -1956,14 +1929,55 @@ def append_guard_log(guard: str, payload: Dict[str, Any]) -> None:
         _atom_debug_error(f"guard_log:{guard}", e)
 
 
-# ─── 宣告閘擋次上限（動資料檔、改舊測試、不是繞閘共用）───────────
-DECL_DENY_CAP = 2                     # 同一個使用者回合、同一道閘、同一件缺件最多擋幾則回覆；再來就放行、由呼叫端留帳
+# ─── Hook 輸出字元上限（官方：additionalContext／systemMessage／stdout 單一字串超過 10,000 字元會被換成
+#     「檔案路徑＋前 2,000 字預覽」且不要求模型去讀；沒有設定能提高）─────────────────────────────
+HOOK_TEXT_CAP = 9000   # 留 1,000 字餘裕給官方包裝
+
+
+def cap_hook_text(text: str, where: str) -> str:
+    """超過 HOOK_TEXT_CAP 就自己截：保留前段、尾行指到溢出全文檔，並寫 guard log（規則 HOOK_TEXT_CAP_SELF_TRUNCATE）。"""
+    if not isinstance(text, str) or len(text) <= HOOK_TEXT_CAP:
+        return text
+    overflow_dir = WORKFLOW_DIR / "hook-overflow"
+    try:
+        overflow_dir.mkdir(parents=True, exist_ok=True)
+        fname = overflow_dir / f"{where}-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}.txt"
+        fname.write_text(text, encoding="utf-8", newline="\n")
+        pointer = str(fname)
+    except Exception as e:  # fail-open：寫不出檔就只截
+        _atom_debug_error("hook_text_cap:write", e)
+        pointer = "（溢出檔寫入失敗）"
+    tail = f"\n[Guardian:Truncated] 此段原 {len(text)} 字元，超過 hook 單筆上限，已截；全文：{pointer}"
+    keep = text[: HOOK_TEXT_CAP - len(tail)]
+    cut = keep.rfind("\n")
+    if cut > HOOK_TEXT_CAP // 2:
+        keep = keep[:cut]
+    append_guard_log("hook-text-cap", {"where": where, "chars": len(text), "kept": len(keep), "file": pointer})
+    return keep + tail
+
+
+def cap_hook_output(data: Dict[str, Any], where: str = "") -> Dict[str, Any]:
+    """對 hook JSON 輸出裡會送給模型／使用者的字串套 cap_hook_text；回傳同一個 dict。"""
+    hso = data.get("hookSpecificOutput")
+    if isinstance(hso, dict):
+        w = where or str(hso.get("hookEventName") or "hook")
+        for k in ("additionalContext",):
+            if k in hso:
+                hso[k] = cap_hook_text(hso[k], w)
+    for k in ("systemMessage", "reason"):
+        if k in data:
+            data[k] = cap_hook_text(data[k], (where or "hook") + "-" + k)
+    return data
+
+
+# ─── 工具前閘擋次上限（驗證批次閘、病形閘用）───────────
 _DECL_DENY_KEY = "decl_deny_counts"   # state：{"turn": 使用者回合, "counts": {"<閘>|<缺件>": 已擋則數}, "batch": {同鍵: 上次算次的那則}}
 
 
 def deny_cap(state: Optional[Dict[str, Any]], gate: str, items: List[str],
-             cap: int = DECL_DENY_CAP, call: Optional[Dict[str, Any]] = None) -> Tuple[List[str], List[str]]:
-    """宣告閘這次缺宣告的每一件（呼叫端給穩定的鍵，例：檔的 canon 路徑）→ (照擋的, 這次起放行的)。
+             cap: int, call: Optional[Dict[str, Any]] = None) -> Tuple[List[str], List[str]]:
+    """閘這次缺的每一件（呼叫端給穩定的鍵，例：規則名）→ (照擋的, 這次起放行的)。
+    cap＝同一個使用者回合、同一道閘、同一件缺件最多擋幾則回覆，呼叫端明寫（驗證批次閘、病形閘都給 1）。
     同一個使用者回合（wg_release_rules.user_turn）裡同一件已經擋滿 cap 次就放行：越過上限那一次回在「放行」裡給呼叫端
     留帳，同回合之後再遇到既不擋也不重回；照擋的各記一次。換回合整份歸零。state 就地改、寫檔由呼叫端；
     state 是 None（沒有 session 可記）照擋、不計次。
@@ -2068,7 +2082,7 @@ _DOUBLE_CLAUDE_RE = lazy_re(
 )
 
 _WHITELIST_BASENAMES = frozenset({
-    "MEMORY.md", "_ATOM_INDEX.md", "_CHANGELOG.md", "_CHANGELOG_ARCHIVE.md",
+    MEMORY_INDEX, ATOM_INDEX, "_CHANGELOG.md", "_CHANGELOG_ARCHIVE.md",
     "_roles.md", "atom_io_audit.jsonl",
     "_promotion_audit.jsonl", "project-registry.json", "session_score.json",
     "DESIGN.md", "role.md",
@@ -2076,12 +2090,7 @@ _WHITELIST_BASENAMES = frozenset({
 if atom_writable_dir_segments is not None:
     _WHITELIST_DIR_SEGMENTS = atom_writable_dir_segments()
 else:
-    # Fallback（lib import 失敗的極端情況；與 atom_locations 保持一致）。
-    # 不含 'Failures'：Failures atom 由 _is_failures_atom_path 主動 gate，非白名單豁免。
-    _WHITELIST_DIR_SEGMENTS = frozenset({
-        "_meta", "_staging", "_archived", "_distant", "_reference", "_pending_review",
-        "_vectordb", "_rejected", "templates", "episodic", "wisdom", "personal",
-    })
+    _WHITELIST_DIR_SEGMENTS = _FALLBACK_WRITABLE_DIR_SEGMENTS
 
 
 def _path_under_memory_dir(fp: Path) -> bool:
@@ -2948,8 +2957,7 @@ def _git_restore_targets(args: List[str], cwd: Optional[str], seg: List[_Tok], o
     `git restore [--source <rev>] [--worktree] <路徑>…` 會改寫工作樹的檔 → 目標＝那些路徑（照 `-C <目錄>` 或 cwd 解析）。
     寫碼查核靠它記下「最後一次改這個檔」的時間：反證時用 git 把程式與案例退回舊版、最後只還原程式，時間序才查得到。
     只認字面檔案路徑：萬用字元、pathspec 魔術字（`:` 開頭）、目錄、--pathspec-from-file、--git-dir／--work-tree、算不出的 -C → UNKNOWN。
-    `git mv 來源… 目標` 的目標同 mv 算寫入（目標是現存目錄就是目錄/來源檔名）：寫碼查核對「已不存在的程式檔不欠案例」，
-    搬走的程式要在新路徑照算。其他 git 子指令（commit、log、switch…）照舊不算寫入目標。
+    `git mv 來源… 目標` 的目標同 mv 算寫入（目標是現存目錄就是目錄/來源檔名）：搬走的程式在新路徑照算改檔。其他 git 子指令（commit、log、switch…）照舊不算寫入目標。
     每段 git 都記進 out.gits：(repo 目錄＝cwd 照 -C 推，--git-dir／--work-tree 或推不出 → None, git 後的參數)，給跨層閘分哪幾段在根層 repo。"""
     base, tree, i = cwd, False, 0
     while i < len(args) and args[i].startswith("-"):

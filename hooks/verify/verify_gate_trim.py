@@ -100,7 +100,7 @@ def test_subagent_stop_same_budget_then_released(monkeypatch, capsys):
     monkeypatch.setattr(st, "read_state", lambda sid: state)
     monkeypatch.setattr(st, "write_state", lambda *a, **k: None)
     monkeypatch.setattr(st, "append_guard_log", lambda name, rec: logs.append(rec))
-    monkeypatch.setattr(st, "_verify_gates", lambda *a, **k: ("[Guardian:ReconcileGate] x\n  ✗ (d) OWED", None, "reconcile"))
+    monkeypatch.setattr(st, "_verify_gates", lambda *a, **k: ("[Guardian:ReconcileGate] x\n  ✗ (a) OWED", None, "reconcile"))
     outs = []
     monkeypatch.setattr(st, "output_block", lambda msg: outs.append("block"))
     monkeypatch.setattr(st, "output_nothing", lambda: outs.append("pass"))
@@ -170,7 +170,7 @@ def test_coding_turn_keyword_intent_is_not_a_switch():
 
 
 def test_non_coding_turn_skips_v6_gates_at_stop():
-    """收尾：不是寫碼回合、也不是「前幾回合改過程式、這則宣告完成」，退避偵測、退縮閘、收尾檢核、閱讀路徑不跑
+    """收尾：不是寫碼回合、也不是「前幾回合改過程式、這則宣告完成」，退避偵測、退縮閘、收尾檢核不跑
     （舊碼照跑 → 紅）；收割、收割待補是 v6 以前就有的，照舊每回合跑。"""
     src = (HOOKS_DIR / "handlers" / "stop.py").read_text(encoding="utf-8")
     assert "_coding = v6 and (coding_turn(state, config) or (_done(last_text) and _wrote_code(own_mod_files, config)))" in src

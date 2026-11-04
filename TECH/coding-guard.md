@@ -4,11 +4,11 @@
 
 寫碼守門是記憶系統上面另加的一層。AI 改程式時，它在改檔、問人、宣告完成、提交這幾個時刻多查一次。
 
-- **出廠關**：設定鍵 `coding_guard.enabled` 出廠是 false。
-- **開法**：本機設環境變數 `WG_CODING_GUARD=1`，或在不進版控的 `workflow/config.local.json` 寫 `{"coding_guard": {"enabled": true}}`（[乙1](#乙1-開關與減量原則)）。
-- **開了也只在寫碼回合跑**：這個使用者回合用工具改過程式檔，才跑每回合的檢查。純問答、只改文件的回合不跑。
+- **出廠開**：設定鍵 `coding_guard.enabled` 出廠是 true。
+- **關法**：本機設環境變數 `WG_CODING_GUARD=0`，或在不進版控的 `workflow/config.local.json` 寫 `{"coding_guard": {"enabled": false}}`（[乙1](#乙1-開關與減量原則)）。
+- **只在寫碼回合跑**：這個使用者回合用工具改過程式檔，才跑每回合的檢查。純問答、只改文件的回合不跑。
 
-開關不只開關這一層。記憶系統（含基本守門）還有 36 處行為跟著變，例如記憶系統的收尾閘從「擋」變成「只提醒」。這些差異只列在一個地方：[TECH.md〈守門開關會改到記憶系統的地方〉](../TECH.md#守門開關會改到記憶系統的地方)（下文簡稱「跨層表」）。
+開關不只開關這一層。記憶系統（含基本守門）還有 30 處行為跟著變，例如記憶系統的收尾閘從「擋」變成「只提醒」。這些差異只列在一個地方：[TECH.md〈守門開關會改到記憶系統的地方〉](../TECH.md#守門開關會改到記憶系統的地方)（下文簡稱「跨層表」）。
 
 本篇寫的都是**守門開時**的行為。守門關時，本篇各閘都不跑。
 
@@ -18,25 +18,25 @@
 
 ### 開關
 
-- **設定鍵**：[`workflow/config.json`](../workflow/config.json) 的 `coding_guard.enabled`，出廠 false。
+- **設定鍵**：[`workflow/config.json`](../workflow/config.json) 的 `coding_guard.enabled`，出廠 true。
 - **判法**：`wg_core.v6_enabled`（[`hooks/wg_core.py`](../hooks/wg_core.py)）。先看環境變數，沒設才看設定。設定只認 JSON 的 true，寫成字串 `"true"` 也當關。
-- **本機開**：`WG_CODING_GUARD=1`，或 `workflow/config.local.json` 寫 `{"coding_guard": {"enabled": true}}`。
-- **強制關**：`WG_CODING_GUARD=0`。
+- **本機關**：`WG_CODING_GUARD=0`，或 `workflow/config.local.json` 寫 `{"coding_guard": {"enabled": false}}`（local 同名鍵蓋過出廠值）。
+- **強制開**：`WG_CODING_GUARD=1`（環境變數蓋過兩個設定檔）。
 - **舊名照認**：設定鍵 `v6`、環境變數 `WG_V6`。
 - 守門相關的其他鍵（`coding_turn_only`、各閘的 `guard.<名>.enabled`…）→ [TECH §12.1](../TECH.md#121-功能開關不想要某個功能時逐鍵關)、[TECH/config.md](config.md)。
 
 ### 開關改了什麼
 
-| 範圍 | 守門關（出廠） | 守門開 |
+| 範圍 | 守門關 | 守門開（出廠） |
 |---|---|---|
 | 寫碼守門這一層（乙2～乙11） | 整個不跑 | 只在寫碼回合跑 |
-| 記憶系統（含基本守門） | 出廠行為 | 36 處行為改變 → [跨層表](../TECH.md#守門開關會改到記憶系統的地方) |
+| 記憶系統（含基本守門） | 守門關時的行為 | 30 處行為改變 → [跨層表](../TECH.md#守門開關會改到記憶系統的地方) |
 
 守門關時整個不跑、也不算跨層的項目（只在本篇）：
 
-- 寫碼查核 ReconcileGate、拐彎判斷與閱讀路徑、等值閘、收尾自清、Reload 建議、PickOne、連鎖斷路器。
-- 動資料檔 DataFileAsk、改舊測試 OldTestDeclare、病形閘 SmellGate、繞閘宣告 GateBypass、問使用者附推薦。
-- 驗收規格提示與驗收裁判、開場的部位表骨架提示、部位表讀檔帳、驗證收據哨兵記帳、搬程式目錄記帳。
+- 寫碼查核 ReconcileGate、等值閘、Reload 建議、連鎖斷路器。
+- 病形閘 SmellGate、問使用者附推薦。
+- 驗收裁判、開場的部位表骨架提示、部位表讀檔帳、驗證收據哨兵記帳、搬程式目錄記帳。
 
 hook 計時與快逾時降級也只在守門開時有（[乙11](#乙11-hook-計時與快逾時降級)；跨層表 #6）。
 
@@ -50,7 +50,7 @@ hook 計時與快逾時降級也只在守門開時有（[乙11](#乙11-hook-計�
 
 - 判法 `wg_core.coding_turn`：這個使用者回合用工具改過程式檔（`wg_code_path.is_code_path`），或跑了判不出寫入目標的指令。
 - 規則 [CODING_TURN_ONLY](release-rules.md#coding_turn_only)。使用者 prompt 的關鍵字不當開關。
-- 本篇只在寫碼回合跑的：閱讀路徑、hook 計時的 run 帳。
+- 本篇只在寫碼回合跑的：hook 計時的 run 帳。
 - 記憶系統的退避偵測、退縮閘、收尾檢核，守門開時也改成只在寫碼回合跑（跨層表 #22）。
 - `coding_guard.coding_turn_only=false` 退回每回合都跑。
 
@@ -58,16 +58,15 @@ hook 計時與快逾時降級也只在守門開時有（[乙11](#乙11-hook-計�
 
 - 送法只看 [`hooks/wg_release_rules.py`](../hooks/wg_release_rules.py) 的 `RULE_MODE`。呼叫端一律經 `gate_mode(rule, v6)` 問。
 - 守門關時 `gate_mode` 一律回「擋」。所以記憶系統的收尾閘在守門關時擋、守門開時只提醒（跨層表 #21）。
-- 守門開時，寫碼守門照擋的只有三類（`RULE_CLASS` 標病形／宣告／紅測），其餘提醒：
+- 守門開時，寫碼守門照擋的只有兩類（`RULE_CLASS` 標病形／紅測），其餘提醒：
 
 | 類別 | 守門開時 | 例子 |
 |---|---|---|
-| 病形（含防繞） | 擋 | SmellGate、GateBypass |
-| 宣告：改資料檔、改舊測試沒先宣告 | 擋 | DataFileAsk、OldTestDeclare |
+| 病形 | 擋 | SmellGate |
 | 紅測：紅測閘、寫碼查核 (a) 說修好要有綠收據 | 擋 | TestFailGate、ReconcileGate (a) |
-| 其餘寫碼守門 | 提醒 | 寫碼查核 (d)、拐彎判斷、等值閘、收尾自清、Reload 建議、PickOne、問使用者附推薦 |
+| 其餘寫碼守門 | 提醒 | 等值閘、Reload 建議、問使用者附推薦 |
 | 記憶系統的收尾閘 | 提醒 | 退縮歸屬、收割、同步、深度檢討（跨層表 #21） |
-| 安全與權限邊界（不在範圍） | 擋 | 版控口令、隱私檔、驗證批次、svn 測試路徑、繞閘卡片拒寫、`readonly_paths` |
+| 安全與權限邊界（不在範圍） | 擋 | 版控口令、隱私檔、驗證批次、svn 測試路徑、`readonly_paths` |
 
 - `readonly_paths` 是部位表的設定：守門開時照擋；守門關時部位表整個不跑，不擋（跨層表 #36）。
 - 表上沒登的規則名當「擋」。
@@ -87,13 +86,12 @@ hook 計時與快逾時降級也只在守門開時有（[乙11](#乙11-hook-計�
 寫碼守門為了不拖慢寫程式，照這幾條做：
 
 - **只在寫碼回合啟動**：見上面〈只在寫碼回合跑〉。
-- **只擋三類，其餘提醒一次**：見上面〈擋或提醒〉。
+- **只擋兩類，其餘提醒一次**：見上面〈擋或提醒〉。
 - **同一件事只問一次**：提醒與擋訊息在同一 session 或回合只送一次全文，之後併成一行。
-- **記帳交程式或背景免費模型**：收據號碼、收割候選由程式或內網模型做，不叫寫碼的 AI 做。
-- **要判斷的事入口還在**：動資料檔與改舊測試的宣告、拐彎判斷、等值證法、同步交代仍由 AI 宣告理由。只拿掉重複與記帳。
-- **用不到就不載**：守門的模組（連鎖斷路器、動資料檔、改舊測試、繞閘、擋滿放行、閱讀路徑、背景收割…）在 handler 頂端用 `lazy_module` 宣告（[`hooks/wg_lazy_re.py`](../hooks/wg_lazy_re.py)），第一次用到才真的載入。守門關時這些模組不載；守門開時，也只在那道閘真的要判時才載。
-- **語言專屬工具只是側資料**：閱讀路徑只量 Python 與 C#；commit 病形樣式只認 Python、C# Unity 腳本與匿名函式。量出來的東西是給 AI 的參考材料。沒有工具的語言不擋，由 AI 自己讀碼判斷。
-  - 目前的落差：其他語言在閱讀路徑結果裡只印一行「不支援（只算 Python 與 C#）」（[`hooks/wg_reading_path.py`](../hooks/wg_reading_path.py)），這行沒叫 AI 自己讀。原則跟輸出還沒對齊。
+- **記帳交程式**：收據號碼由程式做，不叫寫碼的 AI 做。
+- **要判斷的事入口還在**：等值證法、同步交代仍由 AI 宣告理由。只拿掉重複與記帳。
+- **用不到就不載**：守門的模組（連鎖斷路器、擋滿放行…）在 handler 頂端用 `lazy_module` 宣告（[`hooks/wg_lazy_re.py`](../hooks/wg_lazy_re.py)），第一次用到才真的載入。守門關時這些模組不載；守門開時，也只在那道閘真的要判時才載。
+- **語言專屬工具只是側資料**：commit 病形樣式只認 Python、C# Unity 腳本與匿名函式。量出來的東西是給 AI 的參考材料。沒有工具的語言不擋，由 AI 自己讀碼判斷。
 - **能退回的做成開關**：各開關見 [TECH/config.md](config.md) 的〈功能開關〉。
 
 ---
@@ -106,11 +104,11 @@ hook 計時與快逾時降級也只在守門開時有（[乙11](#乙11-hook-計�
 - **提醒**＝多送一行字，不擋。
 
 ```text
-① 開場（SessionStart）          列未結追蹤項、公司層與週健檢狀態                  提醒
+① 開場（SessionStart）          公司層與週健檢狀態                                提醒
    ↓
 ② 收到需求（UserPromptSubmit）   注入記憶卡（寫碼回合瘦身）                         不擋
    ↓
-③ 改檔當下（PreToolUse）         動資料檔、改舊測試要先寫宣告行                     擋
+③ 改檔當下（PreToolUse）         寫入目標命中部位表 readonly_paths                  擋
    ↓
 ④ 改完之後（PostToolUse）        記改了哪些檔；讀到 Depends 指的檔就召回那張卡      提醒
    ↓
@@ -118,33 +116,32 @@ hook 計時與快逾時降級也只在守門開時有（[乙11](#乙11-hook-計�
    ↓
 ⑥ 跑測試                         哨兵行收成「收據」；紅了記紅測                     只記帳
    ↓
-⑦ 宣告完成（Stop）               依序查紅測、寫碼查核、拐彎、等值、自清…            擋只紅測與 (a)；其餘提醒
+⑦ 宣告完成（Stop）               依序查紅測、寫碼查核、等值…                        擋只紅測與 (a)；其餘提醒
    ↓
-⑧ 交付                           收尾檢核報告送 HUD；點出最該修的一件進追蹤帳本     提醒
+⑧ 交付                           收尾檢核報告送 HUD                                 提醒
    ↓
-⑨ commit 與合併                  口令、隱私檔、病形、繞閘                           擋
+⑨ commit 與合併                  口令、隱私檔、病形                                 擋
 ```
 
 | 時刻 | 系統做什麼 | 擋不擋 | 見哪節 |
 |---|---|---|---|
-| ① 開場 | 列之前沒解的問題（追蹤帳本，跨層表 #29）與待檢討項 | 提醒 | [TECH §3.1](../TECH.md#31-settingsjson-十一個事件)、[TECH §8](../TECH.md#8-可觀測與自我維護) |
+| ① 開場 | 列待檢討項、公司層與週健檢狀態 | 提醒 | [TECH §3.1](../TECH.md#31-settingsjson-十一個事件)、[TECH §8](../TECH.md#8-可觀測與自我維護) |
 | ② 收到需求 | 注入記憶卡；寫碼回合瘦身（跨層表 #7） | 不擋 | [TECH §5](../TECH.md#5-檢索與注入每-prompt) |
-| ③ 改檔當下 | 動資料檔、改舊測試要先宣告 | 擋 | [乙6](#乙6-其他寫碼守門) |
-| ④ 改完之後 | 記帳、召回 Depends 卡、背景量閱讀路徑 | 提醒 | [乙7](#乙7-部位表與-depends-召回)、[乙3](#乙3-收尾閘序守門開時與收據) |
+| ③ 改檔當下 | 寫入目標命中部位表 `readonly_paths` | 擋 | [乙7](#乙7-部位表與-depends-召回) |
+| ④ 改完之後 | 記帳、召回 Depends 卡 | 提醒 | [乙7](#乙7-部位表與-depends-召回) |
 | ⑤ 問使用者之前 | 每題附推薦選項 | 提醒 | [乙6](#乙6-其他寫碼守門) |
 | ⑥ 跑測試 | 收據與紅測記帳 | 只記帳 | [乙3 收據](#收據) |
 | ⑦ 宣告完成 | 依序查紅測、寫碼查核等 | 擋只紅測與 (a) | [乙3](#乙3-收尾閘序守門開時與收據)、[乙4](#乙4-擋滿之後怎麼放行) |
-| ⑧ 交付 | 收尾檢核報告、點出最該修的一件 | 提醒 | [TECH §7.2](../TECH.md#72-反退避anti-evasion)、[乙3](#乙3-收尾閘序守門開時與收據) PickOne |
-| ⑨ commit 與合併 | 口令、隱私、病形、繞閘 | 擋 | [乙6](#乙6-其他寫碼守門)、[TECH §7.3](../TECH.md#73-commit-與驗證前的閘)、[TECH §13.4](../TECH.md#134-多-session-協作雙總控台與工作軌) |
+| ⑧ 交付 | 收尾檢核報告 | 提醒 | [TECH §7.2](../TECH.md#72-反退避anti-evasion) |
+| ⑨ commit 與合併 | 口令、隱私、病形 | 擋 | [乙6](#乙6-其他寫碼守門)、[TECH §7.3](../TECH.md#73-commit-與驗證前的閘)、[TECH §13.4](../TECH.md#134-多-session-協作雙總控台與工作軌) |
 
 每個時刻的完整內容 → [guards.md A7.0](guards.md#a70-寫程式時一路會遇到什麼總覽)
 
 ### 目前關著的閘
 
-- 寫碼查核的 `reconcile_gate.block_letters` 設成 `["a", "d"]`（[`workflow/config.json`](../workflow/config.json)）。
-  - (b)(c)(e) 照判，只印 stderr。
-  - (d) 再照送法表是提醒，所以實際只有 (a) 擋。
-  - 拿掉這個鍵，(b)(c)(e) 也照送法表判（守門開時是提醒）。
+- 寫碼查核的 `reconcile_gate.block_letters` 設成 `["a"]`（[`workflow/config.json`](../workflow/config.json)）。
+  - (b)(c)(v)(e) 照判，只印 stderr。
+  - 拿掉這個鍵，(b)(c)(v)(e) 也照送法表判（守門開時是提醒）。
 - 收尾檢核報告、卡片表態、svn 測試路徑閘的開關屬基本守門 → [TECH §7](../TECH.md#7-基本守門)。
 
 ---
@@ -153,38 +150,30 @@ hook 計時與快逾時降級也只在守門開時有（[乙11](#乙11-hook-計�
 
 這節回答：守門開時，AI 宣告完成的那一刻，系統依什麼順序查、各擋什麼、擋幾次。入口是 [`hooks/handlers/stop.py`](../hooks/handlers/stop.py) 的 `handle_stop`。守門關時的閘序 → [TECH §7.1](../TECH.md#71-收尾閘序守門關時)。
 
-- 一開頭（任何閘之前）：
-  - 把最後一句「順手看到最該修：…」段記進追蹤帳本（PickOne）。
-  - 問一次連鎖斷路器（[乙8](#乙8-連鎖斷路器)）：中止中，這一回合其餘閘只記錄、不擋。
+- 一開頭（任何閘之前）問一次連鎖斷路器（[乙8](#乙8-連鎖斷路器)）：中止中，這一回合其餘閘只記錄、不擋。
 - 之後依序查，前者優先：
 
 ```text
 斷路器
-  → 紅測（TestFailGate，新版）
+  → 紅測（TestFailGate）
   → 寫碼查核（ReconcileGate）
-  → 拐彎判斷（ReadingPath／TurnJudgment）
   → 等值與熱路徑（Equivalence）
   → 退縮歸屬                              ［記憶系統］
   → 收割、收割對帳                        ［記憶系統］
-  → 收尾自清（Cleanup）
   → 收尾檢核（ScanReport／AEC-Pending）    ［記憶系統］
   → Reload 建議
   → 同步閘（SyncReminder）                ［記憶系統］
   → 卡片表態（AtomAudit）                 ［記憶系統］
   → 深度檢討（Deep Post-Mortem）          ［記憶系統］
-  → PickOne
   → 底部同步擋                            ［記憶系統］
 ```
 
 | 閘 | 擋什麼 | 守門開時 |
 |---|---|---|
-| TestFailGate（新版） | 本 session 有沒轉綠的失敗測試又宣告完成 | 擋 |
-| ReconcileGate | 說修好沒有綠收據 (a)、改了程式沒有案例 (d)… | 只 (a) 擋；(d) 提醒；(b)(c)(e) 只印 stderr |
-| ReadingPath／TurnJudgment | 函式拐彎超線，收尾沒寫判斷 | 提醒 |
+| TestFailGate | 本 session 有沒轉綠的失敗測試、最後一則又宣告完成 | 擋；守門開或關同一套（[TECH §7.1](../TECH.md#71-收尾閘序守門關時)）：不吃預算、不問放行，斷路器中止中也照擋 |
+| ReconcileGate | 說修好沒有綠收據 (a)、說量了沒 DONE (b)… | 只 (a) 擋；(b)(c)(v)(e) 只印 stderr |
 | Equivalence | refactor／perf 缺等值證法或熱路徑答覆 | 提醒 |
-| Cleanup | 自己建的工作樹與暫存沒清 | 提醒 |
 | Reload 建議 | 叫人 Reload，但工具服務已載入最新 | 提醒 |
-| PickOne | 交付時點出最該修的一件 | 提醒（收尾那批附問句，Stop 只留帳） |
 | 驗收裁判 | 背景審查，下一則附結果 | 永不擋（[乙5](#乙5-驗收裁判)） |
 | 迴歸提示 | 驗收 fail／high 真命中 | 每 session 一次 |
 | 標［記憶系統］的閘 | 退縮、收割、同步、深度檢討… | 提醒；收尾檢核與卡片表態設定關著，不擋也不提醒 → [TECH §7.1](../TECH.md#71-收尾閘序守門關時)、跨層表 #21 |
@@ -193,8 +182,7 @@ hook 計時與快逾時降級也只在守門開時有（[乙11](#乙11-hook-計�
 
 下面的預算只在那條規則照擋時用得到。守門開時判成提醒的規則不吃預算。
 
-- **紅測閘與寫碼查核**共用每個使用者回合一份 `reconcile_gate.max_blocks_per_turn`（2）。等值閘缺件也吃這份。
-- **拐彎判斷**每個使用者回合最多擋一次。
+- **寫碼查核**每個使用者回合一份 `reconcile_gate.max_blocks_per_turn`（2）。等值閘缺件也吃這份。紅測閘不看擋次預算。
 - **共用預算** `stop_gate_max_blocks`（2）：守門開時每個使用者回合重算（跨層表 #26）。守門開時用到它的閘都是提醒，`RULE_MODE` 把哪一條改回擋才會吃。
 - **擋滿只認使用者放行**（[乙4](#乙4-擋滿之後怎麼放行)）。沒人能回答（headless／SDK、子代理、裁判）擋滿就放行並留帳。
 - **閘自己判定出錯**：同一個錯誤每個使用者回合擋一次，之後放行並留帳（[GATE_SELF_ERROR](release-rules.md#gate_self_error)）。
@@ -202,10 +190,8 @@ hook 計時與快逾時降級也只在守門開時有（[乙11](#乙11-hook-計�
 
 ### 其他具名項目
 
-- **ReadingPath**：改了程式檔那批跑完，背景量改到的碼的拐彎數與側面數據（Python、C#），收尾前附上。只在超線時提醒。
-- **PickOne**：交付時點出這次最該修的一件，記進追蹤帳本，下個 session 開場列出。
 - **擋訊息格式**：寫碼查核每條是 `✗ (<字母>) <規則名>：<一句現象>｜證據：<一行一證據>`（規則表 [乙9](#乙9-規則全表)）。
-- **舊版紅測閘**：守門關時跑的那一版 → [TECH §7.1](../TECH.md#71-收尾閘序守門關時)。
+- **紅測閘**：守門開或關同一套 → [TECH §7.1](../TECH.md#71-收尾閘序守門關時)。
 
 ### 收據
 
@@ -219,11 +205,10 @@ hook 計時與快逾時降級也只在守門開時有（[乙11](#乙11-hook-計�
    │  超過 10 分鐘的驗證背景跑，印完哨兵後自寫收據
    ▼
 Stop 的紅測閘與寫碼查核拿收據對帳
-   ├─ (a) 說修好：對得上改檔的 PASS，或改檔部位的量尺／合格自寫收據
-   └─ (d) 補案例：本 session 改過的案例要覆蓋改過的程式檔
+   └─ (a) 說修好：對得上改檔的 PASS，或改檔部位的量尺／合格自寫收據
 ```
 
-- (a) 是規則 [CLAIM_FIXED_NEEDS_PASS](release-rules.md#claim_fixed_needs_passclaim_measured_needs_doneclaim_tried_needs_exec)；(d) 是規則 [CASE_COVERS_CHANGE](release-rules.md#case_covers_change)，「case_for｜<程式檔>：<案例…>」宣告行也算。
+- (a) 是規則 [CLAIM_FIXED_NEEDS_PASS](release-rules.md#claim_fixed_needs_passclaim_measured_needs_doneclaim_tried_needs_exec)。
 - 部位量尺來自部位表（[乙7](#乙7-部位表與-depends-召回)）；哪些收據算數 → [guards.md 收據列](guards.md#收據收據列)。
 - 收據不防偽造：不看指令形狀、不查指令裡寫的哨兵字樣。指令解析不了（heredoc、`$( )`…）只當一般證據。
 
@@ -235,7 +220,7 @@ Stop 的紅測閘與寫碼查核拿收據對帳
 
 ## 乙4 擋滿之後怎麼放行
 
-這節回答：寫碼類查核閘擋滿次數後，AI 不能自己放行、也不能改寫措辭繞過，決定權交回使用者。用在紅測閘、寫碼查核、等值閘。程式在 [`hooks/wg_release.py`](../hooks/wg_release.py)。
+這節回答：寫碼類查核閘擋滿次數後，AI 不能自己放行、也不能改寫措辭繞過，決定權交回使用者。用在寫碼查核、等值閘。程式在 [`hooks/wg_release.py`](../hooks/wg_release.py)。
 
 ```text
 擋滿 → 記 pending_release → 擋訊息要 AI 用 AskUserQuestion 問【收尾放行確認】
@@ -249,7 +234,7 @@ Stop 的紅測閘與寫碼查核拿收據對帳
 - **放行只認兩種**，都要在最後一次擋之後。
 - **待放行只在同一個使用者回合有效**（[PENDING_SAME_USER_TURN](release-rules.md#pending_same_user_turnrelease_covers_shown_itemsnoninteractive_release_at_budget)）。
 - **放行的是列過的那幾件**（[RELEASE_COVERS_SHOWN_ITEMS](release-rules.md#pending_same_user_turnrelease_covers_shown_itemsnoninteractive_release_at_budget)）。
-- **沒人能回答**的情境照預算擋，擋滿放行並留帳（[NONINTERACTIVE_RELEASE_AT_BUDGET](release-rules.md#pending_same_user_turnrelease_covers_shown_itemsnoninteractive_release_at_budget)）。
+- **沒人能回答**的情境（headless／SDK、子代理、裁判、背景 session〔CLAUDE_JOB_DIR〕）照預算擋，擋滿放行並留帳（[NONINTERACTIVE_RELEASE_AT_BUDGET](release-rules.md#pending_same_user_turnrelease_covers_shown_itemsnoninteractive_release_at_budget)）。
 - 問使用者附推薦（[乙6](#乙6-其他寫碼守門)）認得放行題：真有待放行紀錄時，放行題整題不查。
 
 細節 → [guards.md A7.3](guards.md#a73-擋滿之後怎麼放行hookswg_releasepy)
@@ -262,11 +247,12 @@ Stop 的紅測閘與寫碼查核拿收據對帳
 
 ```text
 ① 規格工件 ──→ ② 影子裁判 ──→ ③ 背景審 ──→ ④ 迴歸提示
- plan 落驗收規格   完成宣稱觸發   Stop 不等、        fail/high 命中後
+ AI 自己寫的       完成宣稱觸發   Stop 不等、        fail/high 命中後
  acceptance-*.md   案卷＋verdict  下一則附一行        建議補測試／落 atom
 ```
 
 - **整段歸守門開關**：守門關時，兩個觸發處（收尾宣稱完成、規格檔標 done）都不跑。
+- **規格檔不提示**：系統不叫 AI 寫規格檔；AI 自己寫了 `<專案根>/.claude/verify/acceptance-*.md`，PostToolUse 只把路徑登記進 `workflow/acceptance-spec/<sid>.json`（[`hooks/acceptance_spec.py`](../hooks/acceptance_spec.py)），裁判憑它找標準。沒有規格檔，裁判就沒有任務專屬的標準可對。
 - **守門開時只記錄**：裁判在背景審，記 `workflow/acceptance-audit.jsonl`，結果下一則附一行。**一律不擋收尾**，也沒有改成硬閘的開關。
   - 為什麼不擋：擋收尾會讓「改 → 驗收 → 再改 → 再驗收」無限擴張。所以裁判只記錄，結果交人看。
 - **後端鏈**（[`tools/codex-companion/judge_backend.py`](../tools/codex-companion/judge_backend.py) 決定用哪個）：
@@ -286,11 +272,6 @@ Stop 的紅測閘與寫碼查核拿收據對帳
 
 這節回答：[乙3](#乙3-收尾閘序守門開時與收據) 的收尾閘序以外，寫碼守門還掛在哪些時機。每道一行：名稱｜擋什麼｜擋還是提醒。其餘不看守門開關的閘 → [TECH §7.3～7.6](../TECH.md#7-基本守門)。
 
-**改檔前**
-
-- `DataFileAsk`｜改使用者既有的資料檔（json／yaml／md…）前要先寫一句宣告｜擋（宣告後放行）
-- `OldTestDeclare`｜刪、改名、改斷言、加跳過標記等動到既有測試前要先宣告｜擋（宣告後放行）
-
 **問使用者前**（AskUserQuestion／ExitPlanMode，[`hooks/wg_ask_gate.py`](../hooks/wg_ask_gate.py)，留帳 `Logs/guard-ask.jsonl`）
 
 - [`ASK_NEEDS_RECOMMENDATION`](release-rules.md#ask_needs_recommendation)｜每一題要附推薦選項；【收尾放行確認】題在真有待放行紀錄時整題不查｜提醒
@@ -298,16 +279,8 @@ Stop 的紅測閘與寫碼查核拿收據對帳
 
 **commit 前**
 
-- `SmellGate`｜這次要提交的程式碼新長出「病形」（匿名函式多層巢狀、函式巢狀 ≥4 層…）｜擋（`smell-ok:` 可放行）
-- `GateBypass`｜病形閘擋過後，用 `restore --staged`／`reset`／`--no-verify` 等把被點名的檔排除｜擋（要宣告「不是繞閘｜理由」）
+- `SmellGate`｜這次要提交的程式碼新長出「病形」（匿名函式多層巢狀、函式巢狀 ≥4 層…）｜擋（`smell-ok:` 可放行；同一回合同一個 repo 只擋一次）
 
-**為什麼這樣分**：能判斷的事交程式擋；需要判斷的事（該不該動資料檔、舊測試能不能改）改成「先宣告、事後被對帳」，宣告句本身就是留給健檢抽查的帳。
-
-**宣告型守門的共同模式**：
-
-- 宣告寫在同一則先發的不寫檔指令開頭的 `#` 註解。
-- 同一使用者回合同一缺件擋滿 2 次，第 3 次放行並留帳（[GATE_DENY_CAP](release-rules.md#gate_deny_cap)）。
-- 閘自己出錯＝這次不擋，stderr＋留帳（[GATE_SELF_ERROR](release-rules.md#gate_self_error)）。
 - 各閘有 `guard.<名>.enabled` 開關與 `Logs/guard-*.jsonl` 留帳。
 
 細節 → [guards.md A7.5](guards.md#a75-其他守門)
@@ -346,7 +319,7 @@ Stop 的紅測閘與寫碼查核拿收據對帳
   → AI 看過擋訊息後動手（改檔、重跑、寫卡、重交報告）
   → 又被任一道閘擋下／記欠 → 記一條邊（帳 Logs/chain-<session>.jsonl）
         ↓
-  同一道閘擋同一個對象，這一段第 2 次（max_same_gate），且兩次之間有改到檔、不是原封不動的同一個呼叫
+  同一道閘（只看閘名）這一段第 2 次（max_same_gate），且兩次之間有改到檔、不是原封不動的同一個呼叫
         否 → 不警報，照常擋（深度只記、預設不警報）
         是 → 警報 CHAIN_ALARM_SAME_GATE
         ↓
@@ -362,7 +335,6 @@ Stop 的紅測閘與寫碼查核拿收據對帳
 - **開關**：守門開、`chain_breaker.enabled` 為 true 才跑；設定裡沒寫這段＝不開。
 - **判什麼算連鎖**：原樣重試、只改寫回覆就又撞同一道閘、沒改到檔的動作，都不算。
 - **同一則回覆算同一步**（CHAIN_SAME_BATCH）：平行送出的工具呼叫沒看到擋訊息，不接成邊。
-- **同閘照對象計數**（[CHAIN_SAME_GATE_PER_OBJECT](release-rules.md#chain_same_gate_per_object)）：擋不同對象各算各的第 1 次，不響。
 - **斷路器不逼修補**：不要求任何宣告，只在警報後擋（收尾擋一次、停手中擋讀與問以外的工具呼叫）。
 - **出錯照原閘行為**：斷路器自己出錯不中止、不只記錄、不停手，stderr 一行。沒有連鎖時各閘輸出一字不變。
 
@@ -394,15 +366,15 @@ Stop 的紅測閘與寫碼查核拿收據對帳
 規則分這幾大類（第一次讀只要知道有哪類，細節在全表）：
 
 - **回合與檔案同一性**：「本回合」從哪裡算起、兩種寫法是不是同一個檔、寫碼檢查這回合要不要跑。
-- **宣稱與提示詞**：宣稱詞、糾正詞、否決詞只是提示，語意交 AI 用一行宣告回答。
-- **退避例外與紅測**：「追蹤」「不做」宣告怎麼放行；紅測的失敗項怎麼取、哪次綠能清哪次紅。
-- **寫碼查核**：改了程式要有案例、說修好要有改完之後的收據，哪些改檔作廢哪些收據。
-- **改檔事實判定**：檔被刪、搬走、改回原樣、只改註解時算不算改過。
+- **宣稱與提示詞**：宣稱詞、否決詞只是提示，語意交 AI 用一行宣告回答。
+- **退避例外與紅測**：「追蹤」「不做」宣告怎麼放行退避；紅測的失敗項怎麼取、哪次綠能清哪次紅。
+- **寫碼查核**：說修好要有改完之後的收據，哪些改檔作廢哪些收據。
+- **改檔事實判定**：改回原樣、只改註解、等於已提交版本時算不算改過。
 - **擋次預算與放行**：每回合擋幾次、擋滿後怎麼問使用者、閘自己出錯時怎麼辦。
 - **指令怎麼讀**：Bash／PowerShell 指令的寫入目標、刪除、唯讀、讀檔證據怎麼認。
 - **提問**：問使用者要附推薦、問改法前先讀過題目點名的部位。
-- **收尾加檢**：等值證法、拐彎判斷、收尾自清、收尾檢核報告的各段。
-- **宣告類閘**：動使用者資料檔、改既有測試、繞閘要先宣告。
+- **收尾加檢**：等值證法、收尾檢核報告的各段。
+- **追蹤帳**：追蹤帳本同一件不重記。
 - **同步與暫存目錄**：什麼時候要求 push、暫存目錄與一次性腳本怎麼算。
 - **注入與擋訊息版面**：記憶卡送多少、擋訊息怎麼排版。
 
@@ -417,7 +389,7 @@ Stop 的紅測閘與寫碼查核拿收據對帳
 - 寫碼守門只在守門開、而且是寫碼回合時付代價。純問答、只改文件的回合，這一層幾乎不做事。
 - 大頭不是 hook 程式本身，是 AI 收到提醒後多想、多寫的輸出。
 - 守門關時也不是全免：settings.json 照掛守門專屬的事件與工具，hook 行程照起，讀完設定就退（跨層表 #1、#2）。
-- 量過的是「hook 全關」對「全開（守門開）」，守門開對守門關沒有獨立量過。量測紀錄 → [`_AIDocs/DevHistory/v6.0-寫程式碼的進化-2026-10/TECH-重整搬出-2026-10-30.md`](../_AIDocs/DevHistory/v6.0-寫程式碼的進化-2026-10/TECH-重整搬出-2026-10-30.md)；完整報告在同目錄 `v6.0的代價-*.md`。
+- 守門開對守門關量過兩組模型（Opus 5.5 xhigh、Fable 5.1 high；寫程式題與三個簡單工作各一場）：守門開不比關貴，交付結果相同，送到 AI 眼前的字最多兩行；開比關省的部分來自守門關時記憶系統的收尾硬擋多跑一輪 → [`v6.0的代價-拔留改後上版-2026-11-02.md`](../_AIDocs/DevHistory/v6.0-寫程式碼的進化-2026-10/v6.0的代價-拔留改後上版-2026-11-02.md)。更早量的是「hook 全關」對「全開」 → [`_AIDocs/DevHistory/v6.0-寫程式碼的進化-2026-10/TECH-重整搬出-2026-10-30.md`](../_AIDocs/DevHistory/v6.0-寫程式碼的進化-2026-10/TECH-重整搬出-2026-10-30.md)；完整報告在同目錄 `v6.0的代價-*.md`。
 - 記憶系統本體的代價 → [TECH §11](../TECH.md#11-記憶系統的代價與怎麼量)。
 
 ---

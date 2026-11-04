@@ -1,11 +1,11 @@
-"""verify_v6_switch.py — 寫碼守門總開關（wg_core.v6_enabled，預設關）的案例。
+"""verify_v6_switch.py — 寫碼守門總開關（wg_core.v6_enabled，出廠開；設定段沒寫＝關）的案例。
 
 做什麼：
-1. 開關三態：預設關、環境變數 WG_CODING_GUARD=1 開、workflow/config.local.json 寫 coding_guard.enabled=true 開
+1. 開關三態：設定段沒寫＝關、環境變數 WG_CODING_GUARD=1 開、workflow/config.local.json 寫 coding_guard.enabled=true 開；出廠 config.json 寫 true
    （WG_CODING_GUARD=0 蓋過 local）；舊名 WG_V6／舊鍵 v6.enabled 仍認、新名優先；MCP 端 lib/paths.js v6Enabled 同三態（沒裝 node 跳過）。
-2. 關閉時寫碼守門的閘不擋：把閘換成「必擋」替身，關閉時分派點不呼叫（不擋）、打開時照擋——PreToolUse 動資料檔宣告閘、
-   改舊測試閘，Stop 對帳閘、拐彎判斷閘，PostToolUse 需求目標提示；dispatcher 不分派 v6 才有的事件／工具／裁判子 session。
-3. 關閉時寫碼守門關時也跑的處理照跑：子代理記憶注入、知識收割擋（不走背景收割）、收割驗過後 vcs-sync、語言守門。
+2. 關閉時寫碼守門的閘不擋：把閘換成「必擋」替身，關閉時分派點不呼叫（不擋）、打開時照擋——PreToolUse 病形閘，
+   Stop 對帳閘，PostToolUse 需求目標提示；紅測閘開或關同一份舊版擋訊息；dispatcher 不分派 v6 才有的事件／工具／裁判子 session。
+3. 關閉時寫碼守門關時也跑的處理照跑：子代理記憶注入、知識收割擋（打開時改提醒）、收割驗過後 vcs-sync、語言守門。
 怎麼跑：
   python -X utf8 -m pytest -q hooks/verify/verify_v6_switch.py
   python -X utf8 hooks/verify/verify_v6_switch.py          # 尾行 V6_SWITCH_CHECK PASS|FAIL
@@ -58,9 +58,9 @@ def test_default_is_off(cfg_root):
     assert wg_core.v6_enabled(wg_core.load_config()) is False
 
 
-def test_repo_config_ships_off():
+def test_repo_config_ships_on():
     shipped = json.loads((REPO / "workflow" / "config.json").read_text(encoding="utf-8"))
-    assert shipped["coding_guard"]["enabled"] is False
+    assert shipped["coding_guard"]["enabled"] is True, "寫碼守門出廠開；本機要關寫 workflow/config.local.json"
     assert "v6" not in shipped, "出廠設定只留新鍵 coding_guard；舊鍵 v6 只在讀取端相容"
     ignored = subprocess.run(["git", "-C", str(REPO), "check-ignore", "-q", "workflow/config.local.json"])
     assert ignored.returncode == 0, "workflow/config.local.json 要進 .gitignore"
@@ -83,7 +83,7 @@ def test_new_key_turns_on_and_new_env_zero_overrides(cfg_root, monkeypatch):
 
 
 def test_old_key_still_turns_on_beside_shipped_new_key(cfg_root):
-    """出廠 config.json 已改成 coding_guard.enabled=false；舊的 config.local.json 只寫 v6.enabled=true 照樣能開（相容）。
+    """config.json 寫 coding_guard.enabled=false 時，舊的 config.local.json 只寫 v6.enabled=true 照樣能開（相容）。
     子鍵 coding_turn_only／slim_reminders：coding_guard 有寫就用它、沒寫才讀 v6。"""
     (cfg_root / "config.json").write_text(json.dumps({"coding_guard": {"enabled": False}}), encoding="utf-8")
     (cfg_root / "config.local.json").write_text(json.dumps({"v6": {"enabled": True, "coding_turn_only": False}}), encoding="utf-8")
@@ -101,6 +101,16 @@ def test_local_file_turns_on_and_env_zero_wins(cfg_root, monkeypatch):
     assert cfg["enabled"] is True, "local 只蓋同名鍵，其餘照 config.json"
     monkeypatch.setenv("WG_V6", "0")
     assert wg_core.v6_enabled(cfg) is False
+
+
+def test_local_file_turns_shipped_on_off(cfg_root, monkeypatch):
+    """出廠開之後本機的關法：config.local.json 寫 coding_guard.enabled=false 蓋過出廠的 true；WG_CODING_GUARD=1 再蓋回開。"""
+    (cfg_root / "config.json").write_text(json.dumps({"coding_guard": {"enabled": True}}), encoding="utf-8")
+    assert wg_core.v6_enabled(wg_core.load_config()) is True
+    (cfg_root / "config.local.json").write_text(json.dumps({"coding_guard": {"enabled": False}}), encoding="utf-8")
+    assert wg_core.v6_enabled(wg_core.load_config()) is False
+    monkeypatch.setenv("WG_CODING_GUARD", "1")
+    assert wg_core.v6_enabled(wg_core.load_config()) is True
 
 
 @pytest.mark.parametrize("raw", ["{壞".encode("utf-8"), b'{"v6": {"enabled": true}} \xff\xfe'])
@@ -143,7 +153,7 @@ def test_mcp_mirror_same_three_states(tmp_path, env, local, want):
 # ─── 2. 關閉時 v6 閘不擋（打開時照擋：證明替身真的會擋） ──────────────
 
 @pytest.mark.parametrize("event, tool, skip", [
-    ("SubagentStop", "", True), ("PostToolUseFailure", "Bash", True),
+    ("SubagentStop", "", False), ("PostToolUseFailure", "Bash", True),
     ("PreToolUse", "AskUserQuestion", True), ("PreToolUse", "mcp__workflow-guardian__second_opinion_start", True),
     ("PostToolUse", "Read", True), ("PostToolUse", "mcp__workflow-guardian__need_goal", True),
     ("PreToolUse", "Edit", False), ("PostToolUse", "Bash", False), ("Stop", "", False), ("UserPromptSubmit", "", False),
@@ -157,7 +167,8 @@ def test_dispatcher_only_routes_pre_v6_events_and_tools(event, tool, skip):
     ({}, {"hook_event_name": "SubagentStop", "session_id": _SID}),
 ])
 def test_dispatcher_off_exits_before_handler(tmp_path, extra_env, inp):
-    """裁判子 session、SubagentStop：關閉時一進門就退，不輸出、不留計時帳（hook_timing 是 v6 才有）。"""
+    """裁判子 session：關閉時一進門就退；SubagentStop：關閉時進 handler 只記效用帳（SUBAGENT_RESULT_FROM_SUBAGENT_STOP，
+    這裡沒有 state 就什麼都不記）。兩者都不輸出、不留計時帳（hook_timing 是 v6 才有）。"""
     env = {k: v for k, v in os.environ.items() if k not in ("WG_V6", "CLAUDE_COMPANION_JUDGE")}
     env.update({"WG_CLAUDE_DIR": str(tmp_path), "WG_TEST_LOGS_DIR": str(tmp_path / "Logs"), "WG_V6": "0", **extra_env})
     r = subprocess.run([sys.executable, str(HOOKS_DIR / "workflow-guardian.py")], input=json.dumps(inp).encode(),
@@ -184,22 +195,29 @@ def pre_run(monkeypatch, tmp_path, capsys):
     return run
 
 
-@pytest.mark.parametrize("gate", ["data_file", "oldtest"])
 @pytest.mark.parametrize("on", [False, True])
-def test_pretool_v6_gates_skipped_when_off(pre_run, monkeypatch, gate, on):
+def test_pretool_v6_gate_skipped_when_off(monkeypatch, tmp_path, capsys, on):
+    """病形閘（寫碼守門的工具前閘）換成必擋替身：關閉時分派點不呼叫、不擋；打開時照擋。版控口令、隱私、合併驅動換成放行。"""
     _set_v6(monkeypatch, on)
+    monkeypatch.setattr(pre, "read_state_status", lambda sid: (None, "missing"))
+    monkeypatch.setattr(pre, "read_state", lambda sid: None)
+    for name in ("check_git_commit_order", "check_git_privacy", "check_merge_driver"):
+        monkeypatch.setattr(pre, name, lambda *a, **k: None)
     called = []
-
-    def deny(*a, **k):
-        called.append(gate)
-        return f"[V6-{gate}] 必擋替身"
-
-    monkeypatch.setattr(pre.wg_data_file if gate == "data_file" else pre.wg_oldtest, "gate", deny)
-    if gate == "oldtest":
-        monkeypatch.setattr(pre.wg_data_file, "gate", lambda *a, **k: None)
-    out = pre_run()
+    monkeypatch.setattr(pre, "check_smell_gate", lambda *a, **k: (called.append(1) or "[V6-smell] 必擋替身", None))
+    with pytest.raises(SystemExit):
+        pre.handle_pre_tool_use({"session_id": _SID, "cwd": str(tmp_path), "tool_name": "Bash",
+                                 "tool_input": {"command": 'git commit -m "x"'}}, {})
+    out = capsys.readouterr().out
     assert bool(called) is on
-    assert (f"[V6-{gate}]" in out and '"deny"' in out) is on
+    assert ("[V6-smell]" in out and '"deny"' in out) is on
+
+
+@pytest.mark.parametrize("on", [False, True])
+def test_pretool_data_file_and_old_test_edit_not_blocked(pre_run, monkeypatch, on):
+    """改資料檔不用先宣告：開或關，Edit 既有的 data.json 都不擋。"""
+    _set_v6(monkeypatch, on)
+    assert '"deny"' not in pre_run()
 
 
 @pytest.fixture
@@ -220,7 +238,7 @@ def stop_run(monkeypatch, capsys):
     def run(state):
         monkeypatch.setattr(st, "_ensure_state", lambda *a, **k: state)
         with pytest.raises(SystemExit):
-            st.handle_stop({"session_id": _SID, "cwd": ""}, {"harvest": {"background": True}})
+            st.handle_stop({"session_id": _SID, "cwd": ""}, {"harvest": {"enabled": True}})
         return capsys.readouterr().out
 
     return run
@@ -251,21 +269,9 @@ def test_stop_reconcile_gate_skipped_when_off(stop_run, monkeypatch, on):
 
 
 @pytest.mark.parametrize("on", [False, True])
-def test_stop_turn_judgment_gate_skipped_when_off(stop_run, monkeypatch, on):
-    """開：拐彎判斷閘跑了，但 TURN_JUDGMENT_REQUIRED 是提醒（GATE_MODE_TABLE）→ 不擋、只留帳 event=remind；關：閘不跑、沒帳。"""
+def test_stop_testfail_message_is_pre_v6_either_way(stop_run, monkeypatch, on):
+    """紅測閘照擋（v6 以前就有），開或關訊息都是 9e476fd0 原文：沒有「不做｜」豁免出口。"""
     _set_v6(monkeypatch, on)
-    logs = []
-    monkeypatch.setattr(st, "append_guard_log", lambda g, p: logs.append((g, p)))
-    monkeypatch.setattr(st, "_verify_gates", lambda *a, **k: (None, None, None))
-    monkeypatch.setattr(st, "turn_judgment_note", lambda *a, **k: ("[Guardian:TurnJudgment] 必擋替身", False))
-    out = stop_run(_stop_state())
-    assert "TurnJudgment" not in out
-    assert any(g == "reading_path" and p.get("event") == "remind" and p.get("rule") == "TURN_JUDGMENT_REQUIRED" for g, p in logs) is on
-
-
-def test_stop_off_testfail_message_is_pre_v6(stop_run, monkeypatch):
-    """關閉時紅測閘照擋（v6 以前就有），但訊息是 9e476fd0 原文：沒有關閉時不存在的「不做｜」豁免出口。"""
-    _set_v6(monkeypatch, False)
     out = stop_run(_stop_state(failing_tests=[{"cmd": "pytest -q", "summary": "1 failed", "session_id": _SID}]))
     assert "[Guardian:TestFailGate]" in out and "已知 regression" in out and "不做｜" not in out
 
@@ -276,7 +282,7 @@ def ptu_run(monkeypatch, tmp_path, capsys):
     for name, val in {
         "write_state": lambda *a, **k: None, "WORKFLOW_DIR": tmp_path, "_hud_alive": lambda *a, **k: (True, {}),
         "append_guard_log": lambda *a, **k: None, "_write_aec_report_file": lambda *a, **k: None,
-        "_run_companion_hooks": lambda *a, **k: ([], []),
+        "_run_companion_hooks": lambda *a, **k: [],
         "spawn_vcs_sync": lambda sid, cwd, reason, retired_paths=None: spawned.append(reason),
     }.items():
         monkeypatch.setattr(ptu, name, val)
@@ -317,17 +323,17 @@ def test_off_subagent_memory_injection_still_runs(monkeypatch, capsys):
 
 
 @pytest.mark.parametrize("on", [False, True])
-def test_off_harvest_gate_blocks_instead_of_background(stop_run, monkeypatch, on):
-    """收割擋是 v6 以前就有的：關閉時照擋；背景收割（wg_bg_harvest）是 v6 新增，只在打開時接手、不擋。"""
+def test_off_harvest_gate_blocks_on_reminds(stop_run, monkeypatch, on):
+    """收割擋是 v6 以前就有的：關閉時照擋、不留提醒帳；打開時 HARVEST_AT_PHASE_DONE 是提醒（跨層表 #21）→ 不擋、只留帳 event=remind。"""
     _set_v6(monkeypatch, on)
-    sent = []
+    logs = []
+    monkeypatch.setattr(st, "append_guard_log", lambda g, p: logs.append((g, p)))
     monkeypatch.setattr(st, "_verify_gates", lambda *a, **k: (None, None, None))
-    monkeypatch.setattr(st, "turn_judgment_note", lambda *a, **k: (None, False))
     monkeypatch.setattr(st, "harvest_gate_reason", lambda *a, **k: "[Guardian:KnowledgeHarvest] 收割替身")
-    monkeypatch.setattr(st, "bg_harvest", lambda *a, **k: sent.append(1) or True)
     out = stop_run(_stop_state())
     assert ("[Guardian:KnowledgeHarvest]" in out) is (not on)
-    assert bool(sent) is on
+    assert any(g == "knowledge_harvest" and p.get("event") == "remind" and p.get("rule") == "HARVEST_AT_PHASE_DONE"
+               for g, p in logs) is on
 
 
 def test_off_vcs_sync_still_spawns_after_validated_harvest(ptu_run, monkeypatch):

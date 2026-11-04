@@ -27,7 +27,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .atom_spec import (
     SKIP_DIRS, MEMORY_INDEX, VALID_CONFIDENCE, VALID_SCOPES,
-    build_atom_content, slugify, validate_atom_content, render_knowledge_lines, strip_bypass_declaration,
+    build_atom_content, slugify, validate_atom_content, render_knowledge_lines,
     knowledge_sections_bytes, knowledge_budget_error, knowledge_budget_warning,
     knowledge_task_list_error, has_conflict_markers,
 )
@@ -42,6 +42,7 @@ from .atom_taxonomy import gate_enabled as _taxonomy_gate_enabled
 from .narrative_date import narrative_date_error
 from .project_root import resolve_project_root
 from .realm_gate import is_core_root
+from .sensitive_gate import SECRET_DIR_NAME, is_secret_path, secret_value_found
 
 
 # ─── Constants ────────────────────────────────────────────────────────────────
@@ -397,6 +398,7 @@ def _resolve_target_impl(
     allow_new_category: bool = False,
     enforce_cwd_scope: bool = False,
     cross_project: bool = False,
+    secret: bool = False,
 ) -> Dict[str, Any]:
     """回傳 {dir, base, index_dir, index_root, search_roots, scope_label, category, routed_to_*, error}。
 
@@ -473,7 +475,7 @@ def _resolve_target_impl(
             }
         return {**common, **target}
 
-    if scope not in ("shared", "role", "personal"):
+    if scope not in VALID_SCOPES:   # global 已在上面處理完
         return {"error": f"Unknown scope: {scope}"}
 
     if scope == "role" and not role:
@@ -482,14 +484,15 @@ def _resolve_target_impl(
         return {"error": "scope=personal requires 'user' parameter"}
 
     if scope == "personal":
-        # 本人跨專案 personal：~/.claude/memory/personal/<user>/。索引在全域 _atom_index.json，
+        # 本人跨專案 personal：~/.claude/memory/personal/<user>/。登記在不進版控的 personal/_personal_index.json，
         # path 前綴 memory/personal/<user>/ → 讀取端（filter_visible）只給本人。
+        # secret＝個人隱私敏感資訊：不管 cwd 在哪都落根層的 secret/（根層 .gitignore 擋得到，專案 repo 不一定）。
         # 觸發：明給 cross_project，或 cwd 不在任何專案／在核心根（~/.claude 子樹、程式碼樹、根層 worktree）。
         _root = _find_project_root(project_cwd) if project_cwd else None
-        if cross_project or is_core_root(_root):
+        if secret or cross_project or is_core_root(_root):
             pg_dir = GLOBAL_MEMORY_DIR / "personal" / user
             return {
-                "dir": pg_dir, "base": GLOBAL_MEMORY_DIR, "index_dir": GLOBAL_MEMORY_DIR,
+                "dir": pg_dir / SECRET_DIR_NAME if secret else pg_dir, "base": GLOBAL_MEMORY_DIR, "index_dir": GLOBAL_MEMORY_DIR,
                 "index_root": CLAUDE_DIR, "search_roots": [pg_dir],
                 "scope_label": f"personal:{user}", "category": None,
                 "routed_to_failures": False, "routed_to_pending": False, "routed_to_local": False,
@@ -718,6 +721,12 @@ def write_index_full(
 # ─── Raw write escape hatch（給 V4 spec 不適用的 atom 子族用） ───────────────
 
 
+def _secret_value_error(file_path: Path, content: str) -> Optional[str]:
+    if secret_value_found(content) and not is_secret_path(file_path):
+        return f"{file_path}：內容含密碼或 token 的真實值，只能放 personal/<user>/{SECRET_DIR_NAME}/；值本身最好別寫進卡，只寫放在哪"
+    return None
+
+
 def write_raw(
     file_path: Path,
     content: str,
@@ -732,11 +741,15 @@ def write_raw(
     仍需走 audit log + PreToolUse 放行清單。
 
     funnel 只負責 _atomic_write + _audit_log；不做 validate / scope resolve / build。
+    唯一的內容檢查：密碼或 token 的真實值不准落 secret/ 以外（背景寫卡也走這裡）。
     """
     audit_id = _gen_audit_id()
     if source not in VALID_SOURCES:
         return WriteResult(ok=False, audit_id=audit_id,
                            error=f"invalid source: {source}")
+    leak = _secret_value_error(file_path, content)
+    if leak:
+        return WriteResult(ok=False, audit_id=audit_id, error=leak)
     try:
         _atomic_write(file_path, content)
     except OSError as e:
@@ -762,7 +775,7 @@ def _build_append_content(existing: str, knowledge: List[str]) -> str:
     if "## 行動" not in existing:
         existing = existing.rstrip() + "\n\n" + _ACTION_STUB
     action_idx = existing.find("## 行動")
-    rendered = "\n".join(render_knowledge_lines(strip_bypass_declaration(knowledge)))
+    rendered = "\n".join(render_knowledge_lines(knowledge))
     before = existing[:action_idx].rstrip()
     after = existing[action_idx:]
     # 表格/fence 開頭需與既有知識間隔一空行才正確渲染（block-aware append）
@@ -1303,20 +1316,6 @@ def carry_replace_header(old: str, built: str, given: Iterable[str] = ()) -> str
     return "\n".join(new_lines[:nh1] + [h1] + head + new_lines[nend:])
 
 
-def gate_bypass_refusal(title: str, knowledge: List[str], actions: Optional[List[str]]) -> Optional[str]:
-    """規則 ATOM_BYPASS_HOWTO_REFUSED（T2.19）：卡片在教怎麼繞 Guardian 的閘 → 拒寫訊息；判式在 hooks/wg_gate_bypass.atom_refusal
-    （MCP 那條路在 tools/memory-write-gate.py 呼叫同一支）。判式載不起來 → stderr 說一聲、照寫（不因依賴缺失擋住所有寫入）。"""
-    hooks = str(Path(__file__).resolve().parents[1] / "hooks")
-    if hooks not in sys.path:
-        sys.path.insert(0, hooks)
-    try:
-        import wg_gate_bypass
-    except Exception as e:  # noqa: BLE001
-        print(f"[atom_io] 繞閘卡片檢查載不起來（這次不判）：{type(e).__name__}: {e}", file=sys.stderr)
-        return None
-    return wg_gate_bypass.atom_refusal(title, knowledge, actions, source="atom_io")
-
-
 def write_atom(
     *,
     title: str,
@@ -1345,6 +1344,7 @@ def write_atom(
     subdir: Optional[str] = None,
     allow_new_category: bool = False,
     cross_project: bool = False,
+    secret: bool = False,
     supersedes: Optional[List[str]] = None,
     provenance: Optional[str] = None,
     depends: Optional[List[str]] = None,
@@ -1401,11 +1401,6 @@ def write_atom(
                       + " — shorten the trigger; it would poison every later "
                         "validate_index run (atom_move exit 2).")
 
-    # ── 繞閘做法拒寫（T2.19 ATOM_BYPASS_HOWTO_REFUSED；所有 mode；skip_gate 跳不過）──
-    bypass_err = gate_bypass_refusal(title, knowledge, actions)
-    if bypass_err:
-        return WriteResult(ok=False, audit_id=audit_id, error=bypass_err)
-
     # ── Realm gate：專案專屬內容不得落 global（所有 mode；skip_gate 跳不過）──
     # 裁決在 lib/realm_gate.py 單源；cwd 缺（純程式寫手無 session 脈絡）或 cwd∈~/.claude
     # → 閘不啟動。force_global 為 migration／測試逃生門。
@@ -1424,11 +1419,11 @@ def write_atom(
     resolved = _resolve_target(scope, project_cwd, role, user, audience, force_global,
                                title=title, realm=realm, domain=domain, subdir=subdir,
                                mode=mode, allow_new_category=allow_new_category,
-                               cross_project=cross_project, create_dirs=not dry_run)
+                               cross_project=cross_project, secret=secret, create_dirs=not dry_run)
     if resolved.get("error"):
         return WriteResult(ok=False, audit_id=audit_id, error=resolved["error"])
-    # 本人跨專案 personal 也住根層（~/.claude/memory/personal/），同受 realm gate
-    if scope == "personal" and not force_global and _is_under(resolved["dir"], GLOBAL_MEMORY_DIR):
+    # 本人跨專案 personal 也住根層（~/.claude/memory/personal/），同受 realm gate；secret 不共享，提到專案名不要緊
+    if scope == "personal" and not secret and not force_global and _is_under(resolved["dir"], GLOBAL_MEMORY_DIR):
         from .realm_gate import check_global_write
         gate_err = check_global_write(project_cwd, title=title, triggers=triggers,
                                       knowledge=knowledge, actions=actions, domain=domain)
@@ -1586,6 +1581,9 @@ def write_atom(
                                   "index_ok": None, "supersedes": supersedes_final})
 
     # ── Write file ──
+    leak = _secret_value_error(file_path, content)
+    if leak:
+        return WriteResult(ok=False, audit_id=audit_id, error=leak)
     try:
         _atomic_write(file_path, content)
     except ConflictMarkerError as e:
@@ -1655,6 +1653,7 @@ def locate_atom(
     triggers: Optional[List[str]] = None,
     enforce_cwd_scope: bool = False,
     cross_project: bool = False,
+    secret: bool = False,
     entry: Optional[List[str]] = None,
 ) -> WriteResult:
     """atom 落點與定位的**唯一裁決者**（唯讀；只 mkdir 落點）。MCP js 端 create/append/
@@ -1698,7 +1697,7 @@ def locate_atom(
                                title=title, realm=realm, domain=domain, subdir=subdir,
                                mode=mode, allow_new_category=allow_new_category,
                                enforce_cwd_scope=enforce_cwd_scope,
-                               cross_project=cross_project)
+                               cross_project=cross_project, secret=secret)
     if resolved.get("error"):
         hint = (f"（{ENTRY_BOUND_STAYS_CORE}：綁 Entry 的卡不自動分到 local，"
                 f"詞庫本來判 {realm_hold['would']}；請給 core 的 domain）") if realm_hold else ""

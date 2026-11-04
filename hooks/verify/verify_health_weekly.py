@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -126,6 +127,48 @@ def test_recall_miss_counts_window_filter(hw, tmp_path, monkeypatch):
     assert counts["cold-atom"] < hw.RECALL_MISS_MIN
 
 
+def _leak_root(hw, tmp_path, monkeypatch, public_text, *, rows=True, git_repo=True):
+    """tmp 資料根：一張公開卡＋一張 secret 卡與一張一般個人卡的本機登記；personal/*/secret/ 不進版控。"""
+    monkeypatch.setattr(hw, "CLAUDE_DIR", tmp_path)
+    monkeypatch.setattr(hw, "MEMORY", tmp_path / "memory")
+    public = tmp_path / "memory" / "x" / "pub.md"
+    public.parent.mkdir(parents=True)
+    public.write_text(public_text, encoding="utf-8")
+    if rows:
+        card = tmp_path / "memory" / "personal" / "u" / "secret" / "key-card.md"
+        card.parent.mkdir(parents=True)
+        card.write_text("# key-card\n", encoding="utf-8")
+        index = {"atoms": [{"name": "key-card", "path": "memory/personal/u/secret/key-card.md"},
+                           {"name": "plain-pref", "path": "memory/personal/u/plain-pref.md"}]}
+        (tmp_path / "memory" / "personal" / "_personal_index.json").write_text(json.dumps(index), encoding="utf-8")
+    if git_repo:
+        (tmp_path / ".gitignore").write_text("memory/personal/*/secret/\nmemory/personal/_personal_index.json\n", encoding="utf-8")
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
+
+
+def test_secret_leak_lists_file_naming_secret_card_without_the_name(hw, tmp_path, monkeypatch):
+    """未追蹤的新卡也要抓；secret 卡自己不算；回傳只有路徑，報告不會寫出卡名。"""
+    _leak_root(hw, tmp_path, monkeypatch, "# pub\n\n- Related: key-card\n")
+    assert hw._secret_leaks() == ["memory/x/pub.md"]
+
+
+def test_secret_leak_ignores_plain_personal_card_name(hw, tmp_path, monkeypatch):
+    """一般個人卡（工作偏好）本來就能進版控，被公開卡提到不算外流。"""
+    _leak_root(hw, tmp_path, monkeypatch, "# pub\n\n- Related: plain-pref\n")
+    assert hw._secret_leaks() == []
+
+
+def test_secret_leak_catches_real_token_value(hw, tmp_path, monkeypatch):
+    _leak_root(hw, tmp_path, monkeypatch, "# pub\n\n- [臨] " + "glpat-" + "a" * 20 + "\n", rows=False)
+    assert hw._secret_leaks() == ["memory/x/pub.md"]
+
+
+def test_secret_leak_says_so_when_git_unavailable(hw, tmp_path, monkeypatch):
+    """查不了要分得出來，不能當成沒外流。"""
+    _leak_root(hw, tmp_path, monkeypatch, "# pub\n", git_repo=False)
+    assert hw._secret_leaks() is None
+
+
 def test_recall_miss_counts_missing_log_zero(hw, tmp_path, monkeypatch):
     monkeypatch.setattr(hw, "RECALL_MISS_LOG", tmp_path / "nope.jsonl")
     assert hw._recall_miss_counts(14) == {}
@@ -196,3 +239,75 @@ def test_pytest_regex_block_case_only_and_junk_items(hw):
     rules[0]["verdict_map"] = {"failed": "FAIL", "passed": "PASS", "xpassed": "PASS"}
     yellow = hw._pytest_regex_block(_cfg_with_rules(rules))
     assert len(yellow) == 1 and "（verdict_map 與版控庫" in yellow[0] and yellow[0].startswith("config 內建 PYTEST regex 非現行版")
+
+
+# ─── 官方健檢摘要（/skill-doctor、/context、/doctor prompt-audit 手動提示）──────────
+
+_SKILL_DOCTOR = """Skills loaded this session
+
+  skill                              source          context  7d tokens   uses  last used
+  atom-source                        userSettings        ~70          -     0x  never
+  browse-sprites                     userSettings          -          -     0x  never
+  anthropic-skills:docs              claude.ai sync     ~340          -     0x  never
+  codex                              userSettings       ~130          -     0x  never
+  vector                             userSettings       < 20          -     2x  64 days
+  mailbox                            userSettings        ~90       2.7m     1x  today
+
+  context = this skill's one-line listing in the system prompt, included every turn
+7 skills loaded but never invoked. Each one adds to the system prompt every turn.
+"""
+
+_CONTEXT = """## Context Usage
+
+**Model:** claude-haiku-5-5  
+**Tokens:** 33.6k / 1m (3%)
+
+| Category | Tokens | Percentage |
+|----------|--------|------------|
+| System prompt | 3.3k | 0.3% |
+| System tools | 9.2k | 0.9% |
+| MCP tools | 7.3k | 0.7% |
+| MCP tools (deferred) | 35.2k | 3.5% |
+| Memory files | 5.5k | 0.6% |
+| Skills | 6.6k | 0.7% |
+| Free space | 933.4k | 93.3% |
+"""
+
+
+def test_skill_doctor_summary_top5_and_never_invoked(hw):
+    out = hw._skill_doctor_summary(_SKILL_DOCTOR)
+    assert out[0].startswith("skill 6 個；context 成本前五：anthropic-skills:docs(~340)、codex(~130)、mailbox(~90)")
+    assert out[0].count("(~") == 5 and "browse-sprites" not in out[0]   # 第六名（成本 0）被截掉
+    assert any(x.startswith("7 skills loaded but never invoked") for x in out)
+
+
+def test_skill_doctor_unparseable_signals(hw):
+    assert "解析不到" in hw._skill_doctor_summary("totally different")[0]
+
+
+def test_context_summary_fixed_only(hw):
+    out = hw._context_summary(_CONTEXT)
+    assert len(out) == 1 and "System prompt 3.3k" in out[0] and "Memory files 5.5k" in out[0]
+    assert "deferred" not in out[0] and "Free space" not in out[0] and "開場合計 33.6k" in out[0]
+    assert "解析不到" in hw._context_summary("nope")[0]
+
+
+def test_official_block_cli_missing_signals_and_keeps_manual_line(hw):
+    lines, yellow = hw._official_block(None)
+    assert len(yellow) == 1 and "找不到 claude CLI" in yellow[0]
+    assert any("/doctor prompt-audit" in x and "170 秒" in x for x in lines)
+
+
+def test_official_block_runner_failure_goes_yellow_other_part_survives(hw):
+    def fake(cli, cmd, timeout=60):
+        if cmd == "/context":
+            raise TimeoutError("slow")
+        return _SKILL_DOCTOR
+    lines, yellow = hw._official_block("claude", fake)
+    assert len(yellow) == 1 and "/context 沒跑成" in yellow[0]
+    assert any(x.startswith("skill 6 個") for x in lines) and any("prompt-audit" in x for x in lines)
+
+
+def test_write_report_has_official_section(hw):
+    p = hw.write_report({"at": "2026-11-04T09:00:00", "red": [], "yellow": [], "info": [], "official": ["a", "b"]})
+    assert "## 官方健檢（2）" in p.read_text(encoding="utf-8")

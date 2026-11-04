@@ -158,8 +158,12 @@ def hook_commands(settings: dict) -> List[str]:
     return out
 
 
+# 本系統要求的 Claude Code 頂層設定：使用者檔沒有這個鍵才補系統值，有就尊重使用者（claudeMdExcludes 含本機路徑，不帶）
+SYSTEM_CONTRACT_KEYS = ("autoMemoryEnabled", "crossSessionInbound", "cleanupPeriodDays", "worktree")
+
+
 def merge_settings(user: Optional[dict], system: dict, tracked: frozenset) -> Tuple[dict, List[str]]:
-    """hooks 取系統整段＋使用者自己的條目；statusLine 使用者自己的優先；其餘頂層鍵只用使用者的。
+    """hooks 取系統整段＋使用者自己的條目；statusLine 使用者自己的優先；SYSTEM_CONTRACT_KEYS 缺的補系統值；其餘頂層鍵只用使用者的。
     tracked＝repo 追蹤的 hooks/、tools/ 檔案清單。回（合併結果, 被丟掉且系統版沒有接手的使用者指令）。"""
     user = user or {}
     hooks = json.loads(json.dumps(system.get("hooks") or {}))
@@ -176,6 +180,9 @@ def merge_settings(user: Optional[dict], system: dict, tracked: frozenset) -> Tu
             if own:
                 hooks.setdefault(event, []).append({**group, "hooks": own})
     merged = {k: v for k, v in user.items() if k not in ("hooks", "statusLine")}
+    for key in SYSTEM_CONTRACT_KEYS:
+        if key in system and key not in merged:
+            merged[key] = json.loads(json.dumps(system[key]))
     merged["hooks"] = hooks
     status = user.get("statusLine")
     if status and replaced_by_system(status, tracked):
@@ -454,7 +461,7 @@ def merge_overlays(backup: Path) -> None:
     write_json(TARGET / "settings.json", merged)
     print_dropped(dropped)
     if user_settings is None:
-        print("  settings.json：原本沒有 → 只放入系統的 hooks 與 statusLine，不帶入任何授權清單、模型或權限模式。")
+        print("  settings.json：原本沒有 → 只放入系統的 hooks、statusLine 與四個系統契約鍵（auto memory 關、跨 session 收訊、逐字稿保留、worktree 分出點），不帶入任何授權清單、模型或權限模式。")
         print("    想要同款授權清單見：git -C ~/.claude show HEAD:settings.json")
     else:
         print("  settings.json：系統 hooks＋你原有的其餘設定與你自己的 hook。")
@@ -696,12 +703,12 @@ def cmd_upgrade() -> int:
     return 0
 
 
-V6_HINT = ("寫碼守門（寫程式時的定位提示與三道照擋）目前是關的；要開請在 workflow/config.local.json 加 "
-           "{\"coding_guard\": {\"enabled\": true}} 後 Reload Window，或設環境變數 WG_CODING_GUARD=1")
+V6_HINT = ("寫碼守門（出廠開，只在寫程式的回合跑）在這台是關的：本機 workflow/config.local.json 或環境變數把它關了；"
+           "要開回來把 config.local.json 的 coding_guard.enabled 改成 true（或拿掉那段）後 Reload Window，或設環境變數 WG_CODING_GUARD=1")
 
 
 def v6_hint() -> None:
-    """上游 workflow/config.json 的 coding_guard.enabled 出廠是 false；本機沒在 config.local.json（或 WG_CODING_GUARD=1）打開就提醒一行。
+    """上游 workflow/config.json 的 coding_guard.enabled 出廠是 true；這台算出來是關（config.local.json 蓋成 false、或環境變數 =0）就提醒一行。
     開沒開照 hook 的同一套規則算（hooks/wg_core.v6_enabled）：環境變數 WG_CODING_GUARD（沒設看舊名 WG_V6）先；
     再 config.json 疊 config.local.json（lib/config_local.merge_local），coding_guard.enabled 或舊鍵 v6.enabled 是 true 就算開。"""
     env = next((os.environ.get(n, "").strip() for n in ("WG_CODING_GUARD", "WG_V6")

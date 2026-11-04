@@ -2,7 +2,7 @@
 
 用真的 workflow/config.json（本 worktree 那份）判，退回舊碼或舊設定會紅：
 1. 驗收裁判歸 v6 開關：關 → 收尾宣稱完成也不叫裁判；開 → 只走背景審（Stop 不等、不擋），沒有同步擋這條路；
-   驗收規格提示同一個開關。
+   驗收規格不送提示，開關怎麼設都一樣。
 2. 文件漂移：別的專案改 tools/x.py 不記；改 ~/.claude 自己的 tools/x.py 照記。
 3. 回訪表：host 存電腦代號（電腦名小寫後 sha256 前 12 碼），對不上的機器不跑不顯示、那台照顯示；登記表找不到電腦名原文；
    開場跑一次回訪檢查後登記表內容不變（執行期紀錄寫本機 followups.local.json）。
@@ -19,6 +19,7 @@ import importlib.util
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -86,14 +87,14 @@ def test_spec_done_trigger_follows_v6(monkeypatch):
     assert cc._acceptance_enabled(CONFIG["codex_companion"]) is True
 
 
-@pytest.mark.parametrize("v6,expect", [("0", 0), ("1", 1)])
-def test_acceptance_spec_advisory_follows_v6(tmp_path, monkeypatch, v6, expect):
+@pytest.mark.parametrize("v6", ["0", "1"])
+def test_acceptance_spec_sends_nothing_either_switch(tmp_path, monkeypatch, v6):
     monkeypatch.setattr(asp, "WORKFLOW_DIR", tmp_path)
     monkeypatch.setattr(asp, "SIDECAR_DIR", tmp_path / "acceptance-spec")
     monkeypatch.setenv("WG_V6", v6)
     msgs = asp.run({"session_id": SID, "tool_name": "ExitPlanMode", "tool_response": "ok", "cwd": str(tmp_path)},
                    CONFIG["acceptance_spec"])
-    assert len(msgs) == expect                           # 舊碼：v6 關也叫 AI 寫規格檔
+    assert msgs is None                                  # 舊碼：plan 被核可就叫 AI 寫規格檔（更舊的連 v6 關也叫）
 
 
 # ─── 2. 文件漂移對應表只對記憶系統自己的目錄 ─────────────────────────────────
@@ -150,8 +151,8 @@ def test_followup_shown_only_on_registered_machine(fc, host, shown):
 def test_registry_dev_measurements_are_machine_local_without_machine_name():
     raw = (ROOT / "workflow" / "followups.json").read_text(encoding="utf-8")
     hosts = {f["id"]: f.get("host") for f in json.loads(raw)["followups"]}
-    me = _host_id(platform.node())
-    assert hosts["closing-gates-trim-2026-10-20"] == me and hosts["injection-budget-2026-08-28"] == me
+    for followup_id in ("closing-gates-trim-2026-10-20", "injection-budget-2026-08-28"):
+        assert re.fullmatch(r"[0-9a-f]{12}", hosts[followup_id] or ""), hosts[followup_id]   # 登記的是雜湊代號；是哪一台不綁，每台都跑得過
     assert platform.node().lower() not in raw.lower()   # 登記表找不到電腦名原文（舊版直接寫原名）
 
 

@@ -12,7 +12,7 @@
 
 | 鍵 | 預設 | 意義 |
 |----|------|------|
-| `coding_guard.enabled` / `coding_turn_only` | false / true（後者沒寫＝true） | 寫碼守門總開關與退回開關 |
+| `coding_guard.enabled` / `coding_turn_only` | true / true（後者沒寫＝true） | 寫碼守門總開關與退回開關；本機要關寫 `config.local.json` 或設 `WG_CODING_GUARD=0` |
 | `stop_gate_max_blocks` / `min_files_to_block` | 2 / 2 | 收尾閘共用的擋次／幾檔以上才擋 |
 | `chain_breaker.enabled` / `depth_alarm` / `max_depth` / `max_same_gate` / `snapshot_max_bytes` / `snapshot_max_files` / `restore_retries` | true / false / 2 / 2 / 5000000 / 200 / 3 | 連鎖斷路器（[乙8](coding-guard.md#乙8-連鎖斷路器)），寫碼守門開才跑 |
 
@@ -33,37 +33,26 @@
 
 | 鍵 | 預設 | 意義 |
 |----|------|------|
-| `reconcile_gate.block_letters` / `max_blocks_per_turn` | ["a","d"] / 2 | 寫碼查核（[乙3](coding-guard.md#乙3-收尾閘序守門開時與收據)）的擋收尾範圍 |
+| `reconcile_gate.block_letters` / `max_blocks_per_turn` | ["a"] / 2 | 寫碼查核（[乙3](coding-guard.md#乙3-收尾閘序守門開時與收據)）的擋收尾範圍 |
 | `aec.scan_report_gate` / `hud_stale_s` | false / 75 | 沒交收尾檢核擋不擋收尾（[甲 §7.1](../TECH.md#71-收尾閘序守門關時)）／HUD 幾秒沒更新算死 |
 | `atom_audit.enabled` | false | 卡片表態閘（[甲 §7.1](../TECH.md#71-收尾閘序守門關時)） |
-| `pick_one.enabled` / `pre_close` | true / true | 交付時順手點出最該修的一件（[乙3](coding-guard.md#乙3-收尾閘序守門開時與收據) PickOne） |
 | `acceptance_regression_hint.enabled` | true | 驗收真命中後建議補測試（[乙3](coding-guard.md#乙3-收尾閘序守門開時與收據) 迴歸提示） |
-| `reading_path.early_start` | true | 改程式檔那批跑完就起跑拐彎判斷量測（[乙3](coding-guard.md#乙3-收尾閘序守門開時與收據) ReadingPath） |
-| `reading_path.remind_only_over_threshold` | true | 沒有任何一條到門檻就不問模型、不附提醒行 |
-| `reading_path.turn_judgment.turns` / `nesting` / `bumpy` / `handoff_chain` / `inherit_depth` / `max_items` / `cs_layers` | 2 / 3 / 2 / 2 / 3 / 8 / 3 | 拐彎判斷門檻與一次最多問幾條 |
-| `acceptance_spec.min_files_trigger` | 3 | 規格工件建議門檻 |
 | `deferral_gate.max_context_ratio` / `min_object_chars` | 0.75 / 6 | DeferralGate |
 | `lang_guard.english_ratio_threshold` / `min_lang_chars` | 0.5 / 40 | 英文漂移 |
 | `version_guard.mode` | warn | 版本脈絡殘留 |
 | `docdrift.path_mappings` / `self_path_mappings` | 空 / hooks→Architecture.md、skills/rules/tools→DocIndex-System.md | 文件漂移（[甲 §7.6](../TECH.md#76-回合結束與背景審查) DocDrift）的路徑對應 |
-| `codex_companion.soft_gate.handoff_review` / `handoff_review_v6` | true / false（後者只在程式預設） | Codex 接續單自檢（[§5.7](../TECH.md#57-其他注入來源同一-additionalcontext)） |
+| `codex_companion.soft_gate.handoff_review` / `handoff_review_v6` | false / false（後者只在程式預設） | Codex 接續單自檢（[§5.7](../TECH.md#57-其他注入來源同一-additionalcontext)） |
 
 - **`aec.scan_report_gate` / `atom_audit.enabled`**：這兩道的擋和提醒綁同一個開關；出廠 false，守門開或關都不擋、也不提醒。
 - **`reconcile_gate.block_letters` / `max_blocks_per_turn`**（[乙3](coding-guard.md#乙3-收尾閘序守門開時與收據)）：
   - 只有列出的條目字母擋收尾，其餘照判、只印 stderr（規則 [RECONCILE_BLOCK_LETTERS](../TECH/release-rules.md#reconcile_block_letters)）。
   - `max_blocks_per_turn`＝紅測與寫碼查核每個使用者回合共用的擋次，不分哪一條規則（[BLOCK_BUDGET_SHARED](../TECH/release-rules.md#block_budget_shared)）。
-  - 子代理與裁判子 session 的收尾也用這個擋次（各自計次）：擋滿就放行並留帳（[NONINTERACTIVE_RELEASE_AT_BUDGET](../TECH/release-rules.md#pending_same_user_turnrelease_covers_shown_itemsnoninteractive_release_at_budget)）。
-  - 另有 `code_exts`（程式檔副檔名）、`verify_case_globs`（案例檔樣式）。
-- **`pick_one.enabled` / `pre_close`**：`pre_close` 在交收尾檢核那批先附。
-- **`reading_path.early_start`**：改了程式檔那批跑完就起跑拐彎判斷量測，交收尾檢核那批附結果。
-- **`reading_path.remind_only_over_threshold`**：
-  - 背景量完沒有任何一條到門檻要問 → 整段不送模型、不附提醒行，只留帳 under_threshold。
-  - 有才送條目＋那一題。
-- **`reading_path.turn_judgment.*`**：`cs_layers`＝C# 路上拐彎、繼承層數超過幾個才問。
+  - 子代理、裁判子 session、背景 session（CLAUDE_JOB_DIR）的收尾也用這個擋次（各自計次）：擋滿就放行並留帳（[NONINTERACTIVE_RELEASE_AT_BUDGET](../TECH/release-rules.md#pending_same_user_turnrelease_covers_shown_itemsnoninteractive_release_at_budget)）。
+  - 另有 `code_exts`（程式檔副檔名）、`verify_case_globs`（案例檔樣式：驗證批次閘數測試檔支數時用，`wg_verify_batch`）。
 - **`docdrift.path_mappings` / `self_path_mappings`**：
   - 前者由專案自己填。
   - 後者是記憶系統自己的對應，只在改的檔落在 `~/.claude` 底下才套。
-- **`codex_companion.soft_gate.handoff_review` / `handoff_review_v6`**：寫碼守門關看前者，寫碼守門開看後者。
+- **`codex_companion.soft_gate.handoff_review` / `handoff_review_v6`**：寫碼守門關看前者，寫碼守門開看後者；兩個都關，寫交接檔不叫 Codex 審。交接靠 [`skills/handoff`](../skills/handoff/SKILL.md) Step 3.5 自我複審，要第二意見叫 skill [`codex`](../skills/codex/SKILL.md)。
 
 ### commit 與資料檔閘
 
@@ -75,7 +64,6 @@
 | `sync_keywords` | 同步、sync、commit、提交、結束、收工 | 使用者說這些字時注入同步提醒 |
 | `privacy.enabled` / `deny_globs` | true / []（追加；只在程式預設） | git commit 隱私硬閘 |
 | `guard.verify_batch.enabled` / `full_run_keywords` / `slow_run_s` / `large_suite_files` | true / 整組、全量、全部測試、run_verify / 120 / 50 | 驗證批次閘：整組驗證要使用者口令、同一批改動只驗一次（[甲 §7.3](../TECH.md#73-commit-與驗證前的閘)） |
-| `guard.data_file_ask.enabled` / `old_test_declare.enabled` / `gate_bypass.enabled` | true / true / true | 改資料檔、改舊測試、繞閘的宣告閘（[乙6](coding-guard.md#乙6-其他寫碼守門)） |
 | `guard.smell_gate.anon_body_block_lines` / `anon_body_list_lines` / `nesting_block_depth` | 20 / 10 / 4 | 病形閘門檻（[乙6](coding-guard.md#乙6-其他寫碼守門) SmellGate） |
 | `verify_ledger.enabled` / `sentinel_regex` | true / PASS／FAIL／DONE 兩條＋pytest 映射 | 哨兵收據入帳（[乙3](coding-guard.md#乙3-收尾閘序守門開時與收據) 收據） |
 | `overview_hub.*` | 見下方補充 | 部位表設定：權威地圖、等值與熱路徑閘、svn 提交測試路徑閘（合併順序見[附錄 設定來源](../TECH/guards.md#設定來源)） |
@@ -165,7 +153,6 @@
 | `userExtraction.tokenBudget` | 240 | 使用者決策萃取每 session 預算 |
 | `episodic.auto_generate` / `min_files` / `min_duration_seconds` | true / 1 / 120 | episodic 生成 |
 | `harvest.enabled` / `min_turns` / `min_accessed` / `min_turns_between` | true / 3 / 5 / 3 | 階段收割 Stop 閘（[§6.3](../TECH.md#63-自動萃取在跑-vs-已停產)） |
-| `harvest.background` / `background_model` / `background_max_cards` / `background_timeout_sec` | true / gemma4:e4b / 3 / 180 | 守門開時收割交背景免費模型（[跨層表](../TECH.md#守門開關會改到記憶系統的地方) #25） |
 | `self_iteration.forget.enabled` / `dry_run` | false / true | selective forgetting |
 | `provenance.enabled` / `quote_max_chars` / `anti_rot_days` / `backfill.enabled` | true / 200 / 25 / true | 卡片來源（[§4.1](../TECH.md#41-atom-卡片格式) Source／Quote） |
 | `atom_debug` | false | 檢索除錯 log |
@@ -178,9 +165,6 @@
   - per_turn 已無呼叫端，改 true 不會回滾（要回滾得 revert 程式）。
   - session_end_flush 仍由 [`session_end.py`](../hooks/handlers/session_end.py) 讀，改 true 會恢復 SessionEnd 全量萃取寫 [臨] atom。
 - **`harvest.enabled` / …**：活動門檻與冷卻；缺整段＝機制關。
-- **`harvest.background` / …**（[跨層表](../TECH.md#守門開關會改到記憶系統的地方) #25）：
-  - 守門關（出廠）時不看這個鍵：背景收割不跑，收割閘照擋，要 AI 交 `knowledge_harvest_report`。
-  - 守門開時 true 不擋，產待審候選卡（[`hooks/wg_bg_harvest.py`](../hooks/wg_bg_harvest.py)）；模型不在只記 failed、不改用付費模型。false 照舊擋。
 - **`provenance.*`**（[§4.1](../TECH.md#41-atom-卡片格式) Source／Quote、[§8](../TECH.md#8-可觀測與自我維護) 來源自動填與回填 worker）：
   - `enabled` 是總開關；`quote_max_chars` 是 Quote 上限字數。
   - `anti_rot_days`：週健檢防腐天數，session 來源距今超過此天數仍無 Quote 就補。
@@ -297,18 +281,17 @@
 | `reconcile_gate.enabled` | 整個寫碼查核對帳閘（[乙3](coding-guard.md#乙3-收尾閘序守門開時與收據)） |
 | `aec.scan_report_gate` | 開了才會沒交收尾檢核就擋收尾 |
 | `atom_audit.enabled` | 開了才有卡片表態閘 |
-| `pick_one.enabled` | 交付時順手點出最該修的一件 |
 | `overview_hub.enabled` / `overview_hub.equivalence.enabled` | 讀文件檔時的權威地圖注入 / 等值與熱路徑閘 |
-| `guard.data_file_ask.enabled` / `guard.old_test_declare.enabled` / `guard.gate_bypass.enabled` / `guard.smell_gate.enabled` | 改資料檔、改舊測試、繞閘、commit 前病形的閘 |
+| `guard.smell_gate.enabled` | commit 前病形的閘 |
 | `guard.cross_realm_write.enabled` | 外部專案 session 寫 `~/.claude` 核心層的 deny 閘 |
 | `guard.cross_realm_bash.enabled` | 同上，管經 Bash／PowerShell 改核心層 |
-| `acceptance_spec.enabled` | 多檔改動要求驗收規格 |
+| `acceptance_spec.enabled` | 登記 AI 寫的驗收規格檔路徑（給驗收裁判，不送字） |
 | `deferral_gate.enabled` | Stop 閘攔「推給下個 session」的退縮歸屬 |
 | `privacy.enabled` | git commit 前隱私檔硬閘（staged 比對 `deny_globs`） |
 | `lang_guard.enabled` | 回應英文比例過高時的繁中提醒 |
 | `version_guard.enabled` | 檔內版本操作脈絡殘留的 warn（`mode` warn / off） |
 | `docdrift.enabled` | 改碼後提醒對應文件的漂移偵測 |
-| `codex_companion.enabled` | AI 裁判（驗收審查／計畫審查／handoff 自檢） |
+| `codex_companion.enabled` | AI 裁判（驗收審查／計畫審查；handoff 自檢另看 `soft_gate.handoff_review`，設 false） |
 | `codex_companion.fallback.enabled` | 無 codex 時不退 `claude -p`，直接 heuristics-only |
 
 - **`coding_guard.enabled`**：開法與舊名相容見 [乙1](coding-guard.md#乙1-開關與減量原則)。

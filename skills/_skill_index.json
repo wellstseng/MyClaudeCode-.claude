@@ -1,7 +1,7 @@
 {
   "_doc": "skills/ 計數 SoT 機器鏡像。由 tools/skill-index.py 生成，勿手改。SoT=skills/*/SKILL.md。改 skill 後 PostToolUse hook 自動 --write。",
   "generated_from": "skills/*/SKILL.md",
-  "count": 31,
+  "count": 33,
   "skills": [
     {
       "name": "atom-debug",
@@ -32,6 +32,11 @@
       "name": "code-guide",
       "dir": "code-guide",
       "description": "程式碼系統導讀產生器：輸入檔案路徑/類別名/系統名，AI 讀完原始碼後產出 8 區塊導讀地圖（心智模型、資料模型、入口與主流程、不變量、輔助層、閱讀順序、實機觀察、文件時效），協助開發者快速建立心智模型後再進入精讀。"
+    },
+    {
+      "name": "codex",
+      "dir": "codex",
+      "description": "叫 Codex 當第二意見（唯讀審查）或施工者（在專用工作樹裡改檔），先填同步包讓它的綜觀跟 CC 同步。CC 自己判斷叫不叫：結論錯了代價大（設計方向、影響多處、不可逆）、設計討論已有自己的答案要另一個 context 來挑、要找邊界反例、有邊界清楚且驗收寫得出來的活可以並行交出去；使用者說「加派 codex」「問 codex」「叫 codex 審」「交給 codex 做」時也用。只改文件、註解、措辭時不用；已查到答案只差使用者確認時不用。切換舊的 Codex Companion 監督開關是 /codex-companion，不是這個。"
     },
     {
       "name": "codex-companion",
@@ -152,6 +157,11 @@
       "name": "upgrade",
       "dir": "upgrade",
       "description": "原子記憶環境升級：檢查並執行 V4/V5 schema migration"
+    },
+    {
+      "name": "usage-watch",
+      "dir": "usage-watch",
+      "description": "查 Claude 帳號目前用量（所有機器／網頁合計的每週％、5 小時窗、漲速、預估用完、日用量）與異常，把用量摘要發到 Discord，測試用量通知，查看或註冊用量監控排程。使用者說「Claude 用量多少」「額度還剩多少」「這週會不會爆」「發用量到 Discord」「用量監控有沒有在跑」「測一下用量通知」「/usage-watch」時用。量單一 session 的 token 用 /token，不是這個。"
     },
     {
       "name": "vector",
