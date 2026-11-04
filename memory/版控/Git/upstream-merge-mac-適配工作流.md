@@ -2,11 +2,12 @@
 
 - Scope: global
 - Author: wellstseng
+- Source: commit:878f0ff 2026-07-06（原對話已逾保留期）
+- Quote: 「維持預設 30 天」
 - Confidence: [臨]
-- Trigger: upstream merge, 整併, fork 同步, merge upstream, 衝突解, checkout --ours, settings 接線, python 3.9, write_text newline, 測資可移植
+- Trigger: upstream merge, 整併, fork 同步, merge upstream, 衝突解, checkout --ours, settings 接線, python 3.9, write_text newline, 測資可移植, cleanupPeriodDays
 - Created-at: 2026-07-06
 - Related: mac-缺-python-用-wrapper-指向-python3, toolchain, feedback-tooling-reliability, merge-時-sot-索引檔-ours-策略誤清-catalog-post-mortem, upstream合併-實例檔誤track會蓋本地實例-vector增量搶跑道
-- Source: commit:878f0ff 2026-07-06（原對話已逾保留期）
 
 ## 知識
 
@@ -20,6 +21,7 @@
 - [臨] upstream 的 Python 底線是 3.10（install.py --verify 會報 FAIL）；系統 Python 3.9 的機器每次升級都要重做 write_text(newline=) 改寫（用 AST 掃 Expr 陳述句批次改成 with open），且 verify_install 有三個測試在 3.9／非 Windows／settings 無 statusLine 下固定紅
 - [臨] 使用者說「幫我把 git 上傳」不算版控口令，commit 閘會擋；要他明說「上GIT」
 - [臨] 合 v6.0 線新踩 9 坑（merge driver 直譯器指 3.9、ours 後 trigger drift、子夾搬移懸空、`git add -A` 掃進 state-*.lock、CommitOrder 擋 heredoc、config.local 淺合併、3.12 dataclass 收集錯、本 session MCP 舊碼 `v6Enabled`、VerifyBatch 閘）與各自解法：`_AIDocs/DevHistory/設定與遷移/upstream-merge-v6-mac-2026-11.md`。
+- [臨] 整組 pytest 大量紅而單支全綠 → 找改了全域模組沒還原的驗證檔（v6.1 verify_ensure_mcp 拖紅 807 案）；全組前先還原 hooks／tools 的 verify/cassettes；cleanupPeriodDays 使用者定 30 天：settings 明寫、合併留 ours（upstream 14 會刪舊逐字稿）。細節同一份 DevHistory。
 
 ## 行動
 

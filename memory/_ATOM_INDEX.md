@@ -74,7 +74,7 @@
 | mac-缺-python-用-wrapper-指向-python3 | memory/OS-macOS/mac-缺-python-用-wrapper-指向-python3.md | python, python3, spawn python ENOENT, atom_write, funnel, vector service, xcode-select, AtomFunnelBlock, command not found python | global |  |
 | merge-時-sot-索引檔-ours-策略誤清-catalog-post-mortem | memory/CC與原子記憶契約/merge-時-sot-索引檔-ours-策略誤清-catalog-post-mortem.md | catalog 誤清, _INDEX.md 被刪, index 磁碟不一致, SoT 衝突解, _atom_index.json merge, sync-memory-index, atoms 隱形, 衝突檔 ours, 衍生索引, post-mortem | global |  |
 | post-mortem-write-raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用 | _AIDocs/_atoms/MemDev/post-mortem-write-raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用.md | write_raw, atom_io, VALID_SOURCES, WriteResult, ok=False, 靜默失敗, 未檢回傳值, funnel, fail-soft, invalid source, 代理訊號, post-mortem, 批次寫入驗收, sync-atom-index | global |  |
-| upstream-merge-mac-適配工作流 | memory/版控/Git/upstream-merge-mac-適配工作流.md | upstream merge, 整併, fork 同步, merge upstream, 衝突解, checkout --ours, settings 接線, python 3.9, write_text newline, 測資可移植 | global |  |
+| upstream-merge-mac-適配工作流 | memory/版控/Git/upstream-merge-mac-適配工作流.md | upstream merge, 整併, fork 同步, merge upstream, 衝突解, checkout --ours, settings 接線, python 3.9, write_text newline, 測資可移植, cleanupPeriodDays | global |  |
 | 品質完整性判定須讀完整內容-勿從截斷採樣斷言 | memory/驗證與實證/品質完整性判定須讀完整內容-勿從截斷採樣斷言.md | 斷言品質, 沒垃圾, 沒讀完整, excerpt, 截斷, 採樣, 完整內容, 品質判定, 完整性, 重複偵測, 去蕪, 從根源驗證, post-mortem, 盲點 | global |  |
 | 記憶汙染與上下文腐化-注入萃取自檢 | memory/CC與原子記憶契約/記憶汙染與上下文腐化-注入萃取自檢.md | 上下文腐化, context rot, 記憶汙染, 知識汙染, 累積知識, 焦點模糊, 回應偏門, 越做越小, 多session, 接續, 大型專案, 注入, 萃取, context engineering, memory governance, selective forgetting, 上下文工程, 偏離目標 | global |  |
 | decisions | memory/CC與原子記憶契約/decisions.md | 決策, 記憶系統, 原子記憶, guardian, hooks, MCP, 架構細節, context budget | global |  |

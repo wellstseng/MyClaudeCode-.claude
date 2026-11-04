@@ -1503,7 +1503,8 @@
         "settings 接線",
         "python 3.9",
         "write_text newline",
-        "測資可移植"
+        "測資可移植",
+        "cleanupPeriodDays"
       ],
       "scope": "global",
       "related": [
