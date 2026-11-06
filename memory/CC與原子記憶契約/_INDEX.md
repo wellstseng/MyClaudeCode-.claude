@@ -23,6 +23,7 @@
 | claude-code的stop擋訊息在transcript是兩份-使用者訊息與hook-blocking-error-量重讀或重播時算同一次問要共用起點 | Claude Code的Stop擋訊息在transcript是兩份-使用者訊息與hook_blocking_error-量重讀或重播時算同一次問要共用起點 |
 | claude-code的transcript跨檔不重複-resume不會把舊列複製進新檔-逐檔加總不重複計數-子代理檔在subagents底下要排除 | claude-code的transcript跨檔不重複-resume不會把舊列複製進新檔-逐檔加總不重複計數-子代理檔在subagents底下要排除 |
 | claude-code設定目錄claude-config-dir取值是有值就用-空字串當沒設-不去空白-設定檔與claudejson都跟著搬-和記憶系統資料根是兩件事 | Claude Code設定目錄CLAUDE_CONFIG_DIR取值是有值就用-空字串當沒設-不去空白-設定檔與.claude.json都跟著搬-和記憶系統資料根是兩件事 |
+| claude-p-精簡模式偵測-init-事件工具只剩-bash-edit-read-三支-正常約四十支-隔離模式不會誤判 | claude -p 精簡模式偵測-init 事件工具只剩 Bash Edit Read 三支-正常約四十支-隔離模式不會誤判 |
 | claude-p無頭跑會被hook判成無法互動-g9第二意見整條不觸發-預設claude-code-entrypointclaude-vscode可保留但-p沒有askuserquestion | claude-p無頭跑會被hook判成無法互動-G9第二意見整條不觸發-預設CLAUDE_CODE_ENTRYPOINT=claude-vscode可保留但-p沒有AskUserQuestion |
 | claude-p無頭跑會被hook判成無法互動-問人類流程驗不到-預設claude-code-entrypointclaude-vscode可保留但-p沒有askuserquestion | claude-p無頭跑會被hook判成無法互動-問人類流程驗不到-預設CLAUDE_CODE_ENTRYPOINT=claude-vscode可保留但-p沒有AskUserQuestion |
 | claude-p的json回傳遇背景通知只剩通知那一小段-result與被拒清單要從transcript補整回合-total-cost-usd是session累計 | claude-p的json回傳遇背景通知只剩通知那一小段-result與被拒清單要從transcript補整回合-total_cost_usd是session累計 |

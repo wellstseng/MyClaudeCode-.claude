@@ -15851,6 +15851,37 @@
         "併行原生記憶"
       ],
       "scope": "global"
+    },
+    {
+      "name": "中文回饋詞判斷的陷阱-對了是順帶一提-有用常是有使用-沒有用常是沒用過-正確多在問句-肯定只認短句",
+      "path": "memory/文字與格式/中文回饋詞判斷的陷阱-對了是順帶一提-有用常是有使用-沒有用常是沒用過-正確多在問句-肯定只認短句.md",
+      "triggers": [
+        "糾正詞",
+        "肯定詞",
+        "回饋分類",
+        "feedback",
+        "效用歸因",
+        "使用者下一句",
+        "中文關鍵字判斷",
+        "friction"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "claude-p-精簡模式偵測-init-事件工具只剩-bash-edit-read-三支-正常約四十支-隔離模式不會誤判",
+      "path": "memory/CC與原子記憶契約/claude-p-精簡模式偵測-init-事件工具只剩-bash-edit-read-三支-正常約四十支-隔離模式不會誤判.md",
+      "triggers": [
+        "--bare",
+        "CLAUDE_CODE_SIMPLE",
+        "claude -p",
+        "stream-json",
+        "system/init",
+        "精簡模式",
+        "無頭",
+        "headless",
+        "--mcp-config"
+      ],
+      "scope": "global"
     }
   ]
 }

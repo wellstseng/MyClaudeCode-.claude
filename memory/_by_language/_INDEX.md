@@ -9,7 +9,7 @@
 | C#／.NET | 36 |
 | JavaScript／Node | 5 |
 | PowerShell | 9 |
-| Bash／Shell | 25 |
+| Bash／Shell | 26 |
 
 ## Python
 
@@ -130,6 +130,7 @@
 | `memory/CC與原子記憶契約/cc-windows-hook與statusline經git-bash執行-dollar變數與波浪號展開-百分號不展開-settings可寫localappdata與home去機器路徑.md` | cc-windows-hook與statusline經git-bash執行-dollar變數與波浪號展開-百分號不展開-settings可寫LOCALAPPDATA與HOME去機器路徑 |
 | `memory/CC與原子記憶契約/claude-code內建安全檢查會擋rm-rf加變數路徑-變數空時等於刪根目錄-權限規則放行不了-改字面絕對路徑或用冒號問號展開.md` | claude-code內建安全檢查會擋rm-rf加變數路徑-變數空時等於刪根目錄-權限規則放行不了-改字面絕對路徑或用冒號問號展開 |
 | `memory/CC與原子記憶契約/claude-code的mcp工具呼叫上限約27小時但互動模式滿120秒自動轉背景-要等長工作的mcp工具每次等待短於120秒分段等.md` | claude-code的mcp工具呼叫上限約27小時但互動模式滿120秒自動轉背景-要等長工作的mcp工具每次等待短於120秒分段等 |
+| `memory/CC與原子記憶契約/claude-p-精簡模式偵測-init-事件工具只剩-bash-edit-read-三支-正常約四十支-隔離模式不會誤判.md` | claude -p 精簡模式偵測-init 事件工具只剩 Bash Edit Read 三支-正常約四十支-隔離模式不會誤判 |
 | `memory/CC與原子記憶契約/datafileask宣告行寫在回覆文字裡同一則訊息的工具呼叫在pretooluse讀不到-先跑一個bash開頭註解行再發edit.md` | DataFileAsk宣告行寫在回覆文字裡同一則訊息的工具呼叫在PreToolUse讀不到-先跑一個Bash開頭註解行再發Edit |
 | `memory/CC與原子記憶契約/obsidian-sync-hook-全域同步-stdin-json-測試陷阱.md` | obsidian-sync hook 全域同步 + stdin-JSON 測試陷阱 |
 | `memory/CC與原子記憶契約/plan-mode-彈窗變多-bypass新版提示改用bash查讀-msys路徑被判工作目錄外-allow家族規則修法.md` | plan-mode-彈窗變多-bypass新版提示改用bash查讀-msys路徑被判工作目錄外-allow家族規則修法 |

@@ -17,6 +17,7 @@
 | toolchain-ps51-getcontent-utf8-file-corruption | toolchain-ps51-getcontent-utf8-file-corruption |
 | toolchain-svn-powershell-中文log編碼 | toolchain-svn-powershell-中文log編碼 |
 | windows-python-write-text-缺-newline-把-lf-翻-crlf-整檔假-diff | Windows Python write_text 缺 newline 把 LF 翻 CRLF 整檔假 diff |
+| 中文回饋詞判斷的陷阱-對了是順帶一提-有用常是有使用-沒有用常是沒用過-正確多在問句-肯定只認短句 | 中文回饋詞判斷的陷阱-對了是順帶一提-有用常是有使用-沒有用常是沒用過-正確多在問句-肯定只認短句 |
 | 彙整多份來源寫現況文件時-追蹤表裡的修法建議不是現況-每句現況要能指到程式 | 彙整多份來源寫現況文件時-追蹤表裡的修法建議不是現況-每句現況要能指到程式 |
 | 技術文件寫到開關或量測要標明範疇與量測條件-否則局部開關會被讀成整個系統的開關 | 技術文件寫到開關或量測要標明範疇與量測條件-否則局部開關會被讀成整個系統的開關 |
 | 按空白斷詞的token比對拿去比中文原話會失效-中文整句是一個token-比原話要用前後不是英數字的regex | 按空白斷詞的token比對拿去比中文原話會失效-中文整句是一個token-比原話要用前後不是英數字的regex |
