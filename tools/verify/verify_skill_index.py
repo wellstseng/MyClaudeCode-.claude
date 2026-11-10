@@ -69,6 +69,18 @@ def test_index_json_root_file_excluded(env):
     assert len(si.scan_skills(skills)) == 3
 
 
+def test_scan_skips_linked_skill_dir(env, tmp_path):
+    """連結進來的 skill（本機從別的 repo 接的）不計入；真實資料夾照算。"""
+    _, skills = env
+    outside = tmp_path / "other_repo" / "linked"
+    _mk_skill(outside.parent, "linked")
+    try:
+        (skills / "linked").symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("此環境無法建 symlink")
+    assert {s["dir"] for s in si.scan_skills(skills)} == {"alpha", "beta", "gamma"}
+
+
 def test_build_index_count(env):
     _, skills = env
     idx = si.build_index(si.scan_skills(skills))

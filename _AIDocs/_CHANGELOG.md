@@ -4,6 +4,9 @@
 > 每條僅留「標題 + 一句摘要」。實作細節見 `DevHistory/`（各主題演進檔）。
 
 ---
+## 2026-11-10 ai_skills 連結進來的 skill 不進版控、不算進 skill 計數
+- **做法**：`.gitignore` 排除 `ai_skills/install.py` 接進 `skills/` 的 13 個本機連結（mailbox 正本在本 repo，不排）；`tools/skill-index.py` `scan_skills` 與 SessionStart 計數防呆略過 symlink／junction 資料夾，避免有接跟沒接的機器互報 drift、或把本機 skill 寫進進版控的 `_skill_index.json`。
+- **驗證**：`verify_skill_index.py` 9 綠（新增連結不計入一案）；`skill-index.py --check` 在接了 discord 的本機回 33 無 drift；全 repo 歷史（含 origin）查過沒有 commit 過任何 ai_skills 連結。
 ## 2026-11-04 整併 upstream/main v6.1 到 Mac 線（88 commits）
 - **衝突解法**：17 檔——settings 以本地為底補 SubagentStart／InstructionsLoaded／StopFailure 與 codex rewake、拆 WebFetch 閘，頂層補三個系統契約鍵；`cleanupPeriodDays` 照使用者決定明寫 30（不取 upstream 的 14，也擋安裝器補 14）；測試與文件衝突段吃 upstream；atom 取 upstream 檔頭再補回本地 Related；退役的 `native-memory-bridge.py`、`verify_data_file_ask.py` 照刪。
 - **修 upstream 帶進來的問題**：`verify_ensure_mcp.py` 換掉全域 `subprocess.run` 不還原、頂層 `sys.exit`（整組 pytest 收集崩或 807 案連帶紅）；`verify_install`、`verify_dashboard_api_atoms` 斷言沒跟上契約鍵與私人列；code-guide 檔頭改 `when_to_use`／`metadata`；指紋大小寫測試限 Windows；USER.md 補「例外：直上版控」硬契約行。

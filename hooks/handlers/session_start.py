@@ -1469,7 +1469,19 @@ def handle_session_start(input_data: Dict[str, Any], config: Dict[str, Any]) -> 
             if (config or {}).get("skill_index", {}).get("enabled", True):
                 import json as _json
                 _sk_dir = CODE_DIR / "skills"   # skills 屬程式碼樹（與 tools／hooks／lib 並列）
-                _true_sk = sum(1 for _ in _sk_dir.glob("*/SKILL.md"))
+                # 連結進來的 skill（symlink／junction，本機從別的 repo 接的）不算，
+                # 判斷同 tools/skill-index.py is_linked_dir
+                def _linked(d: Path) -> bool:
+                    if d.is_symlink():
+                        return True
+                    if os.name != "nt":
+                        return False
+                    try:
+                        return bool(os.readlink(d))
+                    except (OSError, ValueError):
+                        return False
+                _true_sk = sum(1 for _sm in _sk_dir.glob("*/SKILL.md")
+                               if not _linked(_sm.parent))
                 _idx = _sk_dir / "_skill_index.json"
                 _idx_n = None
                 if _idx.exists():

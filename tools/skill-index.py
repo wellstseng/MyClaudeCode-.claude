@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """skill-index.py — skills/ 計數單一真相（SoT）工具（鏡像 sync-memory-index.py 模式）
 
-SoT = `skills/*/SKILL.md`（Claude Code 自動發現 skill 的來源，檔案系統即真相）。
+SoT = `skills/*/SKILL.md`（Claude Code 自動發現 skill 的來源，檔案系統即真相）；
+連結進來的 skill 資料夾（本機從別的 repo 接的）不算。
 本工具消除「人讀文件散落硬編 skill 數」的 chronic drift：
   - 掃 `skills/*/SKILL.md`，抽 frontmatter name/description，產機器鏡像
     `skills/_skill_index.json`（count + 清單，勿手改）
@@ -21,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -57,11 +59,29 @@ def _frontmatter(text: str) -> Tuple[str, str]:
     return name, desc
 
 
+def is_linked_dir(d: Path) -> bool:
+    """d 是連結（macOS symlink／Windows junction）→ True。
+    連結進來的 skill 是本機從別的 repo 接的（如 ai_skills/install.py），不屬本 repo、
+    已在 .gitignore 排除；算進計數會讓有接跟沒接的機器互報 drift。
+    SessionStart 的計數防呆（hooks/handlers/session_start.py）用同一判斷。"""
+    if d.is_symlink():
+        return True
+    if os.name == "nt":
+        try:
+            return bool(os.readlink(d))  # junction：py3.8+ readlink 讀得到目標
+        except (OSError, ValueError):
+            return False
+    return False
+
+
 def scan_skills(skills_dir: Path = SKILLS_DIR) -> List[Dict[str, str]]:
     """掃 skills/*/SKILL.md，回傳 sorted [{name, dir, description}]。
-    name 缺 → 退回目錄名。_skill_index.json 在 skills/ 根、非 */SKILL.md，不計入。"""
+    name 缺 → 退回目錄名。_skill_index.json 在 skills/ 根、非 */SKILL.md，不計入。
+    連結進來的 skill 資料夾不計入（見 is_linked_dir）。"""
     out: List[Dict[str, str]] = []
     for sk in sorted(skills_dir.glob("*/SKILL.md")):
+        if is_linked_dir(sk.parent):
+            continue
         try:
             text = sk.read_text(encoding="utf-8-sig")
         except OSError:

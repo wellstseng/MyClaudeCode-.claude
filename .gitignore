@@ -245,3 +245,19 @@ workflow/codex-bridge/
 channels/
 paste-cache/
 node_modules/
+
+# ─── ai_skills/install.py 接進來的本機連結（mac symlink／Windows junction）───
+# 連結指向各機自己的 ai_skills 路徑，進版控到別台就是壞連結。mailbox 不在此列：正本在本 repo。
+skills/audio-transcribe-summarize
+skills/code-rigor-reviewer
+skills/design-spec-compiler
+skills/discord
+skills/google-api
+skills/manage-experience-archival
+skills/notion-knowledge-base
+skills/opportunity-cost-analyzer
+skills/research-artifact-compiler
+skills/research-rigor-reviewer
+skills/research-session-recorder
+skills/situation-report
+skills/tslg-worklog-sheet
