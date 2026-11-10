@@ -15882,6 +15882,21 @@
         "--mcp-config"
       ],
       "scope": "global"
+    },
+    {
+      "name": "playwright瀏覽器下載會轉址到storage-googleapis-可達性要對真實網址http試抓跟轉址-只測443會誤判-內建逾時連上才起算",
+      "path": "memory/驗證與實證/網路/playwright瀏覽器下載會轉址到storage-googleapis-可達性要對真實網址http試抓跟轉址-只測443會誤判-內建逾時連上才起算.md",
+      "triggers": [
+        "playwright install",
+        "Chrome for Testing",
+        "Chromium 下載卡住",
+        "postinstall 卡住",
+        "storage.googleapis.com",
+        "PLAYWRIGHT_DOWNLOAD_HOST",
+        "網路可達性探測",
+        "公司網路擋下載"
+      ],
+      "scope": "global"
     }
   ]
 }

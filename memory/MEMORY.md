@@ -7,7 +7,7 @@
 | 版控 | 48 | `memory/版控/_INDEX.md` |
 | 工作流 | 53 | `memory/工作流/_INDEX.md` |
 | 思考與決策 | 27 | `memory/思考與決策/_INDEX.md` |
-| 驗證與實證 | 93 | `memory/驗證與實證/_INDEX.md` |
+| 驗證與實證 | 94 | `memory/驗證與實證/_INDEX.md` |
 | dotnet | 26 | `memory/dotnet/_INDEX.md` |
 | OS-Windows | 29 | `memory/OS-Windows/_INDEX.md` |
 | 文字與格式 | 17 | `memory/文字與格式/_INDEX.md` |
