@@ -4220,7 +4220,8 @@
         "重下口令",
         "背景事件後 commit",
         "口令持續到 push",
-        "v6 開時口令"
+        "v6 開時口令",
+        "多個 repo 上GIT"
       ],
       "scope": "global",
       "related": [
