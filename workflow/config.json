@@ -229,7 +229,7 @@
       "weak_min_match": 3
     },
     "session_end_flush": {
-      "_note": "SessionEnd 以本機 Ollama 萃取知識，草稿落 _drafts/auto-capture/（不入索引、不注入）；下游＝~/project/wendy/cron 的 memory-drafts-consolidate 定期整併成 atom。沒有下游消費時應關閉。",
+      "_note": "SessionEnd 以本機 Ollama 萃取知識，草稿落 _drafts/auto-capture/（不入索引、不注入）；下游＝~/projects/WendyAgent/cron 的 memory-drafts-consolidate 定期整併成 atom。沒有下游消費時應關閉。",
       "enabled": true,
       "max_atoms": 8
     }

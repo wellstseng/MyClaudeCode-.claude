@@ -4114,26 +4114,6 @@
       ]
     },
     {
-      "name": "catclaw-遷移到-claude-code-的落點與踩坑",
-      "path": "_AIDocs/_atoms/MemDev/catclaw-遷移到-claude-code-的落點與踩坑.md",
-      "triggers": [
-        "CatClaw 遷移",
-        "wendy 專案",
-        "ext 碎片",
-        "專案記憶匯入",
-        "tool:migrate",
-        "MEMORY.md 發現",
-        "trigger 逗號",
-        "cronctl",
-        "批次匯入 atom"
-      ],
-      "scope": "global",
-      "related": [
-        "自動萃取層淨值審查-調整式拔除-2026-07",
-        "catclaw-agent-routing-boundaries"
-      ]
-    },
-    {
       "name": "unity-editorprefs-registry值名hash是djb2xor-字串binary-utf8結尾0-editor關著可直接寫",
       "path": "memory/OS-Windows/unity-editorprefs-registry值名hash是djb2xor-字串binary-utf8結尾0-editor關著可直接寫.md",
       "triggers": [
@@ -15896,6 +15876,36 @@
         "PLAYWRIGHT_DOWNLOAD_HOST",
         "網路可達性探測",
         "公司網路擋下載"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "搬動專案資料夾後要一起改的六處-登記表與向量分層-對話資料夾-專案鍵-連結-排程-常駐程序-舊路徑留相容連結",
+      "path": "memory/CC與原子記憶契約/搬動專案資料夾後要一起改的六處-登記表與向量分層-對話資料夾-專案鍵-連結-排程-常駐程序-舊路徑留相容連結.md",
+      "triggers": [
+        "搬專案資料夾",
+        "專案改名",
+        "專案路徑變了",
+        "project-registry",
+        "向量分層",
+        "resume 找不到 session",
+        "換目錄",
+        "相容連結"
+      ],
+      "scope": "global"
+    },
+    {
+      "name": "批次匯入外部記憶成專案層atom的踩坑-要有memorymd才被發現-保留信心等級走write-raw-trigger不能有逗號",
+      "path": "memory/CC與原子記憶契約/批次匯入外部記憶成專案層atom的踩坑-要有memorymd才被發現-保留信心等級走write-raw-trigger不能有逗號.md",
+      "triggers": [
+        "批次匯入 atom",
+        "專案記憶匯入",
+        "外部記憶遷移",
+        "tool:migrate",
+        "MEMORY.md 發現",
+        "trigger 逗號",
+        "scope_drift",
+        "差量再匯入"
       ],
       "scope": "global"
     }

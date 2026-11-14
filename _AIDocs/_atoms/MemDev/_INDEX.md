@@ -6,7 +6,6 @@
 
 | Atom | 說明 |
 |------|------|
-| catclaw-遷移到-claude-code-的落點與踩坑 | CatClaw 遷移到 Claude Code 的落點與踩坑 |
 | dedup-stage-牢籠去蕪設計-信任模型隔離與substring-only首版 | dedup-stage-牢籠去蕪設計-信任模型隔離與substring-only首版 |
 | post-mortem-write-raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用 | post-mortem-write_raw靜默拒寫invalid-source-未檢回傳值誤報成功-代理訊號非真副作用 |
 | 向量服務查修-vec綠燈只代表服務活著-索引失敗看status的index-job-重啟要確認埠上只剩一支-各層file-path基準目錄不同 | 向量服務查修-vec綠燈只代表服務活著-索引失敗看status的index_job-重啟要確認埠上只剩一支-各層file_path基準目錄不同 |

@@ -65,7 +65,9 @@
 | 專案層tool事件閘要用原生hooks-根層只轉送sessionstart給project-hooks | 專案層tool事件閘要用原生hooks-根層只轉送SessionStart給project_hooks |
 | 從transcript回找使用者原話要停在開回合的紀錄-越過同伴訊息與背景通知會走到開工句 | 從transcript回找使用者原話要停在開回合的紀錄-越過同伴訊息與背景通知會走到開工句 |
 | 從transcript算本機token用量-assistant列以message-id加requestid去重-加權近計費input加5m快取1點25倍1h快取2倍讀0點1倍輸出5倍-專案名取projects下第一層-rglob含子代理 | 從transcript算本機token用量-assistant列以message-id加requestid去重-加權近計費input加5m快取1點25倍1h快取2倍讀0點1倍輸出5倍-專案名取projects下第一層-rglob含子代理 |
+| 批次匯入外部記憶成專案層atom的踩坑-要有memorymd才被發現-保留信心等級走write-raw-trigger不能有逗號 | 批次匯入外部記憶成專案層atom的踩坑-要有MEMORY.md才被發現-保留信心等級走write-raw-trigger不能有逗號 |
 | 換資料根的session向量檢索查的是全機共用live向量庫再用資料根可見池過濾-bm25為主時向量只在全沒命中才打-新卡要等向量重建 | 換資料根的session向量檢索查的是全機共用live向量庫再用資料根可見池過濾-bm25為主時向量只在全沒命中才打-新卡要等向量重建 |
+| 搬動專案資料夾後要一起改的六處-登記表與向量分層-對話資料夾-專案鍵-連結-排程-常駐程序-舊路徑留相容連結 | 搬動專案資料夾後要一起改的六處-登記表與向量分層-對話資料夾-專案鍵-連結-排程-常駐程序-舊路徑留相容連結 |
 | 收割只寫讀程式讀不出下次會重犯的使用者糾正與被證錯的卡必收程式常數與當天狀態不收 | 收割只寫讀程式讀不出、下次會重犯的；使用者糾正與被證錯的卡必收，程式常數與當天狀態不收 |
 | 改既有記憶卡的depends與標題要走對的入口-depends只能write-raw-改標題用新卡取代-相似度過高被拒要先清引用再退役舊卡 | 改既有記憶卡的Depends與標題要走對的入口-Depends只能write_raw-改標題用新卡取代-相似度過高被拒要先清引用再退役舊卡 |
 | 查claude帳號用量不必開瀏覽器-拿claude-code登入token打api-oauth-usage-回整數百分比與重置時間-token過期只報不自刷-用量頁的usage-api週額度多條取最高 | 查Claude帳號用量不必開瀏覽器-拿claude-code登入token打api-oauth-usage-回整數百分比與重置時間-token過期只報不自刷-用量頁的usage-api週額度多條取最高 |
